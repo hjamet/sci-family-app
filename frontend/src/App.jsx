@@ -1,21 +1,21 @@
 import React, { useState, useEffect } from 'react';
 import Header from './components/Header';
-import MemberStayTasksSection from './components/MemberStayTasksSection';
-import StayBalanceWidget from './components/StayBalanceWidget';
-import ProjectsSection from './components/ProjectsSection';
-import LinearStaysSection from './components/LinearStaysSection';
-import VademecumModal from './components/VademecumModal';
+import DashboardPage from './components/DashboardPage';
+import VademecumPage from './components/VademecumPage';
+import ProjectsPage from './components/ProjectsPage';
+import ReservationsPage from './components/ReservationsPage';
+import AdminPage from './components/AdminPage';
 import NewProjectModal from './components/NewProjectModal';
 import BookingModal from './components/BookingModal';
+import VademecumModal from './components/VademecumModal';
 import {
-  fetchProjects, fetchReservations, fetchVademecum, fetchProperties,
-  createProject, createReservation
+  fetchProjects, fetchReservations, fetchVademecum, fetchProperties, createProject
 } from './api';
-import { Home, Sparkles, CheckCircle2, Vote, Calendar, BookOpen, ShieldCheck } from 'lucide-react';
 
 export default function App() {
   const [currentUser, setCurrentUser] = useState(() => localStorage.getItem('sci_user') || 'Henri');
   const [isDarkMode, setIsDarkMode] = useState(() => localStorage.getItem('sci_theme') === 'dark');
+  const [activeTab, setActiveTab] = useState('home'); // 'home' | 'vademecum' | 'signalements' | 'reservations' | 'admin'
 
   const [properties, setProperties] = useState([]);
   const [projects, setProjects] = useState([]);
@@ -72,59 +72,68 @@ export default function App() {
     await loadData();
   };
 
-  // Stats summary calculation
-  const pendingVotesCount = projects.filter(p => p.status === 'EN_VOTE').length;
-  const nextStay = reservations.find(r => r.status === 'Confirmée');
-
   return (
     <div className="min-h-screen bg-slate-50 dark:bg-slate-950 text-slate-900 dark:text-slate-100 flex flex-col font-sans transition-colors duration-200">
       
-      {/* Header / Top Bar */}
+      {/* Header / Top Navigation Bar */}
       <Header
+        activeTab={activeTab}
+        setActiveTab={setActiveTab}
         currentUser={currentUser}
         setCurrentUser={setCurrentUser}
-        onOpenVademecum={() => setIsVademecumOpen(true)}
         onOpenNewProject={() => setIsNewProjectOpen(true)}
         onOpenBooking={() => setIsBookingOpen(true)}
         isDarkMode={isDarkMode}
         setIsDarkMode={setIsDarkMode}
       />
 
-      {/* Main Content Area */}
+      {/* Main Content Area with Dedicated Page Views */}
       <main className="flex-1 max-w-7xl w-full mx-auto px-4 sm:px-6 lg:px-8 py-8">
-        
         {loading ? (
           <div className="flex flex-col items-center justify-center py-24 space-y-3">
             <div className="w-10 h-10 border-4 border-emerald-600 border-t-transparent rounded-full animate-spin"></div>
-            <p className="text-sm font-semibold text-slate-500 dark:text-slate-400">Chargement du portail SCI Familiale...</p>
+            <p className="text-sm font-semibold text-slate-500 dark:text-slate-400">Chargement de Viva Hellenvilliers...</p>
           </div>
         ) : (
           <>
-            {/* Top Section - "Mes Tâches pour ce Séjour" */}
-            <MemberStayTasksSection currentUser={currentUser} />
+            {activeTab === 'home' && (
+              <DashboardPage
+                currentUser={currentUser}
+                setActiveTab={setActiveTab}
+                onOpenNewProject={() => setIsNewProjectOpen(true)}
+                onOpenBooking={() => setIsBookingOpen(true)}
+              />
+            )}
 
-            {/* SECTION 1: Fil des Incidents, Projets & Réparations */}
-            <ProjectsSection
-              projects={projects}
-              currentUser={currentUser}
-              onRefreshProjects={loadData}
-              onOpenNewProject={() => setIsNewProjectOpen(true)}
-            />
+            {activeTab === 'vademecum' && (
+              <VademecumPage
+                properties={properties}
+                currentUser={currentUser}
+              />
+            )}
 
-            {/* SECTION 2: Calendrier Linéaire des Prochains Séjours & Export iCal */}
-            <LinearStaysSection
-              reservations={reservations}
-              onOpenBooking={() => setIsBookingOpen(true)}
-            />
+            {activeTab === 'signalements' && (
+              <ProjectsPage
+                properties={properties}
+                currentUser={currentUser}
+              />
+            )}
 
-            {/* SECTION 3: Équilibrage des Séjours (Positioned lower down below main feed - Requirement 6) */}
-            <StayBalanceWidget reservations={reservations} />
+            {activeTab === 'reservations' && (
+              <ReservationsPage
+                properties={properties}
+                currentUser={currentUser}
+              />
+            )}
+
+            {activeTab === 'admin' && (
+              <AdminPage />
+            )}
           </>
         )}
-
       </main>
 
-      {/* Vademecum Centralisé Modal */}
+      {/* Global Modals */}
       <VademecumModal
         isOpen={isVademecumOpen}
         onClose={() => setIsVademecumOpen(false)}
@@ -133,7 +142,6 @@ export default function App() {
         reservations={reservations}
       />
 
-      {/* New Issue / Idea Submission Modal (Requirement 2) */}
       <NewProjectModal
         isOpen={isNewProjectOpen}
         onClose={() => setIsNewProjectOpen(false)}
@@ -142,7 +150,6 @@ export default function App() {
         onSubmit={handleCreateProject}
       />
 
-      {/* Booking Stay Modal */}
       <BookingModal
         isOpen={isBookingOpen}
         onClose={() => setIsBookingOpen(false)}
@@ -151,14 +158,14 @@ export default function App() {
         onBooked={handleBookStay}
       />
 
-      {/* Modern Footer */}
-      <footer className="border-t border-slate-200 dark:border-slate-900 bg-white dark:bg-slate-950 py-6 mt-12 transition-colors">
+      {/* Modern Minimalist Footer */}
+      <footer className="border-t border-slate-200/80 dark:border-slate-900 bg-white dark:bg-slate-950 py-6 mt-12 transition-colors">
         <div className="max-w-7xl mx-auto px-4 text-center text-xs text-slate-500 dark:text-slate-400 flex flex-col sm:flex-row items-center justify-between gap-2">
-          <p>© 2026 SCI Familiale Hellenvilliers — Tous droits réservés aux 7 membres associés.</p>
+          <p>© 2026 SCI Familiale Hellenvilliers — Portail des 7 membres associés.</p>
           <div className="flex items-center space-x-3">
-            <span className="font-medium text-slate-700 dark:text-slate-300">FastAPI + React</span>
+            <span className="font-semibold text-emerald-600 dark:text-emerald-400">Viva Hellenvilliers !!</span>
             <span>•</span>
-            <span className="font-semibold text-emerald-600 dark:text-emerald-400">Page Unique Épurée</span>
+            <span>FastAPI + React</span>
           </div>
         </div>
       </footer>
