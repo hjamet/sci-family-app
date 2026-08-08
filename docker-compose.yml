@@ -1,0 +1,42 @@
+version: '3.8'
+
+services:
+  backend:
+    build:
+      context: .
+      dockerfile: Dockerfile.backend
+    container_name: sci_family_backend
+    restart: always
+    environment:
+      - DATABASE_PATH=/app/data/sci_family.db
+    volumes:
+      - sqlite_data:/app/data
+      - uploads_data:/app/app/uploads
+    ports:
+      - "8000:8000"
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8000/api/health"]
+      interval: 15s
+      timeout: 5s
+      retries: 3
+
+  frontend:
+    build:
+      context: .
+      dockerfile: Dockerfile.frontend
+    container_name: sci_family_frontend
+    restart: always
+    ports:
+      - "3000:80"
+    depends_on:
+      - backend
+
+volumes:
+  sqlite_data:
+    driver: local
+  uploads_data:
+    driver: local
+
+networks:
+  default:
+    name: sci_family_network

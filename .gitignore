@@ -1,0 +1,26 @@
+# Dependencies
+node_modules/
+frontend/node_modules/
+
+# Production build
+dist/
+frontend/dist/
+
+# Python / Backend
+__pycache__/
+*.py[cod]
+*$py.class
+backend/app/__pycache__/
+.venv/
+venv/
+ENV/
+
+# SQLite WAL & Temp files
+*.db-shm
+*.db-wal
+
+# OS / IDE
+.DS_Store
+Thumbs.db
+.vscode/
+.idea/

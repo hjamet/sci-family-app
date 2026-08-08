@@ -1,0 +1,25 @@
+# Configuration Caddy pour sci.henri-jamet.com sur le serveur Hetzner (138.199.227.48)
+
+sci.henri-jamet.com {
+    # Certificat TLS automatique Let's Encrypt / ZeroSSL
+    tls henri@henri-jamet.com
+
+    # Redirection vers le conteneur Nginx frontend / docker-compose
+    reverse_proxy localhost:3000
+
+    # Compression Gzip & Zstd
+    encode zstd gzip
+
+    # En-têtes de sécurité HSTS & protection iframe
+    header {
+        Strict-Transport-Security "max-age=31536000; includeSubDomains; preload"
+        X-Content-Type-Options "nosniff"
+        X-Frame-Options "DENY"
+        X-XSS-Protection "1; mode=block"
+    }
+
+    # Logging d'accès
+    log {
+        output file /var/log/caddy/sci_access.log
+    }
+}
