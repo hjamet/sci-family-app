@@ -1,12 +1,11 @@
 import React, { useState } from 'react';
 import {
-  Vote, ThumbsUp, ThumbsDown, HelpCircle, Plus, Wrench, Sparkles, CheckCircle2, AlertCircle, ChevronRight
+  Vote, ThumbsUp, ThumbsDown, HelpCircle, Plus, Wrench, Sparkles, CheckCircle2, AlertCircle, ChevronRight, Gavel, FileText
 } from 'lucide-react';
-import { castProjectVote } from '../api';
 import ProjectDetailModal from './ProjectDetailModal';
 
 export default function ProjectsSection({ projects, currentUser, onRefreshProjects, onOpenNewProject }) {
-  const [activeFeedTab, setActiveFeedTab] = useState('voting'); // 'voting' | 'in_progress' | 'archived'
+  const [activeFeedTab, setActiveFeedTab] = useState('voting'); // 'voting' | 'in_progress' | 'ag_agenda' | 'archived'
   const [categoryFilter, setCategoryFilter] = useState('Toutes');
   const [selectedProject, setSelectedProject] = useState(null);
   const [errorMsg, setErrorMsg] = useState(null);
@@ -34,17 +33,26 @@ export default function ProjectsSection({ projects, currentUser, onRefreshProjec
   };
 
   // Group separation
+  const toQualifyItems = filteredProjects
+    .filter(p => p.status === 'SOUMIS')
+    .sort((a, b) => priorityWeight(a) - priorityWeight(b));
+
   const votingItems = filteredProjects
-    .filter(p => p.status === 'EN_VOTE' || p.status === 'SOUMIS')
+    .filter(p => p.status === 'EN_VOTE')
     .sort((a, b) => priorityWeight(a) - priorityWeight(b));
 
   const inProgressItems = filteredProjects
     .filter(p => p.status === 'EN_COURS' || p.status === 'APPROUVE')
     .sort((a, b) => priorityWeight(a) - priorityWeight(b));
 
+  const agAgendaItems = filteredProjects
+    .filter(p => p.status === 'REPORT_AG' || p.add_to_ag_agenda === true)
+    .sort((a, b) => priorityWeight(a) - priorityWeight(b));
+
   const completedItems = filteredProjects
     .filter(p => p.status === 'TERMINE' || p.status === 'RESOLU' || p.status === 'REFUSE')
     .sort((a, b) => priorityWeight(a) - priorityWeight(b));
+
 
   const getPriorityBadge = (prio) => {
     const p = (prio || 'MOYENNE').toUpperCase();
@@ -58,6 +66,14 @@ export default function ProjectsSection({ projects, currentUser, onRefreshProjec
       return <span className="px-2 py-0.5 rounded text-[10px] font-semibold bg-slate-100 text-slate-700 border border-slate-200">🟡 MOYENNE</span>;
     }
     return <span className="px-2 py-0.5 rounded text-[10px] font-semibold bg-emerald-50 text-emerald-700 border border-emerald-200">🟢 BASSE</span>;
+  };
+
+  const getClassificationBadge = (cls, project) => {
+    const isSignalement = cls === 'SIGNALEMENT' || project.category?.includes('Maintenance') || project.priority === 'URGENT';
+    if (isSignalement) {
+      return <span className="px-2 py-0.5 rounded text-[10px] font-black bg-rose-100 text-rose-800 border border-rose-200">🚨 Signalement</span>;
+    }
+    return <span className="px-2 py-0.5 rounded text-[10px] font-extrabold bg-amber-100 text-amber-900 border border-amber-200">💡 Initiative</span>;
   };
 
   const renderCompactCard = (project) => {
@@ -85,7 +101,8 @@ export default function ProjectsSection({ projects, currentUser, onRefreshProjec
 
         {/* Dense Card Information */}
         <div className="flex-1 min-w-0">
-          <div className="flex items-center space-x-2 mb-1">
+          <div className="flex items-center space-x-1.5 mb-1 flex-wrap gap-y-1">
+            {getClassificationBadge(project.classification, project)}
             {getPriorityBadge(project.priority)}
             <span className="text-[10px] font-bold px-2 py-0.5 rounded bg-indigo-50 text-indigo-700 truncate border border-indigo-100">
               {project.category}
@@ -98,10 +115,17 @@ export default function ProjectsSection({ projects, currentUser, onRefreshProjec
 
           <div className="flex items-center justify-between text-[11px] text-slate-500 mt-1.5">
             <span>Par <strong className="text-slate-700">{project.submitted_by}</strong></span>
-            <span className="font-extrabold text-emerald-700 bg-emerald-50 px-2 py-0.5 rounded border border-emerald-200 text-[10px] flex items-center space-x-1">
-              <span>🗳️</span>
-              <span>{summary.total_votes}/7 ({summary.pour_pct}% Pour)</span>
-            </span>
+            {project.status === 'REPORT_AG' ? (
+              <span className="font-extrabold text-purple-700 bg-purple-50 px-2 py-0.5 rounded border border-purple-200 text-[10px] flex items-center space-x-1">
+                <span>🏛️</span>
+                <span>Reporté AG</span>
+              </span>
+            ) : (
+              <span className="font-extrabold text-emerald-700 bg-emerald-50 px-2 py-0.5 rounded border border-emerald-200 text-[10px] flex items-center space-x-1">
+                <span>🗳️</span>
+                <span>{summary.total_votes}/7 ({summary.pour_pct}% Pour)</span>
+              </span>
+            )}
           </div>
         </div>
 
@@ -120,15 +144,15 @@ export default function ProjectsSection({ projects, currentUser, onRefreshProjec
               <Wrench className="h-5 w-5" />
             </div>
             <h2 className="text-2xl font-extrabold text-slate-900 tracking-tight">
-              Fil des Incidents, Projets & Réparations
+              Problèmes et initiatives
             </h2>
           </div>
           <p className="text-xs text-slate-500 mt-1">
-            Plateforme centralisée SCI Familiale : cartes synthétiques & modal de qualification et vote
+            Plateforme centralisée SCI Familiale : cartes synthétiques, qualification Signalement / Initiative & modal de vote
           </p>
         </div>
 
-        {/* Submit Button (Requirement 1) */}
+        {/* Submit Button */}
         <button
           onClick={onOpenNewProject}
           className="flex items-center space-x-2 px-4 py-2.5 rounded-xl text-xs font-semibold bg-indigo-600 hover:bg-indigo-700 text-white shadow-md transition transform hover:-translate-y-0.5"
@@ -163,8 +187,26 @@ export default function ProjectsSection({ projects, currentUser, onRefreshProjec
         </div>
       )}
 
-      {/* Sleek Feed Tab Bar */}
+      {/* Feed Tab Bar with À QUALIFIER / TRAITER Tab */}
       <div className="flex items-center space-x-2 border-b border-slate-200 mb-6 pb-2 overflow-x-auto">
+        {/* Tab 0: 🚨 À QUALIFIER / TRAITER (Coordinateur) */}
+        <button
+          onClick={() => setActiveFeedTab('to_qualify')}
+          className={`flex items-center space-x-2 px-4 py-2.5 rounded-xl text-sm font-black transition-all ${
+            activeFeedTab === 'to_qualify'
+              ? 'bg-rose-600 text-white shadow-md'
+              : 'bg-rose-50 text-rose-800 border border-rose-200 hover:bg-rose-100'
+          }`}
+        >
+          <span>🚨 À QUALIFIER / TRAITER (Coordinateur)</span>
+          <span className={`px-2 py-0.5 rounded-full text-xs font-black ${
+            activeFeedTab === 'to_qualify' ? 'bg-rose-800 text-white' : 'bg-rose-200 text-rose-900'
+          }`}>
+            {toQualifyItems.length}
+          </span>
+        </button>
+
+        {/* Tab 1: À Voter */}
         <button
           onClick={() => setActiveFeedTab('voting')}
           className={`flex items-center space-x-2 px-4 py-2.5 rounded-xl text-sm font-bold transition-all ${
@@ -181,6 +223,7 @@ export default function ProjectsSection({ projects, currentUser, onRefreshProjec
           </span>
         </button>
 
+        {/* Tab 2: Validés & En cours */}
         <button
           onClick={() => setActiveFeedTab('in_progress')}
           className={`flex items-center space-x-2 px-4 py-2.5 rounded-xl text-sm font-bold transition-all ${
@@ -197,6 +240,24 @@ export default function ProjectsSection({ projects, currentUser, onRefreshProjec
           </span>
         </button>
 
+        {/* Tab 3: Ordre du Jour AG */}
+        <button
+          onClick={() => setActiveFeedTab('ag_agenda')}
+          className={`flex items-center space-x-2 px-4 py-2.5 rounded-xl text-sm font-bold transition-all ${
+            activeFeedTab === 'ag_agenda'
+              ? 'bg-purple-600 text-white shadow-md'
+              : 'bg-white text-slate-600 border border-slate-200 hover:text-slate-900'
+          }`}
+        >
+          <span>🏛️ Ordre du jour AG</span>
+          <span className={`px-2 py-0.5 rounded-full text-xs font-black ${
+            activeFeedTab === 'ag_agenda' ? 'bg-purple-700 text-white' : 'bg-slate-100 text-slate-700'
+          }`}>
+            {agAgendaItems.length}
+          </span>
+        </button>
+
+        {/* Tab 4: Archives */}
         <button
           onClick={() => setActiveFeedTab('archived')}
           className={`flex items-center space-x-2 px-4 py-2.5 rounded-xl text-sm font-bold transition-all ${
@@ -213,6 +274,22 @@ export default function ProjectsSection({ projects, currentUser, onRefreshProjec
           </span>
         </button>
       </div>
+
+      {/* TAB 0: 🚨 À QUALIFIER / TRAITER (Coordinateur) */}
+      {activeFeedTab === 'to_qualify' && (
+        <div>
+          {toQualifyItems.length === 0 ? (
+            <div className="p-8 bg-white border border-slate-200 rounded-2xl text-center text-xs text-slate-400 italic shadow-sm">
+              Aucune proposition en attente de qualification par le coordinateur.
+            </div>
+          ) : (
+            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+              {toQualifyItems.map(renderCompactCard)}
+            </div>
+          )}
+        </div>
+      )}
+
 
       {/* TAB 1: 🗳️ À voter */}
       {activeFeedTab === 'voting' && (
@@ -244,7 +321,22 @@ export default function ProjectsSection({ projects, currentUser, onRefreshProjec
         </div>
       )}
 
-      {/* TAB 3: 🗄️ Archives / Terminés */}
+      {/* TAB 3: 🏛️ Ordre du jour AG */}
+      {activeFeedTab === 'ag_agenda' && (
+        <div>
+          {agAgendaItems.length === 0 ? (
+            <div className="p-8 bg-white border border-slate-200 rounded-2xl text-center text-xs text-slate-400 italic shadow-sm">
+              Aucun projet n'a été reporté à l'ordre du jour de la prochaine Assemblée Générale pour le moment.
+            </div>
+          ) : (
+            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+              {agAgendaItems.map(renderCompactCard)}
+            </div>
+          )}
+        </div>
+      )}
+
+      {/* TAB 4: 🗄️ Archives / Terminés */}
       {activeFeedTab === 'archived' && (
         <div>
           {completedItems.length === 0 ? (
@@ -259,7 +351,7 @@ export default function ProjectsSection({ projects, currentUser, onRefreshProjec
         </div>
       )}
 
-      {/* Elegant Project Detail Modal */}
+      {/* Project Detail Modal */}
       <ProjectDetailModal
         project={selectedProject}
         isOpen={!!selectedProject}

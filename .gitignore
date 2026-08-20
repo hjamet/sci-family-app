@@ -19,8 +19,15 @@ ENV/
 *.db-shm
 *.db-wal
 
+# Environment & Secrets
+.env
+backend/.env
+*.save
+*token*.json
+
 # OS / IDE
 .DS_Store
 Thumbs.db
 .vscode/
 .idea/
+

@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { X, Calendar as CalendarIcon, Info, Users, CheckSquare, AlertCircle, Building2 } from 'lucide-react';
+import { X, Calendar as CalendarIcon, Info, Users, CheckSquare, AlertCircle, Home } from 'lucide-react';
 import { createReservation } from '../api';
 
 function getISOWeekAndYear(dateStr) {
@@ -18,29 +18,54 @@ function getISOWeekAndYear(dateStr) {
   return { year: target.getFullYear(), week_number: weekNumber };
 }
 
+export const EXACT_SCI_ROOMS = [
+  // Le Presbytère (5 chambres)
+  { id: "presbytere_1", name: "Suite parentale Presbytère", property: "Le Presbytère", property_id: 2, defaultUser: "Frédéric" },
+  { id: "presbytere_2", name: "Chambre Henri Presbytère", property: "Le Presbytère", property_id: 2, defaultUser: "Henri" },
+  { id: "presbytere_3", name: "Chambre Hortense Presbytère", property: "Le Presbytère", property_id: 2, defaultUser: "Hortense" },
+  { id: "presbytere_4", name: "Chambre Joséphine Presbytère", property: "Le Presbytère", property_id: 2, defaultUser: "Joséphine" },
+  { id: "presbytere_5", name: "Chambre Eugénie et Alexandre Presbytère", property: "Le Presbytère", property_id: 2, defaultUser: "Eugénie" },
+  // Villa Rosings (2 chambres)
+  { id: "rosing_1", name: "Chambre Marguerite Rosings", property: "Villa Rosings", property_id: 1, defaultUser: "Marguerite" },
+  { id: "rosing_2", name: "Chambre Hortense Rosings", property: "Villa Rosings", property_id: 1, defaultUser: "Élisabeth" },
+];
+
 export default function BookingModal({ isOpen, onClose, initialWeek, initialYear, properties, currentUser, onBooked }) {
-  const [selectedHouses, setSelectedHouses] = useState(['Villa Rosing']);
+  const [userName, setUserName] = useState(currentUser || 'Henri');
+  const [selectedRooms, setSelectedRooms] = useState([]);
   const [startDate, setStartDate] = useState('2026-08-10');
   const [endDate, setEndDate] = useState('2026-08-16');
   const [guestCount, setGuestCount] = useState(2);
   const [acceptsExtraFamily, setAcceptsExtraFamily] = useState(true);
-  const [userName, setUserName] = useState(currentUser || 'Henri');
   const [notes, setNotes] = useState('');
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState('');
 
+  // Auto-check default room for the logged-in member
   useEffect(() => {
-    if (currentUser) setUserName(currentUser);
-  }, [currentUser]);
+    const activeUser = currentUser || userName;
+    setUserName(activeUser);
+
+    let defaultRoom = 'Suite parentale Presbytère';
+    if (activeUser.includes('Henri')) defaultRoom = 'Chambre Henri Presbytère';
+    else if (activeUser.includes('Hortense')) defaultRoom = 'Chambre Hortense Presbytère';
+    else if (activeUser.includes('Marguerite')) defaultRoom = 'Chambre Marguerite Rosings';
+    else if (activeUser.includes('Eugénie')) defaultRoom = 'Chambre Eugénie et Alexandre Presbytère';
+    else if (activeUser.includes('Joséphine')) defaultRoom = 'Chambre Joséphine Presbytère';
+    else if (activeUser.includes('Élisabeth')) defaultRoom = 'Chambre Hortense Rosings';
+    else if (activeUser.includes('Frédéric')) defaultRoom = 'Suite parentale Presbytère';
+
+    setSelectedRooms([defaultRoom]);
+  }, [currentUser, isOpen]);
 
   if (!isOpen) return null;
 
-  const toggleHouse = (houseName) => {
-    if (selectedHouses.includes(houseName)) {
-      if (selectedHouses.length === 1) return; // keep at least 1 checked
-      setSelectedHouses(selectedHouses.filter(h => h !== houseName));
+  const toggleRoom = (roomName) => {
+    if (selectedRooms.includes(roomName)) {
+      if (selectedRooms.length === 1) return; // Keep at least 1 room checked
+      setSelectedRooms(selectedRooms.filter(r => r !== roomName));
     } else {
-      setSelectedHouses([...selectedHouses, houseName]);
+      setSelectedRooms([...selectedRooms, roomName]);
     }
   };
 
@@ -57,8 +82,8 @@ export default function BookingModal({ isOpen, onClose, initialWeek, initialYear
 
   const handleSubmit = async (e) => {
     e.preventDefault();
-    if (selectedHouses.length === 0) {
-      setError('Veuillez sélectionner au moins une maison (Villa Rosing ou Le Presbytère).');
+    if (selectedRooms.length === 0) {
+      setError('Veuillez sélectionner au moins 1 chambre pour votre séjour.');
       return;
     }
     setSubmitting(true);
@@ -67,16 +92,26 @@ export default function BookingModal({ isOpen, onClose, initialWeek, initialYear
     try {
       const { year, week_number } = getISOWeekAndYear(startDate);
 
-      const propertyName = selectedHouses.length === 2
-        ? "Villa Rosing & Le Presbytère"
-        : selectedHouses[0];
+      const hasPresbytere = selectedRooms.some(r => r.includes('Presbytère'));
+      const hasRosings = selectedRooms.some(r => r.includes('Rosings') || r.includes('Rosing'));
 
-      const propId = selectedHouses.includes("Villa Rosing") ? 1 : 2;
+      let propertyName = "Le Presbytère";
+      let propId = 2;
+
+      if (hasPresbytere && hasRosings) {
+        propertyName = "Le Presbytère & Villa Rosings";
+        propId = 2;
+      } else if (hasRosings) {
+        propertyName = "Villa Rosings";
+        propId = 1;
+      }
 
       await createReservation({
         property_id: propId,
         property_name: propertyName,
-        properties: selectedHouses,
+        properties: hasPresbytere && hasRosings ? ["Le Presbytère", "Villa Rosings"] : [propertyName],
+        selected_rooms: selectedRooms,
+        rooms_count: selectedRooms.length,
         user_name: userName,
         year,
         week_number,
@@ -96,11 +131,9 @@ export default function BookingModal({ isOpen, onClose, initialWeek, initialYear
     }
   };
 
-  const { year: calculatedYear, week_number: calculatedWeek } = getISOWeekAndYear(startDate);
-
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-900/60 backdrop-blur-sm animate-in fade-in duration-200">
-      <div className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-2xl w-full max-w-lg max-h-[85vh] overflow-y-auto p-6 sm:p-7 shadow-2xl relative text-slate-900 dark:text-slate-100">
+      <div className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-3xl w-full max-w-xl max-h-[90vh] overflow-y-auto p-6 sm:p-7 shadow-2xl relative text-slate-900 dark:text-slate-100">
         
         {/* Header */}
         <div className="flex items-center justify-between border-b border-slate-100 dark:border-slate-800 pb-4 mb-5">
@@ -110,7 +143,7 @@ export default function BookingModal({ isOpen, onClose, initialWeek, initialYear
             </div>
             <div>
               <h2 className="text-lg font-extrabold text-slate-900 dark:text-white">Réserver / Déclarer un Séjour</h2>
-              <p className="text-xs text-slate-500 dark:text-slate-400">Gestion des résidences familiales SCI</p>
+              <p className="text-xs text-slate-500 dark:text-slate-400">Sélection des chambres SCI Familiale</p>
             </div>
           </div>
           <button
@@ -130,53 +163,89 @@ export default function BookingModal({ isOpen, onClose, initialWeek, initialYear
 
         <form onSubmit={handleSubmit} className="space-y-4">
           
-          {/* Property Checkboxes (Requirement 4) */}
+          {/* Exact 7 Rooms Selection Checkboxes */}
           <div>
-            <label className="block text-xs font-bold text-slate-700 dark:text-slate-300 mb-2 uppercase tracking-wider">
-              Choix de la / des Propriété(s) *
+            <label className="block text-xs font-bold text-slate-700 dark:text-slate-300 mb-2 uppercase tracking-wider flex items-center justify-between">
+              <span>Choix des Chambres à réserver (7 chambres SCI) *</span>
+              <span className="text-[10px] text-indigo-600 dark:text-indigo-400 font-extrabold">{selectedRooms.length} chambre(s) sélectionnée(s)</span>
             </label>
-            <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-              <label className={`flex items-center space-x-3 p-3 rounded-xl border cursor-pointer transition ${
-                selectedHouses.includes('Villa Rosing')
-                  ? 'bg-indigo-50/80 dark:bg-indigo-950/60 border-indigo-500 text-indigo-950 dark:text-indigo-200 font-bold'
-                  : 'bg-slate-50 dark:bg-slate-950 border-slate-200 dark:border-slate-800 text-slate-700 dark:text-slate-300'
-              }`}>
-                <input
-                  type="checkbox"
-                  checked={selectedHouses.includes('Villa Rosing')}
-                  onChange={() => toggleHouse('Villa Rosing')}
-                  className="h-4 w-4 rounded text-indigo-600 focus:ring-indigo-500 border-slate-300 dark:border-slate-700 cursor-pointer"
-                />
-                <div className="text-xs">
-                  <span className="block font-bold">Villa Rosing</span>
-                  <span className="text-[10px] text-slate-500 dark:text-slate-400">8 rue Ancienne Mairie</span>
-                </div>
-              </label>
 
-              <label className={`flex items-center space-x-3 p-3 rounded-xl border cursor-pointer transition ${
-                selectedHouses.includes('Le Presbytère')
-                  ? 'bg-indigo-50/80 dark:bg-indigo-950/60 border-indigo-500 text-indigo-950 dark:text-indigo-200 font-bold'
-                  : 'bg-slate-50 dark:bg-slate-950 border-slate-200 dark:border-slate-800 text-slate-700 dark:text-slate-300'
-              }`}>
-                <input
-                  type="checkbox"
-                  checked={selectedHouses.includes('Le Presbytère')}
-                  onChange={() => toggleHouse('Le Presbytère')}
-                  className="h-4 w-4 rounded text-indigo-600 focus:ring-indigo-500 border-slate-300 dark:border-slate-700 cursor-pointer"
-                />
-                <div className="text-xs">
-                  <span className="block font-bold">Le Presbytère</span>
-                  <span className="text-[10px] text-slate-500 dark:text-slate-400">4 rue Ancienne Mairie</span>
+            <div className="space-y-3 max-h-52 overflow-y-auto pr-1">
+              
+              {/* Le Presbytère Group */}
+              <div className="p-3 rounded-2xl bg-indigo-50/50 dark:bg-indigo-950/30 border border-indigo-100 dark:border-indigo-900/40 space-y-2">
+                <span className="text-[10px] font-black uppercase text-indigo-800 dark:text-indigo-300 tracking-wider block">
+                  🏰 Le Presbytère (5 Chambres)
+                </span>
+                <div className="space-y-1.5">
+                  {EXACT_SCI_ROOMS.filter(r => r.property === 'Le Presbytère').map((room) => {
+                    const isChecked = selectedRooms.includes(room.name);
+                    return (
+                      <label
+                        key={room.id}
+                        className={`flex items-center space-x-2.5 p-2 rounded-xl border text-xs cursor-pointer transition ${
+                          isChecked
+                            ? 'bg-indigo-600 text-white font-bold border-indigo-600 shadow-sm'
+                            : 'bg-white dark:bg-slate-950 text-slate-800 dark:text-slate-200 border-slate-200 dark:border-slate-800 hover:bg-slate-50'
+                        }`}
+                      >
+                        <input
+                          type="checkbox"
+                          checked={isChecked}
+                          onChange={() => toggleRoom(room.name)}
+                          className="h-4 w-4 rounded text-indigo-600 focus:ring-indigo-500 border-slate-300 dark:border-slate-700 cursor-pointer"
+                        />
+                        <span className="flex-1">{room.name}</span>
+                        {room.defaultUser === userName && (
+                          <span className="text-[9px] px-2 py-0.5 rounded-full bg-white/20 text-white uppercase font-extrabold">Par défaut</span>
+                        )}
+                      </label>
+                    );
+                  })}
                 </div>
-              </label>
+              </div>
+
+              {/* Villa Rosings Group */}
+              <div className="p-3 rounded-2xl bg-amber-50/50 dark:bg-amber-950/30 border border-amber-100 dark:border-amber-900/40 space-y-2">
+                <span className="text-[10px] font-black uppercase text-amber-800 dark:text-amber-300 tracking-wider block">
+                  🏡 Villa Rosings (2 Chambres)
+                </span>
+                <div className="space-y-1.5">
+                  {EXACT_SCI_ROOMS.filter(r => r.property === 'Villa Rosings').map((room) => {
+                    const isChecked = selectedRooms.includes(room.name);
+                    return (
+                      <label
+                        key={room.id}
+                        className={`flex items-center space-x-2.5 p-2 rounded-xl border text-xs cursor-pointer transition ${
+                          isChecked
+                            ? 'bg-amber-500 text-white font-bold border-amber-500 shadow-sm'
+                            : 'bg-white dark:bg-slate-950 text-slate-800 dark:text-slate-200 border-slate-200 dark:border-slate-800 hover:bg-slate-50'
+                        }`}
+                      >
+                        <input
+                          type="checkbox"
+                          checked={isChecked}
+                          onChange={() => toggleRoom(room.name)}
+                          className="h-4 w-4 rounded text-amber-600 focus:ring-amber-500 border-slate-300 dark:border-slate-700 cursor-pointer"
+                        />
+                        <span className="flex-1">{room.name}</span>
+                        {room.defaultUser === userName && (
+                          <span className="text-[9px] px-2 py-0.5 rounded-full bg-white/20 text-white uppercase font-extrabold">Par défaut</span>
+                        )}
+                      </label>
+                    );
+                  })}
+                </div>
+              </div>
+
             </div>
           </div>
 
-          {/* Date Range Selectors (Requirement 4: start_date & end_date) */}
+          {/* Date Range Selectors */}
           <div className="grid grid-cols-2 gap-3">
             <div>
               <label className="block text-xs font-bold text-slate-700 dark:text-slate-300 mb-1 uppercase tracking-wider">
-                Date d'arrivée (`start_date`) *
+                Date d'arrivée *
               </label>
               <input
                 type="date"
@@ -189,7 +258,7 @@ export default function BookingModal({ isOpen, onClose, initialWeek, initialYear
 
             <div>
               <label className="block text-xs font-bold text-slate-700 dark:text-slate-300 mb-1 uppercase tracking-wider">
-                Date de départ (`end_date`) *
+                Date de départ *
               </label>
               <input
                 type="date"
@@ -202,11 +271,11 @@ export default function BookingModal({ isOpen, onClose, initialWeek, initialYear
             </div>
           </div>
 
-          {/* Guest Count (`guest_count`) & Applicant Name */}
+          {/* Guest Count & Applicant Name */}
           <div className="grid grid-cols-2 gap-3">
             <div>
               <label className="block text-xs font-bold text-slate-700 dark:text-slate-300 mb-1 uppercase tracking-wider">
-                Nombre de personnes (`guest_count`) *
+                Nombre d'occupants *
               </label>
               <div className="relative">
                 <input
@@ -224,7 +293,7 @@ export default function BookingModal({ isOpen, onClose, initialWeek, initialYear
 
             <div>
               <label className="block text-xs font-bold text-slate-700 dark:text-slate-300 mb-1 uppercase tracking-wider">
-                Membre / Associé
+                Membre Associé
               </label>
               <input
                 type="text"
@@ -236,7 +305,7 @@ export default function BookingModal({ isOpen, onClose, initialWeek, initialYear
             </div>
           </div>
 
-          {/* Checkbox: accepts_extra_family (Requirement 4) */}
+          {/* Checkbox: accepts_extra_family */}
           <div className="p-3.5 bg-slate-50 dark:bg-slate-950 border border-slate-200 dark:border-slate-800 rounded-xl flex items-center space-x-3">
             <input
               type="checkbox"
@@ -246,29 +315,18 @@ export default function BookingModal({ isOpen, onClose, initialWeek, initialYear
               className="h-4 w-4 rounded text-indigo-600 focus:ring-indigo-500 border-slate-300 dark:border-slate-700 cursor-pointer"
             />
             <label htmlFor="accepts_extra_family" className="text-xs font-semibold text-slate-800 dark:text-slate-200 cursor-pointer leading-snug">
-              J'accepte d'autres membres de la famille en plus (`accepts_extra_family`)
+              J'accepte d'autres membres de la famille en co-habitation pendant mon séjour
             </label>
-          </div>
-
-          {/* Calculated ISO Week Info Card */}
-          <div className="bg-indigo-50 dark:bg-indigo-950/40 rounded-xl p-3 border border-indigo-200 dark:border-indigo-800/60 flex items-center justify-between text-xs">
-            <div className="flex items-center space-x-2 text-indigo-900 dark:text-indigo-300">
-              <Info className="h-4 w-4 text-indigo-600 dark:text-indigo-400 shrink-0" />
-              <span>Semaine ISO enregistrée :</span>
-            </div>
-            <span className="font-extrabold text-indigo-700 dark:text-indigo-300">
-              Semaine {calculatedWeek} ({calculatedYear})
-            </span>
           </div>
 
           {/* Guest Notes */}
           <div>
             <label className="block text-xs font-bold text-slate-700 dark:text-slate-300 mb-1 uppercase tracking-wider">
-              Notes & Précisions (Optionnel)
+              Précision
             </label>
             <textarea
               rows={2}
-              placeholder="ex: Arrivée le vendredi soir, besoin des draps du grand lit..."
+              placeholder="ex: Arrivée tardive vendredi soir..."
               value={notes}
               onChange={(e) => setNotes(e.target.value)}
               className="w-full bg-slate-50 dark:bg-slate-950 border border-slate-200 dark:border-slate-800 rounded-xl px-3.5 py-2.5 text-xs text-slate-900 dark:text-white focus:outline-none focus:ring-2 focus:ring-indigo-500"

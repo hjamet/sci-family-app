@@ -1,83 +1,154 @@
 import os
 from sqlalchemy.orm import Session
 from .database import engine, SessionLocal, Base
-from .models import User, Property, Issue, Comment, Reservation, Project, ProjectVote, MemberAvailability, VademecumItem, MaintenanceTask, StayTaskAssignment
+from .models import User, Property, Issue, Comment, Reservation, Project, ProjectVote, MemberAvailability, VademecumItem, MaintenanceTask, StayTaskAssignment, AdminDocument
 from datetime import datetime, timedelta
+from .security import hash_password
 
-def seed_database(db: Session):
+def seed_database(db: Session = None):
     print("Seeding database with updated SCI Familiale data (Exact 7 family members, real meeting tasks, vademecum)...")
 
-    # Clear existing data and recreate tables for schema updates
+    # Close existing session to unlock DB before schema recreation
+    if db is not None:
+        db.close()
+
     Base.metadata.drop_all(bind=engine)
     Base.metadata.create_all(bind=engine)
+
+    db = SessionLocal()
 
     # Properties (Requirement 4)
     p1 = Property(
         name="Villa Rosing",
         address="8 rue Ancienne Mairie",
         description="Grande propriété familiale Villa Rosing (8 rue Ancienne Mairie).",
-        photo_url="https://images.unsplash.com/photo-1512917774080-9991f1c4c750?auto=format&fit=crop&w=800&q=80"
+        photo_url="https://images.unsplash.com/photo-1512917774080-9991f1c4c750?auto=format&fit=crop&w=800&q=80",
+        total_chambers=2
     )
     p2 = Property(
         name="Le Presbytère",
         address="4 rue Ancienne Mairie",
         description="Demeure de charme Le Presbytère (4 rue Ancienne Mairie).",
-        photo_url="https://images.unsplash.com/photo-1542314831-068cd1dbfeeb?auto=format&fit=crop&w=800&q=80"
+        photo_url="https://images.unsplash.com/photo-1542314831-068cd1dbfeeb?auto=format&fit=crop&w=800&q=80",
+        total_chambers=5
     )
     db.add_all([p1, p2])
     db.commit()
     db.refresh(p1)
     db.refresh(p2)
 
-    # Exact 7 Family Members (Henri, Hortense, Marguerite, Eugénie, Joséphine, Élisabeth, Frédéric)
+    # Exact 7 Family Members with Permanent Estate Responsibilities
     users = [
-        User(prenom="Henri", name="Henri Jamet", email="henri@sci-familiale.fr", password="pass123", role="Coordinateur", avatar_color="cyan"),
-        User(prenom="Hortense", name="Hortense Jamet", email="hortense@sci-familiale.fr", password="pass123", role="Associé", avatar_color="rose"),
-        User(prenom="Marguerite", name="Marguerite Jamet", email="marguerite@sci-familiale.fr", password="pass123", role="Associé", avatar_color="purple"),
-        User(prenom="Eugénie", name="Eugénie Jamet", email="eugenie@sci-familiale.fr", password="pass123", role="Associé", avatar_color="amber"),
-        User(prenom="Joséphine", name="Joséphine Jamet", email="josephine@sci-familiale.fr", password="pass123", role="Associé", avatar_color="emerald"),
-        User(prenom="Élisabeth", name="Élisabeth Jamet", email="elisabeth@sci-familiale.fr", password="pass123", role="Associé", avatar_color="teal"),
-        User(prenom="Frédéric", name="Frédéric Jamet", email="frederic@sci-familiale.fr", password="pass123", role="Associé", avatar_color="blue"),
+        User(
+            prenom="Henri",
+            name="Henri Jamet",
+            email="henri@sci-familiale.fr",
+            password=hash_password(os.getenv("USER_HENRI_PASS") or os.getenv("MEMBER_PASSWORD_HENRI", "henri2026!")),
+            role="Coordinateur Général (Fioul, Chauffage ViCare, CCA)",
+            avatar_color="cyan"
+        ),
+        User(
+            prenom="Hortense",
+            name="Hortense Jamet",
+            email="hortense@sci-familiale.fr",
+            password=hash_password(os.getenv("USER_HORTENSE_PASS") or os.getenv("MEMBER_PASSWORD_HORTENSE", "hortense2026!")),
+            role="Responsable Espaces Verts (Jardinier Perrot, Starlink)",
+            avatar_color="rose"
+        ),
+        User(
+            prenom="Marguerite",
+            name="Marguerite Jamet",
+            email="marguerite@sci-familiale.fr",
+            password=hash_password(os.getenv("USER_MARGUERITE_PASS") or os.getenv("MEMBER_PASSWORD_MARGUERITE", "marguerite2026!")),
+            role="Responsable Équipements (Frigo Schtroudel, Buanderie)",
+            avatar_color="purple"
+        ),
+        User(
+            prenom="Eugénie",
+            name="Eugénie Jamet",
+            email="eugenie@sci-familiale.fr",
+            password=hash_password(os.getenv("USER_EUGENIE_PASS") or os.getenv("MEMBER_PASSWORD_EUGENIE", "eugenie2026!")),
+            role="Responsable Peintures SdB & Tri Sélectif",
+            avatar_color="amber"
+        ),
+        User(
+            prenom="Joséphine",
+            name="Joséphine Jamet",
+            email="josephine@sci-familiale.fr",
+            password=hash_password(os.getenv("USER_JOSEPHINE_PASS") or os.getenv("MEMBER_PASSWORD_JOSEPHINE", "josephine2026!")),
+            role="Coordinatrice Adjointe (Clés, Boîtier Sud, Vêtements)",
+            avatar_color="emerald"
+        ),
+        User(
+            prenom="Maman",
+            name="Maman (Élisabeth) Jamet",
+            email="maman@sci-familiale.fr",
+            password=hash_password(os.getenv("USER_MAMAN_PASS") or os.getenv("MEMBER_PASSWORD_MAMAN", "maman2026!")),
+            role="Garante du Patrimoine & Journées Ménage",
+            avatar_color="teal"
+        ),
+        User(
+            prenom="Frédéric",
+            name="Frédéric Jamet",
+            email="frederic@sci-familiale.fr",
+            password=hash_password(os.getenv("USER_FREDERIC_PASS") or os.getenv("MEMBER_PASSWORD_FREDERIC", "frederic2026!")),
+            role="Responsable Électricité & Linky Tempo (Contacteur 0/HC)",
+            avatar_color="blue"
+        ),
     ]
     db.add_all(users)
     db.commit()
 
-    # Maintenance Tasks Template (Admin task management & Member Stay Tasks)
+    # Maintenance Tasks Template (Mapped to permanent estate responsibilities across the 7 members)
     m_tasks = [
         MaintenanceTask(
             property_id=p1.id,
-            title="Vérification des clés & coffre-fort",
+            title="Vérification des clés & boîtier sécurisé Sud",
             category="Arrivée",
             frequency="Chaque séjour",
-            description="Contrôler la présence des clés de secours et vérifier le code du boîtier sécurisé (code: 4829) du portail Sud. Voir Vademecum Accès."
+            description="[Référente: Joséphine] Contrôler la présence des clés de secours et vérifier le code du boîtier sécurisé (code: 4829) du portail Sud. Voir Vademecum Accès."
         ),
         MaintenanceTask(
             property_id=p1.id,
-            title="Bascule chauffage / fioul & thermostat",
+            title="Bascule chauffage ViCare / fioul & thermostat",
             category="Arrivée",
             frequency="Chaque séjour",
-            description="Régler le thermostat du couloir central sur 19°C à l'arrivée et contrôler la jauge extérieure de la cuve fioul. Fournisseur JOSSE."
+            description="[Référent: Henri] Régler le thermostat du couloir central sur 19°C à l'arrivée et contrôler la jauge extérieure de la cuve fioul. Fournisseur JOSSE."
         ),
         MaintenanceTask(
             property_id=p1.id,
-            title="Relevé compteurs Eau & Linky Tempo",
+            title="Relevé compteurs Eau & Linky Tempo (HP/HC)",
             category="Arrivée",
             frequency="Chaque séjour",
-            description="Noter l'index du compteur d'eau dans la cave (après ouverture vanne rouge) et l'index Linky Tempo (HP/HC)."
+            description="[Référent: Frédéric] Noter l'index du compteur d'eau dans la cave (après ouverture vanne rouge) et basculer le contacteur Linky Tempo 0/HC/Marche."
         ),
         MaintenanceTask(
             property_id=p1.id,
-            title="Filtre piscine & chlore hebdomadaire",
+            title="Suivi du jardinier Perrot & espaces verts",
             category="Pendant le séjour",
-            frequency="Hebdomadaire",
-            description="Vider le panier du skimmer, vérifier la pression du filtre à sable et rajouter 1 galet de chlore dans le skimmer."
+            frequency="Mensuel",
+            description="[Référente: Hortense] Vérifier le passage du jardinier EI PERROT LAURENT (3 900 €/an) et s'assurer de l'arrosage du potager et massif des roses."
         ),
         MaintenanceTask(
             property_id=p1.id,
-            title="Gestion du frigo Schtroudel & tri cuisine",
+            title="Gestion frigo Schtroudel unique & buanderie",
+            category="Pendant le séjour",
+            frequency="Chaque séjour",
+            description="[Référente: Marguerite] Centraliser la nourriture dans le grand réfrigérateur Schtroudel unique et vérifier l'état du lave-linge/buanderie."
+        ),
+        MaintenanceTask(
+            property_id=p1.id,
+            title="Contrôle humidité SdB & Tri sélectif déchets",
             category="Pendant le séjour",
             frequency="Tous les 3 jours",
-            description="Centraliser toutes les denrées fraîches dans le nouveau réfrigérateur Schtroudel unique et jeter les emballages inutiles."
+            description="[Référente: Eugénie] Aérer la salle de bain du haut (peinture hydrofuge) et sortir les poubelles jaunes (mardi) / noires (jeudi) et bio-compost."
+        ),
+        MaintenanceTask(
+            property_id=p1.id,
+            title="Inspection propreté & charte de séjour",
+            category="Départ",
+            frequency="Chaque séjour",
+            description="[Référente: Maman] Vérifier que les consignes d'utilisation et de rangement sont respectées avant la fermeture."
         ),
         MaintenanceTask(
             property_id=p1.id,
@@ -95,14 +166,7 @@ def seed_database(db: Session):
         ),
         MaintenanceTask(
             property_id=p1.id,
-            title="Vidage poubelles & bac compost bio",
-            category="Départ",
-            frequency="Chaque séjour",
-            description="Vider les poubelles intérieures. Sortir le bac Jaune (mardi) ou Noir (jeudi) en bord de route. Vider le bioseau au compost."
-        ),
-        MaintenanceTask(
-            property_id=p1.id,
-            title="Verrouillage baies vitrées & remise clés",
+            title="Verrouillage baies vitrées & remise clés boîtier",
             category="Départ",
             frequency="Chaque séjour",
             description="Fermer les volets roulants, verrouiller toutes les baies et remettre la clé principale dans le boîtier à digicode du portail."
@@ -320,12 +384,12 @@ def seed_database(db: Session):
             db.add(assignment)
     db.commit()
 
-    # Vademecum Centralisé (Real House Guides)
+    # Vademecum Centralisé (Real House Guides - Authentic Henri Directives)
     vade_list = [
         VademecumItem(
             property_id=p1.id,
             category="Wi-Fi & Réseau",
-            title="Wi-Fi Starlink Maison & Dépendance",
+            title="Wi-Fi Starlink Domaine & Dépendance",
             content="Accès Internet Starlink très haut débit. Routeur principal dans le bureau du rez-de-chaussée, répéteur dans la dépendance.",
             code_to_copy="Hellenvilliers2026!",
             importance="IMPORTANT"
@@ -334,14 +398,14 @@ def seed_database(db: Session):
             property_id=p1.id,
             category="Accès & Clés",
             title="Boîtier à clé sécurisé (Portail Sud)",
-            content="Boîtier à digicode fixé sur le pilier gauche du portail secondaire. Remettre le passe dans le boîtier dès l'ouverture.",
+            content="Boîtier à digicode 4829 fixé sur le pilier gauche du portail Sud. Remettre le passe dans le boîtier dès l'ouverture.",
             code_to_copy="4829",
             importance="CRITIQUE"
         ),
         VademecumItem(
             property_id=p1.id,
             category="Eau & Électricité",
-            title="Vanne d'arrivée d'eau générale (Coupure Eau)",
+            title="Vanne d'arrivée d'eau générale (Cave Buanderie)",
             content="La vanne rouge de coupure générale d'eau se trouve dans la cave sous la buanderie. À FERMER OBLIGATOIREMENT lors de tout départ supérieur à 48h en hiver pour éviter l'éclatement des tuyaux par le gel.",
             code_to_copy=None,
             importance="CRITIQUE"
@@ -349,8 +413,8 @@ def seed_database(db: Session):
         VademecumItem(
             property_id=p1.id,
             category="Chauffage & Fioul",
-            title="Consignes Chaudière Fioul & Jauge",
-            content="Thermostat d'ambiance dans le couloir central. Régler sur 19°C lors des séjours, et obligatoirement basculer sur 12°C Hors-Gel en partant. La jauge fioul de la cuve est dans le local technique extérieur.",
+            title="Consignes Chaudière Fioul Éts JOSSE & Thermostat",
+            content="Thermostat d'ambiance dans le couloir central. Régler sur 19°C lors des séjours, et obligatoirement basculer sur 12°C Hors-Gel en partant. Chaudière alimentée par les Éts JOSSE.",
             code_to_copy=None,
             importance="IMPORTANT"
         ),
@@ -364,20 +428,101 @@ def seed_database(db: Session):
         ),
         VademecumItem(
             property_id=p1.id,
-            category="Urgence & contacts",
-            title="Numéros d'urgence & Artisans référents",
-            content="Plomberie d'urgence : Jean Dupont (06 12 34 56 78). Électricien : SARL Elec Chambray (02 32 45 67 89). SAMU : 15. Pompiers : 18. Médecin de garde : 116 117.",
-            code_to_copy="0612345678",
+            category="Urgence",
+            title="Numéros d'urgence & Artisans référents Domaine",
+            content="Couverture & Plomberie : Artisans Riffael / Denis. Électricien : SARL Elec Chambray. Fioul & Maintenance : Éts JOSSE. SAMU : 15. Pompiers : 18. Médecin de garde : 116 117.",
+            code_to_copy="15",
             importance="CRITIQUE"
         ),
     ]
     db.add_all(vade_list)
     db.commit()
 
-    print("Complete database seeding executed successfully for exact 7 members!")
+    # Admin Documents (Unified Document Library Seeding for 3 Authentic Meetings & Notarized Documents)
+    admin_docs = [
+        AdminDocument(
+            title="PV Réunion Familiale 08/08/2026 (Matin)",
+            category="📜 PV & Réunions",
+            file_url="/uploads/documents/PV_Reunion_Familiale_08082026.md",
+            file_name="PV_Reunion_Familiale_08082026.md",
+            file_type="MD",
+            file_size=18400,
+            source_type="MEETING",
+            uploaded_by="Henri",
+            notes="PV Officiel de l'Assemblée Familiale Cadreuse du matin."
+        ),
+        AdminDocument(
+            title="PV Décisions Économies & Travaux Rosing 08/08/2026 (Après-midi)",
+            category="📜 PV & Réunions",
+            file_url="/uploads/documents/Decisions_Economies_Taches_Travaux_Rosing_08082026.md",
+            file_name="Decisions_Economies_Taches_Travaux_Rosing_08082026.md",
+            file_type="MD",
+            file_size=24600,
+            source_type="MEETING",
+            uploaded_by="Henri",
+            notes="PV d'organisation après-midi Rosing : consigne chauffage 20°C, Wi-Fi répéteurs, jardinier Perrot, expert poutres."
+        ),
+        AdminDocument(
+            title="Audit Gestion Financière & Compte Bancaire SCI 07/08/2026",
+            category="📜 PV & Réunions",
+            file_url="/uploads/documents/Audit_Gestion_Financiere_Compte_Bancaire_SCI_07082026.md",
+            file_name="Audit_Gestion_Financiere_Compte_Bancaire_SCI_07082026.md",
+            file_type="MD",
+            file_size=32100,
+            source_type="MEETING",
+            uploaded_by="Henri",
+            notes="Audit financier consolidé (14 057 €/an), démembrement et comparatif banques."
+        ),
+        AdminDocument(
+            title="Statuts Constitutifs SCI Hellenvilliers",
+            category="⚖️ Actes & Statuts Notariés",
+            file_url="/uploads/documents/Statuts_Constitutifs_SCI_Hellenvilliers.pdf",
+            file_name="Statuts_Constitutifs_SCI_Hellenvilliers.pdf",
+            file_type="PDF",
+            file_size=1200000,
+            source_type="MANUAL",
+            uploaded_by="Henri",
+            notes="Statuts officiels constitutifs notariés de la SCI Familiale."
+        ),
+        AdminDocument(
+            title="Extrait Kbis Greffe du Tribunal",
+            category="⚖️ Actes & Statuts Notariés",
+            file_url="/uploads/documents/Extrait_Kbis_Greffe_SCI.pdf",
+            file_name="Extrait_Kbis_Greffe_SCI.pdf",
+            file_type="PDF",
+            file_size=620000,
+            source_type="MANUAL",
+            uploaded_by="Henri",
+            notes="Immatriculation officielle au Registre du Commerce et des Sociétés."
+        ),
+        AdminDocument(
+            title="Devis Jardinier EI PERROT LAURENT (3 900 € TTC)",
+            category="📑 Devis & Contrats",
+            file_url="/uploads/documents/Devis_Jardinier_PERROT_2025.pdf",
+            file_name="Devis_Jardinier_PERROT_2025.pdf",
+            file_type="PDF",
+            file_size=1200000,
+            source_type="MANUAL",
+            uploaded_by="Hortense",
+            notes="Devis-2025-000002 d'entretien des espaces verts."
+        ),
+        AdminDocument(
+            title="Contrat Assurance PNO AXA Hellenvilliers",
+            category="📑 Devis & Contrats",
+            file_url="/uploads/documents/Contrat_Assurance_PNO_AXA_2026.pdf",
+            file_name="Contrat_Assurance_PNO_AXA_2026.pdf",
+            file_type="PDF",
+            file_size=940000,
+            source_type="MANUAL",
+            uploaded_by="Henri",
+            notes="Contrat d'assurance Propriétaire Non Occupant pour Rosing et Presbytère."
+        )
+    ]
+    db.add_all(admin_docs)
+    db.commit()
+
+    print("Complete database seeding executed successfully for exact 7 members and 3 authentic meetings!")
+    db.close()
 
 if __name__ == "__main__":
-    Base.metadata.create_all(bind=engine)
-    db = SessionLocal()
-    seed_database(db)
-    db.close()
+    seed_database()
