@@ -1,4 +1,5 @@
 import React, { useState, useEffect } from 'react';
+import { useNavigate } from 'react-router-dom';
 import { fetchProjects, fetchReservations, fetchTasks } from '../api';
 
 const DEFAULT_DEMO_STAYS = [
@@ -7,10 +8,10 @@ const DEFAULT_DEMO_STAYS = [
     week_number: 31,
     start_date: '27 juil.',
     end_date: '3 août 2026',
-    status: 'Confirmé',
-    user_name: 'Famille Hortense Jamet',
+    status: null,
+    user_name: 'Famille Hortense & Alex',
     guests: 4,
-    property_name: 'Villa Rosing',
+    property_name: 'Rosing',
     chambers_used: 3,
   },
   {
@@ -18,8 +19,10 @@ const DEFAULT_DEMO_STAYS = [
     week_number: 33,
     start_date: '10 août',
     end_date: '17 août 2026',
-    status: 'Réunion Annuelle & Fête',
+    status: null,
     user_name: 'Grande Retrouvaille Familiale',
+    highlight_label: '(7/7 associés)',
+    is_gathering: true,
     guests: 7,
     property_name: 'Rosing & Presbytère',
     chambers_used: 7,
@@ -47,19 +50,20 @@ const DEFAULT_DEMO_TASKS = [
     deadline: 'Sous 10 jours',
     budget: 1200,
     assignee: 'Henri Jamet',
-    assigned_members: ['Henri Jamet', 'Frédéric Jamet'],
+    assigned_members: ['Henri Jamet', 'Alex Martin'],
   },
   {
     id: 2,
     title: 'Surveillance du traitement d\'eau & pompe à chaleur',
     description: 'Vérification hebdomadaire du taux de sel et consigne de température PAC Rosing en lecture seule.',
     priority: 'Normale',
-    category: 'Piscine',
+    category: 'Piscine & Énergie',
     deadline: 'Récurrent',
     budget: null,
     cost_estimate: null,
     assignee: 'Frédéric Jamet',
     assigned_members: ['Frédéric Jamet'],
+    link: '/energie',
   },
 ];
 
@@ -69,6 +73,7 @@ export default function DashboardPage({
   onOpenNewProject,
   onOpenBooking,
 }) {
+  const navigate = useNavigate();
   const [projects, setProjects] = useState([]);
   const [reservations, setReservations] = useState([]);
   const [tasks, setTasks] = useState([]);
@@ -103,8 +108,44 @@ export default function DashboardPage({
     return () => { isMounted = false; };
   }, []);
 
-  const navigateTo = (tab) => {
-    if (setActiveTab) setActiveTab(tab);
+  const navigateTo = (target) => {
+    const routeMap = {
+      home: '/',
+      reservations: '/calendrier',
+      calendrier: '/calendrier',
+      tasks: '/taches',
+      taches: '/taches',
+      votes: '/votes',
+      democratie: '/votes',
+      admin: '/admin',
+      administratif: '/admin',
+      'finances-cca': '/admin',
+      vademecum: '/sejour',
+      sejour: '/sejour',
+      energie: '/energie',
+    };
+    const cleanKey = typeof target === 'string' && target.startsWith('/') ? target.slice(1) : target;
+    const destPath = routeMap[target] || routeMap[cleanKey] || (typeof target === 'string' && target.startsWith('/') ? target : `/${target}`);
+
+    if (setActiveTab) {
+      if (target === '/calendrier' || target === 'calendrier' || target === 'reservations') {
+        setActiveTab('reservations');
+      } else if (target === '/taches' || target === 'taches' || target === 'tasks') {
+        setActiveTab('tasks');
+      } else if (target === '/sejour' || target === 'sejour' || target === 'vademecum') {
+        setActiveTab('vademecum');
+      } else if (target === '/energie' || target === 'energie') {
+        setActiveTab('vademecum');
+      } else if (target === '/votes' || target === 'votes') {
+        setActiveTab('votes');
+      } else if (target === '/admin' || target === 'admin') {
+        setActiveTab('admin');
+      } else {
+        setActiveTab(target);
+      }
+    }
+
+    navigate(destPath);
   };
 
   // Find active project or use default
@@ -154,7 +195,7 @@ export default function DashboardPage({
               type="button"
               onClick={() => {
                 if (onOpenBooking) onOpenBooking();
-                else navigateTo('reservations');
+                else navigateTo('/calendrier');
               }}
               className="group flex items-center justify-center gap-2 px-5 py-3.5 rounded-DEFAULT bg-white border-2 border-primary text-primary hover:bg-sage-soft font-label-lg text-sm sm:text-label-lg transition-all duration-200 shadow-sm cursor-pointer whitespace-nowrap"
             >
@@ -166,7 +207,7 @@ export default function DashboardPage({
 
             <button
               type="button"
-              onClick={() => navigateTo('vademecum')}
+              onClick={() => navigateTo('/sejour')}
               className="group flex items-center justify-center gap-2 px-5 py-3.5 rounded-DEFAULT bg-white border-2 border-outline-variant text-on-surface hover:border-outline hover:bg-canvas-slate font-label-lg text-sm sm:text-label-lg transition-all duration-200 shadow-sm cursor-pointer whitespace-nowrap"
             >
               <span className="material-symbols-outlined text-[22px] text-primary group-hover:rotate-12 transition-transform">
@@ -177,7 +218,7 @@ export default function DashboardPage({
 
             <button
               type="button"
-              onClick={() => navigateTo('tasks')}
+              onClick={() => navigateTo('/taches')}
               className="flex items-center justify-center gap-2 px-5 py-3.5 rounded-DEFAULT bg-white border-2 border-primary text-primary hover:bg-sage-soft font-label-lg text-sm sm:text-label-lg font-semibold transition-all shadow-sm cursor-pointer whitespace-nowrap"
             >
               <span className="material-symbols-outlined text-[22px]">checklist</span>
@@ -192,7 +233,7 @@ export default function DashboardPage({
         
         {/* Pilier 1 : Votes & Décisions */}
         <div
-          onClick={() => navigateTo('votes')}
+          onClick={() => navigateTo('/votes')}
           className="group relative overflow-hidden rounded-2xl min-h-[160px] p-space-md bg-gradient-to-br from-[#065f46] to-[#044e39] text-white shadow-md transition-all duration-300 transform hover:-translate-y-1 hover:shadow-xl cursor-pointer flex flex-col justify-between"
         >
           <div className="absolute -right-6 -bottom-6 w-32 h-32 rounded-full bg-white/10 blur-xl pointer-events-none group-hover:scale-150 transition-transform duration-500"></div>
@@ -219,7 +260,7 @@ export default function DashboardPage({
 
         {/* Pilier 2 : Administratif & Budget */}
         <div
-          onClick={() => navigateTo('admin')}
+          onClick={() => navigateTo('/admin')}
           className="group relative overflow-hidden rounded-2xl min-h-[160px] p-space-md bg-gradient-to-br from-[#0f4c81] to-[#0a355c] text-white shadow-md transition-all duration-300 transform hover:-translate-y-1 hover:shadow-xl cursor-pointer flex flex-col justify-between"
         >
           <div className="absolute -right-6 -bottom-6 w-32 h-32 rounded-full bg-white/10 blur-xl pointer-events-none group-hover:scale-150 transition-transform duration-500"></div>
@@ -246,7 +287,7 @@ export default function DashboardPage({
 
         {/* Pilier 3 : Calendrier des Passages */}
         <div
-          onClick={() => navigateTo('reservations')}
+          onClick={() => navigateTo('/calendrier')}
           className="group relative overflow-hidden rounded-2xl min-h-[160px] p-space-md bg-gradient-to-br from-[#d97706] to-[#92400e] text-white shadow-md transition-all duration-300 transform hover:-translate-y-1 hover:shadow-xl cursor-pointer flex flex-col justify-between"
         >
           <div className="absolute -right-6 -bottom-6 w-32 h-32 rounded-full bg-white/10 blur-xl pointer-events-none group-hover:scale-150 transition-transform duration-500"></div>
@@ -273,7 +314,7 @@ export default function DashboardPage({
 
         {/* Pilier 4 : Séjour & Intendance */}
         <div
-          onClick={() => navigateTo('vademecum')}
+          onClick={() => navigateTo('/sejour')}
           className="group relative overflow-hidden rounded-2xl min-h-[160px] p-space-md bg-gradient-to-br from-[#0d9488] to-[#115e59] text-white shadow-md transition-all duration-300 transform hover:-translate-y-1 hover:shadow-xl cursor-pointer flex flex-col justify-between"
         >
           <div className="absolute -right-6 -bottom-6 w-32 h-32 rounded-full bg-white/10 blur-xl pointer-events-none group-hover:scale-150 transition-transform duration-500"></div>
@@ -281,7 +322,14 @@ export default function DashboardPage({
             <div className="w-12 h-12 rounded-xl bg-white/15 backdrop-blur-sm flex items-center justify-center text-teal-200 group-hover:bg-white group-hover:text-[#0d9488] transition-all duration-300 shadow-sm">
               <span className="material-symbols-outlined text-[28px]">key</span>
             </div>
-            <span className="opacity-90 group-hover:opacity-100 transition-opacity duration-300 inline-flex items-center gap-1 text-[11px] font-semibold uppercase tracking-wider px-2.5 py-1 rounded-full bg-white/15 backdrop-blur-sm text-teal-100">
+            <span
+              onClick={(e) => {
+                e.stopPropagation();
+                navigateTo('/energie');
+              }}
+              className="opacity-90 group-hover:opacity-100 transition-opacity duration-300 inline-flex items-center gap-1 text-[11px] font-semibold uppercase tracking-wider px-2.5 py-1 rounded-full bg-white/15 backdrop-blur-sm text-teal-100 hover:bg-white/30 cursor-pointer"
+              title="Consulter la télémesure & chauffage ViCare"
+            >
               Guide & Énergie
             </span>
           </div>
@@ -322,7 +370,7 @@ export default function DashboardPage({
           <div className="flex items-center gap-2">
             <button
               type="button"
-              onClick={() => navigateTo('votes')}
+              onClick={() => navigateTo('/votes')}
               className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-DEFAULT bg-white border-2 border-outline-variant text-on-surface-variant font-label-sm text-xs font-semibold hover:border-outline hover:bg-canvas-slate transition-colors shadow-sm cursor-pointer"
             >
               Tous les votes ({projects.length || 2})
@@ -394,7 +442,7 @@ export default function DashboardPage({
             <div className="flex items-center gap-2.5">
               <button
                 type="button"
-                onClick={() => navigateTo('votes')}
+                onClick={() => navigateTo('/votes')}
                 className="inline-flex items-center gap-1.5 px-4 py-2 rounded-DEFAULT bg-white border-2 border-outline-variant text-on-surface font-label-sm text-xs font-semibold hover:border-outline hover:bg-canvas-slate transition-colors shadow-sm cursor-pointer"
               >
                 <span className="material-symbols-outlined text-[18px] text-primary">visibility</span>
@@ -402,7 +450,7 @@ export default function DashboardPage({
               </button>
               <button
                 type="button"
-                onClick={() => navigateTo('votes')}
+                onClick={() => navigateTo('/votes')}
                 className="inline-flex items-center gap-1.5 px-5 py-2 rounded-DEFAULT bg-white border-2 border-primary text-primary font-label-sm text-xs font-bold hover:bg-sage-soft transition-colors shadow-sm cursor-pointer"
               >
                 <span className="material-symbols-outlined text-[18px]">how_to_vote</span>
@@ -420,32 +468,65 @@ export default function DashboardPage({
         <div className="flex flex-col space-y-space-md bg-surface-container-lowest rounded-2xl p-6 sm:p-space-lg shadow-sm border border-outline-variant/30">
           <div className="space-y-space-xs border-b border-outline-variant/20 pb-space-sm">
             <div className="flex items-center gap-2">
-              <span className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full bg-sage-soft text-primary font-label-sm text-xs font-semibold">
+              <span className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full bg-sage-soft text-primary font-label-sm text-label-sm font-semibold">
                 <span className="material-symbols-outlined text-[16px]">date_range</span>
                 Calendrier 52 Semaines
               </span>
               <span className="text-xs text-on-surface-variant font-medium">Saison 2026</span>
             </div>
-            <h2 className="font-headline-md text-lg sm:text-headline-md text-forest-deep font-bold tracking-tight">
+            <h2 className="font-headline-md text-headline-md text-forest-deep font-bold tracking-tight">
               Prochains Séjours au Domaine
             </h2>
-            <p className="font-body-md text-xs sm:text-sm text-on-surface-variant leading-relaxed">
+            <p className="font-body-md text-body-md text-on-surface-variant leading-relaxed">
               Réservations confirmées et présences familiales à Rosing et au Presbytère.
             </p>
           </div>
 
-          <div className="flex flex-col space-y-3 max-h-[420px] overflow-y-auto pr-1">
+          <div className="flex flex-col space-y-3 max-h-[390px] overflow-y-auto pr-1">
             {displayedStays.map((stay, idx) => {
               const weekLabel = stay.week_number ? `Semaine ${stay.week_number}` : (stay.week ? `Semaine ${stay.week}` : `Séjour #${idx + 1}`);
               const dateRange = stay.start_date && stay.end_date
                 ? `(${stay.start_date} - ${stay.end_date})`
                 : '(Dates à confirmer)';
-              const status = stay.status || 'Confirmé';
-              const isHighlight = status.includes('Fête') || status.includes('Annuelle');
+
+              // Épuration : suppression des badges redondants obsolètes ("Confirmé", "Réunion Annuelle & Fête")
+              const rawStatus = (stay.status || '').trim();
+              const isRedundantStatus = !rawStatus ||
+                rawStatus.toLowerCase() === 'confirmé' ||
+                rawStatus.toLowerCase() === 'confirme' ||
+                rawStatus.toLowerCase() === 'confirmed' ||
+                rawStatus.toLowerCase().includes('réunion annuelle') ||
+                rawStatus.toLowerCase().includes('reunion annuelle') ||
+                rawStatus.toLowerCase().includes('fête') ||
+                rawStatus.toLowerCase().includes('fete') ||
+                rawStatus.toLowerCase() === 'en_attente' ||
+                rawStatus.toLowerCase() === 'pending';
+
+              const showContextTag = !isRedundantStatus;
+
               const familyName = stay.user_name || stay.title || 'Associé SCI';
+              const isGathering = stay.is_gathering ||
+                familyName.toLowerCase().includes('retrouvaille') ||
+                rawStatus.toLowerCase().includes('retrouvaille') ||
+                (stay.guests >= 7 && (stay.property_name?.includes('&') || stay.chambers_used >= 7));
+
+              const highlightLabel = stay.highlight_label || (isGathering ? '(7/7 associés)' : null);
               const guestsCount = stay.guest_count || stay.guests || 1;
-              const propName = stay.property_name || (stay.property_id === 2 ? 'Le Presbytère' : 'Villa Rosing');
+              const propName = stay.property_name || (stay.property_id === 2 ? 'Le Presbytère' : 'Rosing');
               const roomsCount = stay.chambers_used || stay.rooms_count || (Array.isArray(stay.selected_rooms) ? stay.selected_rooms.length : 1);
+
+              let propIcon = 'home';
+              let roomIcon = 'bed';
+              const lowerProp = propName.toLowerCase();
+              if (lowerProp.includes('rosing') && lowerProp.includes('presbytère')) {
+                propIcon = 'domain';
+                roomIcon = 'meeting_room';
+              } else if (lowerProp.includes('presbytère') || lowerProp.includes('presbytere')) {
+                propIcon = 'cottage';
+                roomIcon = 'bed';
+              }
+
+              const buttonIcon = isGathering ? 'groups' : 'visibility';
 
               return (
                 <article
@@ -454,42 +535,48 @@ export default function DashboardPage({
                 >
                   <div className="flex items-center justify-between gap-2 flex-wrap">
                     <div className="flex items-center gap-2">
-                      <span className="font-label-md text-sm font-bold text-forest-deep">{weekLabel}</span>
+                      <span className="font-label-md text-label-md font-bold text-forest-deep">{weekLabel}</span>
                       <span className="text-xs text-on-surface-variant font-medium">{dateRange}</span>
                     </div>
-                    <span className={`inline-flex items-center gap-1 px-2 py-0.5 rounded-full font-label-sm text-xs font-semibold ${
-                      isHighlight
-                        ? 'bg-emerald-100 text-forest-deep'
-                        : 'bg-sage-soft text-primary'
-                    }`}>
-                      {isHighlight ? (
-                        <span className="material-symbols-outlined text-[13px]">stars</span>
-                      ) : (
-                        <span className="w-1.5 h-1.5 rounded-full bg-primary"></span>
-                      )}
-                      {status}
-                    </span>
+
+                    {showContextTag && (
+                      <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full bg-surface-container text-on-surface-variant font-label-sm text-xs font-semibold">
+                        <span className="w-1.5 h-1.5 rounded-full bg-outline"></span>
+                        {rawStatus}
+                      </span>
+                    )}
                   </div>
+
                   <div className="flex items-center justify-between gap-2">
                     <div>
-                      <p className="font-body-md text-on-surface font-semibold text-xs sm:text-sm leading-tight">
-                        {familyName} <span className="text-on-surface-variant font-normal text-xs">({guestsCount} pers.)</span>
-                      </p>
+                      {isGathering ? (
+                        <p className="font-body-md text-forest-deep font-bold text-sm leading-tight">
+                          {familyName} {highlightLabel && <span className="text-secondary font-semibold text-xs">{highlightLabel}</span>}
+                        </p>
+                      ) : (
+                        <p className="font-body-md text-on-surface font-semibold text-sm leading-tight">
+                          {familyName} <span className="text-on-surface-variant font-normal text-xs">({guestsCount} pers.)</span>
+                        </p>
+                      )}
                       <div className="flex items-center gap-3 text-xs text-on-surface-variant pt-1">
                         <span className="inline-flex items-center gap-1">
-                          <span className="material-symbols-outlined text-[15px] text-primary">home</span>{propName}
+                          <span className="material-symbols-outlined text-[15px] text-primary">{propIcon}</span>
+                          {propName}
                         </span>
                         <span className="inline-flex items-center gap-1">
-                          <span className="material-symbols-outlined text-[15px] text-primary">bed</span>{roomsCount} chambre{roomsCount > 1 ? 's' : ''}
+                          <span className="material-symbols-outlined text-[15px] text-primary">{roomIcon}</span>
+                          {roomsCount} chambre{roomsCount > 1 ? 's' : ''}
                         </span>
                       </div>
                     </div>
+
                     <button
                       type="button"
-                      onClick={() => navigateTo('reservations')}
+                      onClick={() => navigateTo('/calendrier')}
                       className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-DEFAULT bg-white border-2 border-primary text-primary font-label-sm text-xs font-semibold hover:bg-sage-soft transition-colors shadow-sm whitespace-nowrap cursor-pointer"
                     >
-                      <span className="material-symbols-outlined text-[16px]">visibility</span>Détails
+                      <span className="material-symbols-outlined text-[16px]">{buttonIcon}</span>
+                      Voir détails
                     </button>
                   </div>
                 </article>
@@ -502,9 +589,9 @@ export default function DashboardPage({
               type="button"
               onClick={() => {
                 if (onOpenBooking) onOpenBooking();
-                else navigateTo('reservations');
+                else navigateTo('/calendrier');
               }}
-              className="flex items-center justify-center gap-2 w-full px-5 py-3 rounded-DEFAULT bg-white border-2 border-primary text-primary hover:bg-sage-soft font-label-lg text-sm sm:text-label-lg font-semibold transition-all shadow-sm cursor-pointer"
+              className="flex items-center justify-center gap-2 w-full px-5 py-3 rounded-DEFAULT bg-white border-2 border-primary text-primary hover:bg-sage-soft font-label-lg text-label-lg font-semibold transition-all shadow-sm cursor-pointer"
             >
               <span className="material-symbols-outlined text-[22px]">add_circle_outline</span>
               Réserver un nouveau séjour
@@ -517,7 +604,7 @@ export default function DashboardPage({
           <div className="space-y-space-xs border-b border-outline-variant/20 pb-space-sm">
             <div className="flex items-center justify-between gap-2 flex-wrap">
               <div className="flex items-center gap-2">
-                <span className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full bg-amber-soft text-amber-rich font-label-sm text-xs font-semibold">
+                <span className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full bg-amber-soft text-amber-rich font-label-sm text-label-sm font-semibold">
                   <span className="material-symbols-outlined text-[16px]">shield_person</span>
                   Coordinateur & Gérant
                 </span>
@@ -525,13 +612,13 @@ export default function DashboardPage({
               </div>
               <span className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full bg-sage-soft text-primary font-label-sm text-xs font-semibold">
                 <span className="w-1.5 h-1.5 rounded-full bg-primary animate-pulse"></span>
-                {tasks.length > 0 ? tasks.length : displayedTasks.length} Chantiers actifs
+                {tasks.length > 0 ? tasks.length : displayedTasks.length} Tâche active
               </span>
             </div>
-            <h2 className="font-headline-md text-lg sm:text-headline-md text-forest-deep font-bold tracking-tight">
+            <h2 className="font-headline-md text-headline-md text-forest-deep font-bold tracking-tight">
               Missions & Tâches sous votre responsabilité
             </h2>
-            <p className="font-body-md text-xs sm:text-sm text-on-surface-variant leading-relaxed">
+            <p className="font-body-md text-body-md text-on-surface-variant leading-relaxed">
               Suivi des chantiers, arbitrages opérationnels et missions d'intendance confiées aux associés.
             </p>
           </div>
@@ -553,10 +640,10 @@ export default function DashboardPage({
               return (
                 <article
                   key={t.id || idx}
-                  className={`rounded-xl p-4 shadow-sm flex flex-col gap-3 transition-all hover:shadow-md ${
+                  className={`rounded-xl p-space-md shadow-sm flex flex-col gap-3 transition-all hover:shadow-md ${
                     isHigh
                       ? 'bg-amber-soft/30 border-2 border-amber-rich/40'
-                      : 'bg-white border border-outline-variant/40'
+                      : 'bg-white border border-outline-variant/30'
                   }`}
                 >
                   <div className="flex items-center justify-between gap-2 flex-wrap">
@@ -575,14 +662,14 @@ export default function DashboardPage({
                     </div>
                     <div className="text-right">
                       <span className="text-xs text-on-surface-variant font-medium block">Budget prévisionnel</span>
-                      <span className={`font-headline-sm font-bold text-xs sm:text-sm ${isHigh ? 'text-amber-rich' : 'text-forest-deep'}`}>
+                      <span className={`font-headline-sm font-bold text-sm ${isHigh ? 'text-amber-rich' : 'text-forest-deep'}`}>
                         {budgetText}
                       </span>
                     </div>
                   </div>
 
                   <div>
-                    <h3 className="font-headline-sm text-sm sm:text-headline-sm text-forest-deep font-bold">
+                    <h3 className="font-headline-sm text-headline-sm text-forest-deep font-bold">
                       {t.title}
                     </h3>
                     <p className="font-body-md text-on-surface-variant text-xs leading-relaxed mt-1 line-clamp-2">
@@ -590,10 +677,10 @@ export default function DashboardPage({
                     </p>
                   </div>
 
-                  <div className="pt-2 border-t border-slate-100 flex items-center justify-between gap-3 flex-wrap">
+                  <div className="pt-2 border-t border-amber-rich/20 flex items-center justify-between gap-3 flex-wrap">
                     <div className="flex items-center gap-2">
                       <div className={`w-7 h-7 rounded-full text-white flex items-center justify-center font-bold text-xs ${
-                        isHigh ? 'bg-amber-rich' : 'bg-teal-700'
+                        isHigh ? 'bg-amber-rich' : 'bg-[#065f46]'
                       }`}>
                         {initials}
                       </div>
@@ -605,7 +692,14 @@ export default function DashboardPage({
 
                     <button
                       type="button"
-                      onClick={() => navigateTo('tasks')}
+                      onClick={() => {
+                        if (t.link) navigateTo(t.link);
+                        else if (t.category?.toLowerCase().includes('énergie') || t.category?.toLowerCase().includes('energie') || t.title?.toLowerCase().includes('pompe à chaleur')) {
+                          navigateTo('/energie');
+                        } else {
+                          navigateTo('/taches');
+                        }
+                      }}
                       className={`inline-flex items-center gap-2 px-4 py-2 rounded-DEFAULT bg-white border-2 font-label-sm text-xs font-bold transition-colors shadow-sm cursor-pointer ${
                         isHigh
                           ? 'border-amber-rich text-amber-rich hover:bg-amber-soft'
@@ -626,8 +720,8 @@ export default function DashboardPage({
           <div className="pt-space-xs">
             <button
               type="button"
-              onClick={() => navigateTo('tasks')}
-              className="flex items-center justify-center gap-2 w-full px-5 py-3 rounded-DEFAULT bg-white border-2 border-primary text-primary hover:bg-sage-soft font-label-lg text-sm sm:text-label-lg font-semibold transition-all shadow-sm cursor-pointer"
+              onClick={() => navigateTo('/taches')}
+              className="flex items-center justify-center gap-2 w-full px-5 py-3 rounded-DEFAULT bg-white border-2 border-primary text-primary hover:bg-sage-soft font-label-lg text-label-lg font-semibold transition-all shadow-sm cursor-pointer"
             >
               <span className="material-symbols-outlined text-[22px]">checklist</span>
               Voir toutes les tâches

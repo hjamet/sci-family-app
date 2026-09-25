@@ -9,6 +9,7 @@ import TasksPage from './components/TasksPage';
 import ProjectsPage from './components/ProjectsPage';
 import AdminPage from './components/AdminPage';
 import VademecumPage from './components/VademecumPage';
+import HeatingPage from './components/HeatingPage';
 import BookingModal from './components/BookingModal';
 import { fetchProperties } from './api';
 
@@ -22,11 +23,11 @@ export default function App() {
 
   // Sync active tab with current location pathname
   const getActiveTabFromPath = (path) => {
-    if (path === '/reservations') return 'reservations';
-    if (path === '/tasks') return 'tasks';
+    if (path === '/reservations' || path === '/calendrier') return 'reservations';
+    if (path === '/tasks' || path === '/taches') return 'tasks';
     if (path === '/votes') return 'votes';
     if (path === '/admin') return 'admin';
-    if (path === '/vademecum') return 'vademecum';
+    if (path === '/vademecum' || path === '/sejour' || path === '/energie') return 'vademecum';
     return 'home';
   };
 
@@ -43,13 +44,17 @@ export default function App() {
   const handleTabChange = (tabId) => {
     const routeMap = {
       home: '/',
-      reservations: '/reservations',
-      tasks: '/tasks',
+      reservations: '/calendrier',
+      calendrier: '/calendrier',
+      tasks: '/taches',
+      taches: '/taches',
       votes: '/votes',
       admin: '/admin',
-      vademecum: '/vademecum',
+      vademecum: '/sejour',
+      sejour: '/sejour',
+      energie: '/energie',
     };
-    const targetPath = routeMap[tabId] || '/';
+    const targetPath = routeMap[tabId] || (typeof tabId === 'string' && tabId.startsWith('/') ? tabId : '/');
     navigate(targetPath);
   };
 
@@ -112,7 +117,24 @@ export default function App() {
             }
           />
           <Route
+            path="/calendrier"
+            element={
+              <ReservationsPage
+                properties={properties}
+                currentUser={currentUser}
+              />
+            }
+          />
+          <Route
             path="/tasks"
+            element={
+              <TasksPage
+                currentUser={currentUser}
+              />
+            }
+          />
+          <Route
+            path="/taches"
             element={
               <TasksPage
                 currentUser={currentUser}
@@ -141,6 +163,23 @@ export default function App() {
             element={
               <VademecumPage
                 properties={properties}
+                currentUser={currentUser}
+              />
+            }
+          />
+          <Route
+            path="/sejour"
+            element={
+              <VademecumPage
+                properties={properties}
+                currentUser={currentUser}
+              />
+            }
+          />
+          <Route
+            path="/energie"
+            element={
+              <HeatingPage
                 currentUser={currentUser}
               />
             }
