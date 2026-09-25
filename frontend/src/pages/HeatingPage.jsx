@@ -1,3 +1,7 @@
+/**
+ * HeatingPage — Route autonome /energie (alias /chauffage)
+ * Supervision connectée ViCare (Presbytère) & Piscine Klereo (Villa Rosing avec verrou lecture seule)
+ */
 import React, { useState, useEffect } from 'react';
 import {
   Flame, Thermometer, Sun, Moon, Fuel,
