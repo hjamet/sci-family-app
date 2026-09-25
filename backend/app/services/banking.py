@@ -47,6 +47,9 @@ class EnableBankingService:
 
     def _load_private_key(self) -> str:
         """Charge la clé privée RSA PEM en mémoire."""
+        env_key = os.getenv("ENABLE_BANKING_PRIVATE_KEY") or os.getenv("ENABLE_BANKING_KEY_PEM")
+        if env_key:
+            return env_key.replace("\\n", "\n").strip()
         if not self.key_path.exists():
             raise FileNotFoundError(f"Clé privée Enable Banking introuvable à l'emplacement : {self.key_path}")
         with open(self.key_path, "r", encoding="utf-8") as f:

@@ -5,15 +5,15 @@ import TaskDetailModal from './TaskDetailModal';
 import VoteRoofModal from './VoteRoofModal';
 import NewProjectModal from './NewProjectModal';
 
-const ALL_MEMBERS = [
-  { id: 'all', label: 'Tous les associés (7)' },
-  { id: 'henri', label: 'Henri Jamet (2)' },
-  { id: 'hortense', label: 'Hortense Jamet (2)' },
-  { id: 'alexandre', label: 'Alexandre Jamet (1)' },
-  { id: 'frederic', label: 'Frédéric Jamet (1)' },
-  { id: 'eugenie', label: 'Eugénie Jamet (1)' },
-  { id: 'marguerite', label: 'Marguerite Jamet (1)' },
-  { id: 'josephine', label: 'Joséphine Jamet (0)' },
+const AUTHENTIC_ASSOCIATES = [
+  { id: 'all', name: 'Tous les associés', shortName: 'Tous' },
+  { id: 'henri', name: 'Henri Jamet', shortName: 'Henri' },
+  { id: 'hortense', name: 'Hortense Jamet', shortName: 'Hortense' },
+  { id: 'marguerite', name: 'Marguerite Jamet', shortName: 'Marguerite' },
+  { id: 'eugenie', name: 'Eugénie Jamet', shortName: 'Eugénie' },
+  { id: 'josephine', name: 'Joséphine Jamet', shortName: 'Joséphine' },
+  { id: 'maman', name: 'Maman (Élisabeth) Jamet', shortName: 'Maman' },
+  { id: 'frederic', name: 'Frédéric Jamet', shortName: 'Frédéric' },
 ];
 
 export default function TasksPage({ currentUser = 'Henri Jamet' }) {
@@ -49,6 +49,23 @@ export default function TasksPage({ currentUser = 'Henri Jamet' }) {
   const [newAssignee, setNewAssignee] = useState('Henri Jamet');
   const [creating, setCreating] = useState(false);
 
+  // Dynamic filter options based on authentic members and active tasks count
+  const memberFilterOptions = useMemo(() => {
+    return AUTHENTIC_ASSOCIATES.map((m) => {
+      if (m.id === 'all') {
+        return { id: 'all', label: `Tous les associés (${tasks.length})` };
+      }
+      const count = tasks.filter((t) => {
+        const target = m.shortName.toLowerCase();
+        return (
+          t.assignee?.toLowerCase().includes(target) ||
+          (Array.isArray(t.assigned_members) && t.assigned_members.some((am) => am.toLowerCase().includes(target)))
+        );
+      }).length;
+      return { id: m.id, label: `${m.name} (${count})`, name: m.name };
+    });
+  }, [tasks]);
+
   // Synchronisation des votes de toiture
   const [roofVoteStats, setRoofVoteStats] = useState({
     pourCount: 4,
@@ -56,7 +73,7 @@ export default function TasksPage({ currentUser = 'Henri Jamet' }) {
     pourPct: 57,
     abstentionPct: 14,
     attentePct: 29,
-    pourNames: 'Hortense, Henri, Marc, Louise',
+    pourNames: 'Hortense, Henri, Marguerite, Eugénie',
     hasVoted: true,
   });
 
@@ -194,6 +211,7 @@ export default function TasksPage({ currentUser = 'Henri Jamet' }) {
     try {
       await createProject(projectData);
       setIsNewProjectModalOpen(false);
+      await loadTasks();
       alert('Initiative créée et soumise au vote statutaire de la SCI.');
     } catch (err) {
       console.error('Erreur création initiative:', err);
@@ -209,7 +227,7 @@ export default function TasksPage({ currentUser = 'Henri Jamet' }) {
         pourPct: 71,
         abstentionPct: 14,
         attentePct: 15,
-        pourNames: 'Hortense, Henri, Marc, Louise, Associé',
+        pourNames: 'Hortense, Henri, Marguerite, Eugénie, Associé',
       }));
     }
   };
@@ -701,7 +719,7 @@ export default function TasksPage({ currentUser = 'Henri Jamet' }) {
               onChange={(e) => setSelectedAssignee(e.target.value)}
               className="h-[46px] px-3.5 bg-canvas-slate rounded-DEFAULT font-label-sm text-label-sm text-on-surface font-medium focus:ring-2 focus:ring-primary focus:outline-none cursor-pointer"
             >
-              {ALL_MEMBERS.map((m) => (
+              {memberFilterOptions.map((m) => (
                 <option key={m.id} value={m.id}>{m.label}</option>
               ))}
             </select>
@@ -1071,8 +1089,8 @@ export default function TasksPage({ currentUser = 'Henri Jamet' }) {
                     onChange={(e) => setNewAssignee(e.target.value)}
                     className="w-full h-10 px-3 bg-canvas-slate rounded-DEFAULT border border-slate-300 cursor-pointer"
                   >
-                    {ALL_MEMBERS.filter((m) => m.id !== 'all').map((m) => (
-                      <option key={m.id} value={m.label.replace(/\s\(\d+\)$/, '')}>{m.label.replace(/\s\(\d+\)$/, '')}</option>
+                    {AUTHENTIC_ASSOCIATES.filter((m) => m.id !== 'all').map((m) => (
+                      <option key={m.id} value={m.name}>{m.name}</option>
                     ))}
                   </select>
                 </div>

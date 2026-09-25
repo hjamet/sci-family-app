@@ -24,9 +24,9 @@ export default function VoteRoofModal({ isOpen, onClose, currentUser = 'Henri Ja
       initials: 'HJ'
     },
     {
-      id: 'marc',
-      name: 'Marc Jamet',
-      role: 'Associé',
+      id: 'marguerite',
+      name: 'Marguerite Jamet',
+      role: 'Associée',
       isGerance: false,
       vote: 'POUR',
       note: 'Chantier prioritaire pour sécuriser la charpente avant les pluies d\'automne.',
@@ -34,24 +34,24 @@ export default function VoteRoofModal({ isOpen, onClose, currentUser = 'Henri Ja
       initials: 'MJ'
     },
     {
-      id: 'louise',
-      name: 'Louise Jamet',
+      id: 'eugenie',
+      name: 'Eugénie Jamet',
       role: 'Associée',
       isGerance: false,
       vote: 'POUR',
       note: 'Très favorable à l\'isolant laine de bois haute densité R=7.',
       date: '15 mai 2026, 08:15',
-      initials: 'LJ'
+      initials: 'EJ'
     },
     {
-      id: 'alexandre',
-      name: 'Alexandre Jamet',
-      role: 'Associé',
+      id: 'josephine',
+      name: 'Joséphine Jamet',
+      role: 'Associée',
       isGerance: false,
       vote: 'ABSTENTION',
       note: 'Attente de confirmation sur le chéneau en zinc côté jardin (confirmé par Henri).',
       date: '15 mai 2026, 09:15',
-      initials: 'AJ'
+      initials: 'JJ'
     },
     {
       id: 'elisabeth',
@@ -103,11 +103,11 @@ export default function VoteRoofModal({ isOpen, onClose, currentUser = 'Henri Ja
     },
     {
       id: 3,
-      author: 'Alexandre Jamet',
-      initials: 'AJ',
+      author: 'Joséphine Jamet',
+      initials: 'JJ',
       isGerance: false,
       date: '15 mai, 09:12',
-      content: "Je me suis abstenu car je voulais vérifier si l'artisan incluait la reprise de la gouttière en zinc côté jardin ?",
+      content: "Je me suis abstenue car je voulais vérifier si l'artisan incluait la reprise de la gouttière en zinc côté jardin ?",
       reactions: []
     },
     {
@@ -116,7 +116,7 @@ export default function VoteRoofModal({ isOpen, onClose, currentUser = 'Henri Ja
       initials: 'HJ',
       isGerance: true,
       date: '15 mai, 09:30',
-      content: "Oui Alex, vérifié en page 3 du devis Éts Josse, remplacement de 12 mètres linéaires de chéneau en zinc compris. Tout est intégré.",
+      content: "Oui Joséphine, vérifié en page 3 du devis Éts Josse, remplacement de 12 mètres linéaires de chéneau en zinc compris. Tout est intégré.",
       reactions: [
         { emoji: '👌', count: 2 }
       ]

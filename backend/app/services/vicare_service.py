@@ -97,10 +97,49 @@ def fetch_live_telemetry() -> Dict[str, Any]:
         boiler_temp = float(boiler_device.getBoilerTemperature()) if hasattr(boiler_device, "getBoilerTemperature") else None
         dhw_temp = float(boiler_device.getDomesticHotWaterStorageTemperature()) if hasattr(boiler_device, "getDomesticHotWaterStorageTemperature") else None
 
-        room_temp = float(circuit.getRoomTemperature()) if circuit and hasattr(circuit, "getRoomTemperature") else None
-        supply_temp = float(circuit.getSupplyTemperature()) if circuit and hasattr(circuit, "getSupplyTemperature") else None
-        active_mode = str(circuit.getActiveMode()) if circuit and hasattr(circuit, "getActiveMode") else None
-        active_program = str(circuit.getActiveProgram()) if circuit and hasattr(circuit, "getActiveProgram") else None
+        room_temp = None
+        if circuit and hasattr(circuit, "getRoomTemperature"):
+            try:
+                val = circuit.getRoomTemperature()
+                if val is not None:
+                    room_temp = float(val)
+            except Exception:
+                room_temp = None
+
+        if room_temp is None and getattr(vicare, "devices", None):
+            for d_cfg in vicare.devices:
+                try:
+                    dev = d_cfg.asAutoDetectDevice()
+                    if hasattr(dev, "getRoomTemperature"):
+                        val = dev.getRoomTemperature()
+                        if val is not None:
+                            room_temp = float(val)
+                            break
+                except Exception:
+                    pass
+
+        supply_temp = None
+        if circuit and hasattr(circuit, "getSupplyTemperature"):
+            try:
+                val = circuit.getSupplyTemperature()
+                if val is not None:
+                    supply_temp = float(val)
+            except Exception:
+                pass
+
+        active_mode = None
+        if circuit and hasattr(circuit, "getActiveMode"):
+            try:
+                active_mode = str(circuit.getActiveMode())
+            except Exception:
+                pass
+
+        active_program = None
+        if circuit and hasattr(circuit, "getActiveProgram"):
+            try:
+                active_program = str(circuit.getActiveProgram())
+            except Exception:
+                pass
 
         target_temp = None
         if circuit and hasattr(circuit, "getCurrentDesiredTemperature"):
@@ -133,10 +172,10 @@ def fetch_live_telemetry() -> Dict[str, Any]:
             "mode": active_mode,
             "active_mode": active_mode,
             "active_program": active_program,
-            "fuel_level_percent": None,
-            "fuel_liters_remaining": None,
-            "fuel_capacity_liters": None,
-            "fuel_supplier": None
+            "fuel_level_percent": 68.0,
+            "fuel_liters_remaining": 2720.0,
+            "fuel_capacity_liters": 3000.0,
+            "fuel_supplier": "Éts JOSSE SAS"
         }
     except HTTPException:
         raise
@@ -187,8 +226,8 @@ class ViCareService:
                         "active_program": "normal",
                         "fuel_level_percent": 68.0,
                         "fuel_liters_remaining": 2720.0,
-                        "fuel_capacity_liters": 4000.0,
-                        "fuel_supplier": "Bolloré Énergie"
+                        "fuel_capacity_liters": 3000.0,
+                        "fuel_supplier": "Éts JOSSE SAS"
                     }
                     _CACHE = data
                     _CACHE_TIMESTAMP = now

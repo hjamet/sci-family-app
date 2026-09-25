@@ -535,7 +535,7 @@ export default function TaskDetailModal({
                             Devis_EI_Perrot_2026_Avenant.pdf
                           </p>
                           <p className="font-body-md text-[11px] text-outline">
-                            PDF • 1.2 Mo • Indexé par Alexandre J.
+                            PDF • 1.2 Mo • Indexé par Henri J.
                           </p>
                         </div>
                       </div>

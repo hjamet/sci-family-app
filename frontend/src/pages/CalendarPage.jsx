@@ -9,7 +9,6 @@ const ASSOCIATES_LIST = [
   { id: 'elisabeth', label: 'Élisabeth Jamet (Usufruitière)' },
   { id: 'josephine', label: 'Joséphine Jamet' },
   { id: 'hortense', label: 'Hortense Jamet' },
-  { id: 'alexandre', label: 'Alexandre Jamet' },
   { id: 'marguerite', label: 'Marguerite Jamet' },
   { id: 'eugenie', label: 'Eugénie Jamet' },
 ];
@@ -60,92 +59,6 @@ export default function CalendarPage({ properties, currentUser = 'Henri Jamet' }
     if (memberFilter !== 'all' && !r.user_name?.toLowerCase().includes(memberFilter.toLowerCase())) return false;
     return true;
   });
-
-  // Source de vérité canonique Stitch (calendrier_des_passages_reservation_de_sejour.html)
-  const defaultStays = [
-    {
-      id: 'demo_1',
-      week_number: 29,
-      start_date: '2026-07-13',
-      end_date: '2026-07-19',
-      arrival_time: '15h00',
-      departure_time: '11h00',
-      user_name: 'Alexandre Jamet',
-      property_name: 'Villa Rosing',
-      status: 'Confirmé',
-      title: '« Préparation estivale & tonte du parc »',
-      rooms: '3 chambres : Ch. Parentale Rosing, Ch. Jaune, Ch. Bleue',
-      guests: '4 personnes (Alexandre, Mathilde + 2 enfants)',
-      dotColor: 'bg-sky-600',
-      weekBg: 'bg-sky-50 text-sky-800',
-    },
-    {
-      id: 'demo_2',
-      week_number: 31,
-      start_date: '2026-07-27',
-      end_date: '2026-08-03',
-      arrival_time: '16h00',
-      departure_time: '10h30',
-      user_name: 'Hortense & Alex Jamet',
-      property_name: 'Villa Rosing',
-      status: 'Confirmé',
-      title: '« Vacances d\'été famille & activités bord de Seine »',
-      rooms: '3 chambres : Ch. Parentale, Ch. Bleue, Dortoir des Enfants',
-      guests: '4 adultes + 1 enfant (Clémence)',
-      dotColor: 'bg-amber-600',
-      weekBg: 'bg-amber-50 text-amber-900',
-    },
-    {
-      id: 'demo_3',
-      week_number: 33,
-      start_date: '2026-08-10',
-      end_date: '2026-08-17',
-      arrival_time: '12h00',
-      departure_time: '15h00',
-      user_name: 'Famille Jamet (7/7)',
-      property_name: 'Villa Rosing & Le Presbytère (Domaine Entier)',
-      status: 'Rassemblement Plénier',
-      title: '« Grande Retrouvaille Familiale, Fête de l\'Assomption & Réunion Annuelle de Gérance »',
-      rooms: '7 chambres occupées : 100% de capacité',
-      guests: '12 membres de la famille réunis (7/7 branches présentes)',
-      dotColor: 'bg-forest-deep',
-      weekBg: 'bg-emerald-100 text-forest-deep',
-      isPlenary: true,
-    },
-    {
-      id: 'demo_4',
-      week_number: 36,
-      start_date: '2026-08-31',
-      end_date: '2026-09-06',
-      arrival_time: '14h00',
-      departure_time: '17h00',
-      user_name: 'Frédéric & Élisabeth Jamet',
-      property_name: 'Le Presbytère',
-      status: 'Confirmé',
-      title: '« Calme de fin d\'été & intendance paysagère »',
-      rooms: '2 chambres : Ch. du Curé, Ch. du Jardin',
-      guests: '2 personnes (Parents Usufruitiers) • Rosing libre pour cohabitation',
-      dotColor: 'bg-forest-deep',
-      weekBg: 'bg-surface-container-low text-forest-deep',
-    },
-    {
-      id: 'demo_5',
-      week_number: 42,
-      start_date: '2026-10-19',
-      end_date: '2026-10-25',
-      arrival_time: '18h00',
-      departure_time: '18h00',
-      user_name: 'Henri Jamet',
-      property_name: 'Villa Rosing',
-      status: 'En attente confirmation gérant',
-      title: '« Contrôle annuel de toiture & hivernage de la pompe à chaleur »',
-      rooms: '2 chambres : Ch. Parentale, Ch. Jaune',
-      guests: '3 personnes (Henri, Sophie + 1 artisan chauffagiste)',
-      dotColor: 'bg-teal-600',
-      weekBg: 'bg-teal-50 text-teal-800',
-      isPending: true,
-    },
-  ];
 
   const displayStays = filteredReservations.length > 0
     ? filteredReservations.map((r, idx) => ({
@@ -666,7 +579,7 @@ export default function CalendarPage({ properties, currentUser = 'Henri Jamet' }
               {Array.from({ length: 52 }, (_, i) => i + 1).map((w) => {
                 const stay = bookedWeeksMap[w];
                 const isBooked = !!stay;
-                const isPlenary = w === 33 || stay?.isPlenary || stay?.status === 'Rassemblement Plénier';
+                const isPlenary = isBooked && (stay?.isPlenary || stay?.status === 'Rassemblement Plénier');
                 
                 // Coloration thématique fidèle Stitch
                 let cellClass = 'bg-canvas-slate text-on-surface-variant border-border-subtle hover:bg-white';
@@ -678,25 +591,22 @@ export default function CalendarPage({ properties, currentUser = 'Henri Jamet' }
                   labelText = '★ Plénier';
                   labelClass = 'text-forest-deep font-extrabold';
                 } else if (isBooked) {
-                  if (w === 29 || stay?.user_name?.toLowerCase().includes('alex')) {
-                    cellClass = 'bg-sky-50 text-sky-800 border-sky-600/30 font-semibold';
-                    labelText = stay?.user_name?.split(' ')[0] || 'Alexandre';
-                    labelClass = 'text-sky-800 font-bold';
-                  } else if (w === 31 || stay?.user_name?.toLowerCase().includes('hortense')) {
+                  const firstName = stay?.user_name?.split(' ')[0] || 'Réservé';
+                  if (stay?.user_name?.toLowerCase().includes('hortense')) {
                     cellClass = 'bg-amber-50 text-amber-900 border-amber-600/30 font-semibold';
                     labelText = 'Hortense';
                     labelClass = 'text-amber-900 font-bold';
-                  } else if (w === 36 || stay?.user_name?.toLowerCase().includes('frédéric') || stay?.user_name?.toLowerCase().includes('parents')) {
+                  } else if (stay?.user_name?.toLowerCase().includes('frédéric') || stay?.user_name?.toLowerCase().includes('parents')) {
                     cellClass = 'bg-sage-soft text-forest-deep border-emerald-700/30 font-semibold';
                     labelText = 'Parents';
                     labelClass = 'text-forest-deep font-bold';
-                  } else if (w === 42 || stay?.user_name?.toLowerCase().includes('henri')) {
+                  } else if (stay?.user_name?.toLowerCase().includes('henri')) {
                     cellClass = 'bg-teal-50 text-teal-800 border-teal-600/30 font-semibold';
                     labelText = 'Henri';
                     labelClass = 'text-teal-800 font-bold';
                   } else {
                     cellClass = 'bg-sage-soft text-forest-deep border-primary/30 font-semibold';
-                    labelText = stay?.user_name?.split(' ')[0] || 'Réservé';
+                    labelText = firstName;
                     labelClass = 'text-forest-deep font-semibold';
                   }
                 }

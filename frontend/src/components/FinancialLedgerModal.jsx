@@ -108,8 +108,8 @@ export const FINANCIAL_OPERATIONS = [
   {
     id: 'op-10',
     date: '31/12/2026',
-    label: 'Cotisation CCA Annuelle — Alexandre Jamet (12 mensualités)',
-    member_tiers: 'Alexandre Jamet',
+    label: 'Cotisation CCA Annuelle — Marguerite Jamet (12 mensualités)',
+    member_tiers: 'Marguerite Jamet',
     type: 'Virement Permanent',
     category: 'Entrée',
     amount: 600.00,
@@ -125,7 +125,7 @@ export const ASSOCIATES_CONTRIBUTIONS = [
   { initials: 'JJ', name: 'Joséphine Jamet', frequency: 'Virement Permanent', schedule: '12 / 12 mensualités', total: 600.00, status: 'Réglé' },
   { initials: 'EJ', name: 'Eugénie Jamet', frequency: 'Virement Permanent', schedule: '12 / 12 mensualités', total: 600.00, status: 'Réglé' },
   { initials: 'HO', name: 'Hortense Jamet', frequency: 'Virement Permanent', schedule: '12 / 12 mensualités', total: 600.00, status: 'Réglé' },
-  { initials: 'AJ', name: 'Alexandre Jamet', frequency: 'Virement Permanent', schedule: '12 / 12 mensualités', total: 600.00, status: 'Réglé' }
+  { initials: 'MJ', name: 'Marguerite Jamet', frequency: 'Virement Permanent', schedule: '12 / 12 mensualités', total: 600.00, status: 'Réglé' }
 ];
 
 export const EXPENSES_CHARGES = [
