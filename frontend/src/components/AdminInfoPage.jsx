@@ -37,6 +37,20 @@ function renderMarkdownLine(line, idx) {
   return <p key={idx} className="text-xs text-slate-700 leading-relaxed font-normal">{line}</p>;
 }
 
+// Helper to determine icon & style based on file extension
+function getFileBadge(fileType, fileName) {
+  const ext = fileName ? fileName.split('.').pop().toLowerCase() : (fileType || 'txt');
+  if (ext === 'pdf') {
+    return { icon: FileText, color: 'text-red-600 bg-red-50 border-red-200', label: 'PDF' };
+  } else if (ext === 'md' || ext === 'markdown') {
+    return { icon: FileCode, color: 'text-emerald-600 bg-emerald-50 border-emerald-200', label: 'MD' };
+  } else if (['png', 'jpg', 'jpeg', 'webp', 'svg'].includes(ext)) {
+    return { icon: ImageIcon, color: 'text-blue-600 bg-blue-50 border-blue-200', label: ext.toUpperCase() };
+  } else {
+    return { icon: File, color: 'text-amber-600 bg-amber-50 border-amber-200', label: ext.toUpperCase() };
+  }
+}
+
 export default function AdminInfoPage({ currentUser }) {
   const activeUser = currentUser || localStorage.getItem('sci_user') || 'Membre';
   const isCoordinator = activeUser === 'Henri';
@@ -596,19 +610,6 @@ export default function AdminInfoPage({ currentUser }) {
     return parseFloat((bytes / Math.pow(k, i)).toFixed(1)) + ' ' + sizes[i];
   };
 
-  // Helper to determine icon & style based on file extension
-  const getFileBadge = (fileType, fileName) => {
-    const ext = fileName ? fileName.split('.').pop().toLowerCase() : (fileType || 'txt');
-    if (ext === 'pdf') {
-      return { icon: FileText, color: 'text-red-600 bg-red-50 border-red-200', label: 'PDF' };
-    } else if (ext === 'md' || ext === 'markdown') {
-      return { icon: FileCode, color: 'text-emerald-600 bg-emerald-50 border-emerald-200', label: 'MD' };
-    } else if (['png', 'jpg', 'jpeg', 'webp', 'svg'].includes(ext)) {
-      return { icon: ImageIcon, color: 'text-blue-600 bg-blue-50 border-blue-200', label: ext.toUpperCase() };
-    } else {
-      return { icon: File, color: 'text-amber-600 bg-amber-50 border-amber-200', label: ext.toUpperCase() };
-    }
-  };
 
   // Open Raw .md Viewer Modal
   const openMdViewer = (file) => {
