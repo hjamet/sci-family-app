@@ -48,12 +48,25 @@ sci-family-app/
 │   │   └── index.css    # Tailwind CSS + Glassmorphic design
 │   ├── index.html
 │   └── vite.config.js
+├── stitch/              # Sanctuaire de design brut Google Stitch (100% protégé)
+├── stitch_sync.py       # Moteur de synchronisation continue et de diff Stitch
 ├── Dockerfile.backend
 ├── Dockerfile.frontend
 ├── docker-compose.yml
 ├── Caddyfile
 └── README.md
 ```
+
+---
+
+## 🎨 Moteur de Diff Stitch (`stitch_sync.py`)
+
+L'intégration des écrans conçus par Henri sur [Google Stitch](https://stitch.withgoogle.com) s'effectue via `stitch_sync.py` :
+- **Sanctuaire `stitch/`** : Répertoire brut contenant les 11 maquettes HTML synchronisées. Intouchable manuellement, découplé du runtime.
+- **Simulation** : `python stitch_sync.py --dry-run` pour prévisualiser les écrans modifiés sans toucher au disque ni à Git.
+- **Synchronisation** : `python stitch_sync.py --fetch` pour importer les deltas.
+- **Revue pas-à-pas** : `python stitch_sync.py --status`, `python stitch_sync.py --next`, et validation par `python stitch_sync.py --ack stitch/<fichier>.html`.
+- Documentation complète : voir [`docs/STITCH_SYNC.md`](docs/STITCH_SYNC.md).
 
 ---
 
