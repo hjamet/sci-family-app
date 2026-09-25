@@ -8,7 +8,8 @@ const NAV_ITEMS = [
   { id: 'votes', label: 'Votes', path: '/votes', icon: 'how_to_vote' },
   { id: 'admin', label: 'Administratif', path: '/admin', icon: 'folder_shared' },
   { id: 'reservations', label: 'Calendrier', path: '/reservations', icon: 'calendar_month' },
-  { id: 'vademecum', label: 'Séjour', path: '/vademecum', icon: 'key' },
+  { id: 'sejour', label: 'Séjour', path: '/sejour', icon: 'cottage' },
+  { id: 'energie', label: 'Énergie', path: '/energie', icon: 'thermostat_auto' },
 ];
 
 export default function Header({
@@ -19,8 +20,10 @@ export default function Header({
   onNavigate,
 }) {
   const [isUserMenuOpen, setIsUserMenuOpen] = useState(false);
+  const [isMobileMenuOpen, setIsMobileMenuOpen] = useState(false);
   const [logoError, setLogoError] = useState(false);
   const dropdownRef = useRef(null);
+  const mobileMenuRef = useRef(null);
 
   const displayName = typeof currentUser === 'object'
     ? (currentUser?.prenom ? `${currentUser.prenom} ${currentUser.nom || 'Jamet'}` : 'Henri Jamet')
@@ -38,6 +41,9 @@ export default function Header({
       if (dropdownRef.current && !dropdownRef.current.contains(event.target)) {
         setIsUserMenuOpen(false);
       }
+      if (mobileMenuRef.current && !mobileMenuRef.current.contains(event.target)) {
+        setIsMobileMenuOpen(false);
+      }
     }
     document.addEventListener('mousedown', handleClickOutside);
     return () => {
@@ -52,16 +58,27 @@ export default function Header({
     if (onNavigate) {
       onNavigate(item.path, item.id);
     }
+    setIsMobileMenuOpen(false);
+    setIsUserMenuOpen(false);
+  };
+
+  const isItemActive = (item) => {
+    if (activeTab === item.id) return true;
+    if (item.id === 'votes' && activeTab === 'projects_vote') return true;
+    if (item.id === 'tasks' && activeTab === 'stay_tasks') return true;
+    if ((item.id === 'sejour' || item.id === 'vademecum') && (activeTab === 'sejour' || activeTab === 'vademecum')) return true;
+    if ((item.id === 'energie' || item.id === 'chauffage') && (activeTab === 'energie' || activeTab === 'chauffage')) return true;
+    return false;
   };
 
   return (
     <header className="sticky top-0 inset-x-0 z-50 bg-surface-container-lowest/95 backdrop-blur-xl shadow-[0_1px_8px_rgba(6,95,70,0.06)] border-b border-border-subtle transition-colors">
-      <div className="max-w-[1360px] mx-auto px-gutter h-20 flex items-center justify-between gap-gutter">
+      <div className="max-w-[1360px] mx-auto px-gutter h-20 flex items-center justify-between gap-space-sm sm:gap-gutter">
         
         {/* Brand Logo & Title */}
         <div
           onClick={() => handleTabClick(NAV_ITEMS[0])}
-          className="flex items-center gap-space-md cursor-pointer select-none group"
+          className="flex items-center gap-space-xs sm:gap-space-md cursor-pointer select-none group shrink-0"
         >
           <div className="w-10 h-10 rounded-xl bg-white shadow-sm border border-emerald-500/20 p-1 flex items-center justify-center transition-transform group-hover:scale-105">
             {!logoError ? (
@@ -87,32 +104,33 @@ export default function Header({
           </div>
         </div>
 
-        {/* Center Nav Items */}
-        <nav className="hidden lg:flex items-center gap-space-xs">
+        {/* Center Nav Items (Desktop) */}
+        <nav className="hidden lg:flex items-center gap-1 xl:gap-space-xs">
           {NAV_ITEMS.map((item) => {
-            const isActive = activeTab === item.id ||
-              (item.id === 'votes' && activeTab === 'projects_vote') ||
-              (item.id === 'tasks' && activeTab === 'stay_tasks');
+            const isActive = isItemActive(item);
 
             return (
               <button
                 key={item.id}
                 type="button"
                 onClick={() => handleTabClick(item)}
-                className={`px-3 py-2 transition-all cursor-pointer font-label-sm text-label-sm ${
+                className={`px-2.5 xl:px-3 py-2 transition-all cursor-pointer font-label-sm text-xs xl:text-label-sm flex items-center gap-1.5 ${
                   isActive
                     ? 'bg-sage-soft text-primary font-bold rounded-DEFAULT shadow-xs'
                     : 'text-on-surface-variant hover:text-on-surface rounded-DEFAULT hover:bg-canvas-slate'
                 }`}
               >
-                {item.label}
+                <span className={`material-symbols-outlined text-[17px] ${isActive ? 'text-primary' : 'text-outline'}`}>
+                  {item.icon}
+                </span>
+                <span>{item.label}</span>
               </button>
             );
           })}
         </nav>
 
-        {/* User Profile & Logout Dropdown */}
-        <div className="relative flex items-center gap-space-sm" ref={dropdownRef}>
+        {/* User Profile, Mobile Menu Button & Logout Dropdown */}
+        <div className="flex items-center gap-2 sm:gap-space-sm" ref={dropdownRef}>
           <div className="hidden sm:flex flex-col text-right">
             <span className="font-label-sm text-label-sm text-on-surface font-semibold leading-tight">
               {displayName}
@@ -122,35 +140,47 @@ export default function Header({
             </span>
           </div>
 
+          {/* User Profile Avatar Button */}
           <button
             type="button"
             onClick={() => setIsUserMenuOpen(!isUserMenuOpen)}
             className="w-10 h-10 rounded-full bg-primary hover:bg-primary-container text-white flex items-center justify-center shadow-sm transition-all focus:outline-none focus:ring-2 focus:ring-emerald-500 cursor-pointer"
             title="Menu profil"
+            aria-label="Menu profil"
           >
             <span className="material-symbols-outlined text-[20px]">person</span>
           </button>
 
-          {/* Dropdown Menu */}
+          {/* Mobile Menu Hamburger Button */}
+          <button
+            type="button"
+            onClick={() => setIsMobileMenuOpen(!isMobileMenuOpen)}
+            className="lg:hidden w-10 h-10 rounded-xl bg-canvas-slate hover:bg-surface-container border border-border-subtle text-forest-deep flex items-center justify-center transition-all focus:outline-none focus:ring-2 focus:ring-emerald-500 cursor-pointer"
+            title="Menu de navigation"
+            aria-label="Menu de navigation"
+          >
+            <span className="material-symbols-outlined text-[22px]">
+              {isMobileMenuOpen ? 'close' : 'menu'}
+            </span>
+          </button>
+
+          {/* User Profile Dropdown Menu */}
           {isUserMenuOpen && (
-            <div className="absolute right-0 top-12 mt-2 w-56 rounded-2xl bg-white shadow-xl border border-border-subtle py-2 z-50 animate-in fade-in zoom-in-95 duration-150">
+            <div className="absolute right-0 top-14 mt-2 w-56 rounded-2xl bg-white shadow-xl border border-border-subtle py-2 z-50 animate-in fade-in zoom-in-95 duration-150">
               <div className="px-4 py-2 border-b border-slate-100">
                 <p className="text-xs text-on-surface-variant">Connecté en tant que</p>
                 <p className="font-bold text-sm text-emerald-950 truncate">{displayName}</p>
                 <p className="text-[11px] text-emerald-700 font-medium">Membre associé</p>
               </div>
 
-              {/* Mobile nav links inside dropdown */}
+              {/* Mobile nav links inside dropdown fallback */}
               <div className="lg:hidden border-b border-slate-100 py-1">
                 {NAV_ITEMS.map((item) => (
                   <button
                     key={item.id}
                     type="button"
-                    onClick={() => {
-                      handleTabClick(item);
-                      setIsUserMenuOpen(false);
-                    }}
-                    className="w-full px-4 py-2 text-left text-xs font-semibold text-on-surface hover:bg-sage-soft flex items-center gap-2"
+                    onClick={() => handleTabClick(item)}
+                    className="w-full px-4 py-2 text-left text-xs font-semibold text-on-surface hover:bg-sage-soft flex items-center gap-2 cursor-pointer"
                   >
                     <span className="material-symbols-outlined text-[16px] text-primary">
                       {item.icon}
@@ -178,6 +208,34 @@ export default function Header({
         </div>
 
       </div>
+
+      {/* Fluid Mobile Navigation Drawer */}
+      {isMobileMenuOpen && (
+        <div ref={mobileMenuRef} className="lg:hidden border-t border-border-subtle bg-surface-container-lowest/98 backdrop-blur-xl px-gutter py-3 shadow-md animate-in slide-in-from-top-2 duration-150">
+          <div className="grid grid-cols-2 sm:grid-cols-3 gap-2">
+            {NAV_ITEMS.map((item) => {
+              const active = isItemActive(item);
+              return (
+                <button
+                  key={item.id}
+                  type="button"
+                  onClick={() => handleTabClick(item)}
+                  className={`p-3 rounded-xl text-left font-label-sm text-xs font-semibold flex items-center gap-2 transition-all cursor-pointer ${
+                    active
+                      ? 'bg-sage-soft text-primary font-bold shadow-xs'
+                      : 'text-on-surface hover:bg-canvas-slate'
+                  }`}
+                >
+                  <span className={`material-symbols-outlined text-[18px] ${active ? 'text-primary' : 'text-outline'}`}>
+                    {item.icon}
+                  </span>
+                  <span className="truncate">{item.label}</span>
+                </button>
+              );
+            })}
+          </div>
+        </div>
+      )}
     </header>
   );
 }

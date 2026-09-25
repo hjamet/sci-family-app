@@ -9,7 +9,7 @@ import TasksPage from './components/TasksPage';
 import ProjectsPage from './components/ProjectsPage';
 import AdminPage from './components/AdminPage';
 import VademecumPage from './components/VademecumPage';
-import HeatingPage from './components/HeatingPage';
+import HeatingPage from './pages/HeatingPage';
 import BookingModal from './components/BookingModal';
 import { fetchProperties } from './api';
 
@@ -27,7 +27,8 @@ export default function App() {
     if (path === '/tasks' || path === '/taches') return 'tasks';
     if (path === '/votes') return 'votes';
     if (path === '/admin') return 'admin';
-    if (path === '/vademecum' || path === '/sejour' || path === '/energie') return 'vademecum';
+    if (path === '/vademecum' || path === '/sejour') return 'sejour';
+    if (path === '/energie' || path === '/chauffage') return 'energie';
     return 'home';
   };
 
@@ -53,6 +54,7 @@ export default function App() {
       vademecum: '/sejour',
       sejour: '/sejour',
       energie: '/energie',
+      chauffage: '/energie',
     };
     const targetPath = routeMap[tabId] || (typeof tabId === 'string' && tabId.startsWith('/') ? tabId : '/');
     navigate(targetPath);
@@ -91,7 +93,7 @@ export default function App() {
         setActiveTab={handleTabChange}
         currentUser={currentUser}
         onLogout={logout}
-        onNavigate={(path, tabId) => handleTabChange(tabId)}
+        onNavigate={(path, tabId) => handleTabChange(tabId || path)}
       />
 
       {/* Main Container */}
@@ -178,6 +180,14 @@ export default function App() {
           />
           <Route
             path="/energie"
+            element={
+              <HeatingPage
+                currentUser={currentUser}
+              />
+            }
+          />
+          <Route
+            path="/chauffage"
             element={
               <HeatingPage
                 currentUser={currentUser}
