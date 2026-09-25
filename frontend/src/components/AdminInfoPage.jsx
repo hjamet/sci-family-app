@@ -1098,7 +1098,7 @@ export default function AdminInfoPage({ currentUser }) {
           </div>
         </div>
 
-        {/* 3 Cartes Financières Stitch (Cliquables) */}
+        {/* 3 Cartes Financières Stitch (Cliquables & Épurées) */}
         <div className="grid grid-cols-1 md:grid-cols-3 gap-5">
           
           {/* Card 1: Entrées (CCA & Apports) */}
@@ -1109,28 +1109,13 @@ export default function AdminInfoPage({ currentUser }) {
             }}
             className="bg-white rounded-2xl p-5 border border-slate-200 shadow-sm flex flex-col justify-between hover:border-emerald-600 hover:shadow-md transition-all cursor-pointer group"
           >
-            <div className="flex items-start justify-between gap-2">
-              <div>
-                <span className="text-slate-500 text-xs font-bold uppercase tracking-wider block">
-                  Entrées (CCA & Apports)
-                </span>
-                <div className="text-2xl font-black text-emerald-900 mt-1 tabular-nums">
-                  +4 200,00 €
-                </div>
+            <div>
+              <span className="text-slate-500 text-xs font-bold uppercase tracking-wider block">
+                Entrées (CCA & Apports)
+              </span>
+              <div className="text-2xl font-black text-emerald-900 mt-1 tabular-nums">
+                +4 200,00 €
               </div>
-              <span className="inline-flex items-center gap-1 px-2.5 py-1 rounded-full bg-emerald-50 text-emerald-800 border border-emerald-200 text-xs font-bold">
-                <span className="w-2 h-2 rounded-full bg-emerald-600"></span>
-                Flux régulier
-              </span>
-            </div>
-            <div className="mt-4 pt-3 border-t border-slate-100 flex items-center justify-between text-xs text-slate-500">
-              <span className="flex items-center gap-1.5 font-medium">
-                <Users className="w-4 h-4 text-emerald-600" />
-                50 €/mois par associé
-              </span>
-              <span className="text-emerald-700 font-bold group-hover:underline flex items-center gap-0.5">
-                100% perçues →
-              </span>
             </div>
           </div>
 
@@ -1142,28 +1127,13 @@ export default function AdminInfoPage({ currentUser }) {
             }}
             className="bg-white rounded-2xl p-5 border border-slate-200 shadow-sm flex flex-col justify-between hover:border-amber-600 hover:shadow-md transition-all cursor-pointer group"
           >
-            <div className="flex items-start justify-between gap-2">
-              <div>
-                <span className="text-slate-500 text-xs font-bold uppercase tracking-wider block">
-                  Sorties & Charges engagées
-                </span>
-                <div className="text-2xl font-black text-amber-700 mt-1 tabular-nums">
-                  -2 450,00 €
-                </div>
+            <div>
+              <span className="text-slate-500 text-xs font-bold uppercase tracking-wider block">
+                Sorties & Charges engagées
+              </span>
+              <div className="text-2xl font-black text-amber-700 mt-1 tabular-nums">
+                -2 450,00 €
               </div>
-              <span className="inline-flex items-center gap-1 px-2.5 py-1 rounded-full bg-amber-50 text-amber-800 border border-amber-200 text-xs font-bold">
-                <span className="w-2 h-2 rounded-full bg-amber-600"></span>
-                Budget maîtrisé
-              </span>
-            </div>
-            <div className="mt-4 pt-3 border-t border-slate-100 flex items-center justify-between text-xs text-slate-500">
-              <span className="flex items-center gap-1.5 font-medium truncate">
-                <Receipt className="w-4 h-4 text-amber-600" />
-                Parc, Assurance & Piscine
-              </span>
-              <span className="text-amber-700 font-bold group-hover:underline flex items-center gap-0.5">
-                3 factures →
-              </span>
             </div>
           </div>
 
@@ -1175,31 +1145,17 @@ export default function AdminInfoPage({ currentUser }) {
             }}
             className="bg-emerald-50/60 rounded-2xl p-5 border border-emerald-200 shadow-sm flex flex-col justify-between hover:border-emerald-700 hover:shadow-md transition-all cursor-pointer group"
           >
-            <div className="flex items-start justify-between gap-2">
-              <div>
-                <span className="text-emerald-800 text-xs font-bold uppercase tracking-wider block">
-                  Solde Net de Période
-                </span>
-                <div className="text-2xl font-black text-emerald-950 mt-1 tabular-nums">
-                  +1 750,00 €
-                </div>
+            <div>
+              <span className="text-emerald-800 text-xs font-bold uppercase tracking-wider block">
+                Solde Net de Période
+              </span>
+              <div className="text-2xl font-black text-emerald-950 mt-1 tabular-nums">
+                +1 750,00 €
               </div>
-              <span className="inline-flex items-center gap-1 px-2.5 py-1 rounded-full bg-white text-emerald-800 border border-emerald-200 text-xs font-bold shadow-sm">
-                <Wallet className="w-3.5 h-3.5 text-emerald-600" />
-                Excédent
-              </span>
-            </div>
-            <div className="mt-4 pt-3 border-t border-emerald-200/60 flex items-center justify-between text-xs text-emerald-900">
-              <span className="font-medium">
-                Trésorerie saine (CA)
-              </span>
-              <span className="text-emerald-800 font-bold group-hover:underline flex items-center gap-0.5">
-                Voir synthèse →
-              </span>
             </div>
           </div>
-
         </div>
+
       </div>
 
       {/* Grid Section 1: RIB & Financial Summary Cards */}

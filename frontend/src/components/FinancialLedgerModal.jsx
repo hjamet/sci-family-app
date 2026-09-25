@@ -205,23 +205,11 @@ export default function FinancialLedgerModal({ isOpen, onClose, initialTab = 'gr
               <Landmark className="w-6 h-6" />
             </div>
             <div className="flex flex-col">
-              <div className="flex items-center gap-2 flex-wrap">
-                <span className="px-3 py-1 rounded-full bg-emerald-800 text-white font-bold text-xs tracking-wider uppercase">
-                  SCI Hellenvilliers
-                </span>
-                <span className="px-3 py-1 rounded-full bg-emerald-50 text-emerald-800 font-semibold text-xs border border-emerald-200 flex items-center gap-1.5">
-                  <span className="w-2 h-2 rounded-full bg-emerald-600 inline-block animate-pulse"></span>
-                  Exercice 2026 Clôturé
-                </span>
-              </div>
               <h2 className="text-xl sm:text-2xl font-black text-emerald-950 mt-1">
                 Détail des Opérations Financières & Flux de Trésorerie
               </h2>
-              <p className="text-xs text-slate-500 flex items-center gap-1 mt-0.5 font-medium">
-                <Building2 className="w-3.5 h-3.5 text-emerald-600" />
-                Compte bancaire dédié Crédit Agricole Normandie-Seine • IBAN FR76 •••• 4892
-              </p>
             </div>
+
           </div>
           <button
             onClick={onClose}

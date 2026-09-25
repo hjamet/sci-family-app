@@ -17,7 +17,8 @@ const ASSOCIATES_LIST = [
 export default function ReservationsPage({ properties, currentUser = 'Henri Jamet' }) {
   const [selectedYear, setSelectedYear] = useState(2026);
   const [viewMode, setViewMode] = useState('agenda'); // 'agenda' | 'month' | 'year'
-  const [houseFilter, setHouseFilter] = useState('all'); // 'all' | 'rosing' | 'presbytere'
+  const [filterRosing, setFilterRosing] = useState(true);
+  const [filterPresbytere, setFilterPresbytere] = useState(true);
   const [memberFilter, setMemberFilter] = useState('all');
   const [reservations, setReservations] = useState([]);
   const [loading, setLoading] = useState(true);
@@ -27,7 +28,8 @@ export default function ReservationsPage({ properties, currentUser = 'Henri Jame
   const loadReservations = async () => {
     try {
       setLoading(true);
-      const data = await fetchReservations({ year: selectedYear });
+      const params = selectedYear ? { year: selectedYear } : {};
+      const data = await fetchReservations(params);
       setReservations(data || []);
     } catch (err) {
       console.error('Erreur chargement réservations:', err);
@@ -41,18 +43,24 @@ export default function ReservationsPage({ properties, currentUser = 'Henri Jame
   }, [selectedYear]);
 
   const handleResetFilters = () => {
-    setHouseFilter('all');
+    setFilterRosing(true);
+    setFilterPresbytere(true);
     setMemberFilter('all');
     setSelectedYear(2026);
   };
 
   // Filter reservations based on active filters
   const filteredReservations = reservations.filter((r) => {
-    if (houseFilter === 'rosing' && !r.property_name?.toLowerCase().includes('rosing')) return false;
-    if (houseFilter === 'presbytere' && !r.property_name?.toLowerCase().includes('presbytère')) return false;
+    if (selectedYear && r.year && r.year !== selectedYear) return false;
+    const isRosing = r.property_name?.toLowerCase().includes('rosing');
+    const isPresbytere = r.property_name?.toLowerCase().includes('presbytère') || r.property_name?.toLowerCase().includes('presbytere');
+    if (!filterRosing && !filterPresbytere) return true;
+    if (filterRosing && !filterPresbytere && !isRosing) return false;
+    if (!filterRosing && filterPresbytere && !isPresbytere) return false;
     if (memberFilter !== 'all' && !r.user_name?.toLowerCase().includes(memberFilter.toLowerCase())) return false;
     return true;
   });
+
 
   // Default demonstration stays if API returns empty list
   const defaultStays = [
@@ -243,48 +251,99 @@ export default function ReservationsPage({ properties, currentUser = 'Henri Jame
             </button>
           </div>
 
-          {/* Filtres Multiples */}
+          {/* Filtres Multiples Alignés Stitch */}
           <div className="flex flex-wrap items-center gap-3">
-            {/* Sélecteur Année */}
-            <div className="relative min-w-[120px]">
-              <select
-                id="year-selector"
-                value={selectedYear}
-                onChange={(e) => setSelectedYear(parseInt(e.target.value, 10))}
-                className="w-full appearance-none bg-canvas-slate text-on-surface font-label-md text-xs sm:text-sm py-2.5 pl-3.5 pr-8 rounded-xl border border-slate-300 focus:outline-none focus:bg-white transition-colors cursor-pointer"
+            {/* Années : Bouton 'Toutes' + Saisie libre d'année */}
+            <div className="flex items-center gap-1.5 bg-canvas-slate p-1 rounded-xl border border-border-subtle">
+              <button
+                type="button"
+                id="btn-all-years"
+                onClick={() => setSelectedYear(null)}
+                className={`px-2.5 py-1 text-[13px] font-label-sm font-semibold rounded-lg transition-all shadow-xs cursor-pointer ${
+                  !selectedYear
+                    ? 'bg-forest-deep text-white'
+                    : 'bg-white text-on-surface hover:bg-slate-100'
+                }`}
+                title="Voir toutes les années"
               >
-                <option value={2026}>Année 2026</option>
-                <option value={2027}>Année 2027</option>
-              </select>
-              <span className="material-symbols-outlined absolute right-2.5 top-1/2 -translate-y-1/2 pointer-events-none text-on-surface-variant text-[18px]">
-                expand_more
-              </span>
+                Toutes
+              </button>
+              <div className="flex items-center gap-1 pr-1.5 pl-1">
+                <span className="material-symbols-outlined text-[16px] text-on-surface-variant">calendar_today</span>
+                <input
+                  type="number"
+                  id="year-input"
+                  min="2020"
+                  max="2035"
+                  placeholder="2026"
+                  value={selectedYear || ''}
+                  onChange={(e) => {
+                    const val = e.target.value ? parseInt(e.target.value, 10) : null;
+                    setSelectedYear(val);
+                  }}
+                  className="w-14 bg-transparent text-[13px] font-label-md font-semibold text-on-surface focus:outline-none text-center"
+                  title="Saisir une année (ex. 2026)"
+                />
+              </div>
             </div>
 
-            {/* Filtre Maison */}
-            <div className="relative min-w-[180px]">
-              <select
-                id="house-filter"
-                value={houseFilter}
-                onChange={(e) => setHouseFilter(e.target.value)}
-                className="w-full appearance-none bg-canvas-slate text-on-surface font-label-md text-xs sm:text-sm py-2.5 pl-3.5 pr-8 rounded-xl border border-slate-300 focus:outline-none focus:bg-white transition-colors cursor-pointer"
+            {/* Séparateur vertical discret */}
+            <div className="hidden sm:block w-px h-6 bg-border-subtle"></div>
+
+            {/* Demeures : Pilules à cocher élégantes */}
+            <div className="flex items-center gap-1.5">
+              <label
+                className={`cursor-pointer select-none inline-flex items-center gap-1.5 px-3 py-1.5 rounded-xl text-label-sm text-[13px] font-medium border transition-all ${
+                  filterRosing
+                    ? 'bg-sage-soft text-forest-deep border-emerald-700/30 hover:bg-emerald-100'
+                    : 'bg-slate-50 text-slate-400 border-slate-200 hover:bg-slate-100'
+                }`}
+                title="Filtrer Villa Rosing"
               >
-                <option value="all">Toutes les demeures (7 ch.)</option>
-                <option value="rosing">Villa Rosing (4 ch.)</option>
-                <option value="presbytere">Le Presbytère (3 ch.)</option>
-              </select>
-              <span className="material-symbols-outlined absolute right-2.5 top-1/2 -translate-y-1/2 pointer-events-none text-on-surface-variant text-[18px]">
-                roofing
-              </span>
+                <input
+                  type="checkbox"
+                  id="filter-rosing"
+                  checked={filterRosing}
+                  onChange={(e) => setFilterRosing(e.target.checked)}
+                  className="accent-forest-deep w-3.5 h-3.5 rounded cursor-pointer"
+                />
+                <span className="material-symbols-outlined text-[16px] text-forest-deep">roofing</span>
+                <span className="font-semibold">Villa Rosing</span>
+                <span className="text-[11px] text-emerald-800 font-normal">(4 ch.)</span>
+              </label>
+
+              <label
+                className={`cursor-pointer select-none inline-flex items-center gap-1.5 px-3 py-1.5 rounded-xl text-label-sm text-[13px] font-medium border transition-all ${
+                  filterPresbytere
+                    ? 'bg-sage-soft text-forest-deep border-emerald-700/30 hover:bg-emerald-100'
+                    : 'bg-slate-50 text-slate-400 border-slate-200 hover:bg-slate-100'
+                }`}
+                title="Filtrer Le Presbytère"
+              >
+                <input
+                  type="checkbox"
+                  id="filter-presbytere"
+                  checked={filterPresbytere}
+                  onChange={(e) => setFilterPresbytere(e.target.checked)}
+                  className="accent-forest-deep w-3.5 h-3.5 rounded cursor-pointer"
+                />
+                <span className="material-symbols-outlined text-[16px] text-forest-deep">cottage</span>
+                <span className="font-semibold">Le Presbytère</span>
+                <span className="text-[11px] text-emerald-800 font-normal">(3 ch.)</span>
+              </label>
             </div>
 
-            {/* Filtre Associé */}
-            <div className="relative min-w-[190px]">
+            {/* Séparateur vertical discret */}
+            <div className="hidden sm:block w-px h-6 bg-border-subtle"></div>
+
+            {/* Associés : Menu déroulant compact multi-sélection */}
+            <div className="relative min-w-[200px]">
+              <label className="sr-only" htmlFor="member-filter">Filtrer par Associé</label>
               <select
                 id="member-filter"
                 value={memberFilter}
                 onChange={(e) => setMemberFilter(e.target.value)}
-                className="w-full appearance-none bg-canvas-slate text-on-surface font-label-md text-xs sm:text-sm py-2.5 pl-3.5 pr-8 rounded-xl border border-slate-300 focus:outline-none focus:bg-white transition-colors cursor-pointer"
+                className="w-full appearance-none bg-canvas-slate text-on-surface font-label-md text-xs sm:text-sm py-2 pl-3 pr-8 rounded-xl border border-border-subtle focus:outline-none focus:bg-white transition-colors cursor-pointer"
               >
                 {ASSOCIATES_LIST.map((m) => (
                   <option key={m.id} value={m.id}>{m.label}</option>
@@ -299,11 +358,12 @@ export default function ReservationsPage({ properties, currentUser = 'Henri Jame
               type="button"
               onClick={handleResetFilters}
               title="Réinitialiser les filtres"
-              className="p-2.5 text-on-surface-variant hover:text-forest-deep bg-canvas-slate hover:bg-slate-200 rounded-xl transition-colors cursor-pointer"
+              className="p-2 text-on-surface-variant hover:text-forest-deep bg-canvas-slate hover:bg-slate-200 rounded-xl transition-colors cursor-pointer"
             >
               <span className="material-symbols-outlined text-[20px]">refresh</span>
             </button>
           </div>
+
 
         </div>
       </section>

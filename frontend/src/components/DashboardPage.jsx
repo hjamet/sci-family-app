@@ -231,7 +231,7 @@ export default function DashboardPage({
       {/* ==================== 4 GRANDS ENCADRÉS THÉMATIQUES INTERACTIFS ==================== */}
       <section className="grid grid-cols-1 md:grid-cols-2 gap-space-md">
         
-        {/* Pilier 1 : Votes & Décisions */}
+        {/* Pilier 1 : Votes & Chantiers */}
         <div
           onClick={() => navigateTo('/votes')}
           className="group relative overflow-hidden rounded-2xl min-h-[160px] p-space-md bg-gradient-to-br from-[#065f46] to-[#044e39] text-white shadow-md transition-all duration-300 transform hover:-translate-y-1 hover:shadow-xl cursor-pointer flex flex-col justify-between"
@@ -247,13 +247,13 @@ export default function DashboardPage({
           </div>
           <div className="relative z-10 mt-3">
             <h3 className="font-headline-md text-headline-sm font-bold tracking-tight text-white flex items-center justify-between">
-              <span>Votes & Décisions</span>
+              <span>Votes & Chantiers</span>
               <span className="material-symbols-outlined text-sm opacity-0 -translate-x-2 group-hover:opacity-100 group-hover:translate-x-0 transition-all duration-300 text-white">
                 arrow_forward
               </span>
             </h3>
             <p className="font-body-md text-xs leading-relaxed text-emerald-100/90 font-medium mt-2">
-              Arbitrages financiers & scrutins du domaine, décisions de budget, consultation des 7 voix et votes &gt; 300 €.
+              Liste des tâches à faire et des décisions à prendre.
             </p>
           </div>
         </div>
@@ -280,7 +280,7 @@ export default function DashboardPage({
               </span>
             </h3>
             <p className="font-body-md text-xs leading-relaxed text-blue-100/90 font-medium mt-2">
-              Comptes bancaires, cotisations CCA 50 €/mois, statuts notariés, KYC et actes officiels du domaine.
+              Factures des membres, aperçu des comptes banquaires et Documents administratifs de la SCI
             </p>
           </div>
         </div>
@@ -307,12 +307,12 @@ export default function DashboardPage({
               </span>
             </h3>
             <p className="font-body-md text-xs leading-relaxed text-amber-100/90 font-medium mt-2">
-              7 chambres, séjours & réservations, smart matching des retrouvailles estivales et règle des 2 semaines.
+              Réservation et calendrier des passages
             </p>
           </div>
         </div>
 
-        {/* Pilier 4 : Séjour & Intendance */}
+        {/* Pilier 4 : Séjour & Chauffage */}
         <div
           onClick={() => navigateTo('/sejour')}
           className="group relative overflow-hidden rounded-2xl min-h-[160px] p-space-md bg-gradient-to-br from-[#0d9488] to-[#115e59] text-white shadow-md transition-all duration-300 transform hover:-translate-y-1 hover:shadow-xl cursor-pointer flex flex-col justify-between"
@@ -335,16 +335,17 @@ export default function DashboardPage({
           </div>
           <div className="relative z-10 mt-3">
             <h3 className="font-headline-md text-headline-sm font-bold tracking-tight text-white flex items-center justify-between">
-              <span>Séjour & Intendance</span>
+              <span>Séjour & Chauffage</span>
               <span className="material-symbols-outlined text-sm opacity-0 -translate-x-2 group-hover:opacity-100 group-hover:translate-x-0 transition-all duration-300 text-white">
                 arrow_forward
               </span>
             </h3>
             <p className="font-body-md text-xs leading-relaxed text-teal-100/90 font-medium mt-2">
-              Vadémécum complet, codes Wi-Fi, télémesure PAC, entretien de la piscine et protocoles de départ.
+              Gestion du Chauffage et de la piscine pour le séjour, tâches attribuées et Vademecum
             </p>
           </div>
         </div>
+
 
       </section>
 

@@ -28,13 +28,13 @@ const ASSOCIATES_LIST = [
 ];
 
 const ROOMS = [
-  { id: 'rosing_parentale', name: 'Chambre Parentale (Rosing)', house: 'rosing', description: "1er étage • 2 couchages (lit double)" },
-  { id: 'rosing_bleue', name: 'Chambre Bleue (Rosing)', house: 'rosing', description: "1er étage • 2 couchages (lit double)" },
-  { id: 'rosing_jaune', name: 'Chambre Jaune (Rosing)', house: 'rosing', description: "Étage • 2 couchages" },
-  { id: 'rosing_dortoir', name: 'Dortoir des Enfants (Rosing)', house: 'rosing', description: "Étage • 4 couchages simples" },
-  { id: 'presb_cure', name: 'Chambre du Curé (Presbytère)', house: 'presbytere', description: "RDC / Bâtisse principale • 2 couchages" },
-  { id: 'presb_jardin', name: 'Chambre du Jardin (Presbytère)', house: 'presbytere', description: "RDC • 2 couchages" },
-  { id: 'presb_mezzanine', name: 'Mezzanine (Presbytère)', house: 'presbytere', description: "Étage • Capacité : 3 personnes" },
+  { id: 'rosing_haut_droite', name: 'Chambre Haut Droite', house: 'rosing', description: "1er étage, haut droite de l'escalier • 2 couchages (lit double)" },
+  { id: 'rosing_haut_gauche', name: 'Chambre Haut Gauche', house: 'rosing', description: "1er étage, haut gauche de l'escalier • 2 couchages (lit double)" },
+  { id: 'presb_bas', name: 'Chambre du bas', house: 'presbytere', description: "RDC / Bâtisse principale • Capacité : 3 personnes (2 + 1)" },
+  { id: 'presb_mezzanine', name: 'La Mezzanine', house: 'presbytere', description: "Étage • Capacité : 3 personnes (2 + 1)" },
+  { id: 'presb_couloir_1', name: 'Première Chambre du Couloir', house: 'presbytere', description: "Étage, 1ère à droite • Capacité : 2 personnes" },
+  { id: 'presb_couloir_2', name: 'Deuxième Chambre du Couloir', house: 'presbytere', description: "Étage, 2ème chambre • Capacité : 2 personnes" },
+  { id: 'presb_parentale', name: 'Suite Parentale', house: 'presbytere', description: "Chambre parentale avec lit double • Capacité : 2 personnes" },
 ];
 
 export default function BookingModal({
@@ -49,7 +49,8 @@ export default function BookingModal({
 }) {
   const [applicant, setApplicant] = useState(currentUser || 'Henri Jamet');
   const [selectedHouse, setSelectedHouse] = useState('all'); // 'all' | 'rosing' | 'presbytere'
-  const [selectedRooms, setSelectedRooms] = useState(['Chambre Parentale (Rosing)']);
+  const [selectedRooms, setSelectedRooms] = useState(['Chambre Haut Droite']);
+
   const [startDate, setStartDate] = useState('2026-08-10');
   const [endDate, setEndDate] = useState('2026-08-17');
   const [arrivalTime, setArrivalTime] = useState('15:00');
@@ -119,8 +120,9 @@ export default function BookingModal({
       setStayTitle('Séjour estival en famille');
       setCohabitationAgreement(true);
       setNotes('');
-      setSelectedRooms(['Chambre Parentale (Rosing)']);
+      setSelectedRooms(['Chambre Haut Droite']);
       setPoolHeating(false);
+
       setPresbytereHeating(false);
       setPresbytereHeatingManual(false);
     }

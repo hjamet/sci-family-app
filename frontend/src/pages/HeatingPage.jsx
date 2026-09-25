@@ -174,10 +174,15 @@ export default function HeatingPage({ currentUser }) {
           </div>
 
           <div className="flex flex-wrap items-center gap-3 shrink-0">
-            <div className="inline-flex items-center gap-2 px-3.5 py-1.5 rounded-full bg-sage-soft border border-sage-border text-primary font-label-sm text-xs font-semibold shadow-xs">
-              <span className="w-2 h-2 rounded-full bg-primary animate-pulse"></span>
-              <span className="material-symbols-outlined text-[16px]">sensors</span>
-              <span>Système connecté (ViCare & Klereo)</span>
+            <div className="flex flex-wrap items-center gap-2">
+              <div className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-full bg-sage-soft border border-sage-border text-primary font-label-sm text-xs font-semibold shadow-xs">
+                <span className="w-2 h-2 rounded-full bg-primary animate-pulse"></span>
+                <span>ViCare : Connecté (Lecture seule)</span>
+              </div>
+              <div className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-full bg-amber-50 border border-amber-300 text-amber-900 font-label-sm text-xs font-bold shadow-xs">
+                <span className="w-2 h-2 rounded-full bg-amber-500 animate-ping"></span>
+                <span>Piscine : ⚠️ Rupture radio K-Link</span>
+              </div>
             </div>
 
             <button
@@ -374,30 +379,43 @@ export default function HeatingPage({ currentUser }) {
           </div>
         </div>
 
-        {/* ---------------- CARD 3 : PISCINE KLEREO (AVEC VERROU EN LECTURE SEULE) ---------------- */}
-        <div className="p-5 rounded-2xl bg-surface-container-lowest border border-border-subtle flex flex-col justify-between gap-5 shadow-sm relative overflow-hidden">
+        {/* ---------------- CARD 3 : PISCINE KLEREO (AVEC VERROU EN LECTURE SEULE & ALERTE RADIO) ---------------- */}
+        <div className="p-5 rounded-2xl bg-surface-container-lowest border-2 border-amber-300 flex flex-col justify-between gap-5 shadow-sm relative overflow-hidden">
           {/* Read-Only Top Watermark Indicator */}
           <div className="flex flex-col gap-4">
             <div className="flex items-center justify-between border-b border-border-subtle pb-3 gap-2">
               <div className="flex items-center gap-2 min-w-0">
-                <span className="material-symbols-outlined text-primary text-[22px]">pool</span>
+                <span className="material-symbols-outlined text-amber-700 text-[22px]">pool</span>
                 <h3 className="font-headline-sm text-headline-sm text-on-surface font-semibold truncate">Piscine Klereo</h3>
-                <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full bg-amber-soft text-amber-rich font-label-sm text-[11px] font-bold shrink-0">
-                  <span className="material-symbols-outlined text-[13px]">ac_unit</span>
-                  Veille / Hors-Gel
+                <span className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full bg-rose-100 text-rose-800 border border-rose-300 font-label-sm text-[11px] font-bold shrink-0">
+                  <AlertTriangle className="h-3 w-3 text-rose-600" />
+                  Rupture Radio K-Link
                 </span>
               </div>
-              <div className="flex items-center gap-1 px-2.5 py-1 rounded-full bg-canvas-slate border border-border-subtle shrink-0">
-                <span className="font-label-sm text-xs text-outline">Eau :</span>
-                <span className="font-headline-sm text-xs text-on-surface font-bold tabular-nums">13.5°C</span>
-                <span className="text-xs text-outline mx-0.5">•</span>
-                <span className="font-label-sm text-xs text-outline">Air :</span>
-                <span className="font-headline-sm text-xs text-on-surface font-bold tabular-nums">14.2°C</span>
+              <div className="flex items-center gap-1 px-2.5 py-1 rounded-full bg-amber-50 border border-amber-200 shrink-0">
+                <span className="font-label-sm text-xs text-amber-800">Eau :</span>
+                <span className="font-headline-sm text-xs text-amber-950 font-bold tabular-nums">13.5°C*</span>
+                <span className="text-xs text-amber-400 mx-0.5">•</span>
+                <span className="font-label-sm text-xs text-amber-800">Air :</span>
+                <span className="font-headline-sm text-xs text-amber-950 font-bold tabular-nums">14.2°C*</span>
               </div>
             </div>
 
+            {/* BANDEAU D'ALERTE EXPLICITE RUPTURE RADIO K-LINK 868 MHz */}
+            <div className="p-3.5 rounded-xl bg-amber-50 border-2 border-amber-500 text-amber-950 shadow-xs space-y-1.5 animate-in fade-in duration-200">
+              <div className="flex items-start gap-2">
+                <AlertTriangle className="h-4 w-4 text-amber-600 shrink-0 mt-0.5" />
+                <div className="font-bold text-xs leading-snug">
+                  ⚠️ Liaison radio K-Link interrompue (coffret piscine hors portée) - Données non actualisées - Réappairage matériel requis sur place
+                </div>
+              </div>
+              <p className="text-[11px] text-amber-800 pl-6 leading-relaxed">
+                Le boîtier Klereo CONNECT souffre d'une rupture de liaison radio 868 MHz avec le coffret piscine (distance / murs en pierre du Presbytère). L'application Klereo affiche <em>« Vérifier la connexion »</em>. Les valeurs thermiques et physico-chimiques ci-dessous sont les dernières enregistrées avant la perte de liaison.
+              </p>
+            </div>
+
             {/* Target Temperature with STRICT READ-ONLY LOCK */}
-            <div className="p-3.5 bg-canvas-slate rounded-xl border border-border-subtle flex items-center justify-between gap-2 shadow-xs relative">
+            <div className="p-3.5 bg-canvas-slate rounded-xl border border-border-subtle flex items-center justify-between gap-2 shadow-xs relative opacity-90">
               <div className="flex flex-col min-w-0 pr-1">
                 <div className="flex items-center gap-1.5">
                   <span className="font-label-md text-label-md text-on-surface font-semibold leading-tight">Consigne PAC Piscine</span>
@@ -407,12 +425,12 @@ export default function HeatingPage({ currentUser }) {
                   </span>
                 </div>
                 <span className="font-label-sm text-xs text-on-surface-variant mt-0.5 whitespace-nowrap">
-                  Hivernage : consigne minimale 14.0°C
+                  Hivernage : consigne minimale 14.0°C (non transmissible)
                 </span>
               </div>
 
               {/* Locked Stepper (Read-Only) */}
-              <div className="flex items-center gap-1.5 shrink-0 bg-white p-1 rounded-full border border-border-subtle shadow-xs opacity-80">
+              <div className="flex items-center gap-1.5 shrink-0 bg-white p-1 rounded-full border border-border-subtle shadow-xs opacity-75">
                 <button
                   type="button"
                   disabled
@@ -456,47 +474,50 @@ export default function HeatingPage({ currentUser }) {
               <div className="p-2.5 rounded-xl bg-canvas-slate border border-border-subtle flex items-center justify-between gap-2">
                 <div className="flex flex-col min-w-0">
                   <span className="font-label-sm text-[11px] text-on-surface-variant flex items-center gap-1 font-medium">
-                    <span className="material-symbols-outlined text-[14px] text-primary">autorenew</span>
+                    <span className="material-symbols-outlined text-[14px] text-outline">autorenew</span>
                     Filtration programmée Klereo
                   </span>
                   <span className="font-label-md text-xs font-semibold text-on-surface pl-4 mt-0.5 truncate">
-                    2h/jour (Hors-gel automatique)
+                    2h/jour (Hors-gel automatique local)
                   </span>
                 </div>
-                <span className="text-[11px] font-semibold text-emerald-800 bg-sage-soft px-2 py-0.5 rounded-md">Automatique</span>
+                <span className="text-[11px] font-medium text-slate-600 bg-slate-100 px-2 py-0.5 rounded-md border border-slate-200">Cycle Local</span>
               </div>
             </div>
 
             {/* Klereo Physico-Chemical Sensors Grid */}
-            <div className="pt-2.5 border-t border-border-subtle flex flex-wrap items-center gap-1.5">
-              <div className="inline-flex items-center gap-1 px-2 py-0.5 rounded-md bg-canvas-slate border border-border-subtle text-[11px] font-medium text-on-surface-variant">
-                <span className="w-1.5 h-1.5 rounded-full bg-secondary"></span>
-                <span>pH : <strong>7.3</strong></span>
+            <div className="pt-2.5 border-t border-border-subtle">
+              <div className="text-[10px] text-amber-800 font-semibold mb-1.5 flex items-center gap-1">
+                <span>* Dernières données reçues avant coupure radio :</span>
               </div>
-              <div className="inline-flex items-center gap-1 px-2 py-0.5 rounded-md bg-canvas-slate border border-border-subtle text-[11px] font-medium text-on-surface-variant">
-                <span className="w-1.5 h-1.5 rounded-full bg-secondary"></span>
-                <span>Redox : <strong>680 mV</strong></span>
-              </div>
-              <div className="inline-flex items-center gap-1 px-2 py-0.5 rounded-md bg-canvas-slate border border-border-subtle text-[11px] font-medium text-on-surface-variant">
-                <span className="w-1.5 h-1.5 rounded-full bg-secondary"></span>
-                <span>Filtre : <strong>850 mbar</strong></span>
-              </div>
-              <div className="inline-flex items-center gap-1 px-2 py-0.5 rounded-md bg-sage-soft text-primary text-[11px] font-semibold">
-                <span className="material-symbols-outlined text-[12px]">sync</span>
-                Pompe ON
-              </div>
-              <div className="inline-flex items-center gap-1 px-2 py-0.5 rounded-md bg-slate-100 text-outline text-[11px] font-medium">
-                PAC OFF
+              <div className="flex flex-wrap items-center gap-1.5">
+                <div className="inline-flex items-center gap-1 px-2 py-0.5 rounded-md bg-canvas-slate border border-border-subtle text-[11px] font-medium text-on-surface-variant">
+                  <span className="w-1.5 h-1.5 rounded-full bg-slate-400"></span>
+                  <span>pH : <strong>7.3</strong></span>
+                </div>
+                <div className="inline-flex items-center gap-1 px-2 py-0.5 rounded-md bg-canvas-slate border border-border-subtle text-[11px] font-medium text-on-surface-variant">
+                  <span className="w-1.5 h-1.5 rounded-full bg-slate-400"></span>
+                  <span>Redox : <strong>680 mV</strong></span>
+                </div>
+                <div className="inline-flex items-center gap-1 px-2 py-0.5 rounded-md bg-canvas-slate border border-border-subtle text-[11px] font-medium text-on-surface-variant">
+                  <span className="w-1.5 h-1.5 rounded-full bg-slate-400"></span>
+                  <span>Filtre : <strong>850 mbar</strong></span>
+                </div>
+                <div className="inline-flex items-center gap-1 px-2 py-0.5 rounded-md bg-slate-100 text-slate-600 text-[11px] font-medium">
+                  État local : Pompe ON / PAC OFF
+                </div>
               </div>
             </div>
           </div>
 
           <div className="pt-2 border-t border-border-subtle flex items-center justify-between text-xs text-on-surface-variant">
-            <span className="flex items-center gap-1 text-slate-500 font-medium">
-              <Lock className="h-3.5 w-3.5 text-slate-400" />
-              Télémétrie Klereo (Villa Rosing)
+            <span className="flex items-center gap-1 text-rose-700 font-semibold">
+              <Radio className="h-3.5 w-3.5 text-rose-600" />
+              Klereo CONNECT 868 MHz (Rupture signal)
             </span>
-            <span className="font-semibold text-slate-600 bg-slate-100 px-2 py-0.5 rounded">🔒 Verrou en lecture seule</span>
+            <span className="font-semibold text-rose-800 bg-rose-100 px-2 py-0.5 rounded border border-rose-200">
+              🔒 Lecture seule & Radio KO
+            </span>
           </div>
         </div>
 

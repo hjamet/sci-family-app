@@ -673,10 +673,15 @@ export default function VademecumPage({ properties, currentUser }) {
             </div>
           </div>
 
-          <div className="inline-flex items-center gap-2 px-3.5 py-1.5 rounded-full bg-sage-soft border border-sage-border text-primary font-label-sm text-xs font-semibold shrink-0 shadow-sm">
-            <span className="w-2 h-2 rounded-full bg-primary animate-pulse"></span>
-            <span className="material-symbols-outlined text-[16px]">sensors</span>
-            <span>Système connecté (ViCare & Klereo)</span>
+          <div className="flex flex-wrap items-center gap-2 shrink-0">
+            <div className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-full bg-sage-soft border border-sage-border text-primary font-label-sm text-xs font-semibold shadow-xs">
+              <span className="w-2 h-2 rounded-full bg-primary animate-pulse"></span>
+              <span>ViCare : Connecté</span>
+            </div>
+            <div className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-full bg-amber-50 border border-amber-300 text-amber-900 font-label-sm text-xs font-bold shadow-xs">
+              <span className="w-2 h-2 rounded-full bg-amber-500 animate-ping"></span>
+              <span>Piscine : ⚠️ Rupture radio K-Link</span>
+            </div>
           </div>
         </div>
 
@@ -920,60 +925,76 @@ export default function VademecumPage({ properties, currentUser }) {
           </div>
 
           {/* Volet 3 : Piscine Klereo */}
-          <div className="p-5 rounded-2xl bg-canvas-slate border border-border-subtle flex flex-col justify-between gap-5 shadow-sm">
+          <div className="p-5 rounded-2xl bg-canvas-slate border-2 border-amber-300 flex flex-col justify-between gap-5 shadow-sm">
             <div className="flex flex-col gap-4">
               
               {/* Header */}
               <div className="flex items-center justify-between border-b border-border-subtle pb-3 gap-2">
                 <div className="flex items-center gap-2 min-w-0">
-                  <span className="material-symbols-outlined text-primary text-[22px]">pool</span>
+                  <span className="material-symbols-outlined text-amber-700 text-[22px]">pool</span>
                   <h3 className="font-headline-sm text-headline-sm text-on-surface font-semibold truncate">
                     Piscine
                   </h3>
-                  <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full bg-amber-soft text-amber-rich font-label-sm text-[11px] font-bold shrink-0">
-                    <span className="material-symbols-outlined text-[13px]">ac_unit</span>
-                    Veille / Hors-Gel
+                  <span className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full bg-rose-100 text-rose-800 border border-rose-300 font-label-sm text-[11px] font-bold shrink-0">
+                    <span className="material-symbols-outlined text-[13px] text-rose-600">signal_wifi_off</span>
+                    Rupture Radio K-Link
                   </span>
                 </div>
-                <div className="flex items-center gap-1 px-2.5 py-1 rounded-full bg-white border border-border-subtle shrink-0">
-                  <span className="font-label-sm text-xs text-outline">Eau :</span>
-                  <span className="font-headline-sm text-xs text-on-surface font-bold tabular-nums">13.5°C</span>
-                  <span className="text-xs text-outline mx-0.5">•</span>
-                  <span className="font-label-sm text-xs text-outline">Air :</span>
-                  <span className="font-headline-sm text-xs text-on-surface font-bold tabular-nums">14.2°C</span>
+                <div className="flex items-center gap-1 px-2.5 py-1 rounded-full bg-amber-50 border border-amber-200 shrink-0">
+                  <span className="font-label-sm text-xs text-amber-800">Eau :</span>
+                  <span className="font-headline-sm text-xs text-amber-950 font-bold tabular-nums">13.5°C*</span>
+                  <span className="text-xs text-amber-400 mx-0.5">•</span>
+                  <span className="font-label-sm text-xs text-amber-800">Air :</span>
+                  <span className="font-headline-sm text-xs text-amber-950 font-bold tabular-nums">14.2°C*</span>
                 </div>
               </div>
 
-              {/* Target Stepper */}
-              <div className="p-3.5 bg-white rounded-xl border border-border-subtle flex items-center justify-between gap-2 shadow-sm">
+              {/* BANDEAU D'ALERTE EXPLICITE RUPTURE RADIO K-LINK 868 MHz */}
+              <div className="p-3.5 rounded-xl bg-amber-50 border-2 border-amber-500 text-amber-950 text-xs shadow-xs space-y-1.5 animate-in fade-in duration-200">
+                <div className="flex items-start gap-2">
+                  <span className="material-symbols-outlined text-[18px] text-amber-600 shrink-0 mt-0.5">warning</span>
+                  <div className="font-bold text-xs leading-snug">
+                    ⚠️ Liaison radio K-Link interrompue (coffret piscine hors portée) - Données non actualisées - Réappairage matériel requis sur place
+                  </div>
+                </div>
+                <p className="text-[11px] text-amber-800 pl-6 leading-relaxed">
+                  Rupture matérielle de la liaison radio 868 MHz entre le boîtier Klereo CONNECT et le local technique piscine (distance / murs en pierre). L'application Klereo indique <em>« Vérifier la connexion »</em>. Les valeurs thermiques et physico-chimiques ci-dessous sont figées.
+                </p>
+              </div>
+
+              {/* Target Stepper (Verrouillé - Commande désactivée) */}
+              <div className="p-3.5 bg-white/90 rounded-xl border border-border-subtle flex items-center justify-between gap-2 shadow-sm opacity-85">
                 <div className="flex flex-col min-w-0 pr-1">
-                  <span className="font-label-md text-label-md text-on-surface font-semibold leading-tight">
-                    Température cible
+                  <span className="font-label-md text-label-md text-on-surface font-semibold leading-tight flex items-center gap-1">
+                    <span>Température cible PAC</span>
+                    <span className="material-symbols-outlined text-[14px] text-slate-400">lock</span>
                   </span>
-                  <span className="font-label-sm text-xs text-on-surface-variant mt-0.5 whitespace-nowrap">
-                    Recommandé 26°C – 28°C été
+                  <span className="font-label-sm text-xs text-rose-700 mt-0.5 whitespace-nowrap">
+                    Non modifiable (Radio KO & Verrou lecture seule)
                   </span>
                 </div>
-                <div className="flex items-center gap-1.5 shrink-0 bg-canvas-slate p-1 rounded-full border border-border-subtle">
+                <div className="flex items-center gap-1.5 shrink-0 bg-canvas-slate p-1 rounded-full border border-border-subtle opacity-75">
                   <button
-                    onClick={handlePoolMinus}
-                    aria-label="Diminuer température piscine"
-                    className="w-8 h-8 rounded-full bg-white border border-outline-variant hover:bg-surface-container flex items-center justify-center text-on-surface active:scale-95 transition-transform shadow-sm"
+                    disabled
+                    aria-label="Diminuer température piscine (désactivé)"
+                    className="w-8 h-8 rounded-full bg-slate-100 border border-slate-200 flex items-center justify-center text-slate-400 cursor-not-allowed"
                     type="button"
+                    title="Commande désactivée : liaison radio K-Link coupée"
                   >
-                    <span className="material-symbols-outlined text-[16px]">remove</span>
+                    <span className="material-symbols-outlined text-[16px]">lock</span>
                   </button>
-                  <span className="font-headline-md text-[18px] text-primary font-bold tabular-nums w-12 text-center">
+                  <span className="font-headline-md text-[18px] text-slate-600 font-bold tabular-nums w-12 text-center">
                     {poolTemp.toFixed(1)}
                     <span className="text-xs text-outline font-normal">°C</span>
                   </span>
                   <button
-                    onClick={handlePoolPlus}
-                    aria-label="Augmenter température piscine"
-                    className="w-8 h-8 rounded-full bg-primary text-white hover:bg-forest-deep flex items-center justify-center font-bold active:scale-95 transition-transform shadow-sm"
+                    disabled
+                    aria-label="Augmenter température piscine (désactivé)"
+                    className="w-8 h-8 rounded-full bg-slate-100 border border-slate-200 flex items-center justify-center text-slate-400 cursor-not-allowed"
                     type="button"
+                    title="Commande désactivée : liaison radio K-Link coupée"
                   >
-                    <span className="material-symbols-outlined text-[16px]">add</span>
+                    <span className="material-symbols-outlined text-[16px]">lock</span>
                   </button>
                 </div>
               </div>
@@ -987,61 +1008,68 @@ export default function VademecumPage({ properties, currentUser }) {
                       Mise en marche PAC
                     </span>
                     <span className="font-label-md text-xs font-semibold text-amber-rich pl-4 mt-0.5 truncate">
-                      Déconseillée (Hiver)
+                      Déconseillée (Hiver) • Radio coupée
                     </span>
                   </div>
                   <button
-                    onClick={() => alert('La PAC piscine est mise en hivernage automatique. Activation non conseillée sous 15°C extérieur.')}
-                    className="h-8 px-3 rounded-lg bg-surface-container hover:bg-surface-container-high text-primary font-label-sm text-xs font-semibold shrink-0 transition-colors"
+                    onClick={() => alert('Liaison radio K-Link coupée et PAC en hivernage automatique. Aucune commande possible à distance.')}
+                    className="h-8 px-3 rounded-lg bg-surface-container text-slate-500 font-label-sm text-xs font-semibold shrink-0 cursor-not-allowed"
                     type="button"
                   >
-                    Modifier
+                    Verrouillée
                   </button>
                 </div>
 
                 <div className="p-2.5 rounded-xl bg-white border border-border-subtle flex items-center justify-between gap-2 shadow-sm">
                   <div className="flex flex-col min-w-0">
                     <span className="font-label-sm text-[11px] text-on-surface-variant flex items-center gap-1 font-medium">
-                      <span className="material-symbols-outlined text-[14px] text-primary">autorenew</span>
+                      <span className="material-symbols-outlined text-[14px] text-outline">autorenew</span>
                       Filtration programmée
                     </span>
                     <span className="font-label-md text-xs font-semibold text-on-surface pl-4 mt-0.5 truncate">
-                      2h/jour (Hors-gel auto)
+                      2h/jour (Hors-gel automatique local)
                     </span>
                   </div>
-                  <button
-                    onClick={() => showToast('Cycle de filtration maintenu en mode Hors-gel 2h/jour.')}
-                    className="h-8 px-3 rounded-lg bg-surface-container hover:bg-surface-container-high text-primary font-label-sm text-xs font-semibold shrink-0 transition-colors"
-                    type="button"
-                  >
-                    Modifier
-                  </button>
+                  <span className="text-[11px] font-medium text-slate-600 bg-slate-100 px-2 py-1 rounded-md border border-slate-200">
+                    Cycle Local
+                  </span>
                 </div>
               </div>
 
             </div>
 
             {/* Footer metrics */}
-            <div className="pt-2.5 border-t border-border-subtle flex flex-wrap items-center gap-1.5">
-              <div className="inline-flex items-center gap-1 px-2 py-0.5 rounded-md bg-white border border-border-subtle text-[11px] font-medium text-on-surface-variant">
-                <span className="w-1.5 h-1.5 rounded-full bg-secondary"></span>
-                <span>pH : <strong>7.3</strong></span>
+            <div className="pt-2.5 border-t border-border-subtle space-y-1.5">
+              <div className="text-[10px] text-amber-800 font-semibold flex items-center gap-1">
+                <span>* Dernières données reçues avant coupure radio :</span>
               </div>
-              <div className="inline-flex items-center gap-1 px-2 py-0.5 rounded-md bg-white border border-border-subtle text-[11px] font-medium text-on-surface-variant">
-                <span className="w-1.5 h-1.5 rounded-full bg-secondary"></span>
-                <span>Redox : <strong>680 mV</strong></span>
+              <div className="flex flex-wrap items-center gap-1.5">
+                <div className="inline-flex items-center gap-1 px-2 py-0.5 rounded-md bg-white border border-border-subtle text-[11px] font-medium text-on-surface-variant">
+                  <span className="w-1.5 h-1.5 rounded-full bg-slate-400"></span>
+                  <span>pH : <strong>7.3</strong></span>
+                </div>
+                <div className="inline-flex items-center gap-1 px-2 py-0.5 rounded-md bg-white border border-border-subtle text-[11px] font-medium text-on-surface-variant">
+                  <span className="w-1.5 h-1.5 rounded-full bg-slate-400"></span>
+                  <span>Redox : <strong>680 mV</strong></span>
+                </div>
+                <div className="inline-flex items-center gap-1 px-2 py-0.5 rounded-md bg-white border border-border-subtle text-[11px] font-medium text-on-surface-variant">
+                  <span className="w-1.5 h-1.5 rounded-full bg-slate-400"></span>
+                  <span>Filtre : <strong>850 mbar</strong></span>
+                </div>
+                <div className="inline-flex items-center gap-1 px-2 py-0.5 rounded-md bg-slate-100 text-slate-600 text-[11px] font-medium">
+                  Pompe ON / PAC OFF
+                </div>
               </div>
-              <div className="inline-flex items-center gap-1 px-2 py-0.5 rounded-md bg-white border border-border-subtle text-[11px] font-medium text-on-surface-variant">
-                <span className="w-1.5 h-1.5 rounded-full bg-secondary"></span>
-                <span>Filtre : <strong>850 mbar</strong></span>
-              </div>
-              <div className="inline-flex items-center gap-1 px-2 py-0.5 rounded-md bg-sage-soft text-primary text-[11px] font-semibold">
-                <span className="material-symbols-outlined text-[12px]">sync</span>
-                Pompe ON
-              </div>
-              <div className="inline-flex items-center gap-1 px-2 py-0.5 rounded-md bg-surface-container text-outline text-[11px] font-medium">
-                PAC OFF
-              </div>
+            </div>
+
+            <div className="pt-2 border-t border-border-subtle flex items-center justify-between text-xs text-on-surface-variant">
+              <span className="flex items-center gap-1 text-rose-700 font-semibold">
+                <span className="material-symbols-outlined text-[14px] text-rose-600">settings_remote</span>
+                Klereo CONNECT 868 MHz (Signal perdu)
+              </span>
+              <span className="font-semibold text-rose-800 bg-rose-100 px-2 py-0.5 rounded border border-rose-200">
+                🔒 Lecture seule & Radio KO
+              </span>
             </div>
           </div>
 
