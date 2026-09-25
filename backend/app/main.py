@@ -2,6 +2,7 @@ import os
 import json
 import shutil
 import uuid
+import logging
 from datetime import datetime, timedelta
 from typing import List, Optional
 from fastapi import FastAPI, Depends, HTTPException, Query, UploadFile, File, Form, status, Request
@@ -34,8 +35,11 @@ from .services.vicare_service import ViCareService
 from .security import (
     rate_limiter, verify_password, create_access_token, decode_access_token, normalize_prenom
 )
+from .email_service import notify_coordinator_new_issue, notify_all_members_project_vote
 from dotenv import load_dotenv
 load_dotenv()
+
+logger = logging.getLogger("sci_api")
 
 
 # Create DB tables
@@ -83,6 +87,8 @@ app.mount("/uploads", StaticFiles(directory=UPLOAD_DIR), name="uploads")
 
 # Automatic column migration safeguard for Project table in SQLite
 def run_project_migrations():
+    if engine.dialect.name != "sqlite":
+        return
     from sqlalchemy import text
     with engine.connect() as conn:
         inspector_query = text("PRAGMA table_info(projects)")
@@ -96,6 +102,8 @@ def run_project_migrations():
             conn.commit()
 
 def run_task_migrations():
+    if engine.dialect.name != "sqlite":
+        return
     from sqlalchemy import text
     with engine.connect() as conn:
         inspector_query = text("PRAGMA table_info(stay_task_assignments)")
@@ -391,6 +399,23 @@ def create_issue(issue: IssueCreate, db: Session = Depends(get_db)):
     db.add(db_issue)
     db.commit()
     db.refresh(db_issue)
+
+    # Email notification trigger: notify coordinator of new issue (non-blocking)
+    try:
+        coordinator = db.query(User).filter(User.role.like("%Coordinateur%")).first()
+        coord_email = coordinator.email if (coordinator and coordinator.email) else "henri@sci-familiale.fr"
+        notify_coordinator_new_issue(
+            issue_title=db_issue.title,
+            created_by=db_issue.created_by or "Membre SCI",
+            description=db_issue.description or "",
+            category=db_issue.category or "SIGNALEMENT",
+            priority=db_issue.priority or "Moyenne",
+            coordinator_email=coord_email
+        )
+    except Exception as e:
+        logger.error(f"[EMAIL ERROR] Failed to send new issue notification: {e}")
+        print(f"[EMAIL ERROR] Failed to send new issue notification: {e}")
+
     return db_issue
 
 @app.post("/api/issues/upload-photo")
@@ -685,6 +710,8 @@ def approve_project_by_coordinator(
     if not db_proj:
         raise HTTPException(status_code=404, detail="Projet non trouvé")
 
+    old_status = db_proj.status
+
     if approval.estimated_cost is not None:
         db_proj.estimated_cost = approval.estimated_cost
     if approval.coordinator_notes is not None:
@@ -703,12 +730,32 @@ def approve_project_by_coordinator(
 
     if approval.decision_mode:
         db_proj.decision_mode = approval.decision_mode
+        if approval.decision_mode == "SOUMETTRE_AU_VOTE":
+            db_proj.status = "EN_VOTE"
     if approval.responsible:
         db_proj.responsible = approval.responsible
 
     db_proj.updated_at = datetime.utcnow()
     db.commit()
     db.refresh(db_proj)
+
+    # Email notification trigger: notify all members if submitted to vote (non-blocking)
+    if db_proj.status == "EN_VOTE" and old_status != "EN_VOTE":
+        try:
+            member_users = db.query(User).filter(User.email.isnot(None)).all()
+            member_emails = [u.email for u in member_users if u.email]
+            notify_all_members_project_vote(
+                project_title=db_proj.title,
+                submitted_by=db_proj.submitted_by or "Associé SCI",
+                description=db_proj.description or "",
+                estimated_cost=float(db_proj.estimated_cost or 0.0),
+                project_id=db_proj.id,
+                member_emails=member_emails if member_emails else None
+            )
+        except Exception as e:
+            logger.error(f"[EMAIL ERROR] Failed to send project vote notification from approve: {e}")
+            print(f"[EMAIL ERROR] Failed to send project vote notification from approve: {e}")
+
     return format_project_response(db_proj)
 
 @app.patch("/api/projects/{project_id}/review")
@@ -716,6 +763,8 @@ def review_project(project_id: int, review: ProjectReview, db: Session = Depends
     db_proj = db.query(Project).filter(Project.id == project_id).first()
     if not db_proj:
         raise HTTPException(status_code=404, detail="Projet non trouvé")
+
+    old_status = db_proj.status
 
     if review.status is not None:
         db_proj.status = review.status
@@ -753,7 +802,26 @@ def review_project(project_id: int, review: ProjectReview, db: Session = Depends
     db_proj.updated_at = datetime.utcnow()
     db.commit()
     db.refresh(db_proj)
+
+    # Email notification trigger: notify all members when a project enters voting (non-blocking)
+    if db_proj.status == "EN_VOTE" and (old_status != "EN_VOTE" or review.decision_mode == "SOUMETTRE_AU_VOTE"):
+        try:
+            member_users = db.query(User).filter(User.email.isnot(None)).all()
+            member_emails = [u.email for u in member_users if u.email]
+            notify_all_members_project_vote(
+                project_title=db_proj.title,
+                submitted_by=db_proj.submitted_by or "Associé SCI",
+                description=db_proj.description or "",
+                estimated_cost=float(db_proj.estimated_cost or 0.0),
+                project_id=db_proj.id,
+                member_emails=member_emails if member_emails else None
+            )
+        except Exception as e:
+            logger.error(f"[EMAIL ERROR] Failed to send project vote notification from review: {e}")
+            print(f"[EMAIL ERROR] Failed to send project vote notification from review: {e}")
+
     return format_project_response(db_proj)
+
 
 @app.patch("/api/projects/{project_id}/cost")
 def update_project_cost(project_id: int, payload: dict, db: Session = Depends(get_db)):

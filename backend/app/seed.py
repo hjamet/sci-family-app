@@ -5,14 +5,33 @@ from .models import User, Property, Issue, Comment, Reservation, Project, Projec
 from datetime import datetime, timedelta
 from .security import hash_password
 
-def seed_database(db: Session = None):
+def seed_database(db: Session = None, force: bool = False):
+    should_force = force or os.getenv("FORCE_DB_RESET", "false").lower() == "true"
+
+    # Check if data already exists to prevent overwriting production/persistent DB
+    check_session = db if db is not None else SessionLocal()
+    try:
+        user_count = check_session.query(User).count()
+        if user_count > 0 and not should_force:
+            print(f"Database already populated ({user_count} users found). Skipping seed.")
+            return
+    except Exception as e:
+        print(f"Notice during seed check (tables might not exist yet): {e}")
+    finally:
+        if db is None:
+            check_session.close()
+
     print("Seeding database with updated SCI Familiale data (Exact 7 family members, real meeting tasks, vademecum)...")
 
     # Close existing session to unlock DB before schema recreation
     if db is not None:
-        db.close()
+        try:
+            db.close()
+        except Exception:
+            pass
 
-    Base.metadata.drop_all(bind=engine)
+    if should_force:
+        Base.metadata.drop_all(bind=engine)
     Base.metadata.create_all(bind=engine)
 
     db = SessionLocal()
