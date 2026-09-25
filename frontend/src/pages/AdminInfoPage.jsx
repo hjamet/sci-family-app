@@ -8,7 +8,8 @@ import {
 } from 'lucide-react';
 import WorkloadDashboard from '../components/WorkloadDashboard';
 import FinancialLedgerModal from '../components/FinancialLedgerModal';
-import { fetchAdminDocuments, deleteAdminDocument } from '../api';
+import BankReauthBanner from '../components/BankReauthBanner';
+import { fetchAdminDocuments, deleteAdminDocument, fetchBankStatus } from '../api';
 
 function renderMarkdownLine(line, idx) {
   const trimmed = line.trim();
@@ -279,6 +280,28 @@ export default function AdminInfoPage({ currentUser }) {
     sorties: 2450.0,
     reserves: 6850.0
   });
+
+  // Open Banking DSP2 Status
+  const [bankStatus, setBankStatus] = useState(null);
+
+  const loadBankStatus = async () => {
+    try {
+      const data = await fetchBankStatus();
+      setBankStatus(data);
+      if (data && data.total_balance !== undefined && data.total_balance !== null && data.total_balance > 0) {
+        setFinancialTotals((prev) => ({
+          ...prev,
+          reserves: data.total_balance
+        }));
+      }
+    } catch (err) {
+      console.warn('Bank status load notice:', err.message);
+    }
+  };
+
+  useEffect(() => {
+    loadBankStatus();
+  }, []);
 
   // Documents State
   const [documents, setDocuments] = useState(INITIAL_STITCH_DOCUMENTS);
@@ -592,6 +615,9 @@ export default function AdminInfoPage({ currentUser }) {
       {/* SECTION 1 : FINANCIAL QUICK SUMMARY (3 HIGH-IMPACT KPI CARDS)             */}
       {/* ========================================================================= */}
       <div className="mt-space-lg">
+        {/* Bannière d'alerte raccordement bancaire DSP2 réactive */}
+        <BankReauthBanner bankStatus={bankStatus} onRefresh={loadBankStatus} />
+
         <div className="flex items-center justify-between mb-space-sm">
           <div className="flex items-center gap-2">
             <span className="material-symbols-outlined text-primary text-[20px]">account_balance</span>
@@ -686,6 +712,19 @@ export default function AdminInfoPage({ currentUser }) {
                 savings
               </span>
             </div>
+            {bankStatus && bankStatus.needs_reauth && (
+              <div className="mt-2 pt-2 border-t border-rose-100 flex items-center justify-between text-[11px] text-rose-800">
+                <span className="inline-flex items-center gap-1 font-medium">
+                  <span className="w-1.5 h-1.5 rounded-full bg-rose-500 animate-pulse"></span>
+                  Relevé en cache (hors ligne)
+                </span>
+                {bankStatus.last_successful_sync && (
+                  <span className="opacity-75">
+                    {new Date(bankStatus.last_successful_sync).toLocaleDateString('fr-FR')}
+                  </span>
+                )}
+              </div>
+            )}
           </div>
 
         </div>
