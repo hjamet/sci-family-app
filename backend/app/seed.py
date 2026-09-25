@@ -1,7 +1,11 @@
 import os
 from sqlalchemy.orm import Session
 from .database import engine, SessionLocal, Base
-from .models import User, Property, Issue, Comment, Reservation, Project, ProjectVote, MemberAvailability, VademecumItem, MaintenanceTask, StayTaskAssignment, AdminDocument
+from .models import (
+    Member, User, Property, Issue, Comment, Reservation, Project, ProjectVote,
+    MemberAvailability, VademecumItem, MaintenanceTask, StayTaskAssignment,
+    AdminDocument, Task, TaskComment, Log
+)
 from datetime import datetime, timedelta
 from .security import hash_password
 
@@ -11,9 +15,9 @@ def seed_database(db: Session = None, force: bool = False):
     # Check if data already exists to prevent overwriting production/persistent DB
     check_session = db if db is not None else SessionLocal()
     try:
-        user_count = check_session.query(User).count()
-        if user_count > 0 and not should_force:
-            print(f"Database already populated ({user_count} users found). Skipping seed.")
+        member_count = check_session.query(Member).count()
+        if member_count > 0 and not should_force:
+            print(f"Database already populated ({member_count} members found). Skipping seed.")
             return
     except Exception as e:
         print(f"Notice during seed check (tables might not exist yet): {e}")
@@ -57,65 +61,65 @@ def seed_database(db: Session = None, force: bool = False):
     db.refresh(p2)
 
     # Exact 7 Family Members with Permanent Estate Responsibilities
-    users = [
-        User(
+    members = [
+        Member(
             prenom="Henri",
             name="Henri Jamet",
             email="henri@sci-familiale.fr",
-            password=hash_password(os.getenv("USER_HENRI_PASS") or os.getenv("MEMBER_PASSWORD_HENRI", "henri2026!")),
+            password=hash_password(os.getenv("USER_HENRI_PASS") or os.getenv("MEMBER_PASSWORD_HENRI", "N8xK9mP2vQ5rT7wY")),
             role="Coordinateur Général (Fioul, Chauffage ViCare, CCA)",
             avatar_color="cyan"
         ),
-        User(
+        Member(
             prenom="Hortense",
             name="Hortense Jamet",
             email="hortense@sci-familiale.fr",
-            password=hash_password(os.getenv("USER_HORTENSE_PASS") or os.getenv("MEMBER_PASSWORD_HORTENSE", "hortense2026!")),
+            password=hash_password(os.getenv("USER_HORTENSE_PASS") or os.getenv("MEMBER_PASSWORD_HORTENSE", "Q2mK9vL5nR1wT7pY")),
             role="Responsable Espaces Verts (Jardinier Perrot, Starlink)",
             avatar_color="rose"
         ),
-        User(
+        Member(
             prenom="Marguerite",
             name="Marguerite Jamet",
             email="marguerite@sci-familiale.fr",
-            password=hash_password(os.getenv("USER_MARGUERITE_PASS") or os.getenv("MEMBER_PASSWORD_MARGUERITE", "marguerite2026!")),
+            password=hash_password(os.getenv("USER_MARGUERITE_PASS") or os.getenv("MEMBER_PASSWORD_MARGUERITE", "B4vL7nP1wR9tY2mK")),
             role="Responsable Équipements (Frigo Schtroudel, Buanderie)",
             avatar_color="purple"
         ),
-        User(
+        Member(
             prenom="Eugénie",
             name="Eugénie Jamet",
             email="eugenie@sci-familiale.fr",
-            password=hash_password(os.getenv("USER_EUGENIE_PASS") or os.getenv("MEMBER_PASSWORD_EUGENIE", "eugenie2026!")),
+            password=hash_password(os.getenv("USER_EUGENIE_PASS") or os.getenv("MEMBER_PASSWORD_EUGENIE", "R9tY2mK9vL5nR1wP")),
             role="Responsable Peintures SdB & Tri Sélectif",
             avatar_color="amber"
         ),
-        User(
+        Member(
             prenom="Joséphine",
             name="Joséphine Jamet",
             email="josephine@sci-familiale.fr",
-            password=hash_password(os.getenv("USER_JOSEPHINE_PASS") or os.getenv("MEMBER_PASSWORD_JOSEPHINE", "josephine2026!")),
+            password=hash_password(os.getenv("USER_JOSEPHINE_PASS") or os.getenv("MEMBER_PASSWORD_JOSEPHINE", "T7pY2mK9vL5nR1wQ")),
             role="Coordinatrice Adjointe (Clés, Boîtier Sud, Vêtements)",
             avatar_color="emerald"
         ),
-        User(
+        Member(
             prenom="Maman",
             name="Maman (Élisabeth) Jamet",
             email="maman@sci-familiale.fr",
-            password=hash_password(os.getenv("USER_MAMAN_PASS") or os.getenv("MEMBER_PASSWORD_MAMAN", "maman2026!")),
-            role="Garante du Patrimoine & Journées Ménage",
+            password=hash_password(os.getenv("USER_MAMAN_PASS") or os.getenv("MEMBER_PASSWORD_MAMAN", "W1tY2mK9vL5nR1pT")),
+            role="Membre Associé",
             avatar_color="teal"
         ),
-        User(
+        Member(
             prenom="Frédéric",
             name="Frédéric Jamet",
             email="frederic@sci-familiale.fr",
-            password=hash_password(os.getenv("USER_FREDERIC_PASS") or os.getenv("MEMBER_PASSWORD_FREDERIC", "frederic2026!")),
+            password=hash_password(os.getenv("USER_FREDERIC_PASS") or os.getenv("MEMBER_PASSWORD_FREDERIC", "L5nR1wT7pY2mK9vQ")),
             role="Responsable Électricité & Linky Tempo (Contacteur 0/HC)",
             avatar_color="blue"
         ),
     ]
-    db.add_all(users)
+    db.add_all(members)
     db.commit()
 
     # Maintenance Tasks Template (Mapped to permanent estate responsibilities across the 7 members)
@@ -322,6 +326,8 @@ def seed_database(db: Session = None, force: bool = False):
             week_number=32,
             start_date="2026-08-03",
             end_date="2026-08-09",
+            arrival_time="15:00",
+            departure_time="11:00",
             status="Confirmée",
             notes="Vacances d'été en famille (4 personnes)."
         ),
@@ -332,6 +338,8 @@ def seed_database(db: Session = None, force: bool = False):
             week_number=33,
             start_date="2026-08-10",
             end_date="2026-08-16",
+            arrival_time="15:00",
+            departure_time="11:00",
             status="Confirmée",
             notes="Semaine du 15 août — Grand rassemblement familial."
         ),
@@ -342,6 +350,8 @@ def seed_database(db: Session = None, force: bool = False):
             week_number=35,
             start_date="2026-08-24",
             end_date="2026-08-30",
+            arrival_time="15:00",
+            departure_time="11:00",
             status="Confirmée",
             notes="Fin d'été au calme & télétravail."
         ),
@@ -352,6 +362,8 @@ def seed_database(db: Session = None, force: bool = False):
             week_number=38,
             start_date="2026-09-14",
             end_date="2026-09-20",
+            arrival_time="15:00",
+            departure_time="11:00",
             status="Demande en attente",
             notes="Weekend rallongé vendanges & cueillette."
         ),
@@ -362,6 +374,8 @@ def seed_database(db: Session = None, force: bool = False):
             week_number=42,
             start_date="2026-10-12",
             end_date="2026-10-18",
+            arrival_time="15:00",
+            departure_time="11:00",
             status="Confirmée",
             notes="Séjour d'automne & entretien chaudière."
         ),
@@ -372,6 +386,8 @@ def seed_database(db: Session = None, force: bool = False):
             week_number=44,
             start_date="2026-10-26",
             end_date="2026-11-01",
+            arrival_time="15:00",
+            departure_time="11:00",
             status="Demande en attente",
             notes="Vacances de la Toussaint."
         ),
@@ -382,6 +398,8 @@ def seed_database(db: Session = None, force: bool = False):
             week_number=52,
             start_date="2026-12-21",
             end_date="2026-12-28",
+            arrival_time="15:00",
+            departure_time="11:00",
             status="Confirmée",
             notes="Fêtes de Noël en famille à Hellenvilliers."
         ),
@@ -540,7 +558,156 @@ def seed_database(db: Session = None, force: bool = False):
     db.add_all(admin_docs)
     db.commit()
 
-    print("Complete database seeding executed successfully for exact 7 members and 3 authentic meetings!")
+    # Unified Tasks (Stitch screens: 6 authentic tasks from the domain registry)
+    t1 = Task(
+        ref="T-2026-088",
+        title="Contrôle & Expertise des Poutres Maîtresses",
+        description="Diagnostic structurel de la charpente de la bibliothèque avant reprise de plâtrerie. Risque d'effritement sous solives identifié lors de l'hiver.",
+        subject="Presbytère",
+        category="Maintenance",
+        priority="Haute",
+        status="EN_COURS",
+        complexity="Élevée",
+        budget=1200.0,
+        budget_notes="~1 200 € TTC",
+        assignee_id=1,
+        assigned_members='["Henri Jamet", "Alex Martin (Expert bois)"]',
+        deadline="31 août 2026",
+        checklist='[{"text": "Visite préliminaire et sondage solives", "completed": true}, {"text": "Diagnostic structurel charpente", "completed": true}, {"text": "Chiffrage devis étayage", "completed": false}, {"text": "Validation en réunion de famille", "completed": false}]',
+        documents='[{"name": "Rapport_Pre_Diagnostic_Poutres.pdf", "url": "/uploads/documents/Rapport_Pre_Diagnostic_Poutres.pdf", "size": "2.4 Mo", "type": "PDF"}]',
+        created_by="Henri"
+    )
+    t2 = Task(
+        ref="T-2026-089",
+        title="Renégociation Contrat Jardinier EI Perrot & Fauche Tardive",
+        description="Basculer vers le dispositif CESU déclaratif (50% crédit d'impôt) et intégrer le protocole de fauche tardive de la grande prairie. Gain net projeté de -800 € / an.",
+        subject="Rosing",
+        category="Parc & Espaces Verts",
+        priority="Haute",
+        status="EN_COURS",
+        complexity="Modérée",
+        budget=3900.0,
+        budget_notes="Forfait Annuel 3 900 € TTC",
+        assignee_id=3,
+        assigned_members='["Hortense Jamet", "Alexandre Jamet"]',
+        deadline="15 septembre 2026",
+        checklist='[{"text": "Bilan des tontes 2025", "completed": true}, {"text": "Avenant et intégration CESU", "completed": true}, {"text": "Protocole fauche tardive grande prairie", "completed": false}, {"text": "Signature contrat révisé", "completed": false}]',
+        documents='[{"name": "Devis_Jardinier_PERROT_2025.pdf", "url": "/uploads/documents/Devis_Jardinier_PERROT_2025.pdf", "size": "1.2 Mo", "type": "PDF"}]',
+        created_by="Hortense"
+    )
+    t3 = Task(
+        ref="T-2026-090",
+        title="Installation Répéteurs Wi-Fi Inter-Maisons",
+        description="Pont Wi-Fi longue portée depuis Rosing pour résilier l'abonnement internet doublon du Presbytère lors du passage estival. Matériel commandé.",
+        subject="Rosing",
+        category="Équipements & Réseau",
+        priority="Normale",
+        status="EN_COURS",
+        complexity="Faible",
+        budget=120.0,
+        budget_notes="120 € TTC (Matériel)",
+        assignee_id=7,
+        assigned_members='["Frédéric Jamet", "Henri Jamet"]',
+        deadline="20 août 2026",
+        checklist='[{"text": "Commande bornes Wi-Fi Mesh", "completed": true}, {"text": "Test portée signal jardin", "completed": true}, {"text": "Pose et configuration des répéteurs", "completed": true}, {"text": "Résiliation abonnement doublon Presbytère", "completed": false}]',
+        documents='[]',
+        created_by="Frédéric"
+    )
+    t4 = Task(
+        ref="T-2026-091",
+        title="Purge & Remplacement Vanne Radiateur Chambre Bleue",
+        description="Remplacement de la vanne thermostatique grippée dans la chambre bleue du Presbytère avant l'arrivée du froid.",
+        subject="Presbytère",
+        category="Plomberie & Chauffage",
+        priority="Critique",
+        status="A_FAIRE",
+        complexity="Modérée",
+        budget=180.0,
+        budget_notes="180 € TTC",
+        assignee_id=1,
+        assigned_members='["Henri Jamet"]',
+        deadline="10 octobre 2026",
+        checklist='[{"text": "Achat robinet thermostatique", "completed": false}, {"text": "Vidange circuit chambre", "completed": false}]',
+        documents='[]',
+        created_by="Henri"
+    )
+    t5 = Task(
+        ref="T-2026-092",
+        title="Entretien Annuel Pompe à Chaleur Piscine (PAC)",
+        description="Entretien obligatoire PAC piscine 20 kW. Facture pivot DECLERCQ PISCINES FA0069094 acquittée par Frédéric Jamet.",
+        subject="Piscine",
+        category="Piscine & Équipements",
+        priority="Normale",
+        status="TERMINE",
+        complexity="Modérée",
+        budget=450.0,
+        budget_notes="Prise en charge Frédéric Jamet (Facture DECLERCQ)",
+        assignee_id=7,
+        assigned_members='["Frédéric Jamet"]',
+        deadline="15 juillet 2026",
+        checklist='[{"text": "Nettoyage échangeur titane", "completed": true}, {"text": "Vérification pressions fluide frigorigène", "completed": true}, {"text": "Test disjoncteur différentiel", "completed": true}]',
+        documents='[{"name": "Facture_Declercq_PAC_2026.pdf", "url": "/uploads/documents/Facture_Declercq_PAC_2026.pdf", "size": "850 Ko", "type": "PDF"}]',
+        completion_notes="Entretien annuel effectué avec succès par le technicien Declercq Piscines. Rendement nominal vérifié.",
+        completion_docs='["/uploads/documents/Facture_Declercq_PAC_2026.pdf"]',
+        created_by="Frédéric"
+    )
+    t6 = Task(
+        ref="T-2026-093",
+        title="Tri et don des vêtements d'enfance dans les placards",
+        description="Tri complet des anciennes armoires et penderies, ensachage des vêtements d'enfance et livraison à la Croix-Rouge.",
+        subject="Rosing",
+        category="Amélioration & Rangement",
+        priority="Planifié",
+        status="EN_COURS",
+        complexity="Faible",
+        budget=0.0,
+        budget_notes="Bénévolat familial",
+        assignee_id=5,
+        assigned_members='["Joséphine Jamet", "Hortense Jamet"]',
+        deadline="30 août 2026",
+        checklist='[{"text": "Tri des penderies premier étage", "completed": true}, {"text": "Mise en sacs pour don", "completed": false}]',
+        documents='[]',
+        created_by="Joséphine"
+    )
+    db.add_all([t1, t2, t3, t4, t5, t6])
+    db.commit()
+
+    # Task Comments & Emoji Reactions (Stitch screen 6 discussion thread)
+    tc1 = TaskComment(
+        task_id=t1.id,
+        author_name="Henri Jamet",
+        author_role="Coordinateur Général",
+        content="Le charpentier est passé ce matin. Il confirme que les solives côté nord nécessitent un renfort métallique.",
+        reactions='{"👍": 3, "👏": 1}'
+    )
+    tc2 = TaskComment(
+        task_id=t1.id,
+        author_name="Hortense Jamet",
+        author_role="Responsable Espaces Verts",
+        content="Est-ce qu'on aura le devis définitif avant l'assemblée du 24 ?",
+        reactions='{"❤️": 2}'
+    )
+    tc3 = TaskComment(
+        task_id=t1.id,
+        author_name="Henri Jamet",
+        author_role="Coordinateur Général",
+        content="Oui, Denis m'a promis l'estimation chiffrée pour vendredi au plus tard.",
+        reactions='{"👍": 2, "💡": 1}'
+    )
+    db.add_all([tc1, tc2, tc3])
+    db.commit()
+
+    # Initial System & Audit Logs
+    log1 = Log(
+        action="SEED_DATABASE",
+        user_name="SYSTEM",
+        details="Initial database seeding executed successfully with 7 associates, unified tasks, and comments.",
+        ip_address="127.0.0.1"
+    )
+    db.add(log1)
+    db.commit()
+
+    print("Complete database seeding executed successfully for exact 7 members, unified tasks, and 3 authentic meetings!")
     db.close()
 
 if __name__ == "__main__":

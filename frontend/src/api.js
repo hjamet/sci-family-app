@@ -572,3 +572,119 @@ export async function fetchStats() {
   if (!res.ok) throw new Error('Erreur lors de la récupération des statistiques');
   return res.json();
 }
+
+// Auth Current User
+export async function fetchCurrentUser() {
+  const res = await fetch(`${API_BASE}/auth/me`, {
+    headers: getAuthHeaders()
+  });
+  if (!res.ok) throw new Error('Erreur lors de la récupération du profil');
+  return res.json();
+}
+
+// Rooms
+export async function fetchRooms() {
+  const res = await fetch(`${API_BASE}/rooms`, {
+    headers: getAuthHeaders()
+  });
+  if (!res.ok) throw new Error('Erreur lors du chargement des chambres');
+  return res.json();
+}
+
+// Reservations Stay Balance
+export async function fetchStayBalance(year = 2026) {
+  const res = await fetch(`${API_BASE}/reservations/balance?year=${year}`, {
+    headers: getAuthHeaders()
+  });
+  if (!res.ok) throw new Error('Erreur lors de la récupération de l\'équilibre des séjours');
+  return res.json();
+}
+
+// Unified Tasks API
+export async function fetchTaskById(taskId) {
+  const res = await fetch(`${API_BASE}/tasks/${taskId}`, {
+    headers: getAuthHeaders()
+  });
+  if (!res.ok) throw new Error('Tâche introuvable');
+  return res.json();
+}
+
+export async function updateTask(taskId, data) {
+  const res = await fetch(`${API_BASE}/tasks/${taskId}`, {
+    method: 'PATCH',
+    headers: getAuthJsonHeaders(),
+    body: JSON.stringify(data)
+  });
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({}));
+    throw new Error(err.detail || 'Erreur lors de la mise à jour de la tâche');
+  }
+  return res.json();
+}
+
+export async function closeTask(taskId, completionData) {
+  const res = await fetch(`${API_BASE}/tasks/${taskId}/close`, {
+    method: 'POST',
+    headers: getAuthJsonHeaders(),
+    body: JSON.stringify(completionData)
+  });
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({}));
+    throw new Error(err.detail || 'Erreur lors de la clôture de la tâche');
+  }
+  return res.json();
+}
+
+export async function deleteTask(taskId) {
+  const res = await fetch(`${API_BASE}/tasks/${taskId}`, {
+    method: 'DELETE',
+    headers: getAuthHeaders()
+  });
+  if (!res.ok) throw new Error('Erreur lors de la suppression de la tâche');
+  return true;
+}
+
+// Task Comments & Reactions
+export async function fetchTaskComments(taskId) {
+  const res = await fetch(`${API_BASE}/tasks/${taskId}/comments`, {
+    headers: getAuthHeaders()
+  });
+  if (!res.ok) throw new Error('Erreur lors du chargement des commentaires');
+  return res.json();
+}
+
+export async function addTaskComment(taskId, commentData) {
+  const res = await fetch(`${API_BASE}/tasks/${taskId}/comments`, {
+    method: 'POST',
+    headers: getAuthJsonHeaders(),
+    body: JSON.stringify(commentData)
+  });
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({}));
+    throw new Error(err.detail || 'Erreur lors de l\'ajout du commentaire');
+  }
+  return res.json();
+}
+
+export async function reactToTaskComment(taskId, commentId, emoji, userName) {
+  const res = await fetch(`${API_BASE}/tasks/${taskId}/comments/${commentId}/react`, {
+    method: 'POST',
+    headers: getAuthJsonHeaders(),
+    body: JSON.stringify({ emoji, user_name: userName })
+  });
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({}));
+    throw new Error(err.detail || 'Erreur lors de la réaction');
+  }
+  return res.json();
+}
+
+// Piscine Telemetry
+export async function fetchPiscineStatus() {
+  const res = await fetch(`${API_BASE}/piscine/status`, {
+    headers: getAuthHeaders()
+  });
+  if (!res.ok) throw new Error('Erreur lors de la récupération du statut piscine');
+  return res.json();
+}
+

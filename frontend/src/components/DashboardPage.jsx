@@ -1,304 +1,641 @@
 import React, { useState, useEffect } from 'react';
-import {
-  BookOpen, PlusCircle, Calendar, Landmark, Sparkles, AlertCircle, CheckCircle2,
-  Clock, ShieldCheck, User, Vote, ArrowRight, ChevronRight, CheckSquare, Flame
-} from 'lucide-react';
-import { fetchStats, fetchProjects, fetchReservations } from '../api';
+import { fetchProjects, fetchReservations, fetchTasks } from '../api';
 
-export default function DashboardPage({ currentUser, setActiveTab, onOpenNewProject, onOpenBooking }) {
-  const [stats, setStats] = useState(null);
+const DEFAULT_DEMO_STAYS = [
+  {
+    id: 'demo-stay-1',
+    week_number: 31,
+    start_date: '27 juil.',
+    end_date: '3 août 2026',
+    status: 'Confirmé',
+    user_name: 'Famille Hortense Jamet',
+    guests: 4,
+    property_name: 'Villa Rosing',
+    chambers_used: 3,
+  },
+  {
+    id: 'demo-stay-2',
+    week_number: 33,
+    start_date: '10 août',
+    end_date: '17 août 2026',
+    status: 'Réunion Annuelle & Fête',
+    user_name: 'Grande Retrouvaille Familiale',
+    guests: 7,
+    property_name: 'Rosing & Presbytère',
+    chambers_used: 7,
+  },
+  {
+    id: 'demo-stay-3',
+    week_number: 36,
+    start_date: '31 août',
+    end_date: '6 sept. 2026',
+    status: 'Calme & Intendance',
+    user_name: 'Frédéric & Élisabeth Jamet',
+    guests: 2,
+    property_name: 'Le Presbytère',
+    chambers_used: 2,
+  },
+];
+
+const DEFAULT_DEMO_TASKS = [
+  {
+    id: 1,
+    title: 'Contrôle & Expertise des Poutres Maîtresses',
+    description: 'Diagnostic structurel de la charpente de la bibliothèque avant plâtrerie. Devis expert attendu sous 10 jours.',
+    priority: 'Haute',
+    category: 'Bâti',
+    deadline: 'Sous 10 jours',
+    budget: 1200,
+    assignee: 'Henri Jamet',
+    assigned_members: ['Henri Jamet', 'Frédéric Jamet'],
+  },
+  {
+    id: 2,
+    title: 'Surveillance du traitement d\'eau & pompe à chaleur',
+    description: 'Vérification hebdomadaire du taux de sel et consigne de température PAC Rosing en lecture seule.',
+    priority: 'Normale',
+    category: 'Piscine',
+    deadline: 'Récurrent',
+    budget: null,
+    cost_estimate: null,
+    assignee: 'Frédéric Jamet',
+    assigned_members: ['Frédéric Jamet'],
+  },
+];
+
+export default function DashboardPage({
+  currentUser = 'Henri',
+  setActiveTab,
+  onOpenNewProject,
+  onOpenBooking,
+}) {
   const [projects, setProjects] = useState([]);
   const [reservations, setReservations] = useState([]);
+  const [tasks, setTasks] = useState([]);
   const [loading, setLoading] = useState(true);
 
-  const loadData = async () => {
-    try {
-      setLoading(true);
-      const [sData, pData, rData] = await Promise.all([
-        fetchStats(),
-        fetchProjects(),
-        fetchReservations()
-      ]);
-      setStats(sData);
-      setProjects(pData);
-      setReservations(rData);
-    } catch (err) {
-      console.error("Error loading home dashboard data:", err);
-    } finally {
-      setLoading(false);
-    }
-  };
+  const userPrenom = typeof currentUser === 'object'
+    ? (currentUser?.prenom || 'Henri')
+    : (currentUser ? currentUser.split(' ')[0] : 'Henri');
 
   useEffect(() => {
-    loadData();
+    let isMounted = true;
+    async function loadDashboardData() {
+      try {
+        setLoading(true);
+        const [projData, resData, taskData] = await Promise.all([
+          fetchProjects().catch(() => []),
+          fetchReservations().catch(() => []),
+          fetchTasks().catch(() => []),
+        ]);
+        if (isMounted) {
+          setProjects(projData || []);
+          setReservations(resData || []);
+          setTasks(taskData || []);
+        }
+      } catch (err) {
+        console.error('Erreur chargement dashboard:', err);
+      } finally {
+        if (isMounted) setLoading(false);
+      }
+    }
+    loadDashboardData();
+    return () => { isMounted = false; };
   }, []);
 
-  const pendingVotesCount = projects.filter(p => p.status === 'EN_VOTE' || p.status === 'SOUMIS').length;
+  const navigateTo = (tab) => {
+    if (setActiveTab) setActiveTab(tab);
+  };
+
+  // Find active project or use default
+  const activeVote = projects.find(p => p.status === 'EN_VOTE' || p.status === 'SOUMIS') || {
+    id: 1,
+    title: 'Réfection Couverture & Isolation Combles Presbytère',
+    description: 'Devis Charpente & Toiture Normandie retenu en AG. Vote statutaire requis pour tout engagement > 300 € sur les fonds communs de la SCI.',
+    estimated_cost: 4850,
+    status: 'EN_VOTE',
+    rapporteur: 'Henri Jamet',
+  };
+
+  const displayedStays = reservations && reservations.length > 0
+    ? reservations.slice(0, 5)
+    : DEFAULT_DEMO_STAYS;
+
+  const displayedTasks = tasks && tasks.length > 0
+    ? tasks.slice(0, 4)
+    : DEFAULT_DEMO_TASKS;
 
   return (
-    <div className="space-y-8 animate-in fade-in duration-300">
+    <div className="flex flex-col w-full space-y-space-lg sm:space-y-space-xl pb-16">
       
-      {/* Welcome Banner */}
-      <div className="relative overflow-hidden rounded-3xl bg-white dark:bg-slate-900 border border-slate-200/90 dark:border-slate-800 p-6 sm:p-8 shadow-sm text-slate-900 dark:text-slate-100">
-        <div className="absolute top-0 right-0 -mt-10 -mr-10 w-72 h-72 rounded-full bg-emerald-500/10 blur-3xl pointer-events-none"></div>
+      {/* ==================== BANNIÈRE D'ACCUEIL CHALEUREUSE ==================== */}
+      <section className="relative overflow-hidden rounded-2xl bg-surface-container-lowest p-6 sm:p-space-lg lg:p-margin shadow-sm border border-border-subtle">
+        {/* Subtle decorative glow */}
+        <div className="absolute -right-24 -top-24 w-96 h-96 rounded-full bg-sage-soft/40 blur-3xl pointer-events-none"></div>
+        <div className="absolute -left-12 -bottom-12 w-64 h-64 rounded-full bg-amber-soft/30 blur-2xl pointer-events-none"></div>
 
-        <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 relative z-10">
-          <div>
-            <div className="flex items-center space-x-2 text-xs font-semibold text-emerald-700 dark:text-emerald-400 uppercase tracking-widest mb-1">
-              <Sparkles className="h-4 w-4 text-emerald-600 dark:text-emerald-400" />
-              <span>Domaine d'Hellenvilliers • SCI Familiale</span>
-            </div>
-            <h1 className="text-2xl sm:text-4xl font-black text-slate-900 dark:text-white tracking-tight">
-              Viva Hellenvilliers !!
+        <div className="relative z-10 flex flex-col xl:flex-row xl:items-center justify-between gap-space-lg">
+          <div className="space-y-space-xs max-w-3xl">
+            <span className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full bg-sage-soft text-primary font-label-sm text-xs font-semibold">
+              <span className="w-2 h-2 rounded-full bg-primary animate-pulse"></span>
+              Domaine d'Hellenvilliers • SCI Familiale
+            </span>
+            <h1 className="font-display-lg text-2xl sm:text-3xl lg:text-display-lg text-forest-deep tracking-tight mt-2">
+              Bonjour {userPrenom},
             </h1>
-            <p className="text-sm text-slate-600 dark:text-slate-300 mt-1 max-w-xl">
-              Bienvenue sur le portail des associés. Accédez aux 6 espaces thématiques pour vos séjours, vos tâches, vos votes et la gestion du domaine.
+            <p className="font-body-md text-sm sm:text-base text-on-surface-variant leading-relaxed">
+              Bienvenue sur le portail des 7 associés. Consultez les plannings de passage, les arbitrages budgétaires et le registre des chantiers.
             </p>
           </div>
 
-          <div className="flex items-center space-x-3 bg-slate-50 dark:bg-slate-950 border border-slate-200 dark:border-slate-800 rounded-2xl px-4 py-2.5 shadow-sm">
-            <div className="w-8 h-8 rounded-full bg-cyan-600 text-white flex items-center justify-center font-bold text-xs">
-              {currentUser[0]}
-            </div>
-            <div>
-              <span className="text-[10px] text-slate-400 font-semibold uppercase block">Membre Connecté</span>
-              <span className="text-xs font-extrabold text-slate-900 dark:text-white">{currentUser}</span>
-            </div>
-          </div>
-        </div>
-      </div>
-
-      {/* GRID OF 6 LARGE COLOR TILES */}
-      <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
-        
-        {/* TILE 1: 🟢 Vademecum (Vert Émeraude) */}
-        <div
-          onClick={() => setActiveTab('vademecum')}
-          className="group relative overflow-hidden rounded-3xl p-6 bg-gradient-to-br from-emerald-600 via-teal-600 to-emerald-700 text-white shadow-md hover:shadow-xl hover:scale-[1.02] transition-all duration-200 cursor-pointer border border-emerald-500/30"
-        >
-          <div className="absolute top-0 right-0 -mt-6 -mr-6 w-32 h-32 rounded-full bg-white/10 blur-xl pointer-events-none group-hover:scale-150 transition-transform"></div>
-
-          <div className="flex justify-between items-start mb-4">
-            <div className="p-3.5 rounded-2xl bg-white/20 backdrop-blur-md text-white border border-white/20 shadow-sm">
-              <BookOpen className="h-7 w-7" />
-            </div>
-            <span className="flex items-center space-x-1 text-xs font-extrabold bg-white/20 backdrop-blur-md px-3 py-1 rounded-full text-white border border-white/20">
-              <span>7 Fiches</span>
-              <ChevronRight className="h-3.5 w-3.5 group-hover:translate-x-1 transition-transform" />
-            </span>
-          </div>
-
-          <h2 className="text-2xl font-black tracking-tight mb-1">Vademecum</h2>
-          <p className="text-xs text-emerald-100/90 leading-relaxed">
-            Consignes d'arrivée & de départ, Wi-Fi, clés, compteurs d'eau, Tempo et contacts d'urgence.
-          </p>
-        </div>
-
-        {/* TILE 2: 🟠 Signaler un Problème / Projet (Ambre/Corail) -> Opens submission modal directly! */}
-        <div
-          onClick={onOpenNewProject}
-          className="group relative overflow-hidden rounded-3xl p-6 bg-gradient-to-br from-amber-500 via-orange-500 to-rose-600 text-white shadow-md hover:shadow-xl hover:scale-[1.02] transition-all duration-200 cursor-pointer border border-amber-400/30"
-        >
-          <div className="absolute top-0 right-0 -mt-6 -mr-6 w-32 h-32 rounded-full bg-white/10 blur-xl pointer-events-none group-hover:scale-150 transition-transform"></div>
-
-          <div className="flex justify-between items-start mb-4">
-            <div className="p-3.5 rounded-2xl bg-white/20 backdrop-blur-md text-white border border-white/20 shadow-sm">
-              <PlusCircle className="h-7 w-7" />
-            </div>
-            <span className="flex items-center space-x-1 text-xs font-extrabold bg-white/20 backdrop-blur-md px-3 py-1 rounded-full text-white border border-white/20">
-              <span>Nouveau</span>
-              <ChevronRight className="h-3.5 w-3.5 group-hover:translate-x-1 transition-transform" />
-            </span>
-          </div>
-
-          <h2 className="text-2xl font-black tracking-tight mb-1">Signaler un Problème</h2>
-          <p className="text-xs text-amber-100/90 leading-relaxed">
-            Ouvrir le formulaire rapide pour signaler une panne, une urgence ou proposer une idée de projet.
-          </p>
-        </div>
-
-        {/* TILE 3: 🟣 Réservations & Planning (Indigo/Violet) */}
-        <div
-          onClick={() => setActiveTab('reservations')}
-          className="group relative overflow-hidden rounded-3xl p-6 bg-gradient-to-br from-indigo-600 via-purple-600 to-violet-700 text-white shadow-md hover:shadow-xl hover:scale-[1.02] transition-all duration-200 cursor-pointer border border-indigo-500/30"
-        >
-          <div className="absolute top-0 right-0 -mt-6 -mr-6 w-32 h-32 rounded-full bg-white/10 blur-xl pointer-events-none group-hover:scale-150 transition-transform"></div>
-
-          <div className="flex justify-between items-start mb-4">
-            <div className="p-3.5 rounded-2xl bg-white/20 backdrop-blur-md text-white border border-white/20 shadow-sm">
-              <Calendar className="h-7 w-7" />
-            </div>
-            <span className="flex items-center space-x-1 text-xs font-extrabold bg-white/20 backdrop-blur-md px-3 py-1 rounded-full text-white border border-white/20">
-              <span>Chart 12M</span>
-              <ChevronRight className="h-3.5 w-3.5 group-hover:translate-x-1 transition-transform" />
-            </span>
-          </div>
-
-          <h2 className="text-2xl font-black tracking-tight mb-1">Réservations & Planning</h2>
-          <p className="text-xs text-indigo-100/90 leading-relaxed">
-            Agenda des séjours, graphique d'occupation 12 mois des 7 chambres et réservation en ligne.
-          </p>
-        </div>
-
-        {/* TILE 4: 🔵 Informations Administratives (Bleu SCI) */}
-        <div
-          onClick={() => setActiveTab('admin')}
-          className="group relative overflow-hidden rounded-3xl p-6 bg-gradient-to-br from-blue-700 via-blue-800 to-slate-900 text-white shadow-md hover:shadow-xl hover:scale-[1.02] transition-all duration-200 cursor-pointer border border-blue-500/30"
-        >
-          <div className="absolute top-0 right-0 -mt-6 -mr-6 w-32 h-32 rounded-full bg-white/10 blur-xl pointer-events-none group-hover:scale-150 transition-transform"></div>
-
-          <div className="flex justify-between items-start mb-4">
-            <div className="p-3.5 rounded-2xl bg-white/20 backdrop-blur-md text-white border border-white/20 shadow-sm">
-              <Landmark className="h-7 w-7" />
-            </div>
-            <span className="flex items-center space-x-1 text-xs font-extrabold bg-white/20 backdrop-blur-md px-3 py-1 rounded-full text-white border border-white/20">
-              <span>RIB & Statuts</span>
-              <ChevronRight className="h-3.5 w-3.5 group-hover:translate-x-1 transition-transform" />
-            </span>
-          </div>
-
-          <h2 className="text-2xl font-black tracking-tight mb-1">Informations Admin</h2>
-          <p className="text-xs text-blue-100/90 leading-relaxed">
-            RIB de la SCI, Statuts constitutifs, Budget annuel (17 157 €) et simulateur CCA 50 €/mois.
-          </p>
-        </div>
-
-        {/* TILE 5: 🟡 Mes Tâches (Jaune/Ambre) -> Navigates to tasks dedicated tab */}
-        <div
-          onClick={() => setActiveTab('tasks')}
-          className="group relative overflow-hidden rounded-3xl p-6 bg-gradient-to-br from-amber-400 via-yellow-500 to-amber-600 text-white shadow-md hover:shadow-xl hover:scale-[1.02] transition-all duration-200 cursor-pointer border border-amber-300/40"
-        >
-          <div className="absolute top-0 right-0 -mt-6 -mr-6 w-32 h-32 rounded-full bg-white/10 blur-xl pointer-events-none group-hover:scale-150 transition-transform"></div>
-
-          <div className="flex justify-between items-start mb-4">
-            <div className="p-3.5 rounded-2xl bg-white/20 backdrop-blur-md text-white border border-white/20 shadow-sm">
-              <CheckSquare className="h-7 w-7" />
-            </div>
-            <span className="flex items-center space-x-1 text-xs font-extrabold bg-white/20 backdrop-blur-md px-3 py-1 rounded-full text-white border border-white/20">
-              <span>Mon Espace</span>
-              <ChevronRight className="h-3.5 w-3.5 group-hover:translate-x-1 transition-transform" />
-            </span>
-          </div>
-
-          <h2 className="text-2xl font-black tracking-tight mb-1">Mes Tâches</h2>
-          <p className="text-xs text-amber-100/95 leading-relaxed">
-            Page dédiée aux consignes de séjour et tâches d'entretien personnellement attribuées.
-          </p>
-        </div>
-
-        {/* TILE 6: 🗳️ Voter (Rose/Violet) -> Navigates to signalements active votes */}
-        <div
-          onClick={() => setActiveTab('signalements')}
-          className="group relative overflow-hidden rounded-3xl p-6 bg-gradient-to-br from-rose-600 via-pink-600 to-purple-700 text-white shadow-md hover:shadow-xl hover:scale-[1.02] transition-all duration-200 cursor-pointer border border-rose-400/30"
-        >
-          <div className="absolute top-0 right-0 -mt-6 -mr-6 w-32 h-32 rounded-full bg-white/10 blur-xl pointer-events-none group-hover:scale-150 transition-transform"></div>
-
-          <div className="flex justify-between items-start mb-4">
-            <div className="p-3.5 rounded-2xl bg-white/20 backdrop-blur-md text-white border border-white/20 shadow-sm">
-              <Vote className="h-7 w-7" />
-            </div>
-            <span className="flex items-center space-x-1 text-xs font-extrabold bg-white/20 backdrop-blur-md px-3 py-1 rounded-full text-white border border-white/20">
-              <span>{pendingVotesCount} en vote</span>
-              <ChevronRight className="h-3.5 w-3.5 group-hover:translate-x-1 transition-transform" />
-            </span>
-          </div>
-
-          <h2 className="text-2xl font-black tracking-tight mb-1">Voter sur les Projets</h2>
-          <p className="text-xs text-rose-100/90 leading-relaxed">
-            Espace de vote des 7 associés pour approuver les devis, travaux et idées d'aménagement.
-          </p>
-        </div>
-
-      </div>
-
-      {/* QUICK OVERVIEW & UPCOMING STAYS SUMMARY */}
-      <div className="grid grid-cols-1 lg:grid-cols-3 gap-6 pt-4">
-        
-        {/* Next Stays Card */}
-        <div className="lg:col-span-2 bg-white dark:bg-slate-900 rounded-3xl p-6 border border-slate-200/90 dark:border-slate-800 shadow-sm flex flex-col justify-between">
-          <div className="flex items-center justify-between border-b border-slate-100 dark:border-slate-800 pb-4 mb-4">
-            <div className="flex items-center space-x-2">
-              <div className="p-2 rounded-xl bg-purple-50 dark:bg-purple-950/60 text-purple-600 dark:text-purple-400">
-                <Clock className="h-5 w-5" />
-              </div>
-              <h3 className="text-base font-bold text-slate-900 dark:text-white">Prochains Séjours à Hellenvilliers</h3>
-            </div>
+          {/* Boutons d'Action Rapide : Style Signature (Fond Blanc + Bordure 2px + Icône + Texte) */}
+          <div className="flex flex-wrap sm:flex-nowrap items-stretch gap-space-xs sm:gap-space-sm pt-space-xs xl:pt-0">
             <button
-              onClick={() => setActiveTab('reservations')}
-              className="text-xs font-bold text-indigo-600 dark:text-indigo-400 hover:underline flex items-center space-x-1"
+              type="button"
+              onClick={() => {
+                if (onOpenBooking) onOpenBooking();
+                else navigateTo('reservations');
+              }}
+              className="group flex items-center justify-center gap-2 px-5 py-3.5 rounded-DEFAULT bg-white border-2 border-primary text-primary hover:bg-sage-soft font-label-lg text-sm sm:text-label-lg transition-all duration-200 shadow-sm cursor-pointer whitespace-nowrap"
             >
-              <span>Voir l'agenda complet</span>
-              <ArrowRight className="h-3.5 w-3.5" />
+              <span className="material-symbols-outlined text-[22px] group-hover:scale-110 transition-transform">
+                event_available
+              </span>
+              <span>Réserver un séjour</span>
+            </button>
+
+            <button
+              type="button"
+              onClick={() => navigateTo('vademecum')}
+              className="group flex items-center justify-center gap-2 px-5 py-3.5 rounded-DEFAULT bg-white border-2 border-outline-variant text-on-surface hover:border-outline hover:bg-canvas-slate font-label-lg text-sm sm:text-label-lg transition-all duration-200 shadow-sm cursor-pointer whitespace-nowrap"
+            >
+              <span className="material-symbols-outlined text-[22px] text-primary group-hover:rotate-12 transition-transform">
+                key
+              </span>
+              <span>Voir le Vadémécum</span>
+            </button>
+
+            <button
+              type="button"
+              onClick={() => navigateTo('tasks')}
+              className="flex items-center justify-center gap-2 px-5 py-3.5 rounded-DEFAULT bg-white border-2 border-primary text-primary hover:bg-sage-soft font-label-lg text-sm sm:text-label-lg font-semibold transition-all shadow-sm cursor-pointer whitespace-nowrap"
+            >
+              <span className="material-symbols-outlined text-[22px]">checklist</span>
+              <span>Voir toutes les tâches</span>
             </button>
           </div>
+        </div>
+      </section>
 
-          {loading ? (
-            <p className="text-xs text-slate-400 py-6 text-center">Chargement des séjours...</p>
-          ) : reservations.length === 0 ? (
-            <p className="text-xs text-slate-500 py-6 text-center">Aucun séjour planifié pour le moment.</p>
-          ) : (
-            <div className="space-y-3">
-              {reservations.slice(0, 3).map((r) => (
-                <div key={r.id} className="p-4 rounded-2xl bg-slate-50 dark:bg-slate-950 border border-slate-200/70 dark:border-slate-800 flex items-center justify-between">
-                  <div className="flex items-center space-x-3">
-                    <div className="w-9 h-9 rounded-full bg-indigo-600 text-white flex items-center justify-center font-extrabold text-xs">
-                      {r.user_name[0]}
-                    </div>
-                    <div>
-                      <h4 className="text-xs font-bold text-slate-900 dark:text-white">{r.user_name}</h4>
-                      <p className="text-[11px] text-slate-500 dark:text-slate-400">
-                        Du <strong className="text-slate-800 dark:text-slate-200">{r.start_date}</strong> au <strong className="text-slate-800 dark:text-slate-200">{r.end_date}</strong>
-                      </p>
-                    </div>
-                  </div>
-                  <span className="px-3 py-1 rounded-full text-[10px] font-bold bg-emerald-50 text-emerald-700 border border-emerald-200 dark:bg-emerald-950/60 dark:text-emerald-300 dark:border-emerald-800">
-                    Semaine {r.week_number}
-                  </span>
-                </div>
-              ))}
+      {/* ==================== 4 GRANDS ENCADRÉS THÉMATIQUES INTERACTIFS ==================== */}
+      <section className="grid grid-cols-1 md:grid-cols-2 gap-space-md">
+        
+        {/* Pilier 1 : Votes & Décisions */}
+        <div
+          onClick={() => navigateTo('votes')}
+          className="group relative overflow-hidden rounded-2xl min-h-[160px] p-space-md bg-gradient-to-br from-[#065f46] to-[#044e39] text-white shadow-md transition-all duration-300 transform hover:-translate-y-1 hover:shadow-xl cursor-pointer flex flex-col justify-between"
+        >
+          <div className="absolute -right-6 -bottom-6 w-32 h-32 rounded-full bg-white/10 blur-xl pointer-events-none group-hover:scale-150 transition-transform duration-500"></div>
+          <div className="relative z-10 flex items-center justify-between gap-3">
+            <div className="w-12 h-12 rounded-xl bg-white/15 backdrop-blur-sm flex items-center justify-center text-emerald-200 group-hover:bg-white group-hover:text-[#065f46] transition-all duration-300 shadow-sm">
+              <span className="material-symbols-outlined text-[28px]">how_to_vote</span>
             </div>
-          )}
+            <span className="opacity-90 group-hover:opacity-100 transition-opacity duration-300 inline-flex items-center gap-1 text-[11px] font-semibold uppercase tracking-wider px-2.5 py-1 rounded-full bg-white/15 backdrop-blur-sm text-emerald-100">
+              1 voix = 1 pers.
+            </span>
+          </div>
+          <div className="relative z-10 mt-3">
+            <h3 className="font-headline-md text-headline-sm font-bold tracking-tight text-white flex items-center justify-between">
+              <span>Votes & Décisions</span>
+              <span className="material-symbols-outlined text-sm opacity-0 -translate-x-2 group-hover:opacity-100 group-hover:translate-x-0 transition-all duration-300 text-white">
+                arrow_forward
+              </span>
+            </h3>
+            <p className="font-body-md text-xs leading-relaxed text-emerald-100/90 font-medium mt-2">
+              Arbitrages financiers & scrutins du domaine, décisions de budget, consultation des 7 voix et votes &gt; 300 €.
+            </p>
+          </div>
         </div>
 
-        {/* SCI Key Figures Summary */}
-        <div className="bg-white dark:bg-slate-900 rounded-3xl p-6 border border-slate-200/90 dark:border-slate-800 shadow-sm flex flex-col justify-between">
-          <div>
-            <div className="flex items-center space-x-2 border-b border-slate-100 dark:border-slate-800 pb-4 mb-4">
-              <div className="p-2 rounded-xl bg-blue-50 dark:bg-blue-950/60 text-blue-600 dark:text-blue-400">
-                <Landmark className="h-5 w-5" />
-              </div>
-              <h3 className="text-base font-bold text-slate-900 dark:text-white">Repères SCI</h3>
+        {/* Pilier 2 : Administratif & Budget */}
+        <div
+          onClick={() => navigateTo('admin')}
+          className="group relative overflow-hidden rounded-2xl min-h-[160px] p-space-md bg-gradient-to-br from-[#0f4c81] to-[#0a355c] text-white shadow-md transition-all duration-300 transform hover:-translate-y-1 hover:shadow-xl cursor-pointer flex flex-col justify-between"
+        >
+          <div className="absolute -right-6 -bottom-6 w-32 h-32 rounded-full bg-white/10 blur-xl pointer-events-none group-hover:scale-150 transition-transform duration-500"></div>
+          <div className="relative z-10 flex items-center justify-between gap-3">
+            <div className="w-12 h-12 rounded-xl bg-white/15 backdrop-blur-sm flex items-center justify-center text-blue-200 group-hover:bg-white group-hover:text-[#0f4c81] transition-all duration-300 shadow-sm">
+              <span className="material-symbols-outlined text-[28px]">folder_shared</span>
             </div>
+            <span className="opacity-90 group-hover:opacity-100 transition-opacity duration-300 inline-flex items-center gap-1 text-[11px] font-semibold uppercase tracking-wider px-2.5 py-1 rounded-full bg-white/15 backdrop-blur-sm text-blue-100">
+              Statuts & CCA
+            </span>
+          </div>
+          <div className="relative z-10 mt-3">
+            <h3 className="font-headline-md text-headline-sm font-bold tracking-tight text-white flex items-center justify-between">
+              <span>Administratif & Budget</span>
+              <span className="material-symbols-outlined text-sm opacity-0 -translate-x-2 group-hover:opacity-100 group-hover:translate-x-0 transition-all duration-300 text-white">
+                arrow_forward
+              </span>
+            </h3>
+            <p className="font-body-md text-xs leading-relaxed text-blue-100/90 font-medium mt-2">
+              Comptes bancaires, cotisations CCA 50 €/mois, statuts notariés, KYC et actes officiels du domaine.
+            </p>
+          </div>
+        </div>
 
-            <div className="space-y-4">
-              <div className="flex justify-between items-center text-xs">
-                <span className="text-slate-500 dark:text-slate-400">Budget Annuel Total :</span>
-                <span className="font-extrabold text-slate-900 dark:text-white">17 157 € / an</span>
-              </div>
-              <div className="flex justify-between items-center text-xs">
-                <span className="text-slate-500 dark:text-slate-400">Cotisation CCA Suggérée :</span>
-                <span className="font-extrabold text-indigo-600 dark:text-indigo-400">50 € / mois</span>
-              </div>
-              <div className="flex justify-between items-center text-xs">
-                <span className="text-slate-500 dark:text-slate-400">Jardinier (EI PERROT) :</span>
-                <span className="font-bold text-amber-700 dark:text-amber-400">3 900 € TTC/an</span>
-              </div>
-              <div className="flex justify-between items-center text-xs">
-                <span className="text-slate-500 dark:text-slate-400">Associés Égaux :</span>
-                <span className="font-bold text-slate-800 dark:text-slate-200">7 Membres Famille</span>
+        {/* Pilier 3 : Calendrier des Passages */}
+        <div
+          onClick={() => navigateTo('reservations')}
+          className="group relative overflow-hidden rounded-2xl min-h-[160px] p-space-md bg-gradient-to-br from-[#d97706] to-[#92400e] text-white shadow-md transition-all duration-300 transform hover:-translate-y-1 hover:shadow-xl cursor-pointer flex flex-col justify-between"
+        >
+          <div className="absolute -right-6 -bottom-6 w-32 h-32 rounded-full bg-white/10 blur-xl pointer-events-none group-hover:scale-150 transition-transform duration-500"></div>
+          <div className="relative z-10 flex items-center justify-between gap-3">
+            <div className="w-12 h-12 rounded-xl bg-white/15 backdrop-blur-sm flex items-center justify-center text-amber-200 group-hover:bg-white group-hover:text-[#d97706] transition-all duration-300 shadow-sm">
+              <span className="material-symbols-outlined text-[28px]">calendar_month</span>
+            </div>
+            <span className="opacity-90 group-hover:opacity-100 transition-opacity duration-300 inline-flex items-center gap-1 text-[11px] font-semibold uppercase tracking-wider px-2.5 py-1 rounded-full bg-white/15 backdrop-blur-sm text-amber-100">
+              52 Semaines
+            </span>
+          </div>
+          <div className="relative z-10 mt-3">
+            <h3 className="font-headline-md text-headline-sm font-bold tracking-tight text-white flex items-center justify-between">
+              <span>Calendrier des Passages</span>
+              <span className="material-symbols-outlined text-sm opacity-0 -translate-x-2 group-hover:opacity-100 group-hover:translate-x-0 transition-all duration-300 text-white">
+                arrow_forward
+              </span>
+            </h3>
+            <p className="font-body-md text-xs leading-relaxed text-amber-100/90 font-medium mt-2">
+              7 chambres, séjours & réservations, smart matching des retrouvailles estivales et règle des 2 semaines.
+            </p>
+          </div>
+        </div>
+
+        {/* Pilier 4 : Séjour & Intendance */}
+        <div
+          onClick={() => navigateTo('vademecum')}
+          className="group relative overflow-hidden rounded-2xl min-h-[160px] p-space-md bg-gradient-to-br from-[#0d9488] to-[#115e59] text-white shadow-md transition-all duration-300 transform hover:-translate-y-1 hover:shadow-xl cursor-pointer flex flex-col justify-between"
+        >
+          <div className="absolute -right-6 -bottom-6 w-32 h-32 rounded-full bg-white/10 blur-xl pointer-events-none group-hover:scale-150 transition-transform duration-500"></div>
+          <div className="relative z-10 flex items-center justify-between gap-3">
+            <div className="w-12 h-12 rounded-xl bg-white/15 backdrop-blur-sm flex items-center justify-center text-teal-200 group-hover:bg-white group-hover:text-[#0d9488] transition-all duration-300 shadow-sm">
+              <span className="material-symbols-outlined text-[28px]">key</span>
+            </div>
+            <span className="opacity-90 group-hover:opacity-100 transition-opacity duration-300 inline-flex items-center gap-1 text-[11px] font-semibold uppercase tracking-wider px-2.5 py-1 rounded-full bg-white/15 backdrop-blur-sm text-teal-100">
+              Guide & Énergie
+            </span>
+          </div>
+          <div className="relative z-10 mt-3">
+            <h3 className="font-headline-md text-headline-sm font-bold tracking-tight text-white flex items-center justify-between">
+              <span>Séjour & Intendance</span>
+              <span className="material-symbols-outlined text-sm opacity-0 -translate-x-2 group-hover:opacity-100 group-hover:translate-x-0 transition-all duration-300 text-white">
+                arrow_forward
+              </span>
+            </h3>
+            <p className="font-body-md text-xs leading-relaxed text-teal-100/90 font-medium mt-2">
+              Vadémécum complet, codes Wi-Fi, télémesure PAC, entretien de la piscine et protocoles de départ.
+            </p>
+          </div>
+        </div>
+
+      </section>
+
+      {/* ==================== SCRUTIN FAMILIAL EN COURS ==================== */}
+      <section className="w-full bg-surface-container-lowest rounded-2xl p-6 sm:p-space-lg shadow-sm border-2 border-primary/30 flex flex-col space-y-space-md relative overflow-hidden">
+        <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-space-sm border-b border-outline-variant/20 pb-space-sm">
+          <div className="flex items-center gap-3 flex-wrap">
+            <div className="w-10 h-10 rounded-xl bg-sage-soft text-primary flex items-center justify-center font-bold">
+              <span className="material-symbols-outlined text-[24px]">how_to_vote</span>
+            </div>
+            <div>
+              <div className="flex items-center gap-2">
+                <h2 className="font-headline-md text-base sm:text-headline-sm text-forest-deep font-bold tracking-tight">
+                  Démocratie Familiale & Scrutins en cours
+                </h2>
+                <span className="px-2.5 py-0.5 rounded-full bg-sage-soft text-primary font-label-sm text-xs font-bold">
+                  Vote actif
+                </span>
               </div>
             </div>
           </div>
 
-          <button
-            onClick={() => setActiveTab('admin')}
-            className="mt-6 w-full py-2.5 bg-slate-100 dark:bg-slate-800 hover:bg-slate-200 dark:hover:bg-slate-700 text-slate-800 dark:text-slate-200 text-xs font-bold rounded-xl transition"
-          >
-            Accéder aux infos financières & RIB →
-          </button>
+          <div className="flex items-center gap-2">
+            <button
+              type="button"
+              onClick={() => navigateTo('votes')}
+              className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-DEFAULT bg-white border-2 border-outline-variant text-on-surface-variant font-label-sm text-xs font-semibold hover:border-outline hover:bg-canvas-slate transition-colors shadow-sm cursor-pointer"
+            >
+              Tous les votes ({projects.length || 2})
+            </button>
+          </div>
         </div>
 
-      </div>
+        <article className="bg-white rounded-xl p-space-md border border-outline-variant/30 flex flex-col gap-4 shadow-sm">
+          <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2">
+            <div className="flex items-center gap-2">
+              <span className="px-2.5 py-0.5 rounded-full bg-emerald-50 text-emerald-800 border border-emerald-200 text-xs font-semibold">
+                Majorité statutaire requise
+              </span>
+            </div>
+            <div className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full bg-canvas-slate border border-outline-variant/30 text-xs font-bold text-forest-deep self-start sm:self-auto">
+              <span className="text-on-surface-variant font-normal">Enveloppe budgétaire :</span>
+              {activeVote.estimated_cost ? `${activeVote.estimated_cost.toLocaleString('fr-FR')} € TTC` : '4 850 € TTC'}
+            </div>
+          </div>
+
+          <div>
+            <h3 className="font-headline-md text-base sm:text-headline-sm font-bold text-forest-deep">
+              {activeVote.title}
+            </h3>
+            <p className="font-body-md text-on-surface-variant text-xs sm:text-sm leading-relaxed mt-1">
+              {activeVote.description}
+            </p>
+          </div>
+
+          <div className="bg-canvas-slate rounded-xl p-space-sm border border-outline-variant/30 space-y-2">
+            <div className="flex items-center justify-between text-xs">
+              <span className="font-bold text-forest-deep flex items-center gap-1.5">
+                <span className="material-symbols-outlined text-[16px] text-primary">poll</span>
+                Participation : 5/7 voix exprimées (71%)
+              </span>
+              <span className="font-bold text-primary">Majorité qualifiée acquise</span>
+            </div>
+
+            <div className="w-full h-2.5 rounded-full bg-surface-container overflow-hidden flex">
+              <div className="bg-primary h-full transition-all duration-500" style={{ width: '71%' }} title="4 Pour"></div>
+              <div className="bg-amber-rich h-full transition-all duration-500" style={{ width: '14%' }} title="1 Abstention"></div>
+              <div className="bg-error h-full transition-all duration-500" style={{ width: '0%' }} title="0 Contre"></div>
+            </div>
+
+            <div className="flex flex-wrap items-center justify-between gap-2 text-xs text-on-surface-variant pt-1">
+              <span className="flex items-center gap-1.5 font-medium">
+                <span className="w-2 h-2 rounded-full bg-primary inline-block"></span>
+                4 Pour (Hortense, Henri, Marguerite, Joséphine)
+              </span>
+              <span className="flex items-center gap-1.5 font-medium">
+                <span className="w-2 h-2 rounded-full bg-amber-rich inline-block"></span>
+                1 Abstention
+              </span>
+              <span className="italic text-on-surface-variant/80">2 en attente</span>
+            </div>
+          </div>
+
+          <div className="pt-2 border-t border-outline-variant/20 flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+            <div className="flex items-center gap-2">
+              <div className="w-8 h-8 rounded-full bg-[#065f46] text-white flex items-center justify-center font-bold text-xs">
+                HJ
+              </div>
+              <div className="flex flex-col leading-tight">
+                <span className="text-xs font-semibold text-on-surface">Rapporteur : Henri Jamet</span>
+                <span className="text-[11px] text-on-surface-variant">Gérant de la SCI</span>
+              </div>
+            </div>
+
+            <div className="flex items-center gap-2.5">
+              <button
+                type="button"
+                onClick={() => navigateTo('votes')}
+                className="inline-flex items-center gap-1.5 px-4 py-2 rounded-DEFAULT bg-white border-2 border-outline-variant text-on-surface font-label-sm text-xs font-semibold hover:border-outline hover:bg-canvas-slate transition-colors shadow-sm cursor-pointer"
+              >
+                <span className="material-symbols-outlined text-[18px] text-primary">visibility</span>
+                Voir le dossier
+              </button>
+              <button
+                type="button"
+                onClick={() => navigateTo('votes')}
+                className="inline-flex items-center gap-1.5 px-5 py-2 rounded-DEFAULT bg-white border-2 border-primary text-primary font-label-sm text-xs font-bold hover:bg-sage-soft transition-colors shadow-sm cursor-pointer"
+              >
+                <span className="material-symbols-outlined text-[18px]">how_to_vote</span>
+                Voter
+              </button>
+            </div>
+          </div>
+        </article>
+      </section>
+
+      {/* ==================== SECTION SCINDÉE : SÉJOURS & MISSIONS ==================== */}
+      <section className="grid grid-cols-1 lg:grid-cols-2 gap-space-lg items-start">
+        
+        {/* Colonne Gauche : Prochains Séjours au Domaine */}
+        <div className="flex flex-col space-y-space-md bg-surface-container-lowest rounded-2xl p-6 sm:p-space-lg shadow-sm border border-outline-variant/30">
+          <div className="space-y-space-xs border-b border-outline-variant/20 pb-space-sm">
+            <div className="flex items-center gap-2">
+              <span className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full bg-sage-soft text-primary font-label-sm text-xs font-semibold">
+                <span className="material-symbols-outlined text-[16px]">date_range</span>
+                Calendrier 52 Semaines
+              </span>
+              <span className="text-xs text-on-surface-variant font-medium">Saison 2026</span>
+            </div>
+            <h2 className="font-headline-md text-lg sm:text-headline-md text-forest-deep font-bold tracking-tight">
+              Prochains Séjours au Domaine
+            </h2>
+            <p className="font-body-md text-xs sm:text-sm text-on-surface-variant leading-relaxed">
+              Réservations confirmées et présences familiales à Rosing et au Presbytère.
+            </p>
+          </div>
+
+          <div className="flex flex-col space-y-3 max-h-[420px] overflow-y-auto pr-1">
+            {displayedStays.map((stay, idx) => {
+              const weekLabel = stay.week_number ? `Semaine ${stay.week_number}` : (stay.week ? `Semaine ${stay.week}` : `Séjour #${idx + 1}`);
+              const dateRange = stay.start_date && stay.end_date
+                ? `(${stay.start_date} - ${stay.end_date})`
+                : '(Dates à confirmer)';
+              const status = stay.status || 'Confirmé';
+              const isHighlight = status.includes('Fête') || status.includes('Annuelle');
+              const familyName = stay.user_name || stay.title || 'Associé SCI';
+              const guestsCount = stay.guest_count || stay.guests || 1;
+              const propName = stay.property_name || (stay.property_id === 2 ? 'Le Presbytère' : 'Villa Rosing');
+              const roomsCount = stay.chambers_used || stay.rooms_count || (Array.isArray(stay.selected_rooms) ? stay.selected_rooms.length : 1);
+
+              return (
+                <article
+                  key={stay.id || idx}
+                  className="rounded-xl bg-white p-3.5 border border-outline-variant/30 flex flex-col justify-between gap-2.5 hover:shadow-md transition-all"
+                >
+                  <div className="flex items-center justify-between gap-2 flex-wrap">
+                    <div className="flex items-center gap-2">
+                      <span className="font-label-md text-sm font-bold text-forest-deep">{weekLabel}</span>
+                      <span className="text-xs text-on-surface-variant font-medium">{dateRange}</span>
+                    </div>
+                    <span className={`inline-flex items-center gap-1 px-2 py-0.5 rounded-full font-label-sm text-xs font-semibold ${
+                      isHighlight
+                        ? 'bg-emerald-100 text-forest-deep'
+                        : 'bg-sage-soft text-primary'
+                    }`}>
+                      {isHighlight ? (
+                        <span className="material-symbols-outlined text-[13px]">stars</span>
+                      ) : (
+                        <span className="w-1.5 h-1.5 rounded-full bg-primary"></span>
+                      )}
+                      {status}
+                    </span>
+                  </div>
+                  <div className="flex items-center justify-between gap-2">
+                    <div>
+                      <p className="font-body-md text-on-surface font-semibold text-xs sm:text-sm leading-tight">
+                        {familyName} <span className="text-on-surface-variant font-normal text-xs">({guestsCount} pers.)</span>
+                      </p>
+                      <div className="flex items-center gap-3 text-xs text-on-surface-variant pt-1">
+                        <span className="inline-flex items-center gap-1">
+                          <span className="material-symbols-outlined text-[15px] text-primary">home</span>{propName}
+                        </span>
+                        <span className="inline-flex items-center gap-1">
+                          <span className="material-symbols-outlined text-[15px] text-primary">bed</span>{roomsCount} chambre{roomsCount > 1 ? 's' : ''}
+                        </span>
+                      </div>
+                    </div>
+                    <button
+                      type="button"
+                      onClick={() => navigateTo('reservations')}
+                      className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-DEFAULT bg-white border-2 border-primary text-primary font-label-sm text-xs font-semibold hover:bg-sage-soft transition-colors shadow-sm whitespace-nowrap cursor-pointer"
+                    >
+                      <span className="material-symbols-outlined text-[16px]">visibility</span>Détails
+                    </button>
+                  </div>
+                </article>
+              );
+            })}
+          </div>
+
+          <div className="pt-space-xs">
+            <button
+              type="button"
+              onClick={() => {
+                if (onOpenBooking) onOpenBooking();
+                else navigateTo('reservations');
+              }}
+              className="flex items-center justify-center gap-2 w-full px-5 py-3 rounded-DEFAULT bg-white border-2 border-primary text-primary hover:bg-sage-soft font-label-lg text-sm sm:text-label-lg font-semibold transition-all shadow-sm cursor-pointer"
+            >
+              <span className="material-symbols-outlined text-[22px]">add_circle_outline</span>
+              Réserver un nouveau séjour
+            </button>
+          </div>
+        </div>
+
+        {/* Colonne Droite : Missions & Tâches sous votre responsabilité */}
+        <div className="flex flex-col space-y-space-md bg-surface-container-lowest rounded-2xl p-6 sm:p-space-lg shadow-sm border border-outline-variant/30">
+          <div className="space-y-space-xs border-b border-outline-variant/20 pb-space-sm">
+            <div className="flex items-center justify-between gap-2 flex-wrap">
+              <div className="flex items-center gap-2">
+                <span className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full bg-amber-soft text-amber-rich font-label-sm text-xs font-semibold">
+                  <span className="material-symbols-outlined text-[16px]">shield_person</span>
+                  Coordinateur & Gérant
+                </span>
+                <span className="text-xs text-on-surface-variant font-medium">Henri Jamet</span>
+              </div>
+              <span className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full bg-sage-soft text-primary font-label-sm text-xs font-semibold">
+                <span className="w-1.5 h-1.5 rounded-full bg-primary animate-pulse"></span>
+                {tasks.length > 0 ? tasks.length : displayedTasks.length} Chantiers actifs
+              </span>
+            </div>
+            <h2 className="font-headline-md text-lg sm:text-headline-md text-forest-deep font-bold tracking-tight">
+              Missions & Tâches sous votre responsabilité
+            </h2>
+            <p className="font-body-md text-xs sm:text-sm text-on-surface-variant leading-relaxed">
+              Suivi des chantiers, arbitrages opérationnels et missions d'intendance confiées aux associés.
+            </p>
+          </div>
+
+          <div className="flex flex-col space-y-space-sm">
+            {displayedTasks.map((t, idx) => {
+              const isHigh = t.priority === 'Critique' || t.priority === 'Haute';
+              const category = t.category || 'Domaine';
+              const deadline = t.deadline || t.timeline || 'Sous 10 jours';
+              const budgetText = t.budget
+                ? `Devis ~${t.budget} €`
+                : (t.cost_estimate ? `~${t.cost_estimate} €` : 'Inclus SCI');
+              const assignee = (Array.isArray(t.assigned_members) && t.assigned_members.length > 0 ? t.assigned_members[0] : null) || t.assignee || 'Henri Jamet';
+              const initials = assignee.split(' ').map(n => n[0]).join('').substring(0, 2).toUpperCase() || 'HJ';
+              const secondaries = Array.isArray(t.assigned_members) && t.assigned_members.length > 1
+                ? `Avec ${t.assigned_members.slice(1).join(', ')}`
+                : (t.subject ? `Emplacement : ${t.subject}` : 'Chantier domaine');
+
+              return (
+                <article
+                  key={t.id || idx}
+                  className={`rounded-xl p-4 shadow-sm flex flex-col gap-3 transition-all hover:shadow-md ${
+                    isHigh
+                      ? 'bg-amber-soft/30 border-2 border-amber-rich/40'
+                      : 'bg-white border border-outline-variant/40'
+                  }`}
+                >
+                  <div className="flex items-center justify-between gap-2 flex-wrap">
+                    <div className="flex items-center gap-2 flex-wrap">
+                      <span className={`inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full text-[11px] font-bold uppercase tracking-wider ${
+                        isHigh ? 'bg-amber-rich text-white' : 'bg-emerald-100 text-emerald-900'
+                      }`}>
+                        <span className="material-symbols-outlined text-[14px]">
+                          {isHigh ? 'warning' : 'assignment'}
+                        </span>
+                        {isHigh ? `Priorité ${t.priority} • ${category}` : `Normal • ${category}`}
+                      </span>
+                      <span className={`text-xs font-semibold ${isHigh ? 'text-amber-rich' : 'text-on-surface-variant'}`}>
+                        {deadline}
+                      </span>
+                    </div>
+                    <div className="text-right">
+                      <span className="text-xs text-on-surface-variant font-medium block">Budget prévisionnel</span>
+                      <span className={`font-headline-sm font-bold text-xs sm:text-sm ${isHigh ? 'text-amber-rich' : 'text-forest-deep'}`}>
+                        {budgetText}
+                      </span>
+                    </div>
+                  </div>
+
+                  <div>
+                    <h3 className="font-headline-sm text-sm sm:text-headline-sm text-forest-deep font-bold">
+                      {t.title}
+                    </h3>
+                    <p className="font-body-md text-on-surface-variant text-xs leading-relaxed mt-1 line-clamp-2">
+                      {t.description}
+                    </p>
+                  </div>
+
+                  <div className="pt-2 border-t border-slate-100 flex items-center justify-between gap-3 flex-wrap">
+                    <div className="flex items-center gap-2">
+                      <div className={`w-7 h-7 rounded-full text-white flex items-center justify-center font-bold text-xs ${
+                        isHigh ? 'bg-amber-rich' : 'bg-teal-700'
+                      }`}>
+                        {initials}
+                      </div>
+                      <div className="flex flex-col leading-tight">
+                        <span className="text-xs font-semibold text-on-surface">En charge : {assignee}</span>
+                        <span className="text-[11px] text-on-surface-variant">{secondaries}</span>
+                      </div>
+                    </div>
+
+                    <button
+                      type="button"
+                      onClick={() => navigateTo('tasks')}
+                      className={`inline-flex items-center gap-2 px-4 py-2 rounded-DEFAULT bg-white border-2 font-label-sm text-xs font-bold transition-colors shadow-sm cursor-pointer ${
+                        isHigh
+                          ? 'border-amber-rich text-amber-rich hover:bg-amber-soft'
+                          : 'border-primary text-primary hover:bg-sage-soft'
+                      }`}
+                    >
+                      <span className="material-symbols-outlined text-[16px]">
+                        {isHigh ? 'construction' : 'visibility'}
+                      </span>
+                      Consulter la tâche
+                    </button>
+                  </div>
+                </article>
+              );
+            })}
+          </div>
+
+          <div className="pt-space-xs">
+            <button
+              type="button"
+              onClick={() => navigateTo('tasks')}
+              className="flex items-center justify-center gap-2 w-full px-5 py-3 rounded-DEFAULT bg-white border-2 border-primary text-primary hover:bg-sage-soft font-label-lg text-sm sm:text-label-lg font-semibold transition-all shadow-sm cursor-pointer"
+            >
+              <span className="material-symbols-outlined text-[22px]">checklist</span>
+              Voir toutes les tâches
+            </button>
+          </div>
+        </div>
+
+      </section>
 
     </div>
   );

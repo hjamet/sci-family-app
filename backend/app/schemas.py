@@ -27,20 +27,33 @@ class LoginRequest(BaseModel):
     prenom: str
     password: str
 
-class UserBase(BaseModel):
+class MemberBase(BaseModel):
     prenom: str
     name: str
     email: Optional[str] = None
     role: str = "Membre Associé"
     avatar_color: str = "cyan"
 
-class UserCreate(UserBase):
+class MemberCreate(MemberBase):
     password: str = "pass123"
 
-class UserResponse(UserBase):
+class MemberUpdate(BaseModel):
+    prenom: Optional[str] = None
+    name: Optional[str] = None
+    email: Optional[str] = None
+    role: Optional[str] = None
+    avatar_color: Optional[str] = None
+    password: Optional[str] = None
+
+class MemberResponse(MemberBase):
     id: int
+    created_at: Optional[datetime] = None
     class Config:
         from_attributes = True
+
+UserBase = MemberBase
+UserCreate = MemberCreate
+UserResponse = MemberResponse
 
 class TokenResponse(BaseModel):
     access_token: str
@@ -213,7 +226,7 @@ class IssueResponse(BaseModel):
         from_attributes = True
 
 # Reservation Schemas
-class ReservationCreate(BaseModel):
+class ReservationBase(BaseModel):
     property_id: Optional[int] = 1
     property_name: Optional[str] = None
     properties: Optional[List[str]] = None
@@ -222,6 +235,8 @@ class ReservationCreate(BaseModel):
     week_number: int
     start_date: str
     end_date: str
+    arrival_time: Optional[str] = "15:00"
+    departure_time: Optional[str] = "11:00"
     guest_count: Optional[int] = 1
     chambers_used: Optional[int] = 1
     selected_rooms: Optional[List[str]] = None
@@ -229,9 +244,20 @@ class ReservationCreate(BaseModel):
     accepts_extra_family: Optional[bool] = True
     notes: Optional[str] = None
 
+class ReservationCreate(ReservationBase):
+    pass
+
 class ReservationUpdate(BaseModel):
     status: Optional[str] = None  # Demande en attente, Confirmée, Refusée
+    property_id: Optional[int] = None
     property_name: Optional[str] = None
+    user_name: Optional[str] = None
+    year: Optional[int] = None
+    week_number: Optional[int] = None
+    start_date: Optional[str] = None
+    end_date: Optional[str] = None
+    arrival_time: Optional[str] = None
+    departure_time: Optional[str] = None
     guest_count: Optional[int] = None
     chambers_used: Optional[int] = None
     selected_rooms: Optional[List[str]] = None
@@ -248,6 +274,8 @@ class ReservationResponse(BaseModel):
     week_number: int
     start_date: str
     end_date: str
+    arrival_time: Optional[str] = "15:00"
+    departure_time: Optional[str] = "11:00"
     status: str
     guest_count: Optional[int] = 1
     chambers_used: Optional[int] = 1
@@ -553,6 +581,196 @@ class HeatingModeRequest(BaseModel):
 class HeatingTemperatureRequest(BaseModel):
     target_temperature: float
     program: Optional[str] = "normal"
+
+
+# --- Piscine Schemas ---
+class PiscineStatusResponse(BaseModel):
+    water_temperature: float = 13.5
+    frost_protection_target: float = 14.0
+    pac_state: str = "Mise en veille hivernale"
+    pac_power: str = "20 kW"
+    cover_state: str = "Verrouillée & tendue"
+    filtration_state: str = "En veille (Actif 03h00 - 06h00)"
+    filtration_cycle: str = "03h00 — 06h00 (Heures Creuses)"
+    hivernage_status: str = "Hivernage Actif"
+    sensor_location: str = "Sonde skimmer sud"
+    winter_warning: str = "Chauffage du bassin déconseillé & formellement proscrit en octobre-mars. Surcoût électrique estimé à plus de 450 €/semaine ! Le bassin est placé en protocole pré-hivernage DECLERCQ PISCINES."
+    frederic_jamet_agreement: str = "Prise en charge contrat DECLERCQ à 100% jusqu’au 31/12/2026."
+    agreement_status: str = "Actif (100% pris en charge par Frédéric Jamet)"
+    contract_provider: str = "DECLERCQ PISCINES"
+    test_mode_read_only: bool = True
+    message: str = "Garde-fou de sécurité inviolable actif (Garde-fou Henri #1) : Mode lecture seule permanent. Toute commande actionneur piscine est formellement interdite."
+    class Config:
+        from_attributes = True
+
+
+# --- Stay Balance Schemas ---
+class StayBalanceMember(BaseModel):
+    prenom: str
+    name: Optional[str] = None
+    role: Optional[str] = None
+    avatar_color: Optional[str] = "cyan"
+    days: int = 0
+    stays_count: int = 0
+    percentage: int = 0
+
+class StayBalanceResponse(BaseModel):
+    year: int
+    total_days: int
+    max_days: int
+    members: List[StayBalanceMember]
+
+
+# --- Unified Task Schemas (Stitch Screens) ---
+
+class TaskBase(BaseModel):
+    title: str
+    description: str
+    subject: Optional[str] = "SCI"
+    category: Optional[str] = None
+    priority: Optional[str] = "Normale"
+    status: Optional[str] = "EN_COURS"
+    complexity: Optional[str] = "Modérée"
+    budget: Optional[float] = 0.0
+    budget_notes: Optional[str] = None
+    assignee_id: Optional[int] = None
+    assigned_members: Optional[List[str]] = []
+    deadline: Optional[str] = None
+    checklist: Optional[List[Dict]] = []
+    documents: Optional[List[Dict]] = []
+    completion_notes: Optional[str] = None
+    completion_docs: Optional[List[str]] = []
+    created_by: Optional[str] = "Henri"
+
+
+class TaskCreate(TaskBase):
+    ref: Optional[str] = None
+
+
+class TaskUpdate(BaseModel):
+    title: Optional[str] = None
+    description: Optional[str] = None
+    subject: Optional[str] = None
+    category: Optional[str] = None
+    priority: Optional[str] = None
+    status: Optional[str] = None
+    complexity: Optional[str] = None
+    budget: Optional[float] = None
+    budget_notes: Optional[str] = None
+    assignee_id: Optional[int] = None
+    assigned_members: Optional[List[str]] = None
+    deadline: Optional[str] = None
+    checklist: Optional[List[Dict]] = None
+    documents: Optional[List[Dict]] = None
+    completion_notes: Optional[str] = None
+    completion_docs: Optional[List[str]] = None
+
+
+class TaskCloseRequest(BaseModel):
+    completion_notes: str
+    completion_docs: Optional[List[str]] = []
+
+
+class TaskCommentBase(BaseModel):
+    content: str
+    author_name: Optional[str] = None
+    author_role: Optional[str] = None
+    author_id: Optional[int] = None
+
+
+class TaskCommentCreate(TaskCommentBase):
+    pass
+
+
+ALLOWED_REACTION_EMOJIS = ['👍', '❤️', '👏', '💡', '🌸']
+
+
+class TaskCommentReactRequest(BaseModel):
+    emoji: str  # Allowed: 👍, ❤️, 👏, 💡, 🌸
+    user_name: Optional[str] = None
+
+
+class TaskCommentResponse(BaseModel):
+    id: int
+    task_id: int
+    author_id: Optional[int] = None
+    author_name: str
+    author_role: Optional[str] = None
+    content: str
+    reactions: Dict[str, int] = {}
+    created_at: Optional[datetime] = None
+
+    @field_validator("reactions", mode="before")
+    @classmethod
+    def parse_reactions(cls, v):
+        if isinstance(v, str):
+            try:
+                v = json.loads(v)
+            except Exception:
+                return {}
+        if isinstance(v, dict):
+            res = {}
+            for k, val in v.items():
+                if isinstance(val, list):
+                    res[k] = len(val)
+                elif isinstance(val, int):
+                    res[k] = val
+                else:
+                    try:
+                        res[k] = int(val)
+                    except Exception:
+                        res[k] = 1
+            return res
+        return v or {}
+
+    class Config:
+        from_attributes = True
+
+
+class TaskResponse(TaskBase):
+    id: int
+    ref: Optional[str] = None
+    created_at: Optional[datetime] = None
+    updated_at: Optional[datetime] = None
+    comments_count: Optional[int] = 0
+    comments: Optional[List[TaskCommentResponse]] = []
+    progress_percent: Optional[int] = 0
+    completed_steps: Optional[int] = 0
+    total_steps: Optional[int] = 0
+
+    @field_validator("assigned_members", "checklist", "documents", "completion_docs", mode="before")
+    @classmethod
+    def parse_task_json_fields(cls, v):
+        if isinstance(v, str):
+            try:
+                return json.loads(v)
+            except Exception:
+                return [s.strip() for s in v.split(",") if s.strip()]
+        return v or []
+
+    class Config:
+        from_attributes = True
+
+
+# --- Log & Audit Schemas ---
+
+class LogCreate(BaseModel):
+    action: str
+    user_name: Optional[str] = None
+    details: Optional[str] = None
+    ip_address: Optional[str] = None
+
+
+class LogResponse(BaseModel):
+    id: int
+    action: str
+    user_name: Optional[str] = None
+    details: Optional[str] = None
+    ip_address: Optional[str] = None
+    created_at: Optional[datetime] = None
+
+    class Config:
+        from_attributes = True
 
 
 

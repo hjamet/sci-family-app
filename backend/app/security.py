@@ -3,9 +3,13 @@ import time
 import unicodedata
 from datetime import datetime, timedelta
 from typing import Dict, List, Optional
+import logging
 from fastapi import Request, HTTPException, status
 from passlib.context import CryptContext
 from dotenv import load_dotenv
+
+# Suppress passlib trapped bcrypt version warning
+logging.getLogger("passlib").setLevel(logging.ERROR)
 
 # Ensure environment variables are loaded
 dotenv_path = os.path.join(os.path.dirname(__file__), "..", ".env")
@@ -140,8 +144,9 @@ class SlidingWindowRateLimiter:
     def check_general_rate_limit(self, ip: str):
         """
         Anti-DDoS rule:
-        Max 100 requests per minute for general API requests.
+        Configurable requests per minute for general API requests (default 250).
         """
+        max_limit = int(os.getenv("RATE_LIMIT_GENERAL_PER_MINUTE", "250"))
         now = time.time()
         if ip not in self.general_requests:
             self.general_requests[ip] = []
@@ -149,10 +154,10 @@ class SlidingWindowRateLimiter:
         # Filter timestamps to last 60 seconds
         self.general_requests[ip] = [ts for ts in self.general_requests[ip] if now - ts < 60]
 
-        if len(self.general_requests[ip]) >= 100:
+        if len(self.general_requests[ip]) >= max_limit:
             raise HTTPException(
                 status_code=status.HTTP_429_TOO_MANY_REQUESTS,
-                detail="[Anti-DDoS Rate Limit] Limite de débit dépassée (100 requêtes/min max). Veuillez rééditer votre requête."
+                detail=f"[Anti-DDoS Rate Limit] Limite de débit dépassée ({max_limit} requêtes/min max). Veuillez rééditer votre requête."
             )
 
         self.general_requests[ip].append(now)

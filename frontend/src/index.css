@@ -5,45 +5,87 @@
 @layer base {
   body {
     font-family: 'Inter', system-ui, -apple-system, BlinkMacSystemFont, sans-serif;
-    @apply bg-slate-50 text-slate-900 antialiased selection:bg-slate-900 selection:text-white transition-colors duration-200;
+    @apply bg-canvas-slate text-on-surface antialiased transition-colors duration-200;
   }
 
   h1, h2, h3, h4, h5, h6 {
-    font-family: 'Outfit', 'Inter', system-ui, sans-serif;
-  }
-
-  .dark body {
-    @apply bg-slate-950 text-slate-100 selection:bg-cyan-500 selection:text-slate-950;
+    font-family: 'Plus Jakarta Sans', 'Outfit', 'Inter', system-ui, sans-serif;
   }
 }
 
 @layer utilities {
   .clean-card {
-    @apply bg-white border border-slate-200/80 rounded-2xl shadow-sm hover:shadow-md transition-all duration-200;
+    @apply bg-surface-container-lowest border border-border-subtle rounded-2xl shadow-sm hover:shadow-md transition-all duration-200;
   }
 
-  .dark .clean-card {
-    @apply bg-slate-900 border-slate-800 shadow-none hover:border-slate-700;
+  .stitch-button {
+    @apply bg-white border-2 border-primary text-primary hover:bg-sage-soft font-semibold transition-all duration-200 shadow-sm hover:shadow-md active:scale-[0.99] flex items-center justify-center gap-2;
   }
 
-  .glass-header {
-    @apply bg-white/80 backdrop-blur-md border-b border-slate-200/80;
+  .stitch-button-secondary {
+    @apply bg-white border-2 border-outline-variant text-on-surface hover:border-outline hover:bg-canvas-slate transition-all duration-200 shadow-sm flex items-center justify-center gap-2;
   }
 
-  .dark .glass-header {
-    @apply bg-slate-950/80 border-slate-800/80;
-  }
-
-  .glass-modal {
-    @apply bg-white border border-slate-200 shadow-2xl rounded-3xl;
-  }
-
-  .dark .glass-modal {
-    @apply bg-slate-900 border-slate-800 shadow-2xl rounded-3xl;
+  .stitch-button-emerald {
+    @apply bg-white border-2 border-emerald-600 text-emerald-800 hover:text-emerald-950 hover:bg-emerald-50/50 hover:border-emerald-700 font-semibold transition-all duration-200 shadow-sm hover:shadow-md active:scale-[0.99] flex items-center justify-center gap-2;
   }
 }
 
-/* Custom horizontal and vertical scrollbars */
+/* Shimmer animation for task cards and progress indicators */
+@keyframes shimmer {
+  0% { transform: translateX(-100%); }
+  100% { transform: translateX(100%); }
+}
+
+.progress-shimmer {
+  position: relative;
+  overflow: hidden;
+}
+
+.progress-shimmer::after {
+  content: '';
+  position: absolute;
+  top: 0;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  background: linear-gradient(90deg, transparent, rgba(255, 255, 255, 0.45), transparent);
+  transform: translateX(-100%);
+  animation: shimmer 2.4s cubic-bezier(0.4, 0, 0.2, 1) infinite;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .progress-shimmer::after {
+    animation: none;
+  }
+}
+
+/* Custom Chat Scrollbar for Task Discussion */
+.custom-chat-scrollbar {
+  scrollbar-width: thin;
+  scrollbar-color: #059669 #f1f5f9;
+}
+
+.custom-chat-scrollbar::-webkit-scrollbar {
+  width: 6px;
+  display: block !important;
+}
+
+.custom-chat-scrollbar::-webkit-scrollbar-track {
+  background: #f1f5f9;
+  border-radius: 9999px;
+}
+
+.custom-chat-scrollbar::-webkit-scrollbar-thumb {
+  background-color: #059669;
+  border-radius: 9999px;
+}
+
+.custom-chat-scrollbar::-webkit-scrollbar-thumb:hover {
+  background-color: #047857;
+}
+
+/* Standard scrollbars */
 ::-webkit-scrollbar {
   width: 6px;
   height: 6px;

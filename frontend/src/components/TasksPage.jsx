@@ -1,844 +1,800 @@
-import React, { useState, useEffect, useRef } from 'react';
-import {
-  CheckSquare, Info, Sparkles, FileText, CheckCircle2, Calendar, User, Clock, AlertCircle,
-  Upload, X, Paperclip, ShieldCheck, Check, FileCode, Image as ImageIcon, File, Download, Plus
-} from 'lucide-react';
-import {
-  fetchMemberCurrentStayTasks, toggleStayTask, uploadTaskDocuments,
-  submitTaskCompletion, validateTaskCompletion, fetchTasks, createTask
-} from '../api';
+import React, { useState, useEffect } from 'react';
+import { useNavigate } from 'react-router-dom';
+import { fetchTasks, createTask } from '../api';
+import TaskDetailModal from './TaskDetailModal';
 
-export default function TasksPage({ currentUser }) {
-  const activeUser = currentUser || localStorage.getItem('sci_user') || 'Membre';
-  const isCoordinator = activeUser === 'Henri';
+const ALL_MEMBERS = [
+  { id: 'all', label: 'Tous les associés (7)' },
+  { id: 'henri', label: 'Henri Jamet' },
+  { id: 'hortense', label: 'Hortense Jamet' },
+  { id: 'alexandre', label: 'Alexandre Jamet' },
+  { id: 'frederic', label: 'Frédéric Jamet' },
+  { id: 'eugenie', label: 'Eugénie Jamet' },
+  { id: 'marguerite', label: 'Marguerite Jamet' },
+  { id: 'josephine', label: 'Joséphine Jamet' },
+];
 
-  const [stay, setStay] = useState(null);
+const DEFAULT_DEMO_TASKS = [
+  {
+    id: 1,
+    ref: 'T-2026-088',
+    title: 'Renégociation Contrat Jardinier EI Perrot & Fauche Tardive',
+    description: 'Renégociation annuelle du contrat d\'entretien du parc de Rosing avec passage en déclaration CESU (crédit d\'impôt 50%) et fauche tardive validée en AG.',
+    category: 'Espaces Verts & Parc',
+    subject: 'Rosing',
+    priority: 'Haute',
+    status: 'EN_COURS',
+    complexity: 'Modérée',
+    budget: 3900,
+    assignee: 'Hortense Jamet',
+    assigned_members: ['Hortense Jamet', 'Alexandre Jamet', 'Henri Jamet'],
+    step_label: 'Étape 2/4 : Établissement de l\'avenant',
+    progress: 50,
+    deadline: 'Sous 15 jours',
+    avatarInitials: ['HJ', 'AJ', 'HJ'],
+  },
+  {
+    id: 2,
+    ref: 'T-2026-091',
+    title: 'Contrôle & Expertise des Poutres Maîtresses',
+    description: 'Diagnostic structurel de la charpente de la bibliothèque avant plâtrerie. Devis expert attendu sous 10 jours.',
+    category: 'Bâti & Structure',
+    subject: 'Presbytère',
+    priority: 'Critique',
+    status: 'EN_COURS',
+    complexity: 'Expertise requise',
+    budget: 1200,
+    assignee: 'Henri Jamet',
+    assigned_members: ['Henri Jamet', 'Frédéric Jamet'],
+    step_label: 'Étape 1/3 : Visite expert programmée',
+    progress: 33,
+    deadline: 'Sous 10 jours',
+    avatarInitials: ['HJ', 'FJ'],
+  },
+  {
+    id: 3,
+    ref: 'T-2026-094',
+    title: 'Surveillance & Entretien Pompe à Chaleur Rosing',
+    description: 'Vérification de consigne de température en lecture seule, taux de sel piscine et contrôle des filtres avant période estivale.',
+    category: 'Équipements & Énergie',
+    subject: 'Piscine',
+    priority: 'Normale',
+    status: 'EN_COURS',
+    complexity: 'Faible',
+    budget: 650,
+    assignee: 'Frédéric Jamet',
+    assigned_members: ['Frédéric Jamet'],
+    step_label: 'Étape 3/4 : Télémétrie opérationnelle',
+    progress: 75,
+    deadline: 'Fin juillet',
+    avatarInitials: ['FJ'],
+  },
+  {
+    id: 4,
+    ref: 'T-2026-098',
+    title: 'Rénovation Peintures Salon & Tri Mobilier Hangar',
+    description: 'Rafraîchissement des teintes du grand salon Presbytère et inventaire des meubles anciens conservés au hangar.',
+    category: 'Décoration & Tri',
+    subject: 'Presbytère',
+    priority: 'Planifié',
+    status: 'PLANIFIE',
+    complexity: 'Modérée',
+    budget: 800,
+    assignee: 'Eugénie Jamet',
+    assigned_members: ['Eugénie Jamet', 'Marguerite Jamet'],
+    step_label: 'Étape 1/4 : Sélection des nuanciers',
+    progress: 25,
+    deadline: 'Automne 2026',
+    avatarInitials: ['EJ', 'MJ'],
+  },
+  {
+    id: 5,
+    ref: 'T-2026-102',
+    title: 'Remplacement Détecteurs Fumée & Extincteurs SCI',
+    description: 'Contrôle quinquennal de sécurité incendie sur l\'ensemble des 7 chambres et des dépendances.',
+    category: 'Sécurité & Normes',
+    subject: 'SCI',
+    priority: 'Normale',
+    status: 'EN_COURS',
+    complexity: 'Faible',
+    budget: 350,
+    assignee: 'Henri Jamet',
+    assigned_members: ['Henri Jamet'],
+    step_label: 'Étape 2/2 : Commande livrée',
+    progress: 90,
+    deadline: 'Immédiat',
+    avatarInitials: ['HJ'],
+  },
+  {
+    id: 6,
+    ref: 'T-2026-105',
+    title: 'Installation Répéteurs Wi-Fi Mesh Parc & Cabanes',
+    description: 'Couverture réseau sans fil vers le verger et la grange pour assurer le travail à distance des associés en séjour.',
+    category: 'Réseau & Numérique',
+    subject: 'Rosing',
+    priority: 'Haute',
+    status: 'EN_COURS',
+    complexity: 'Modérée',
+    budget: 450,
+    assignee: 'Henri Jamet',
+    assigned_members: ['Henri Jamet', 'Alexandre Jamet'],
+    step_label: 'Étape 2/3 : Câblage testé',
+    progress: 60,
+    deadline: 'Avant 15 août',
+    avatarInitials: ['HJ', 'AJ'],
+  },
+];
+
+export default function TasksPage({ currentUser = 'Henri Jamet' }) {
+  const navigate = useNavigate();
   const [tasks, setTasks] = useState([]);
   const [loading, setLoading] = useState(true);
-  const [hoveredTaskId, setHoveredTaskId] = useState(null);
-  const [filterCategory, setFilterCategory] = useState('ALL');
-  const [filterStatus, setFilterStatus] = useState('ALL'); // 'ALL' | 'TODO' | 'PENDING' | 'DONE'
+  const [searchTerm, setSearchTerm] = useState('');
+  const [sortBy, setSortBy] = useState('urgency');
+  const [selectedPriority, setSelectedPriority] = useState('Toutes');
+  const [selectedAssignee, setSelectedAssignee] = useState('all');
+  const [selectedSubject, setSelectedSubject] = useState('all');
 
-  // Completion Modal State
-  const [completingTask, setCompletingTask] = useState(null);
-  const [completionNotes, setCompletionNotes] = useState('');
-  const [completionFiles, setCompletionFiles] = useState([]);
-  const [isSubmitting, setIsSubmitting] = useState(false);
-  const [isDragOver, setIsDragOver] = useState(false);
-  const [validatingTaskId, setValidatingTaskId] = useState(null);
-  const fileInputRef = useRef(null);
-
-  // New Task Creation Modal State
+  // Modal states
+  const [inspectingTask, setInspectingTask] = useState(null);
   const [isCreateModalOpen, setIsCreateModalOpen] = useState(false);
-  const [newTitle, setNewTitle] = useState('');
-  const [newCategory, setNewCategory] = useState('Pendant le séjour');
-  const [newDescription, setNewDescription] = useState('');
-  const [newAssignedUser, setNewAssignedUser] = useState(activeUser);
-  const [isCreatingTask, setIsCreatingTask] = useState(false);
 
-  const loadMemberTasks = async () => {
+  // New task form state
+  const [newTitle, setNewTitle] = useState('');
+  const [newDescription, setNewDescription] = useState('');
+  const [newSubject, setNewSubject] = useState('Rosing');
+  const [newPriority, setNewPriority] = useState('Normale');
+  const [newBudget, setNewBudget] = useState(300);
+  const [newAssignee, setNewAssignee] = useState('Henri Jamet');
+  const [creating, setCreating] = useState(false);
+
+  const loadTasks = async () => {
     try {
       setLoading(true);
-      const data = await fetchMemberCurrentStayTasks(activeUser);
-      setStay(data?.reservation || null);
-      let list = data?.tasks || [];
-      if (list.length === 0) {
-        list = await fetchTasks({ user_name: activeUser });
+      const data = await fetchTasks();
+      if (Array.isArray(data)) {
+        setTasks(data);
+      } else {
+        setTasks(DEFAULT_DEMO_TASKS);
       }
-      if (list.length === 0) {
-        list = await fetchTasks();
-      }
-      if (list.length === 0) {
-        try {
-          const mTasks = await fetchMaintenanceTasks();
-          list = mTasks.map(m => ({
-            id: `mt-${m.id}`,
-            title: m.title,
-            category: m.category || 'Pendant le séjour',
-            description: m.description || '',
-            frequency: m.frequency || 'Chaque séjour',
-            completed: 0,
-            status: 'A_FAIRE'
-          }));
-        } catch (mErr) {
-          console.error('Failed to fetch maintenance tasks template:', mErr);
-        }
-      }
-      setTasks(list || []);
     } catch (err) {
-      console.error('Error fetching member tasks:', err);
-      try {
-        const fallback = await fetchTasks();
-        setTasks(fallback || []);
-      } catch (fErr) {
-        console.error('Fallback fetchTasks failed:', fErr);
-      }
+      console.warn('API fetchTasks fallback to defaults:', err);
+      setTasks(DEFAULT_DEMO_TASKS);
     } finally {
       setLoading(false);
     }
   };
 
-  const handleCreateTaskSubmit = async (e) => {
+  useEffect(() => {
+    loadTasks();
+  }, []);
+
+  const handleCreateTask = async (e) => {
     e.preventDefault();
     if (!newTitle.trim()) return;
+
     try {
-      setIsCreatingTask(true);
-      await createTask({
+      setCreating(true);
+      const payload = {
         title: newTitle.trim(),
-        category: newCategory,
         description: newDescription.trim(),
-        assigned_user: newAssignedUser,
-        property_id: stay ? stay.property_id : 1
-      });
+        subject: newSubject,
+        priority: newPriority,
+        budget: parseFloat(newBudget) || 0,
+        assignee_name: newAssignee,
+        assigned_members: [newAssignee],
+        category: 'Chantier du Domaine',
+      };
+      await createTask(payload);
+      setIsCreateModalOpen(false);
       setNewTitle('');
       setNewDescription('');
-      setIsCreateModalOpen(false);
-      await loadMemberTasks();
+      await loadTasks();
     } catch (err) {
-      alert(err.message || 'Erreur lors de la création de la tâche');
+      console.error('Erreur création tâche:', err);
+      alert(err.message || 'Erreur lors de la création de la tâche.');
     } finally {
-      setIsCreatingTask(false);
+      setCreating(false);
     }
   };
 
-  useEffect(() => {
-    loadMemberTasks();
-  }, [activeUser]);
-
-  const handleToggle = async (task, e) => {
-    if (e) e.stopPropagation();
-    if (task.status === 'EN_ATTENTE_VALIDATION' || task.status === 'ARCHIVEE') {
-      return;
+  // Filter tasks
+  const filteredTasks = tasks.filter((t) => {
+    // Search
+    if (searchTerm) {
+      const q = searchTerm.toLowerCase();
+      const match =
+        t.title?.toLowerCase().includes(q) ||
+        t.description?.toLowerCase().includes(q) ||
+        t.subject?.toLowerCase().includes(q) ||
+        t.assignee?.toLowerCase().includes(q) ||
+        t.ref?.toLowerCase().includes(q);
+      if (!match) return false;
     }
-    // Open completion modal directly so member can provide notes and uploads
-    openCompletionModal(task);
-  };
 
-  const openCompletionModal = (task) => {
-    setCompletingTask(task);
-    setCompletionNotes(task.completion_notes || '');
-    setCompletionFiles([]);
-  };
-
-  const closeCompletionModal = () => {
-    setCompletingTask(null);
-    setCompletionNotes('');
-    setCompletionFiles([]);
-    setIsSubmitting(false);
-  };
-
-  // Multi-File Upload Handlers inside modal
-  const handleFilesSelected = (files) => {
-    const fileList = Array.from(files);
-    setCompletionFiles(prev => [...prev, ...fileList]);
-  };
-
-  const handleFileInputChange = (e) => {
-    if (e.target.files && e.target.files.length > 0) {
-      handleFilesSelected(e.target.files);
+    // Priority filter
+    if (selectedPriority !== 'Toutes') {
+      if (t.priority?.toLowerCase() !== selectedPriority.toLowerCase()) return false;
     }
-  };
 
-  const handleDragOver = (e) => {
-    e.preventDefault();
-    e.stopPropagation();
-    setIsDragOver(true);
-  };
-
-  const handleDragLeave = (e) => {
-    e.preventDefault();
-    e.stopPropagation();
-    setIsDragOver(false);
-  };
-
-  const handleDrop = (e) => {
-    e.preventDefault();
-    e.stopPropagation();
-    setIsDragOver(false);
-    if (e.dataTransfer.files && e.dataTransfer.files.length > 0) {
-      handleFilesSelected(e.dataTransfer.files);
+    // Assignee filter
+    if (selectedAssignee !== 'all') {
+      const target = selectedAssignee.toLowerCase();
+      const matchesAssignee =
+        t.assignee?.toLowerCase().includes(target) ||
+        (Array.isArray(t.assigned_members) && t.assigned_members.some((m) => m.toLowerCase().includes(target)));
+      if (!matchesAssignee) return false;
     }
-  };
 
-  const handleRemoveFile = (index) => {
-    setCompletionFiles(prev => prev.filter((_, i) => i !== index));
-  };
-
-  // Submit Completion (Transition to EN_ATTENTE_VALIDATION)
-  const handleCompletionSubmit = async (e) => {
-    e.preventDefault();
-    if (!completingTask) return;
-
-    try {
-      setIsSubmitting(true);
-      let uploadedUrls = [];
-
-      if (completionFiles.length > 0) {
-        const uploadRes = await uploadTaskDocuments(completionFiles);
-        uploadedUrls = uploadRes.document_urls || [];
-      }
-
-      // Preserve any existing completion docs
-      const existingDocs = Array.isArray(completingTask.completion_docs) ? completingTask.completion_docs : [];
-      const allDocs = [...existingDocs, ...uploadedUrls];
-
-      const updated = await submitTaskCompletion(completingTask.id, {
-        completion_notes: completionNotes,
-        completion_docs: allDocs
-      });
-
-      setTasks(prev => prev.map(t => t.id === updated.id ? updated : t));
-      closeCompletionModal();
-    } catch (err) {
-      console.error('Error submitting task completion:', err);
-      alert(err.message || 'Erreur lors de la soumission de la finalisation');
-    } finally {
-      setIsSubmitting(false);
+    // Subject filter
+    if (selectedSubject !== 'all') {
+      if (t.subject?.toLowerCase() !== selectedSubject.toLowerCase()) return false;
     }
-  };
 
-  // Coordinator Action: Validate Completion (Transition to ARCHIVEE)
-  const handleValidateCompletion = async (taskId, e) => {
-    if (e) e.stopPropagation();
-    try {
-      setValidatingTaskId(taskId);
-      const updated = await validateTaskCompletion(taskId);
-      setTasks(prev => prev.map(t => t.id === updated.id ? updated : t));
-    } catch (err) {
-      console.error('Error validating task completion:', err);
-      alert(err.message || 'Erreur lors de la validation');
-    } finally {
-      setValidatingTaskId(null);
-    }
-  };
-
-  // Helper for file type badges
-  const getFileBadge = (url) => {
-    const filename = url.split('/').pop();
-    const ext = filename.split('.').pop().toLowerCase();
-    if (ext === 'pdf') {
-      return { icon: FileText, color: 'text-red-600 bg-red-50 border-red-200', label: 'PDF' };
-    } else if (ext === 'md' || ext === 'markdown') {
-      return { icon: FileCode, color: 'text-emerald-600 bg-emerald-50 border-emerald-200', label: 'MD' };
-    } else if (['png', 'jpg', 'jpeg', 'webp'].includes(ext)) {
-      return { icon: ImageIcon, color: 'text-blue-600 bg-blue-50 border-blue-200', label: ext.toUpperCase() };
-    } else {
-      return { icon: File, color: 'text-amber-600 bg-amber-50 border-amber-200', label: ext.toUpperCase() };
-    }
-  };
-
-  // Categories & Filtering
-  const baseCategories = ['Arrivée', 'Pendant le séjour', 'Départ'];
-  const extraCategories = Array.from(new Set(tasks.map(t => t.category).filter(Boolean)));
-  const allCategories = ['ALL', ...Array.from(new Set([...baseCategories, ...extraCategories]))];
-
-  const filteredTasks = tasks.filter(t => {
-    const matchCat = filterCategory === 'ALL' || t.category === filterCategory;
-    let matchStatus = true;
-    if (filterStatus === 'TODO') {
-      matchStatus = t.completed === 0 && t.status !== 'EN_ATTENTE_VALIDATION' && t.status !== 'ARCHIVEE';
-    } else if (filterStatus === 'PENDING') {
-      matchStatus = t.status === 'EN_ATTENTE_VALIDATION';
-    } else if (filterStatus === 'DONE') {
-      matchStatus = t.completed === 1 || t.status === 'ARCHIVEE';
-    }
-    return matchCat && matchStatus;
+    return true;
   });
 
-  const pendingValidationCount = tasks.filter(t => t.status === 'EN_ATTENTE_VALIDATION').length;
-  const completedCount = tasks.filter(t => t.completed === 1 || t.status === 'ARCHIVEE').length;
-  const todoCount = tasks.length - completedCount;
-  const progressPct = tasks.length > 0 ? Math.round((completedCount / tasks.length) * 100) : 0;
-
-  const getCategoryBadgeClass = (cat) => {
-    switch (cat) {
-      case 'Arrivée':
-        return 'bg-blue-50 text-blue-700 border-blue-200 dark:bg-blue-950/40 dark:text-blue-300 dark:border-blue-800';
-      case 'Pendant le séjour':
-        return 'bg-purple-50 text-purple-700 border-purple-200 dark:bg-purple-950/40 dark:text-purple-300 dark:border-purple-800';
-      case 'Départ':
-        return 'bg-amber-50 text-amber-800 border-amber-200 dark:bg-amber-950/40 dark:text-amber-300 dark:border-amber-800';
-      default:
-        return 'bg-slate-100 text-slate-700 border-slate-200 dark:bg-slate-800 dark:text-slate-300';
+  // Sort tasks
+  const sortedTasks = [...filteredTasks].sort((a, b) => {
+    if (sortBy === 'urgency') {
+      const priorityOrder = { Critique: 3, Haute: 2, Normale: 1, Planifié: 0 };
+      return (priorityOrder[b.priority] || 0) - (priorityOrder[a.priority] || 0);
     }
-  };
+    if (sortBy === 'budget_desc') {
+      return (b.budget || 0) - (a.budget || 0);
+    }
+    return 0;
+  });
+
+  // Metrics computation
+  const openTasksCount = tasks.filter((t) => t.status !== 'ARCHIVEE' && t.status !== 'TERMINE').length;
+  const directTasksCount = tasks.filter((t) => {
+    const userFirst = (currentUser || 'Henri').split(' ')[0].toLowerCase();
+    return (
+      t.assignee?.toLowerCase().includes(userFirst) ||
+      (Array.isArray(t.assigned_members) && t.assigned_members.some((m) => m.toLowerCase().includes(userFirst)))
+    );
+  }).length;
+  const totalTasks = tasks.length;
+  const completedTasks = tasks.filter((t) => t.status === 'TERMINE' || t.status === 'ARCHIVEE' || (t.progress_percent ?? t.progress) === 100).length;
+  const percent = totalTasks > 0 ? Math.round((completedTasks / totalTasks) * 100) : 0;
+  const strokeDashoffset = 113 - (113 * percent) / 100;
+  const priorityTasksCount = tasks.filter((t) => (t.priority === 'Critique' || t.priority === 'Haute') && t.status !== 'TERMINE' && t.status !== 'ARCHIVEE').length;
 
   return (
-    <div className="space-y-8 animate-in fade-in duration-300">
+    <div className="flex flex-col w-full pb-16 space-y-space-lg">
       
-      {/* Header Banner */}
-      <div className="relative overflow-hidden rounded-3xl bg-gradient-to-r from-amber-500 via-amber-600 to-yellow-600 p-6 sm:p-8 text-white shadow-md w-full">
-        <div className="absolute top-0 right-0 -mt-10 -mr-10 w-64 h-64 rounded-full bg-white/10 blur-3xl pointer-events-none"></div>
+      {/* ==================== 1. TOP AMBIENT BANNER & ACTIONS ==================== */}
+      <div className="flex flex-col md:flex-row md:items-end justify-between gap-space-md pt-space-xs">
+        <div className="space-y-1.5 max-w-3xl">
+          <span className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full bg-sage-soft text-primary font-label-sm text-xs font-semibold">
+            <span className="material-symbols-outlined text-[16px]">domain</span>
+            Domaine d'Hellenvilliers • Travaux & Intendance
+          </span>
+          <h1 className="font-headline-lg text-2xl sm:text-3xl lg:text-headline-lg text-forest-deep tracking-tight mt-1 font-bold">
+            Registre des Tâches, Chantiers & Missions
+          </h1>
+          <p className="font-body-md text-xs sm:text-sm text-on-surface-variant">
+            Suivi opérationnel, attribution aux associés, budgets prévisionnels et protocoles de clôture.
+          </p>
+        </div>
 
-        <div className="w-full flex flex-row items-center justify-between gap-4 relative z-10">
-          <div>
-            <div className="flex items-center space-x-2 text-xs font-bold text-amber-100 uppercase tracking-widest mb-1">
-              <CheckSquare className="h-4 w-4" />
-              <span>Gestion & Checklist de Séjour SCI</span>
-            </div>
-            <h1 className="text-2xl sm:text-4xl font-black tracking-tight">
-              Mes Tâches Attribuées
-            </h1>
-            <p className="text-sm text-amber-100/90 mt-1 max-w-xl">
-              Consignes d'arrivée, d'entretien du domaine et de départ réservées à <strong className="underline">{activeUser}</strong>.
-            </p>
-          </div>
+        {/* Buttons adhering to Stitch signature style: bg-white, border-2, icon + text */}
+        <div className="flex items-center gap-space-sm shrink-0 flex-wrap">
+          <button
+            type="button"
+            onClick={() => window.print()}
+            className="h-[48px] px-4 rounded-2xl bg-white border-2 border-outline-variant text-on-surface font-label-md text-xs sm:text-sm hover:bg-canvas-slate hover:border-outline transition-all duration-200 flex items-center gap-2 shadow-sm cursor-pointer"
+          >
+            <span className="material-symbols-outlined text-[20px] text-on-surface-variant">download</span>
+            <span>Exporter en PDF</span>
+          </button>
 
-          <div className="flex items-center space-x-3 shrink-0">
-            <button
-              onClick={() => setIsCreateModalOpen(true)}
-              className="flex items-center space-x-2 px-4 py-2.5 rounded-2xl bg-white text-amber-800 hover:bg-amber-50 font-black text-sm shadow-md transition transform hover:scale-105"
-            >
-              <Plus className="h-4 w-4 text-amber-600" />
-              <span>➕ Créer / Attribuer une Tâche</span>
-            </button>
-
-            <div className="hidden md:flex items-center space-x-3 bg-white/15 backdrop-blur-md border border-white/20 rounded-2xl px-4 py-2.5 shadow-sm">
-              <div className="w-9 h-9 rounded-full bg-white text-amber-700 flex items-center justify-center font-black text-sm uppercase">
-                {activeUser[0]}
-              </div>
-              <div>
-                <span className="text-[10px] text-amber-100 font-bold uppercase block">Membre Connecté</span>
-                <span className="text-sm font-black text-white">{activeUser}</span>
-              </div>
-            </div>
-          </div>
+          <button
+            type="button"
+            onClick={() => setIsCreateModalOpen(true)}
+            className="h-[48px] px-5 rounded-2xl bg-white border-2 border-primary-container text-primary-container font-label-md text-xs sm:text-sm font-bold hover:bg-sage-soft hover:border-primary transition-all duration-200 flex items-center gap-2 shadow-sm cursor-pointer"
+          >
+            <span className="material-symbols-outlined text-[20px] text-primary-container">add_task</span>
+            <span>Nouvelle tâche ou mission</span>
+          </button>
         </div>
       </div>
 
-      {/* Main Task List Container */}
-      <div className="bg-white dark:bg-slate-900 border border-slate-200/90 dark:border-slate-800 shadow-sm rounded-3xl p-6 sm:p-8 relative overflow-hidden">
+      {/* ==================== 2. KPI OVERVIEW STRIP (3 CARDS) ==================== */}
+      <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 gap-space-md max-w-[1100px] mx-auto w-full">
         
-        {/* Progress & Info Bar */}
-        <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 mb-6 pb-6 border-b border-slate-100 dark:border-slate-800">
-          <div>
-            <div className="flex items-center space-x-2">
-              <h2 className="text-xl font-black text-slate-900 dark:text-white">
-                Checklist Personnelle
-              </h2>
-              {stay && (
-                <span className="text-xs font-extrabold px-3 py-1 rounded-full bg-amber-50 text-amber-800 border border-amber-200 dark:bg-amber-950/40 dark:text-amber-300 dark:border-amber-800">
-                  Semaine {stay.week_number}
-                </span>
-              )}
-            </div>
-            {stay ? (
-              <p className="text-xs text-slate-500 dark:text-slate-400 mt-1">
-                Séjour actif du <strong className="text-slate-800 dark:text-slate-200">{stay.start_date}</strong> au <strong className="text-slate-800 dark:text-slate-200">{stay.end_date}</strong>
-              </p>
-            ) : (
-              <p className="text-xs text-slate-500 dark:text-slate-400 mt-1">
-                Tâches récurrentes et consignes d'entretien du Domaine d'Hellenvilliers.
-              </p>
-            )}
-          </div>
-
-          {tasks.length > 0 && (
-            <div className="bg-slate-50 dark:bg-slate-950 border border-slate-200 dark:border-slate-800 rounded-2xl p-4 text-center min-w-[220px] shrink-0">
-              <div className="flex items-center justify-center space-x-1.5">
-                <span className="text-2xl font-black text-amber-600 dark:text-amber-400">{completedCount}/{tasks.length}</span>
-                <span className="text-xs font-bold text-slate-400">tâches</span>
-              </div>
-              <span className="block text-[10px] font-extrabold uppercase text-slate-500 mt-0.5">
-                Accomplies ({progressPct}%)
+        {/* KPI 1 : Tâches Ouvertes */}
+        <div className="bg-surface-container-lowest rounded-2xl p-space-md shadow-sm border border-border-subtle flex flex-col justify-between hover:shadow-md transition-shadow">
+          <div className="flex items-start justify-between">
+            <div>
+              <span className="font-label-sm text-xs text-on-surface-variant uppercase tracking-wider block font-semibold">
+                Tâches Ouvertes
               </span>
-              <div className="w-full h-2 rounded-full bg-slate-200 dark:bg-slate-800 mt-2 overflow-hidden">
-                <div
-                  className="bg-gradient-to-r from-amber-500 to-emerald-500 h-full transition-all duration-300 rounded-full"
-                  style={{ width: `${progressPct}%` }}
-                ></div>
+              <div className="flex items-baseline gap-2 mt-1">
+                <span className="font-display-lg text-3xl font-bold text-forest-deep leading-none">
+                  {openTasksCount ?? 0}
+                </span>
+                <span className="font-label-sm text-xs text-on-surface-variant">chantiers</span>
               </div>
             </div>
-          )}
+            <div className="w-11 h-11 rounded-xl bg-sage-soft flex items-center justify-center text-primary-container">
+              <span className="material-symbols-outlined text-[24px]">construction</span>
+            </div>
+          </div>
+          <div className="mt-4 pt-3 border-t border-slate-100 flex items-center gap-2 text-xs">
+            <span className="w-2 h-2 rounded-full bg-error animate-pulse"></span>
+            <span className="font-semibold text-error">{priorityTasksCount} chantiers prioritaires</span>
+            <span className="text-on-surface-variant">à traiter</span>
+          </div>
         </div>
 
-        {/* UI Tab Management: Status Tabs & Category Tabs */}
-        {tasks.length > 0 && (
-          <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 mb-6 pb-4 border-b border-slate-100 dark:border-slate-800">
-            {/* Category Tabs */}
-            <div className="flex items-center space-x-2 overflow-x-auto pb-1 scrollbar-none">
-              <span className="text-xs font-bold text-slate-400 uppercase mr-1">Catégorie:</span>
-              {allCategories.map((cat) => (
-                <button
-                  key={cat}
-                  onClick={() => setFilterCategory(cat)}
-                  className={`px-3 py-1.5 rounded-xl text-xs font-extrabold transition whitespace-nowrap ${
-                    filterCategory === cat
-                      ? 'bg-amber-500 text-white shadow-sm'
-                      : 'bg-slate-100 text-slate-600 hover:bg-slate-200 dark:bg-slate-800 dark:text-slate-400'
-                  }`}
-                >
-                  {cat === 'ALL' ? 'Toutes les catégories' : cat}
-                </button>
-              ))}
+        {/* KPI 2 : Mes Tâches Directes */}
+        <div className="bg-surface-container-lowest rounded-2xl p-space-md shadow-sm border border-border-subtle flex flex-col justify-between hover:shadow-md transition-shadow">
+          <div className="flex items-start justify-between">
+            <div>
+              <span className="font-label-sm text-xs text-on-surface-variant uppercase tracking-wider block font-semibold">
+                Mes Tâches Directes
+              </span>
+              <div className="flex items-baseline gap-2 mt-1">
+                <span className="font-display-lg text-3xl font-bold text-primary leading-none">
+                  {directTasksCount ?? 0}
+                </span>
+                <span className="font-label-sm text-xs text-on-surface-variant">chantiers actifs</span>
+              </div>
             </div>
-
-            {/* Status Tabs */}
-            <div className="flex items-center space-x-1 bg-slate-100 dark:bg-slate-800 p-1 rounded-xl shrink-0">
-              <button
-                onClick={() => setFilterStatus('ALL')}
-                className={`px-3 py-1 text-xs font-extrabold rounded-lg transition ${
-                  filterStatus === 'ALL' ? 'bg-white dark:bg-slate-900 text-amber-600 shadow-sm' : 'text-slate-500 hover:text-slate-800 dark:text-slate-400'
-                }`}
-              >
-                Toutes ({tasks.length})
-              </button>
-              <button
-                onClick={() => setFilterStatus('TODO')}
-                className={`px-3 py-1 text-xs font-extrabold rounded-lg transition ${
-                  filterStatus === 'TODO' ? 'bg-white dark:bg-slate-900 text-amber-600 shadow-sm' : 'text-slate-500 hover:text-slate-800 dark:text-slate-400'
-                }`}
-              >
-                En cours ({todoCount})
-              </button>
-              {pendingValidationCount > 0 && (
-                <button
-                  onClick={() => setFilterStatus('PENDING')}
-                  className={`px-3 py-1 text-xs font-extrabold rounded-lg transition ${
-                    filterStatus === 'PENDING' ? 'bg-white dark:bg-slate-900 text-amber-700 shadow-sm' : 'text-amber-700 font-bold hover:text-amber-900 dark:text-amber-400'
-                  }`}
-                >
-                  ⏳ En validation ({pendingValidationCount})
-                </button>
-              )}
-              <button
-                onClick={() => setFilterStatus('DONE')}
-                className={`px-3 py-1 text-xs font-extrabold rounded-lg transition ${
-                  filterStatus === 'DONE' ? 'bg-white dark:bg-slate-900 text-emerald-600 shadow-sm' : 'text-slate-500 hover:text-slate-800 dark:text-slate-400'
-                }`}
-              >
-                Terminées ({completedCount})
-              </button>
+            <div className="w-11 h-11 rounded-xl bg-surface-container-high flex items-center justify-center text-primary">
+              <span className="material-symbols-outlined text-[24px]">assignment_ind</span>
             </div>
           </div>
-        )}
-
-        {/* Loading State */}
-        {loading ? (
-          <div className="py-16 text-center text-slate-400 text-sm font-medium">
-            Chargement de vos tâches...
+          <div className="mt-4 pt-3 border-t border-slate-100 flex items-center gap-1.5 text-xs text-on-surface-variant">
+            <span className="w-2 h-2 rounded-full bg-primary"></span>
+            <span>{currentUser || 'Henri Jamet'} (Gérance SCI)</span>
           </div>
-        ) : tasks.length === 0 ? (
-          /* Empty State */
-          <div className="text-center py-16 px-4 bg-slate-50 dark:bg-slate-950 rounded-3xl border border-dashed border-slate-300 dark:border-slate-800 my-4">
-            <div className="w-16 h-16 rounded-full bg-amber-100 dark:bg-amber-950/60 text-amber-600 dark:text-amber-400 flex items-center justify-center mx-auto mb-4 shadow-inner">
-              <CheckCircle2 className="h-8 w-8" />
+        </div>
+
+        {/* KPI 3 : Avancement Global (SVG Gauge) */}
+        <div className="bg-surface-container-lowest rounded-2xl p-space-md shadow-sm border border-border-subtle flex flex-col justify-between hover:shadow-md transition-shadow">
+          <div className="flex items-start justify-between">
+            <div>
+              <span className="font-label-sm text-xs text-on-surface-variant uppercase tracking-wider block font-semibold">
+                Avancement Global
+              </span>
+              <div className="flex items-baseline gap-1 mt-1">
+                <span className="font-display-lg text-3xl font-bold text-forest-deep leading-none">{percent}</span>
+                <span className="font-headline-sm text-lg font-semibold text-forest-deep">%</span>
+              </div>
             </div>
-            <h3 className="text-lg font-black text-slate-800 dark:text-slate-200">
-              🎉 Vous n'avez aucune tâche attribuée pour le moment.
-            </h3>
-            <p className="text-xs text-slate-500 dark:text-slate-400 mt-2 max-w-md mx-auto">
-              Profitez pleinement de votre séjour à Hellenvilliers ! Les tâches d'arrivée et de départ apparaîtront ici lors de vos séjours réservés.
-            </p>
+            <div className="w-12 h-12 relative flex items-center justify-center">
+              <svg className="w-12 h-12 transform -rotate-90" viewBox="0 0 44 44">
+                <circle className="text-surface-container" cx="22" cy="22" fill="none" r="18" stroke="currentColor" strokeWidth="4"></circle>
+                <circle
+                  className="text-primary-container"
+                  cx="22"
+                  cy="22"
+                  fill="none"
+                  r="18"
+                  stroke="currentColor"
+                  strokeDasharray="113.1"
+                  strokeDashoffset={strokeDashoffset}
+                  strokeLinecap="round"
+                  strokeWidth="4"
+                ></circle>
+              </svg>
+              <span className="absolute text-[11px] font-bold text-forest-deep">{completedTasks}/{totalTasks}</span>
+            </div>
           </div>
-        ) : (
-          /* Tasks List */
-          <div className="space-y-4">
-            {filteredTasks.map((task) => {
-              const isPending = task.status === 'EN_ATTENTE_VALIDATION';
-              const isArchived = task.status === 'ARCHIVEE';
-              const isDone = task.completed === 1 || isArchived;
-              const isHovered = hoveredTaskId === task.id;
+          <div className="mt-4 pt-3 border-t border-slate-100 flex items-center justify-between text-xs text-on-surface-variant">
+            <span>{completedTasks} jalons validés</span>
+            <span className="text-primary font-semibold">{openTasksCount} en cours</span>
+          </div>
+        </div>
 
-              const docsList = Array.isArray(task.completion_docs)
-                ? task.completion_docs
-                : (task.completion_docs ? [task.completion_docs] : []);
+      </div>
 
+      {/* ==================== 3. FILTRATION & SEARCH CONSOLE ==================== */}
+      <section className="bg-surface-container-lowest rounded-2xl p-4 sm:p-space-md lg:p-space-lg shadow-sm border border-border-subtle flex flex-col gap-space-md">
+        
+        {/* Top Row: Search Input + Sorting Selector */}
+        <div className="flex flex-col lg:flex-row items-stretch lg:items-center justify-between gap-space-md">
+          {/* Search Input with icon */}
+          <div className="relative flex-1">
+            <span className="material-symbols-outlined absolute left-4 top-1/2 -translate-y-1/2 text-on-surface-variant text-[22px]">
+              search
+            </span>
+            <input
+              id="taskSearchInput"
+              type="text"
+              value={searchTerm}
+              onChange={(e) => setSearchTerm(e.target.value)}
+              placeholder="Rechercher par mot-clé, artisan, pièce ou lot..."
+              className="w-full h-[50px] pl-12 pr-4 bg-canvas-slate rounded-xl text-on-surface font-body-md text-xs sm:text-sm border border-slate-200 focus:bg-white focus:outline-none focus:ring-2 focus:ring-primary-container transition-all"
+            />
+          </div>
+
+          {/* Sorting Controller */}
+          <div className="flex items-center gap-space-xs shrink-0">
+            <span className="font-label-sm text-xs text-on-surface-variant whitespace-nowrap flex items-center gap-1 font-semibold">
+              <span className="material-symbols-outlined text-[18px]">sort</span>
+              Trier par :
+            </span>
+            <select
+              value={sortBy}
+              onChange={(e) => setSortBy(e.target.value)}
+              className="h-[50px] px-3.5 pr-8 bg-canvas-slate rounded-xl font-label-sm text-xs sm:text-sm text-on-surface font-semibold border border-slate-200 focus:outline-none focus:ring-2 focus:ring-primary cursor-pointer transition-colors"
+            >
+              <option value="urgency">Degré d'urgence (priorité haute)</option>
+              <option value="budget_desc">Budget prévisionnel (décroissant)</option>
+            </select>
+          </div>
+        </div>
+
+        {/* Priority Filter Pills */}
+        <div className="flex flex-col gap-1.5">
+          <span className="font-label-sm text-xs text-on-surface-variant font-semibold uppercase tracking-wider">
+            Priorité & Niveau d'Alerte :
+          </span>
+          <div className="flex items-center gap-2 overflow-x-auto pb-1 scrollbar-none">
+            {['Toutes', 'Critique', 'Haute', 'Normale', 'Planifié'].map((p) => {
+              const isActive = selectedPriority === p;
               return (
-                <div
-                  key={task.id}
-                  onMouseEnter={() => setHoveredTaskId(task.id)}
-                  onMouseLeave={() => setHoveredTaskId(null)}
-                  className={`relative p-5 rounded-2xl border transition-all duration-150 group ${
-                    isArchived
-                      ? 'bg-emerald-50/50 dark:bg-emerald-950/20 border-emerald-200 dark:border-emerald-900/60'
-                      : isPending
-                      ? 'bg-amber-50/60 dark:bg-amber-950/30 border-amber-300 dark:border-amber-800'
-                      : 'bg-white dark:bg-slate-900 border-slate-200/90 dark:border-slate-800 hover:border-amber-400 dark:hover:border-amber-600 shadow-sm'
+                <button
+                  key={p}
+                  type="button"
+                  onClick={() => setSelectedPriority(p)}
+                  className={`px-4 py-2 rounded-full font-label-sm text-xs flex items-center gap-2 transition-colors cursor-pointer ${
+                    isActive
+                      ? 'bg-sage-soft text-primary font-bold shadow-xs'
+                      : 'bg-canvas-slate text-on-surface-variant hover:bg-slate-200'
                   }`}
                 >
-                  <div className="flex flex-col sm:flex-row sm:items-start justify-between gap-4">
-                    <div className="flex items-start space-x-3.5 flex-1 min-w-0">
-                      
-                      {/* Checkbox / Action Trigger */}
-                      <button
-                        type="button"
-                        onClick={(e) => handleToggle(task, e)}
-                        className={`mt-0.5 h-6 w-6 rounded-lg flex items-center justify-center border transition shrink-0 ${
-                          isArchived
-                            ? 'bg-emerald-600 border-emerald-600 text-white cursor-default'
-                            : isPending
-                            ? 'bg-amber-500 border-amber-500 text-white cursor-default'
-                            : 'border-slate-300 hover:border-amber-500 bg-white dark:bg-slate-800'
-                        }`}
-                        title={isArchived ? "Tâche validée" : isPending ? "En attente de validation" : "Finaliser cette tâche"}
-                      >
-                        {isArchived ? (
-                          <CheckCircle2 className="h-4 w-4" />
-                        ) : isPending ? (
-                          <Clock className="h-4 w-4 animate-spin" />
-                        ) : null}
-                      </button>
-
-                      <div className="flex-1 min-w-0">
-                        <div className="flex items-center space-x-2 flex-wrap gap-y-1">
-                          <h3 className={`text-base font-bold leading-snug ${isDone ? 'text-slate-700 dark:text-slate-300' : 'text-slate-900 dark:text-white'}`}>
-                            {task.title}
-                          </h3>
-
-                          {task.category && (
-                            <span className={`text-[10px] font-extrabold px-2.5 py-0.5 rounded-md border ${getCategoryBadgeClass(task.category)}`}>
-                              {task.category}
-                            </span>
-                          )}
-
-                          {/* Status Badge */}
-                          {isPending && (
-                            <span className="inline-flex items-center space-x-1 px-2.5 py-0.5 rounded-full text-xs font-black bg-amber-100 text-amber-900 border border-amber-300">
-                              <Clock className="w-3 h-3 text-amber-700" />
-                              <span>⏳ En attente de validation Coordinateur</span>
-                            </span>
-                          )}
-                          {isArchived && (
-                            <span className="inline-flex items-center space-x-1 px-2.5 py-0.5 rounded-full text-xs font-black bg-emerald-100 text-emerald-900 border border-emerald-300">
-                              <CheckCircle2 className="w-3 h-3 text-emerald-700" />
-                              <span>✅ Validée & Archivée</span>
-                            </span>
-                          )}
-                        </div>
-
-                        {task.description && (
-                          <p className="text-xs text-slate-600 dark:text-slate-300 mt-1 leading-relaxed">
-                            {task.description}
-                          </p>
-                        )}
-
-                        {/* Completion Notes Section */}
-                        {task.completion_notes && (
-                          <div className="mt-3 p-3 rounded-xl bg-amber-100/60 dark:bg-amber-950/40 border border-amber-200 dark:border-amber-800 text-xs text-slate-800 dark:text-slate-200">
-                            <span className="font-extrabold text-amber-900 dark:text-amber-300 block mb-0.5 flex items-center space-x-1">
-                              <FileText className="w-3.5 h-3.5" />
-                              <span>Compte rendu / Notes de réalisation :</span>
-                            </span>
-                            <p className="leading-relaxed">{task.completion_notes}</p>
-                          </div>
-                        )}
-
-                        {/* Uploaded Justificatifs / Documents Chips */}
-                        {docsList.length > 0 && (
-                          <div className="mt-3 space-y-1">
-                            <span className="text-[11px] font-extrabold text-slate-500 uppercase tracking-wider block">
-                              Justificatifs & Factures joints ({docsList.length}) :
-                            </span>
-                            <div className="flex flex-wrap gap-2">
-                              {docsList.map((docUrl, idx) => {
-                                const badge = getFileBadge(docUrl);
-                                const BadgeIcon = badge.icon;
-                                const filename = docUrl.split('/').pop().split('_', 2).pop() || 'Justificatif';
-
-                                return (
-                                  <a
-                                    key={idx}
-                                    href={docUrl}
-                                    target="_blank"
-                                    rel="noopener noreferrer"
-                                    className={`flex items-center space-x-1.5 px-3 py-1 rounded-xl border text-xs font-bold transition shadow-sm hover:scale-105 ${badge.color}`}
-                                    title={`Télécharger ${filename}`}
-                                  >
-                                    <BadgeIcon className="w-3.5 h-3.5 shrink-0" />
-                                    <span className="truncate max-w-[160px]">{filename}</span>
-                                    <Download className="w-3 h-3 ml-0.5 opacity-70" />
-                                  </a>
-                                );
-                              })}
-                            </div>
-                          </div>
-                        )}
-
-                      </div>
-                    </div>
-
-                    {/* Action Buttons Right Side */}
-                    <div className="flex items-center space-x-2 shrink-0 self-end sm:self-center">
-                      
-                      {/* Coordinator Henri Validation Action Button */}
-                      {isCoordinator && isPending && (
-                        <button
-                          type="button"
-                          onClick={(e) => handleValidateCompletion(task.id, e)}
-                          disabled={validatingTaskId === task.id}
-                          className="px-4 py-2 bg-emerald-600 hover:bg-emerald-700 text-white font-extrabold text-xs rounded-xl shadow-md transition flex items-center space-x-1.5 animate-pulse"
-                        >
-                          <CheckCircle2 className="w-4 h-4" />
-                          <span>{validatingTaskId === task.id ? 'Validation...' : '✅ Valider la finalisation'}</span>
-                        </button>
-                      )}
-
-                      {/* Member Finalize Button (if not already pending/archived) */}
-                      {!isPending && !isArchived && (
-                        <button
-                          type="button"
-                          onClick={() => openCompletionModal(task)}
-                          className="px-3.5 py-1.5 bg-amber-500 hover:bg-amber-600 text-white font-bold text-xs rounded-xl shadow transition flex items-center space-x-1"
-                        >
-                          <Upload className="w-3.5 h-3.5" />
-                          <span>Finaliser & Justifier</span>
-                        </button>
-                      )}
-
-                    </div>
-                  </div>
-                </div>
+                  {p === 'Critique' && <span className="w-2 h-2 rounded-full bg-error"></span>}
+                  {p === 'Haute' && <span className="w-2 h-2 rounded-full bg-amber-rich"></span>}
+                  {p === 'Normale' && <span className="w-2 h-2 rounded-full bg-secondary"></span>}
+                  {p === 'Planifié' && <span className="w-2 h-2 rounded-full bg-outline"></span>}
+                  <span>{p}</span>
+                </button>
               );
             })}
           </div>
-        )}
+        </div>
 
-      </div>
+        {/* Dropdown Selectors for Associés and Sujets */}
+        <div className="grid grid-cols-1 sm:grid-cols-2 gap-space-sm pt-1">
+          {/* Associé Responsable */}
+          <div className="flex flex-col gap-1">
+            <label className="font-label-sm text-xs text-on-surface font-semibold flex items-center gap-1.5">
+              <span className="material-symbols-outlined text-[18px] text-primary">groups</span>
+              Responsable / Associé
+            </label>
+            <select
+              value={selectedAssignee}
+              onChange={(e) => setSelectedAssignee(e.target.value)}
+              className="h-[44px] px-3.5 bg-canvas-slate rounded-xl font-label-sm text-xs text-on-surface font-medium border border-slate-200 focus:ring-2 focus:ring-primary focus:outline-none cursor-pointer"
+            >
+              {ALL_MEMBERS.map((m) => (
+                <option key={m.id} value={m.id}>{m.label}</option>
+              ))}
+            </select>
+          </div>
 
-      {/* MEMBER TASK COMPLETION MODAL */}
-      {completingTask && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-900/60 backdrop-blur-sm animate-in fade-in duration-200">
-          <div className="bg-white rounded-3xl border border-slate-200 max-w-lg w-full p-6 shadow-2xl space-y-5">
-            
-            {/* Modal Header */}
-            <div className="flex items-center justify-between border-b border-slate-100 pb-4">
-              <div className="flex items-center space-x-3">
-                <div className="p-2.5 rounded-2xl bg-amber-100 text-amber-700">
-                  <CheckSquare className="w-6 h-6" />
-                </div>
-                <div>
-                  <h3 className="text-base font-black text-slate-900">
-                    Finaliser la Tâche
-                  </h3>
-                  <p className="text-xs text-slate-500 truncate max-w-[280px]">
-                    {completingTask.title}
-                  </p>
-                </div>
-              </div>
-
-              <button
-                onClick={closeCompletionModal}
-                className="p-1.5 rounded-xl text-slate-400 hover:text-slate-600 hover:bg-slate-100 transition"
-              >
-                <X className="w-5 h-5" />
-              </button>
-            </div>
-
-            {/* Modal Form */}
-            <form onSubmit={handleCompletionSubmit} className="space-y-4 text-xs">
-              
-              <div className="space-y-1">
-                <label className="block font-extrabold text-slate-700">
-                  Compte rendu / Notes d'accomplissement
-                </label>
-                <textarea
-                  rows={3}
-                  required
-                  placeholder="Décrivez les actions réalisées (ex: Ramonage effectué, fioul vérifié, facture jointe)..."
-                  value={completionNotes}
-                  onChange={(e) => setCompletionNotes(e.target.value)}
-                  className="w-full px-3.5 py-2.5 rounded-xl border border-slate-300 focus:ring-2 focus:ring-amber-500 focus:outline-none text-slate-900 font-medium"
-                />
-              </div>
-
-              {/* Multi-File Upload Drag & Drop Zone */}
-              <div className="space-y-2 pt-1">
-                <label className="block font-extrabold text-slate-700 flex items-center justify-between">
-                  <span>Joindre des justificatifs / factures</span>
-                  <span className="text-[10px] text-slate-400">PDF, JPG, PNG, MD</span>
-                </label>
-
-                <div
-                  onDragOver={handleDragOver}
-                  onDragLeave={handleDragLeave}
-                  onDrop={handleDrop}
-                  onClick={() => fileInputRef.current?.click()}
-                  className={`border-2 border-dashed rounded-2xl p-5 text-center cursor-pointer transition-all ${
-                    isDragOver
-                      ? 'border-amber-500 bg-amber-50/50 scale-[1.01]'
-                      : 'border-slate-200 bg-slate-50/50 hover:border-amber-500/50'
-                  }`}
-                >
-                  <input
-                    type="file"
-                    multiple
-                    accept=".pdf,.jpg,.jpeg,.png,.md,.txt"
-                    ref={fileInputRef}
-                    onChange={handleFileInputChange}
-                    className="hidden"
-                  />
-
-                  <div className="flex flex-col items-center justify-center space-y-1.5">
-                    <div className="p-2.5 rounded-full bg-amber-100 text-amber-700">
-                      <Upload className="w-5 h-5" />
-                    </div>
-                    <div className="text-xs font-bold text-slate-800">
-                      Glissez vos factures/photos ici ou <span className="text-amber-600 underline">parcourez</span>
-                    </div>
-                    <p className="text-[10px] text-slate-400">
-                      Stockage automatique dans /uploads/documents/
-                    </p>
-                  </div>
-                </div>
-
-                {/* Selected Files Preview List */}
-                {completionFiles.length > 0 && (
-                  <div className="space-y-1.5 pt-2">
-                    <span className="text-[11px] font-bold text-slate-700">
-                      Fichiers prêts à être envoyés ({completionFiles.length}) :
-                    </span>
-                    <div className="flex flex-wrap gap-2">
-                      {completionFiles.map((file, idx) => (
-                        <div
-                          key={idx}
-                          className="flex items-center space-x-2 px-3 py-1 rounded-xl bg-amber-50 border border-amber-200 text-amber-900 text-xs font-bold"
-                        >
-                          <Paperclip className="w-3.5 h-3.5 text-amber-600" />
-                          <span className="truncate max-w-[140px]">{file.name}</span>
-                          <button
-                            type="button"
-                            onClick={() => handleRemoveFile(idx)}
-                            className="text-slate-400 hover:text-red-600 ml-1"
-                          >
-                            <X className="w-3.5 h-3.5" />
-                          </button>
-                        </div>
-                      ))}
-                    </div>
-                  </div>
-                )}
-
-              </div>
-
-              {/* Modal Footer */}
-              <div className="flex items-center justify-end space-x-3 pt-4 border-t border-slate-100">
-                <button
-                  type="button"
-                  onClick={closeCompletionModal}
-                  className="px-4 py-2 bg-slate-100 hover:bg-slate-200 text-slate-700 font-bold rounded-xl transition"
-                >
-                  Annuler
-                </button>
-                <button
-                  type="submit"
-                  disabled={isSubmitting}
-                  className="px-5 py-2 bg-amber-500 hover:bg-amber-600 text-white font-black rounded-xl shadow-md transition flex items-center space-x-1.5"
-                >
-                  <Check className="w-4 h-4" />
-                  <span>{isSubmitting ? 'Envoi...' : 'Soumettre pour validation'}</span>
-                </button>
-              </div>
-
-            </form>
-
+          {/* Lieu / Sujet */}
+          <div className="flex flex-col gap-1">
+            <label className="font-label-sm text-xs text-on-surface font-semibold flex items-center gap-1.5">
+              <span className="material-symbols-outlined text-[18px] text-primary">label</span>
+              Sujet
+            </label>
+            <select
+              value={selectedSubject}
+              onChange={(e) => setSelectedSubject(e.target.value)}
+              className="h-[44px] px-3.5 bg-canvas-slate rounded-xl font-label-sm text-xs text-on-surface font-medium border border-slate-200 focus:ring-2 focus:ring-primary focus:outline-none cursor-pointer"
+            >
+              <option value="all">Tous les sujets</option>
+              <option value="rosing">Rosing</option>
+              <option value="presbytere">Presbytère</option>
+              <option value="piscine">Piscine</option>
+              <option value="sci">SCI</option>
+            </select>
           </div>
         </div>
+
+      </section>
+
+      {/* ==================== 4. GRILLE DES CARTES DE TÂCHES ==================== */}
+      <div className="grid grid-cols-1 md:grid-cols-2 gap-space-md">
+        {sortedTasks.length === 0 ? (
+          <div className="col-span-full py-12 px-6 bg-surface-container-lowest rounded-2xl border border-dashed border-border-subtle flex flex-col items-center justify-center text-center">
+            <div className="w-14 h-14 rounded-2xl bg-sage-soft text-forest-deep flex items-center justify-center mb-3">
+              <span className="material-symbols-outlined text-[32px]">checklist_rtl</span>
+            </div>
+            <h4 className="font-headline-sm text-base font-bold text-forest-deep">
+              Aucune tâche ne correspond à vos critères
+            </h4>
+            <p className="font-body-md text-xs sm:text-sm text-on-surface-variant max-w-md mt-1">
+              Aucun chantier ou mission trouvé avec ces filtres. Essayez de réinitialiser la recherche ou de modifier les critères.
+            </p>
+            <button
+              type="button"
+              onClick={() => {
+                setSearchTerm('');
+                setSelectedPriority('Toutes');
+                setSelectedAssignee('all');
+                setSelectedSubject('all');
+              }}
+              className="mt-4 px-4 py-2 bg-sage-soft text-forest-deep text-xs font-bold rounded-xl hover:bg-emerald-100 transition-colors cursor-pointer"
+            >
+              Réinitialiser les filtres
+            </button>
+          </div>
+        ) : (
+          sortedTasks.map((t) => {
+            const isCritical = t.priority === 'Critique';
+            const isHigh = t.priority === 'Haute';
+            const progressVal = t.progress_percent ?? t.progress ?? 50;
+            const displayAssignee = (Array.isArray(t.assigned_members) && t.assigned_members.length > 0 ? t.assigned_members[0] : null) ?? t.assignee ?? 'Henri Jamet';
+            const avatarInitials = (displayAssignee || 'HJ').split(' ').map(n => n[0]).join('').substring(0, 2).toUpperCase() || 'HJ';
+
+            return (
+              <article
+                key={t.id}
+                className={`rounded-2xl p-5 shadow-sm border transition-all duration-200 flex flex-col justify-between gap-4 hover:shadow-md ${
+                  isCritical
+                    ? 'bg-red-50/40 border-red-200'
+                    : isHigh
+                    ? 'bg-amber-soft/20 border-amber-200'
+                    : 'bg-white border-border-subtle'
+                }`}
+              >
+                {/* Header tags & budget */}
+                <div className="flex flex-wrap items-center justify-between gap-2">
+                  <div className="flex items-center gap-2 flex-wrap">
+                    <span
+                      className={`inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full text-[11px] font-bold uppercase tracking-wider ${
+                        isCritical
+                          ? 'bg-error text-white'
+                          : isHigh
+                          ? 'bg-amber-rich text-white'
+                          : 'bg-emerald-100 text-forest-deep'
+                      }`}
+                    >
+                      <span className="material-symbols-outlined text-[13px]">
+                        {isCritical ? 'error' : isHigh ? 'warning' : 'check_circle'}
+                      </span>
+                      {t.priority} • {t.category?.split(' ')[0] || 'Chantier'}
+                    </span>
+
+                    <span className="px-2.5 py-0.5 rounded-full bg-canvas-slate border border-slate-200 text-xs font-semibold text-forest-deep">
+                      {t.subject || 'Rosing'}
+                    </span>
+                  </div>
+
+                  <div className="text-right">
+                    <span className="text-[11px] text-on-surface-variant block">Budget prév.</span>
+                    <span className="font-bold text-xs sm:text-sm text-forest-deep">
+                      {t.budget ? `~${t.budget.toLocaleString('fr-FR')} € TTC` : 'Inclus SCI'}
+                    </span>
+                  </div>
+                </div>
+
+                {/* Title & Description */}
+                <div>
+                  <h3 className="font-headline-sm text-base font-bold text-forest-deep">
+                    {t.title}
+                  </h3>
+                  <p className="font-body-md text-xs sm:text-sm text-on-surface-variant leading-relaxed mt-1 line-clamp-2">
+                    {t.description}
+                  </p>
+                </div>
+
+                {/* Multi-step Progress Bar with Shimmer */}
+                <div className="space-y-1.5">
+                  <div className="flex items-center justify-between text-xs text-on-surface-variant">
+                    <span className="font-medium text-forest-deep">
+                      {t.step_label || 'Avancement du chantier'}
+                    </span>
+                    <span className="font-bold text-primary">{progressVal}%</span>
+                  </div>
+                  <div className="w-full h-2.5 rounded-full bg-slate-100 overflow-hidden border border-slate-200/60">
+                    <div
+                      className="h-full bg-gradient-to-r from-emerald-600 to-teal-600 rounded-full progress-shimmer transition-all duration-500"
+                      style={{ width: `${progressVal}%` }}
+                    ></div>
+                  </div>
+                </div>
+
+                {/* Assignee & Action button */}
+                <div className="pt-3 border-t border-slate-100 flex items-center justify-between gap-3 flex-wrap">
+                  <div className="flex items-center gap-2">
+                    <div className="w-7 h-7 rounded-full bg-primary text-white flex items-center justify-center font-bold text-xs">
+                      {avatarInitials}
+                    </div>
+                    <div className="flex flex-col leading-tight">
+                      <span className="text-xs font-semibold text-on-surface">
+                        {displayAssignee}
+                      </span>
+                      <span className="text-[11px] text-on-surface-variant">
+                        {t.deadline || 'Sous 15 jours'}
+                      </span>
+                    </div>
+                  </div>
+
+                  <button
+                    type="button"
+                    onClick={() => setInspectingTask(t)}
+                    className="inline-flex items-center gap-1.5 px-4 py-2 rounded-xl bg-white border-2 border-emerald-600 text-emerald-800 hover:bg-emerald-50 text-xs font-bold transition-all shadow-xs cursor-pointer"
+                  >
+                    <span className="material-symbols-outlined text-[16px]">visibility</span>
+                    Consulter la tâche
+                  </button>
+                </div>
+              </article>
+            );
+          })
+        )}
+      </div>
+
+      {/* ==================== 5. ENCART DE DÉLÉGATION JURIDIQUE ==================== */}
+      <section className="bg-surface-container-lowest rounded-2xl p-5 border border-border-subtle flex flex-col sm:flex-row sm:items-center justify-between gap-4 shadow-sm">
+        <div className="flex items-center gap-3">
+          <div className="w-10 h-10 rounded-xl bg-amber-soft text-amber-rich flex items-center justify-center shrink-0">
+            <span className="material-symbols-outlined text-[24px]">gavel</span>
+          </div>
+          <div>
+            <h4 className="font-headline-sm text-sm font-bold text-forest-deep">
+              Règle de Délégation & Seuil Budgétaire (300 €)
+            </h4>
+            <p className="font-body-md text-xs text-on-surface-variant">
+              Toute intervention dépassant le montant de 300 € TTC requiert obligatoirement un vote d'approbation préalable de la SCI.
+            </p>
+          </div>
+        </div>
+
+        <button
+          type="button"
+          onClick={() => navigate('/votes')}
+          className="px-4 py-2 rounded-xl bg-white border-2 border-amber-rich text-amber-rich hover:bg-amber-soft text-xs font-bold shadow-xs whitespace-nowrap cursor-pointer"
+        >
+          Ouvrir un vote formel
+        </button>
+      </section>
+
+      {/* Detail / Edit Modal */}
+      {inspectingTask && (
+        <TaskDetailModal
+          isOpen={Boolean(inspectingTask)}
+          task={inspectingTask}
+          onClose={() => setInspectingTask(null)}
+          currentUser={currentUser}
+          onTaskUpdated={loadTasks}
+        />
       )}
 
-      {/* CREATE & ATTRIBUTE TASK MODAL */}
+      {/* Task Creation Modal */}
       {isCreateModalOpen && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-900/60 backdrop-blur-sm animate-in fade-in duration-200">
-          <div className="bg-white rounded-3xl border border-slate-200 max-w-lg w-full p-6 shadow-2xl space-y-5">
-            <div className="flex items-center justify-between border-b border-slate-100 pb-4">
-              <div className="flex items-center space-x-3">
-                <div className="p-2.5 rounded-2xl bg-amber-500 text-white">
-                  <Plus className="w-6 h-6" />
+        <div
+          aria-modal="true"
+          role="dialog"
+          className="fixed inset-0 z-50 bg-black/60 backdrop-blur-sm flex items-center justify-center p-4 overflow-y-auto"
+        >
+          <div className="bg-white rounded-3xl p-6 sm:p-7 max-w-xl w-full shadow-2xl border border-slate-200 space-y-5 animate-in zoom-in-95 duration-150">
+            <div className="flex items-center justify-between border-b border-slate-100 pb-3">
+              <div className="flex items-center gap-2.5">
+                <div className="w-10 h-10 rounded-xl bg-sage-soft text-primary flex items-center justify-center">
+                  <span className="material-symbols-outlined text-[24px]">add_task</span>
                 </div>
                 <div>
-                  <h3 className="text-base font-black text-slate-900">
-                    ➕ Créer / Attribuer une Tâche
+                  <h3 className="font-headline-sm text-base sm:text-lg font-bold text-forest-deep">
+                    Nouvelle tâche ou mission
                   </h3>
-                  <p className="text-xs text-slate-500">
-                    Ajouter une consigne ou tâche d'entretien au Domaine SCI
+                  <p className="text-xs text-on-surface-variant">
+                    Ajout au registre du Domaine d'Hellenvilliers
                   </p>
                 </div>
               </div>
-
               <button
+                type="button"
                 onClick={() => setIsCreateModalOpen(false)}
-                className="p-1.5 rounded-xl text-slate-400 hover:text-slate-600 hover:bg-slate-100 transition"
+                className="w-8 h-8 rounded-full bg-slate-100 hover:bg-slate-200 text-slate-500 flex items-center justify-center"
               >
-                <X className="w-5 h-5" />
+                <span className="material-symbols-outlined text-[18px]">close</span>
               </button>
             </div>
 
-            <form onSubmit={handleCreateTaskSubmit} className="space-y-4 text-xs">
+            <form onSubmit={handleCreateTask} className="space-y-4 text-xs sm:text-sm">
               <div className="space-y-1">
-                <label className="block font-extrabold text-slate-700">
-                  Titre de la Tâche *
-                </label>
+                <label className="font-semibold text-on-surface block">Titre de la mission</label>
                 <input
                   type="text"
                   required
-                  placeholder="ex: Vérification vannes d'eau & fioul"
                   value={newTitle}
                   onChange={(e) => setNewTitle(e.target.value)}
-                  className="w-full px-3.5 py-2.5 rounded-xl border border-slate-300 focus:ring-2 focus:ring-amber-500 focus:outline-none text-slate-900 font-bold"
+                  placeholder="Ex: Réparation volets bibliothèque, taille haie..."
+                  className="w-full h-11 px-3 bg-canvas-slate rounded-xl border border-slate-300 focus:outline-none focus:ring-2 focus:ring-primary"
+                />
+              </div>
+
+              <div className="space-y-1">
+                <label className="font-semibold text-on-surface block">Description détaillée</label>
+                <textarea
+                  rows={3}
+                  value={newDescription}
+                  onChange={(e) => setNewDescription(e.target.value)}
+                  placeholder="Objectif, urgence, prestataires éventuels..."
+                  className="w-full p-3 bg-canvas-slate rounded-xl border border-slate-300 focus:outline-none focus:ring-2 focus:ring-primary resize-none"
                 />
               </div>
 
               <div className="grid grid-cols-2 gap-3">
                 <div className="space-y-1">
-                  <label className="block font-extrabold text-slate-700">
-                    Catégorie
-                  </label>
+                  <label className="font-semibold text-on-surface block">Sujet</label>
                   <select
-                    value={newCategory}
-                    onChange={(e) => setNewCategory(e.target.value)}
-                    className="w-full px-3 py-2 rounded-xl border border-slate-300 focus:ring-2 focus:ring-amber-500 text-slate-900 font-medium"
+                    value={newSubject}
+                    onChange={(e) => setNewSubject(e.target.value)}
+                    className="w-full h-10 px-3 bg-canvas-slate rounded-xl border border-slate-300 cursor-pointer"
                   >
-                    <option value="Arrivée">Arrivée</option>
-                    <option value="Pendant le séjour">Pendant le séjour</option>
-                    <option value="Départ">Départ</option>
-                    <option value="Entretien & Réparation">Entretien & Réparation</option>
+                    <option value="Rosing">Rosing</option>
+                    <option value="Presbytère">Presbytère</option>
+                    <option value="Piscine">Piscine</option>
+                    <option value="Jardin">Jardin</option>
+                    <option value="SCI">SCI</option>
                   </select>
                 </div>
 
                 <div className="space-y-1">
-                  <label className="block font-extrabold text-slate-700">
-                    Membre Référent / Attribué
-                  </label>
+                  <label className="font-semibold text-on-surface block">Priorité</label>
                   <select
-                    value={newAssignedUser}
-                    onChange={(e) => setNewAssignedUser(e.target.value)}
-                    className="w-full px-3 py-2 rounded-xl border border-slate-300 focus:ring-2 focus:ring-amber-500 text-slate-900 font-medium"
+                    value={newPriority}
+                    onChange={(e) => setNewPriority(e.target.value)}
+                    className="w-full h-10 px-3 bg-canvas-slate rounded-xl border border-slate-300 cursor-pointer"
                   >
-                    {['Henri', 'Hortense', 'Marguerite', 'Eugénie', 'Joséphine', 'Maman', 'Frédéric'].map((m) => (
-                      <option key={m} value={m}>{m}</option>
+                    <option value="Critique">Critique</option>
+                    <option value="Haute">Haute</option>
+                    <option value="Normale">Normale</option>
+                    <option value="Planifié">Planifié</option>
+                  </select>
+                </div>
+              </div>
+
+              <div className="grid grid-cols-2 gap-3">
+                <div className="space-y-1">
+                  <label className="font-semibold text-on-surface block">Budget prévisionnel (€ TTC)</label>
+                  <input
+                    type="number"
+                    value={newBudget}
+                    onChange={(e) => setNewBudget(e.target.value)}
+                    className="w-full h-10 px-3 bg-canvas-slate rounded-xl border border-slate-300"
+                  />
+                </div>
+
+                <div className="space-y-1">
+                  <label className="font-semibold text-on-surface block">Responsable assigné</label>
+                  <select
+                    value={newAssignee}
+                    onChange={(e) => setNewAssignee(e.target.value)}
+                    className="w-full h-10 px-3 bg-canvas-slate rounded-xl border border-slate-300 cursor-pointer"
+                  >
+                    {ALL_MEMBERS.filter((m) => m.id !== 'all').map((m) => (
+                      <option key={m.id} value={m.label}>{m.label}</option>
                     ))}
                   </select>
                 </div>
               </div>
 
-              <div className="space-y-1">
-                <label className="block font-extrabold text-slate-700">
-                  Consignes & Description
-                </label>
-                <textarea
-                  rows={3}
-                  placeholder="Consignes précises ou localisation de l'intervention..."
-                  value={newDescription}
-                  onChange={(e) => setNewDescription(e.target.value)}
-                  className="w-full px-3.5 py-2.5 rounded-xl border border-slate-300 focus:ring-2 focus:ring-amber-500 focus:outline-none text-slate-900 font-medium"
-                />
-              </div>
-
-              <div className="flex items-center justify-end space-x-3 pt-4 border-t border-slate-100">
+              <div className="flex items-center justify-end gap-3 pt-3 border-t border-slate-100">
                 <button
                   type="button"
                   onClick={() => setIsCreateModalOpen(false)}
-                  className="px-4 py-2 bg-slate-100 hover:bg-slate-200 text-slate-700 font-bold rounded-xl transition"
+                  className="px-4 py-2 rounded-xl bg-white border border-slate-300 text-slate-700 font-semibold hover:bg-slate-100 cursor-pointer"
                 >
                   Annuler
                 </button>
                 <button
                   type="submit"
-                  disabled={isCreatingTask}
-                  className="px-5 py-2 bg-amber-500 hover:bg-amber-600 text-white font-black rounded-xl shadow-md transition flex items-center space-x-1.5"
+                  disabled={creating}
+                  className="px-5 py-2 rounded-xl bg-white border-2 border-emerald-600 text-emerald-800 hover:bg-emerald-50 font-bold transition-all shadow-xs flex items-center gap-1.5 cursor-pointer disabled:opacity-50"
                 >
-                  <Plus className="w-4 h-4" />
-                  <span>{isCreatingTask ? 'Création...' : 'Créer & Attribuer'}</span>
+                  <span className="material-symbols-outlined text-[16px]">add_circle</span>
+                  Créer la tâche
                 </button>
               </div>
             </form>

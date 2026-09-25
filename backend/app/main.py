@@ -13,7 +13,11 @@ from sqlalchemy.orm import Session
 from sqlalchemy import func
 
 from .database import engine, Base, get_db
-from .models import Property, User, Issue, Comment, IssueComment, Reservation, Project, ProjectVote, ProjectComment, AdminDocument, MemberAvailability, VademecumItem, MaintenanceTask, StayTaskAssignment
+from .models import (
+    Property, User, Issue, Comment, IssueComment, Reservation, Project,
+    ProjectVote, ProjectComment, AdminDocument, MemberAvailability,
+    VademecumItem, MaintenanceTask, StayTaskAssignment, Task, TaskComment, Log
+)
 from .schemas import (
     LoginRequest, PropertyResponse, UserResponse, TokenResponse,
     IssueCreate, IssueUpdate, IssueResponse,
@@ -27,7 +31,10 @@ from .schemas import (
     VademecumItemCreate, VademecumItemUpdate, VademecumItemResponse,
     MaintenanceTaskCreate, MaintenanceTaskResponse, StayTaskAssignmentResponse, TaskCompletionSubmit,
     StatsResponse, UserWorkloadStats, WorkloadSummaryResponse,
-    HeatingStatusResponse, HeatingModeRequest, HeatingTemperatureRequest
+    HeatingStatusResponse, HeatingModeRequest, HeatingTemperatureRequest,
+    PiscineStatusResponse, StayBalanceResponse, StayBalanceMember,
+    TaskCreate, TaskUpdate, TaskResponse, TaskCommentCreate, TaskCommentResponse, TaskCommentReactRequest, TaskCloseRequest,
+    ALLOWED_REACTION_EMOJIS
 )
 from .seed import seed_database
 from .services.workload_balancer import calculate_workload_distribution
@@ -78,12 +85,17 @@ async def security_and_rate_limit_middleware(request: Request, call_next):
     response.headers["X-XSS-Protection"] = "1; mode=block"
     return response
 
-# Static Uploads directory
+# Static Uploads directory (Vercel Serverless Read-Only Filesystem Fix F10)
 UPLOAD_DIR = os.path.join(os.path.dirname(__file__), "uploads")
 DOCUMENTS_DIR = os.path.join(UPLOAD_DIR, "documents")
-os.makedirs(UPLOAD_DIR, exist_ok=True)
-os.makedirs(DOCUMENTS_DIR, exist_ok=True)
-app.mount("/uploads", StaticFiles(directory=UPLOAD_DIR), name="uploads")
+try:
+    os.makedirs(UPLOAD_DIR, exist_ok=True)
+    os.makedirs(DOCUMENTS_DIR, exist_ok=True)
+except OSError as e:
+    logger.warning(f"Notice: Upload directories could not be created on read-only serverless filesystem: {e}")
+
+if os.path.exists(UPLOAD_DIR):
+    app.mount("/uploads", StaticFiles(directory=UPLOAD_DIR), name="uploads")
 
 # Automatic column migration safeguard for Project table in SQLite
 def run_project_migrations():
@@ -239,8 +251,21 @@ def get_current_user(request: Request, db: Session = Depends(get_db)) -> User:
             detail="[Auth Error] Jeton d'authentification invalide ou expiré."
         )
 
+    user_id = payload.get("user_id")
     prenom = payload.get("sub")
-    user = db.query(User).filter(func.lower(User.prenom) == prenom.lower()).first()
+    user = None
+    if user_id:
+        user = db.query(User).filter(User.id == user_id).first()
+    if not user and prenom:
+        user = db.query(User).filter(func.lower(User.prenom) == prenom.strip().lower()).first()
+        if not user:
+            input_norm = normalize_prenom(prenom)
+            for u in db.query(User).all():
+                u_norm = normalize_prenom(u.prenom)
+                if u_norm == input_norm or (input_norm in ["elisabeth", "maman"] and u_norm in ["elisabeth", "maman"]):
+                    user = u
+                    break
+
     if not user:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
@@ -516,6 +541,82 @@ def add_issue_comment(issue_id: int, comment: IssueCommentCreate, db: Session = 
 
 # --- Reservations Endpoints ---
 
+@app.get("/api/reservations/balance", response_model=StayBalanceResponse)
+@app.get("/api/reservations/stay-balance", response_model=StayBalanceResponse)
+def get_stay_balance(
+    year: Optional[int] = Query(2026),
+    db: Session = Depends(get_db)
+):
+    """
+    Stay Balance calculation for Stitch Stay Balance Component.
+    Computes total days booked per associate, stays count, and relative percentage.
+    """
+    MEMBERS_INFO = [
+        {"prenom": "Henri", "name": "Henri Jamet", "role": "Coordinateur", "color": "cyan"},
+        {"prenom": "Marguerite", "name": "Marguerite Jamet", "role": "Membre Associé", "color": "purple"},
+        {"prenom": "Hortense", "name": "Hortense Jamet", "role": "Membre Associé", "color": "rose"},
+        {"prenom": "Joséphine", "name": "Joséphine Jamet", "role": "Membre Associé", "color": "emerald"},
+        {"prenom": "Eugénie", "name": "Eugénie Jamet", "role": "Membre Associé", "color": "amber"},
+        {"prenom": "Élisabeth", "name": "Élisabeth Jamet", "role": "Membre Associé", "color": "teal"},
+        {"prenom": "Frédéric", "name": "Frédéric Jamet", "role": "Membre Associé", "color": "blue"},
+    ]
+
+    query = db.query(Reservation)
+    if year:
+        query = query.filter(Reservation.year == year)
+    reservations = query.all()
+
+    member_days = {m["prenom"]: 0 for m in MEMBERS_INFO}
+    member_stays = {m["prenom"]: 0 for m in MEMBERS_INFO}
+
+    for r in reservations:
+        if r.status in ["Confirmée", "Demande en attente"]:
+            try:
+                d1 = datetime.strptime(r.start_date, "%Y-%m-%d")
+                d2 = datetime.strptime(r.end_date, "%Y-%m-%d")
+                days = max(1, (d2 - d1).days + 1)
+            except Exception:
+                days = 7
+
+            norm_r_user = normalize_prenom(r.user_name)
+            matched = False
+            for m in MEMBERS_INFO:
+                norm_m = normalize_prenom(m["prenom"])
+                if norm_r_user == norm_m or (norm_r_user in ["elisabeth", "maman"] and norm_m in ["elisabeth", "maman"]):
+                    member_days[m["prenom"]] += days
+                    member_stays[m["prenom"]] += 1
+                    matched = True
+                    break
+            if not matched and r.user_name:
+                member_days[r.user_name] = member_days.get(r.user_name, 0) + days
+                member_stays[r.user_name] = member_stays.get(r.user_name, 0) + 1
+
+    max_days = max(list(member_days.values()) + [14])
+    total_days = sum(member_days.values())
+
+    result_members = []
+    for m in MEMBERS_INFO:
+        p = m["prenom"]
+        d = member_days.get(p, 0)
+        s = member_stays.get(p, 0)
+        pct = min(100, round((d / max_days) * 100)) if max_days > 0 else 0
+        result_members.append(StayBalanceMember(
+            prenom=p,
+            name=m["name"],
+            role=m["role"],
+            avatar_color=m["color"],
+            days=d,
+            stays_count=s,
+            percentage=pct
+        ))
+
+    return StayBalanceResponse(
+        year=year or 2026,
+        total_days=total_days,
+        max_days=max_days,
+        members=result_members
+    )
+
 @app.get("/api/reservations", response_model=List[ReservationResponse])
 def list_reservations(
     property_id: Optional[int] = Query(None),
@@ -533,8 +634,63 @@ def list_reservations(
 
     return query.order_by(Reservation.year.asc(), Reservation.week_number.asc()).all()
 
+@app.get("/api/reservations/{reservation_id}", response_model=ReservationResponse)
+def get_reservation(reservation_id: int, db: Session = Depends(get_db)):
+    db_res = db.query(Reservation).filter(Reservation.id == reservation_id).first()
+    if not db_res:
+        raise HTTPException(status_code=404, detail="Réservation non trouvée")
+    return db_res
+
+CANCELLED_RESERVATION_STATUSES = [
+    'Annulée', 'Refusée', 'cancelled', 'rejected',
+    'annulée', 'refusée', 'Cancelled', 'Rejected',
+    'Annulee', 'Refusee', 'annulee', 'refusee'
+]
+
+
+def validate_iso_date_string(date_str: str, field_name: str = "date") -> datetime:
+    """Validate that date_str is a valid ISO date YYYY-MM-DD without whitespace."""
+    if not isinstance(date_str, str):
+        raise HTTPException(
+            status_code=400,
+            detail=f"Format de date invalide pour {field_name}. Format attendu : YYYY-MM-DD."
+        )
+    if len(date_str) != 10 or date_str != date_str.strip():
+        raise HTTPException(
+            status_code=400,
+            detail=f"Format de date invalide pour {field_name} : '{date_str}'. Format attendu : YYYY-MM-DD sans espaces."
+        )
+    parts = date_str.split("-")
+    if len(parts) != 3 or len(parts[0]) != 4 or len(parts[1]) != 2 or len(parts[2]) != 2 or not all(p.isdigit() for p in parts):
+        raise HTTPException(
+            status_code=400,
+            detail=f"Format de date invalide pour {field_name} : '{date_str}'. Format attendu : YYYY-MM-DD."
+        )
+    try:
+        dt = datetime.strptime(date_str, "%Y-%m-%d")
+        return dt
+    except ValueError:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Date invalide pour {field_name} : '{date_str}'. La date n'existe pas dans le calendrier."
+        )
+
+
 @app.post("/api/reservations", response_model=ReservationResponse, status_code=status.HTTP_201_CREATED)
 def create_reservation(res: ReservationCreate, db: Session = Depends(get_db)):
+    # 1. Enforce ISO date format and start_date <= end_date
+    start_dt = validate_iso_date_string(res.start_date, "start_date")
+    end_dt = validate_iso_date_string(res.end_date, "end_date")
+    if start_dt > end_dt:
+        raise HTTPException(
+            status_code=400,
+            detail="start_date must be before or equal to end_date"
+        )
+    norm_start_date = start_dt.strftime("%Y-%m-%d")
+    norm_end_date = end_dt.strftime("%Y-%m-%d")
+    res.start_date = norm_start_date
+    res.end_date = norm_end_date
+
     prop_name = res.property_name
     if not prop_name and res.properties:
         prop_name = " & ".join(res.properties)
@@ -543,19 +699,54 @@ def create_reservation(res: ReservationCreate, db: Session = Depends(get_db)):
         if prop:
             prop_name = prop.name
 
+    target_prop_id = res.property_id or 1
+
     # Overlap validation rule: Prevent booking overlapping dates with an existing stay,
-    # UNLESS the existing stay has accepts_extra_family = true OR the new booking accepts extra family guests.
-    existing_stays = db.query(Reservation).all()
+    # UNLESS BOTH the existing stay and the new booking accept extra family guests.
+    # Exclude cancelled/rejected reservations and isolate strictly by property_id.
+    query = db.query(Reservation).filter(
+        ~Reservation.status.in_(CANCELLED_RESERVATION_STATUSES)
+    )
+    if target_prop_id == 1:
+        query = query.filter((Reservation.property_id == 1) | (Reservation.property_id == None))
+    else:
+        query = query.filter(Reservation.property_id == target_prop_id)
+
+    existing_stays = query.all()
 
     for stay in existing_stays:
-        if res.start_date < stay.end_date and res.end_date > stay.start_date:
+        if stay.status and stay.status in CANCELLED_RESERVATION_STATUSES:
+            continue
+        stay_prop_id = stay.property_id or 1
+        if stay_prop_id != target_prop_id:
+            continue
+        if not stay.start_date or not stay.end_date:
+            continue
+
+        try:
+            stay_start_dt = validate_iso_date_string(stay.start_date, "stay.start_date")
+            stay_end_dt = validate_iso_date_string(stay.end_date, "stay.end_date")
+        except Exception:
+            try:
+                stay_start_dt = datetime.strptime(str(stay.start_date).strip(), "%Y-%m-%d")
+                stay_end_dt = datetime.strptime(str(stay.end_date).strip(), "%Y-%m-%d")
+            except Exception:
+                continue
+
+        if start_dt < stay_end_dt and end_dt > stay_start_dt:
             existing_accepts = stay.accepts_extra_family if stay.accepts_extra_family is not None else True
             new_accepts = res.accepts_extra_family if res.accepts_extra_family is not None else True
 
-            if not existing_accepts and not new_accepts:
+            # If EITHER stay refuses extra family cohabitation, the booking is rejected
+            if not existing_accepts or not new_accepts:
+                detail_msg = (
+                    f"Conflit de dates : La période du {norm_start_date} au {norm_end_date} chevauche le séjour "
+                    f"de {stay.user_name} (du {stay.start_date} au {stay.end_date}). La cohabitation n'est pas autorisée "
+                    f"car l'un des séjours refuse la présence d'autres familles."
+                )
                 raise HTTPException(
                     status_code=400,
-                    detail=f"Conflit de dates : La période du {res.start_date} au {res.end_date} chevauche le séjour de {stay.user_name} (du {stay.start_date} au {stay.end_date}) qui n'accepte pas de famille supplémentaire."
+                    detail=detail_msg
                 )
 
     sel_rooms_str = json.dumps(res.selected_rooms) if res.selected_rooms else None
@@ -567,8 +758,10 @@ def create_reservation(res: ReservationCreate, db: Session = Depends(get_db)):
         user_name=res.user_name,
         year=res.year,
         week_number=res.week_number,
-        start_date=res.start_date,
-        end_date=res.end_date,
+        start_date=norm_start_date,
+        end_date=norm_end_date,
+        arrival_time=res.arrival_time or "15:00",
+        departure_time=res.departure_time or "11:00",
         guest_count=res.guest_count if res.guest_count is not None else 1,
         chambers_used=cnt,
         selected_rooms=sel_rooms_str,
@@ -583,13 +776,105 @@ def create_reservation(res: ReservationCreate, db: Session = Depends(get_db)):
     return db_res
 
 @app.patch("/api/reservations/{reservation_id}", response_model=ReservationResponse)
+@app.put("/api/reservations/{reservation_id}", response_model=ReservationResponse)
 def update_reservation(reservation_id: int, update: ReservationUpdate, db: Session = Depends(get_db)):
     db_res = db.query(Reservation).filter(Reservation.id == reservation_id).first()
     if not db_res:
         raise HTTPException(status_code=404, detail="Réservation non trouvée")
 
+    # 1. Enforce ISO date format and start_date <= end_date
+    if update.start_date is not None:
+        validate_iso_date_string(update.start_date, "start_date")
+    if update.end_date is not None:
+        validate_iso_date_string(update.end_date, "end_date")
+
+    new_start = update.start_date if update.start_date is not None else db_res.start_date
+    new_end = update.end_date if update.end_date is not None else db_res.end_date
+
+    # Validate combined date range
+    start_dt = validate_iso_date_string(new_start, "start_date")
+    end_dt = validate_iso_date_string(new_end, "end_date")
+    if start_dt > end_dt:
+        raise HTTPException(
+            status_code=400,
+            detail="start_date must be before or equal to end_date"
+        )
+    norm_new_start = start_dt.strftime("%Y-%m-%d")
+    norm_new_end = end_dt.strftime("%Y-%m-%d")
+
+    target_prop_id = update.property_id or db_res.property_id or 1
+    new_status = update.status if update.status is not None else db_res.status
+    new_accepts = update.accepts_extra_family if update.accepts_extra_family is not None else db_res.accepts_extra_family
+
+    # If updating dates, property, or accepts_extra_family, validate bilateral cohabitation overlap against other stays
+    # Only perform overlap check if the stay itself is active (not cancelled or rejected)
+    if new_status not in CANCELLED_RESERVATION_STATUSES:
+        if (update.start_date is not None or update.end_date is not None or 
+            update.accepts_extra_family is not None or update.property_id is not None or
+            (update.status is not None and db_res.status in CANCELLED_RESERVATION_STATUSES)):
+            
+            query = db.query(Reservation).filter(
+                Reservation.id != reservation_id,
+                ~Reservation.status.in_(CANCELLED_RESERVATION_STATUSES)
+            )
+            if target_prop_id == 1:
+                query = query.filter((Reservation.property_id == 1) | (Reservation.property_id == None))
+            else:
+                query = query.filter(Reservation.property_id == target_prop_id)
+
+            other_stays = query.all()
+
+            for stay in other_stays:
+                if stay.status and stay.status in CANCELLED_RESERVATION_STATUSES:
+                    continue
+                stay_prop_id = stay.property_id or 1
+                if stay_prop_id != target_prop_id:
+                    continue
+                if not stay.start_date or not stay.end_date:
+                    continue
+
+                try:
+                    stay_start_dt = validate_iso_date_string(stay.start_date, "stay.start_date")
+                    stay_end_dt = validate_iso_date_string(stay.end_date, "stay.end_date")
+                except Exception:
+                    try:
+                        stay_start_dt = datetime.strptime(str(stay.start_date).strip(), "%Y-%m-%d")
+                        stay_end_dt = datetime.strptime(str(stay.end_date).strip(), "%Y-%m-%d")
+                    except Exception:
+                        continue
+
+                if start_dt < stay_end_dt and end_dt > stay_start_dt:
+                    existing_accepts = stay.accepts_extra_family if stay.accepts_extra_family is not None else True
+                    if not existing_accepts or not new_accepts:
+                        raise HTTPException(
+                            status_code=400,
+                            detail=(
+                                f"Conflit de dates : La période du {norm_new_start} au {norm_new_end} chevauche le séjour "
+                                f"de {stay.user_name} (du {stay.start_date} au {stay.end_date}). La cohabitation n'est pas autorisée "
+                                f"car l'un des séjours refuse la présence d'autres familles."
+                            )
+                        )
+
+    if update.start_date is not None:
+        db_res.start_date = norm_new_start
+    if update.end_date is not None:
+        db_res.end_date = norm_new_end
+    if update.user_name is not None:
+        db_res.user_name = update.user_name
+    if update.year is not None:
+        db_res.year = update.year
+    if update.week_number is not None:
+        db_res.week_number = update.week_number
+    if update.property_id is not None:
+        db_res.property_id = update.property_id
+    if update.property_name is not None:
+        db_res.property_name = update.property_name
     if update.status is not None:
         db_res.status = update.status
+    if update.arrival_time is not None:
+        db_res.arrival_time = update.arrival_time or "15:00"
+    if update.departure_time is not None:
+        db_res.departure_time = update.departure_time or "11:00"
     if update.guest_count is not None:
         db_res.guest_count = update.guest_count
     if update.accepts_extra_family is not None:
@@ -1112,113 +1397,416 @@ def delete_vademecum_item(item_id: int, db: Session = Depends(get_db)):
     return None
 
 
-# --- Maintenance Tasks & Automatic Task Attribution Endpoints ---
+# --- Unified Tasks & Comments Endpoints (Stitch Screens F06) ---
+
+def compute_task_progress(task: Task):
+    checklist = []
+    if task.checklist:
+        try:
+            checklist = json.loads(task.checklist) if isinstance(task.checklist, str) else task.checklist
+        except Exception:
+            checklist = []
+    total_steps = len(checklist) if isinstance(checklist, list) else 0
+    completed_steps = sum(1 for step in checklist if isinstance(step, dict) and step.get("completed")) if total_steps > 0 else 0
+    if total_steps > 0:
+        pct = round((completed_steps / total_steps) * 100)
+    else:
+        st = str(task.status or "").upper()
+        if st in ["TERMINE", "ARCHIVEE"]:
+            pct = 100
+        elif st in ["EN_COURS"]:
+            pct = 50
+        else:
+            pct = 0
+    return pct, completed_steps, total_steps
+
+
+def format_comment_response(comment: TaskComment) -> dict:
+    raw_reactions = {}
+    if comment.reactions:
+        try:
+            raw_reactions = json.loads(comment.reactions) if isinstance(comment.reactions, str) else comment.reactions
+        except Exception:
+            raw_reactions = {}
+
+    counts: Dict[str, int] = {}
+    if isinstance(raw_reactions, dict):
+        for k, v in raw_reactions.items():
+            if isinstance(v, list):
+                counts[k] = len(v)
+            elif isinstance(v, int):
+                counts[k] = v
+            else:
+                try:
+                    counts[k] = int(v)
+                except Exception:
+                    counts[k] = 1
+
+    return {
+        "id": comment.id,
+        "task_id": comment.task_id,
+        "author_id": comment.author_id,
+        "author_name": comment.author_name,
+        "author_role": comment.author_role,
+        "content": comment.content,
+        "reactions": counts,
+        "created_at": comment.created_at
+    }
+
+
+def format_task_response(task: Task, include_comments: bool = False) -> dict:
+    progress_pct, completed_steps, total_steps = compute_task_progress(task)
+
+    assigned_members = []
+    if task.assigned_members:
+        try:
+            assigned_members = json.loads(task.assigned_members) if isinstance(task.assigned_members, str) else task.assigned_members
+        except Exception:
+            assigned_members = [task.assigned_members]
+
+    checklist = []
+    if task.checklist:
+        try:
+            checklist = json.loads(task.checklist) if isinstance(task.checklist, str) else task.checklist
+        except Exception:
+            checklist = []
+
+    documents = []
+    if task.documents:
+        try:
+            documents = json.loads(task.documents) if isinstance(task.documents, str) else task.documents
+        except Exception:
+            documents = []
+
+    completion_docs = []
+    if task.completion_docs:
+        try:
+            completion_docs = json.loads(task.completion_docs) if isinstance(task.completion_docs, str) else task.completion_docs
+        except Exception:
+            completion_docs = [task.completion_docs]
+
+    comments_list = [format_comment_response(c) for c in task.comments] if task.comments else []
+
+    data = {
+        "id": task.id,
+        "ref": task.ref,
+        "title": task.title,
+        "description": task.description,
+        "subject": task.subject,
+        "category": task.category,
+        "priority": task.priority,
+        "status": task.status,
+        "complexity": task.complexity,
+        "budget": task.budget,
+        "budget_notes": task.budget_notes,
+        "assignee_id": task.assignee_id,
+        "assigned_members": assigned_members,
+        "deadline": task.deadline,
+        "checklist": checklist,
+        "documents": documents,
+        "completion_notes": task.completion_notes,
+        "completion_docs": completion_docs,
+        "created_by": task.created_by,
+        "created_at": task.created_at,
+        "updated_at": task.updated_at,
+        "comments_count": len(comments_list),
+        "progress_percent": progress_pct,
+        "completed_steps": completed_steps,
+        "total_steps": total_steps,
+        "comments": comments_list
+    }
+    return data
+
+
+def resolve_task_by_id_or_ref(task_id: str, db: Session) -> Task:
+    task = None
+    if str(task_id).isdigit():
+        task = db.query(Task).filter(Task.id == int(task_id)).first()
+    if not task:
+        task = db.query(Task).filter(Task.ref == str(task_id)).first()
+    if not task:
+        raise HTTPException(status_code=404, detail=f"Tâche '{task_id}' non trouvée.")
+    return task
+
 
 @app.get("/api/tasks")
 def list_tasks(
-    user_name: Optional[str] = Query(None),
-    property_id: Optional[int] = Query(None),
+    priority: Optional[str] = Query(None),
     category: Optional[str] = Query(None),
+    status_filter: Optional[str] = Query(None, alias="status"),
+    subject: Optional[str] = Query(None),
+    assignee_id: Optional[int] = Query(None),
+    assigned_members: Optional[str] = Query(None),
+    user_name: Optional[str] = Query(None),
+    search: Optional[str] = Query(None),
+    property_id: Optional[int] = Query(None),
     db: Session = Depends(get_db)
 ):
-    """
-    Returns tasks per member or property templates so tasks view is never empty.
-    """
-    query = db.query(StayTaskAssignment)
-    if user_name:
-        norm_user = normalize_prenom(user_name)
-        user_res_ids = [r.id for r in db.query(Reservation).all() if normalize_prenom(r.user_name) == norm_user]
-        query = query.filter(StayTaskAssignment.reservation_id.in_(user_res_ids))
+    query = db.query(Task)
+
+    if priority and priority not in ["Toutes", "ALL"]:
+        query = query.filter(func.lower(Task.priority) == priority.lower())
+    if category and category not in ["Toutes", "ALL"]:
+        query = query.filter(Task.category.ilike(f"%{category}%"))
+    if status_filter and status_filter not in ["Tous", "ALL"]:
+        query = query.filter(Task.status.ilike(f"%{status_filter}%"))
+    if subject and subject not in ["Tous", "ALL"]:
+        query = query.filter(Task.subject.ilike(f"%{subject}%"))
     if property_id:
-        prop_res_ids = [r.id for r in db.query(Reservation).filter(Reservation.property_id == property_id).all()]
-        query = query.filter(StayTaskAssignment.reservation_id.in_(prop_res_ids))
-    if category and category != "ALL" and category != "Toutes":
-        query = query.filter(StayTaskAssignment.category == category)
+        if property_id == 1:
+            query = query.filter(Task.subject.in_(["Rosing", "Piscine", "Jardin", "SCI"]))
+        elif property_id == 2:
+            query = query.filter(Task.subject.in_(["Presbytère", "Jardin", "SCI"]))
+    if assignee_id:
+        query = query.filter(Task.assignee_id == assignee_id)
+    if assigned_members:
+        query = query.filter(Task.assigned_members.ilike(f"%{assigned_members}%"))
+    if user_name:
+        query = query.filter(
+            (Task.assigned_members.ilike(f"%{user_name}%")) |
+            (Task.created_by.ilike(f"%{user_name}%"))
+        )
+    if search:
+        s = f"%{search.strip()}%"
+        query = query.filter(
+            Task.title.ilike(s) |
+            Task.description.ilike(s) |
+            Task.ref.ilike(s) |
+            Task.category.ilike(s) |
+            Task.subject.ilike(s)
+        )
 
-    tasks = query.all()
-    if not tasks:
-        mt_query = db.query(MaintenanceTask)
-        if property_id:
-            mt_query = mt_query.filter(MaintenanceTask.property_id == property_id)
-        if category and category != "ALL" and category != "Toutes":
-            mt_query = mt_query.filter(MaintenanceTask.category == category)
-        m_templates = mt_query.all()
-        tasks = [
-            {
-                "id": 1000 + t.id,
-                "reservation_id": None,
-                "task_id": t.id,
-                "title": t.title,
-                "category": t.category or "Chaque séjour",
-                "frequency": t.frequency or "Chaque séjour",
-                "description": t.description or "",
-                "completed": 0,
-                "completed_at": None,
-                "status": "A_FAIRE",
-                "completion_notes": None,
-                "completion_docs": None
-            }
-            for t in m_templates
-        ]
-    return tasks
+    tasks = query.order_by(Task.id.asc()).all()
+    return [format_task_response(t) for t in tasks]
 
-@app.post("/api/tasks")
-def create_custom_task(
-    payload: dict,
-    db: Session = Depends(get_db)
-):
-    """
-    Creates and attributes a new task to a property template or active reservation.
-    """
+
+@app.post("/api/tasks", status_code=status.HTTP_201_CREATED)
+def create_task(payload: dict, db: Session = Depends(get_db)):
     title = payload.get("title")
     if not title:
         raise HTTPException(status_code=400, detail="Titre de la tâche obligatoire")
-    
-    category = payload.get("category", "Pendant le séjour")
+
     description = payload.get("description", "")
-    frequency = payload.get("frequency", "Chaque séjour")
-    property_id = payload.get("property_id", 1)
-    assigned_user = payload.get("assigned_user")
+    subject = payload.get("subject", "SCI")
+    category = payload.get("category", "Général")
+    priority = payload.get("priority", "Normale")
+    task_status = payload.get("status", "EN_COURS")
+    complexity = payload.get("complexity", "Modérée")
+    budget = float(payload.get("budget", 0.0) or 0.0)
+    budget_notes = payload.get("budget_notes")
+    assignee_id = payload.get("assignee_id")
+    assigned_members = payload.get("assigned_members")
+    deadline = payload.get("deadline")
+    checklist = payload.get("checklist")
+    documents = payload.get("documents")
+    created_by = payload.get("created_by", "Henri")
 
-    # 1. Create MaintenanceTask template
-    m_task = MaintenanceTask(
-        property_id=property_id,
+    if isinstance(assigned_members, list):
+        assigned_members = json.dumps(assigned_members)
+    elif assigned_members is None:
+        assigned_members = json.dumps([])
+
+    if isinstance(checklist, list):
+        checklist = json.dumps(checklist)
+    elif checklist is None:
+        checklist = json.dumps([])
+
+    if isinstance(documents, list):
+        documents = json.dumps(documents)
+    elif documents is None:
+        documents = json.dumps([])
+
+    ref = payload.get("ref")
+    if not ref:
+        count = db.query(Task).count()
+        ref = f"T-2026-{100 + count:03d}"
+
+    db_task = Task(
+        ref=ref,
         title=title,
+        description=description,
+        subject=subject,
         category=category,
-        frequency=frequency,
-        description=f"[Attribué à: {assigned_user}] {description}" if assigned_user else description
+        priority=priority,
+        status=task_status,
+        complexity=complexity,
+        budget=budget,
+        budget_notes=budget_notes,
+        assignee_id=assignee_id,
+        assigned_members=assigned_members,
+        deadline=deadline,
+        checklist=checklist,
+        documents=documents,
+        created_by=created_by
     )
-    db.add(m_task)
+    db.add(db_task)
     db.commit()
-    db.refresh(m_task)
+    db.refresh(db_task)
+    return format_task_response(db_task, include_comments=True)
 
-    # 2. If assigned_user or upcoming stay, attribute to reservation
-    assigned_res = None
-    if assigned_user:
-        norm_user = normalize_prenom(assigned_user)
-        all_res = db.query(Reservation).order_by(Reservation.start_date.asc()).all()
-        assigned_res = next((r for r in all_res if normalize_prenom(r.user_name) == norm_user), None)
-    
-    if not assigned_res:
-        assigned_res = db.query(Reservation).order_by(Reservation.start_date.desc()).first()
 
-    assignment = None
-    if assigned_res:
-        assignment = StayTaskAssignment(
-            reservation_id=assigned_res.id,
-            task_id=m_task.id,
-            title=m_task.title,
-            category=m_task.category,
-            frequency=m_task.frequency,
-            description=m_task.description,
-            completed=0,
-            status="A_FAIRE"
+@app.get("/api/tasks/{task_id}")
+def get_task(task_id: str, db: Session = Depends(get_db)):
+    task = resolve_task_by_id_or_ref(task_id, db)
+    return format_task_response(task, include_comments=True)
+
+
+@app.patch("/api/tasks/{task_id}")
+@app.put("/api/tasks/{task_id}")
+def update_task(task_id: str, payload: dict, db: Session = Depends(get_db)):
+    task = resolve_task_by_id_or_ref(task_id, db)
+
+    if "title" in payload and payload["title"] is not None:
+        task.title = payload["title"]
+    if "description" in payload and payload["description"] is not None:
+        task.description = payload["description"]
+    if "subject" in payload and payload["subject"] is not None:
+        task.subject = payload["subject"]
+    if "category" in payload and payload["category"] is not None:
+        task.category = payload["category"]
+    if "priority" in payload and payload["priority"] is not None:
+        task.priority = payload["priority"]
+    if "status" in payload and payload["status"] is not None:
+        task.status = payload["status"]
+    if "complexity" in payload and payload["complexity"] is not None:
+        task.complexity = payload["complexity"]
+    if "budget" in payload and payload["budget"] is not None:
+        task.budget = float(payload["budget"])
+    if "budget_notes" in payload and payload["budget_notes"] is not None:
+        task.budget_notes = payload["budget_notes"]
+    if "assignee_id" in payload:
+        task.assignee_id = payload["assignee_id"]
+    if "assigned_members" in payload and payload["assigned_members"] is not None:
+        val = payload["assigned_members"]
+        task.assigned_members = json.dumps(val) if isinstance(val, list) else str(val)
+    if "deadline" in payload and payload["deadline"] is not None:
+        task.deadline = payload["deadline"]
+    if "checklist" in payload and payload["checklist"] is not None:
+        val = payload["checklist"]
+        task.checklist = json.dumps(val) if isinstance(val, list) else str(val)
+    if "documents" in payload and payload["documents"] is not None:
+        val = payload["documents"]
+        task.documents = json.dumps(val) if isinstance(val, list) else str(val)
+    if "completion_notes" in payload and payload["completion_notes"] is not None:
+        task.completion_notes = payload["completion_notes"]
+    if "completion_docs" in payload and payload["completion_docs"] is not None:
+        val = payload["completion_docs"]
+        task.completion_docs = json.dumps(val) if isinstance(val, list) else str(val)
+
+    task.updated_at = datetime.utcnow()
+    db.commit()
+    db.refresh(task)
+    return format_task_response(task, include_comments=True)
+
+
+@app.delete("/api/tasks/{task_id}", status_code=status.HTTP_204_NO_CONTENT)
+def delete_task(task_id: str, db: Session = Depends(get_db)):
+    task = resolve_task_by_id_or_ref(task_id, db)
+    db.delete(task)
+    db.commit()
+    return None
+
+
+@app.post("/api/tasks/{task_id}/close")
+def close_task(task_id: str, req: TaskCloseRequest, db: Session = Depends(get_db)):
+    task = resolve_task_by_id_or_ref(task_id, db)
+    task.status = "ARCHIVEE"
+    task.completion_notes = req.completion_notes
+    if req.completion_docs:
+        task.completion_docs = json.dumps(req.completion_docs)
+    task.updated_at = datetime.utcnow()
+    db.commit()
+    db.refresh(task)
+    return format_task_response(task, include_comments=True)
+
+
+@app.get("/api/tasks/{task_id}/comments")
+def get_task_comments(task_id: str, db: Session = Depends(get_db)):
+    task = resolve_task_by_id_or_ref(task_id, db)
+    comments = db.query(TaskComment).filter(TaskComment.task_id == task.id).order_by(TaskComment.created_at.asc()).all()
+    return [format_comment_response(c) for c in comments]
+
+
+@app.post("/api/tasks/{task_id}/comments", status_code=status.HTTP_201_CREATED)
+def create_task_comment(task_id: str, req: TaskCommentCreate, db: Session = Depends(get_db)):
+    task = resolve_task_by_id_or_ref(task_id, db)
+    if not req.content or not req.content.strip():
+        raise HTTPException(status_code=400, detail="Le contenu du message ne peut pas être vide.")
+
+    author_name = req.author_name or "Henri Jamet"
+    author_role = req.author_role or "Membre Associé"
+
+    db_comment = TaskComment(
+        task_id=task.id,
+        author_id=req.author_id,
+        author_name=author_name,
+        author_role=author_role,
+        content=req.content.strip(),
+        reactions="{}"
+    )
+    db.add(db_comment)
+    db.commit()
+    db.refresh(db_comment)
+    return format_comment_response(db_comment)
+
+
+@app.post("/api/tasks/{task_id}/comments/{comment_id}/react")
+def react_to_task_comment(task_id: str, comment_id: int, req: TaskCommentReactRequest, db: Session = Depends(get_db)):
+    task = resolve_task_by_id_or_ref(task_id, db)
+    comment = db.query(TaskComment).filter(TaskComment.id == comment_id, TaskComment.task_id == task.id).first()
+    if not comment:
+        raise HTTPException(status_code=404, detail="Commentaire non trouvé pour cette tâche.")
+
+    raw_emoji = req.emoji.strip() if req.emoji else ""
+    if not raw_emoji:
+        raise HTTPException(status_code=400, detail="Emoji de réaction requis.")
+
+    # Validate against allowed emoji whitelist: 👍, ❤️, 👏, 💡, 🌸
+    allowed_set = set(ALLOWED_REACTION_EMOJIS) | {'\u2764'}
+    if raw_emoji not in allowed_set:
+        raise HTTPException(
+            status_code=400,
+            detail="Invalid emoji. Allowed: 👍, ❤️, 👏, 💡, 🌸"
         )
-        db.add(assignment)
-        db.commit()
-        db.refresh(assignment)
 
-    return assignment or m_task
+    # Normalize red heart
+    emoji = '❤️' if raw_emoji in ('❤️', '\u2764') else raw_emoji
+
+    user = (req.user_name or "Henri").strip()
+
+    curr_data = {}
+    if comment.reactions:
+        try:
+            curr_data = json.loads(comment.reactions) if isinstance(comment.reactions, str) else comment.reactions
+        except Exception:
+            curr_data = {}
+
+    normalized_reactions = {}
+    if isinstance(curr_data, dict):
+        for em, val in curr_data.items():
+            if isinstance(val, list):
+                normalized_reactions[em] = list(val)
+            elif isinstance(val, int):
+                normalized_reactions[em] = [f"User_{i+1}" for i in range(val)]
+            else:
+                normalized_reactions[em] = []
+
+    user_list = normalized_reactions.get(emoji, [])
+    if user in user_list:
+        user_list.remove(user)
+    else:
+        user_list.append(user)
+
+    if user_list:
+        normalized_reactions[emoji] = user_list
+    else:
+        normalized_reactions.pop(emoji, None)
+
+    comment.reactions = json.dumps(normalized_reactions)
+    db.commit()
+    db.refresh(comment)
+
+    return format_comment_response(comment)
 
 @app.get("/api/maintenance-tasks", response_model=List[MaintenanceTaskResponse])
 def list_maintenance_tasks(
@@ -1729,22 +2317,49 @@ def get_workload_summary(
     )
 
 
-# --- Heating & ViCare System Endpoints ---
+# --- Heating & ViCare System Endpoints (Passive Telemetry F07) ---
 
+@app.get("/api/vicare/status", response_model=HeatingStatusResponse)
 @app.get("/api/heating/status", response_model=HeatingStatusResponse)
 @app.get("/api/heating/vicare/status", response_model=HeatingStatusResponse)
 def get_heating_status(property_id: Optional[int] = Query(None)):
     return ViCareService.get_status(property_id=property_id)
 
+@app.post("/api/vicare/mode", response_model=HeatingStatusResponse)
 @app.post("/api/heating/mode", response_model=HeatingStatusResponse)
 @app.post("/api/heating/vicare/mode", response_model=HeatingStatusResponse)
 def set_heating_mode(req: HeatingModeRequest):
     return ViCareService.set_mode(req.mode)
 
+@app.post("/api/vicare/temperature", response_model=HeatingStatusResponse)
 @app.post("/api/heating/temperature", response_model=HeatingStatusResponse)
 @app.post("/api/heating/vicare/temperature", response_model=HeatingStatusResponse)
 def set_heating_temperature(req: HeatingTemperatureRequest):
     return ViCareService.set_temperature(req.target_temperature)
+
+
+# --- Piscine Rosing Telemetry Endpoints (PAC Rosing F08) ---
+
+@app.get("/api/piscine/status", response_model=PiscineStatusResponse)
+def get_piscine_status():
+    """Returns PAC Rosing passive telemetry and Frédéric Jamet agreement status."""
+    return PiscineStatusResponse()
+
+@app.post("/api/piscine/mode")
+@app.post("/api/piscine/temperature")
+def set_piscine_control_interlock():
+    """
+    IMMUTABLE SOFTWARE INTERLOCK (Garde-fou Impératif Henri #1).
+    Strictly forbids sending actuator or temperature commands to pool equipment.
+    Always raises HTTP 403 Forbidden.
+    """
+    raise HTTPException(
+        status_code=status.HTTP_403_FORBIDDEN,
+        detail={
+            "error": "Garde-fou de sécurité inviolable actif (Garde-fou Henri #1) : Mode lecture seule obligatoire pour la piscine. Toute modification de consigne ou commande actionneur est formellement interdite.",
+            "type": "SecurityInterlockError"
+        }
+    )
 
 
 # --- Serve Frontend Production Build (Single Combined FastAPI server) ---

@@ -33,11 +33,14 @@ import time
 import glob
 import zipfile
 import shutil
+import hashlib
 import argparse
 import unicodedata
 import subprocess
 import urllib.request
 import urllib.error
+import concurrent.futures
+from collections import Counter
 from datetime import datetime
 from pathlib import Path
 
@@ -58,6 +61,20 @@ README_SANCTUARY_WARNING = """# ⚠️ AVERTISSEMENT : SANCTUAIRE DE DESIGN STIT
 - **Règle d'Intégration** : L'agent ou le développeur consulte `git diff` sur ce dossier et reporte chirurgicalement les modifications nécessaires dans le code applicatif (`frontend/src/`, etc.) sans jamais altérer ce dossier.
 """
 
+ANSI_ESCAPE_RE = re.compile(r'\x1b\[[0-9;]*[a-zA-Z]')
+
+
+def strip_ansi(text: str) -> str:
+    """Supprime les séquences d'échappement ANSI pour un diff Unified propre."""
+    return ANSI_ESCAPE_RE.sub('', text)
+
+
+def should_use_color(no_color_flag: bool = False) -> bool:
+    """Détermine si la sortie couleur ANSI doit être activée."""
+    if no_color_flag or os.getenv("NO_COLOR"):
+        return False
+    return sys.stdout.isatty()
+
 
 def slugify(text: str) -> str:
     """Génère un slug propre pour nom de fichier sans caractères spéciaux ni accents."""
@@ -65,6 +82,48 @@ def slugify(text: str) -> str:
     text = re.sub(r'[^\w\s-]', '', text).strip().lower()
     slug = re.sub(r'[-\s]+', '_', text)
     return slug.strip('_') or 'screen'
+
+
+def extract_screen_id(screen: dict) -> str:
+    """Extrait un identifiant court déterministe (8 caractères) pour un écran Stitch."""
+    name = screen.get("name") or ""
+    if "/" in name:
+        screen_id = name.split("/")[-1][:8]
+        if screen_id:
+            return screen_id
+    if name:
+        return name[:8]
+    raw_key = (screen.get("title") or "") + str(screen.get("id") or "")
+    return hashlib.sha256(raw_key.encode("utf-8")).hexdigest()[:8]
+
+
+def get_screen_filename(screen: dict, all_screens: list = None) -> str:
+    """
+    Retourne le nom de fichier HTML déterministe pour un écran Stitch.
+    Si all_screens est fourni et contient des collisions de titre/slug,
+    ajoute un suffixe déterministe basé sur l'ID Stitch de l'écran (_<short_id>.html).
+    L'assignation est 100% stable et insensible à l'ordre d'énumération.
+    """
+    title = screen.get("title") or "sans_titre"
+    slug = slugify(title)
+    if all_screens:
+        collisions = [
+            s for s in all_screens
+            if slugify(s.get("title") or "sans_titre") == slug
+        ]
+        if len(collisions) > 1:
+            short_id = extract_screen_id(screen)
+            return f"{slug}_{short_id}.html"
+    return f"{slug}.html"
+
+
+def build_screen_filename_mapping(screens: list) -> dict:
+    """
+    Construit un dictionnaire de mapping déterministe screen_name -> nom_de_fichier.html
+    pour l'ensemble des écrans d'un projet Stitch.
+    """
+    return {s.get("name"): get_screen_filename(s, screens) for s in screens}
+
 
 
 def find_git_root(target_path: str = None) -> Path:
@@ -271,15 +330,30 @@ def download_html_direct(download_url: str, api_key: str = "", cookie_header: st
 def find_matching_local_export(slug: str, title: str, downloads_dir: str = None) -> str:
     """
     Recherche un export local valide dans Downloads correspondant SPÉCIFIQUEMENT
-    à cet écran (par extraction ZIP ou fichier HTML contenant le slug ou titre).
+    à cet écran (par fichier HTML direct ou ZIP récent).
     Évite formellement d'écraser tous les écrans avec un seul fichier arbitraire.
     """
     if not downloads_dir:
         downloads_dir = os.path.expanduser(r"~\Downloads")
+    if not os.path.isdir(downloads_dir):
+        return ""
 
-    # 1. Recherche dans les archives ZIP
+    # 1. Recherche prioritaire parmi les fichiers HTML nommés précisément (rapide)
+    for ext in ["*.html", "*.htm"]:
+        for h in glob.glob(os.path.join(downloads_dir, ext)):
+            base = os.path.basename(h).lower()
+            if slug in base:
+                try:
+                    with open(h, "r", encoding="utf-8", errors="replace") as f:
+                        return f.read()
+                except Exception:
+                    pass
+
+    # 2. Recherche dans les archives ZIP récentes (< 24h) uniquement si aucun HTML direct
+    now = time.time()
     zips = glob.glob(os.path.join(downloads_dir, "*.zip"))
-    for z in sorted(zips, key=os.path.getmtime, reverse=True):
+    recent_zips = [z for z in zips if (now - os.path.getmtime(z)) < 86400]
+    for z in sorted(recent_zips, key=os.path.getmtime, reverse=True)[:3]:
         try:
             with zipfile.ZipFile(z, 'r') as zf:
                 for name in zf.namelist():
@@ -291,18 +365,8 @@ def find_matching_local_export(slug: str, title: str, downloads_dir: str = None)
         except Exception:
             continue
 
-    # 2. Recherche parmi les fichiers HTML nommés précisément
-    for ext in ["*.html", "*.htm"]:
-        for h in glob.glob(os.path.join(downloads_dir, ext)):
-            base = os.path.basename(h).lower()
-            if slug in base:
-                try:
-                    with open(h, "r", encoding="utf-8", errors="replace") as f:
-                        return f.read()
-                except Exception:
-                    pass
-
     return ""
+
 
 
 def fetch_screen_content(screen: dict, api_key: str, cookie_header: str, source_path: str = None) -> tuple:
@@ -354,40 +418,52 @@ def sync_screens(project_id: str, stitch_dir: Path, source_path: str = None, mcp
     print(f"[*] Interrogation du projet Stitch {project_id} (API Key: {'Oui' if api_key else 'Non'})...")
     screens = list_stitch_screens(project_id, config_path=mcp_config, api_key=api_key)
 
+    # Filtrer pour ne retenir que les vrais écrans d'interface HTML (exclure specs .md et assets graphiques)
     html_screens = [
         s for s in screens
         if s.get("htmlCode", {}).get("downloadUrl")
         and s.get("htmlCode", {}).get("mimeType") == "text/html"
+        and not (s.get("title") or "").lower().endswith((".md", ".txt", ".json", ".png", ".svg", ".jpg", ".jpeg"))
+        and not (s.get("title") or "").lower().startswith("logo")
     ]
 
     print(f"[*] {len(screens)} éléments trouvés sur le projet {project_id} ({len(html_screens)} écrans HTML identifiés).")
     if not html_screens:
         return [], [], [], ["Aucun écran HTML trouvé dans le projet."]
 
+    # Tri déterministe pour une stabilité absolue indépendante de l'ordre d'énumération API
+    html_screens.sort(key=lambda s: (slugify(s.get("title") or ""), s.get("name") or ""))
+
+    # Mapping déterministe screen_name -> nom_de_fichier.html avec short_id si collisions de titres
+    filename_map = build_screen_filename_mapping(html_screens)
+
     updated_screens = []
     new_screens = []
     identical_screens = []
     errors = []
 
-    # Dictionnaire des fichiers locaux existants pour matcher par nom
-    existing_files = {p.name: p for p in stitch_dir.glob("*.html")}
-    used_filenames = set()
+    # Téléchargement parallèle rapide et résilient de l'ensemble des écrans
+    fetched_data = {}
+    with concurrent.futures.ThreadPoolExecutor(max_workers=6) as executor:
+        future_to_screen = {
+            executor.submit(fetch_screen_content, s, api_key, cookie_header, source_path): s
+            for s in html_screens
+        }
+        for future in concurrent.futures.as_completed(future_to_screen):
+            s = future_to_screen[future]
+            try:
+                content, origin = future.result()
+                fetched_data[s.get("name")] = (content, origin)
+            except Exception as e:
+                fetched_data[s.get("name")] = ("", f"error: {e}")
 
     for s in html_screens:
         title = s.get("title") or "sans_titre"
-        slug = slugify(title)
-        filename = f"{slug}.html"
-
-        # Gérer les doublons de titres éventuels
-        if filename in used_filenames:
-            short_id = (s.get("name") or "").split("/")[-1][:8]
-            filename = f"{slug}_{short_id}.html"
-        used_filenames.add(filename)
-
+        filename = filename_map[s.get("name")]
         target_path = stitch_dir / filename
         print(f"[*] Analyse écran : « {title} » -> {filename}")
 
-        html_content, origin = fetch_screen_content(s, api_key, cookie_header, source_path)
+        html_content, origin = fetched_data.get(s.get("name"), ("", "not_found"))
         if not html_content:
             print(f"    [!] Impossible de récupérer le contenu de « {title} ».", file=sys.stderr)
             errors.append(title)
@@ -408,6 +484,18 @@ def sync_screens(project_id: str, stitch_dir: Path, source_path: str = None, mcp
             new_screens.append({"title": title, "path": target_path, "size": len(html_content)})
             if not dry_run:
                 target_path.write_text(html_content, encoding="utf-8")
+
+    # Détection et rapport des maquettes orphelines, renommées ou supprimées côté Stitch
+    synced_filenames = set(filename_map.values())
+    orphaned_screens = []
+    for local_file in sorted(stitch_dir.glob("*.html")):
+        if local_file.name not in synced_filenames:
+            print(f"    [!] Écran orphelin, renommé ou supprimé côté Stitch détecté : {local_file.name}")
+            orphaned_screens.append({
+                "title": local_file.name,
+                "path": local_file,
+                "size": local_file.stat().st_size
+            })
 
     return updated_screens, new_screens, identical_screens, errors
 
@@ -586,7 +674,7 @@ def cmd_fetch(project_id: str, repo_root: Path, source_path: str = None, mcp_con
     print("\n👉 Exécute 'python stitch_sync.py --next' pour examiner et intégrer le 1er écran.")
 
 
-def cmd_next(repo_root: Path) -> None:
+def cmd_next(repo_root: Path, no_color: bool = False) -> None:
     """Affiche le diff du prochain écran non stagé ou déclenche le commit de clôture si tout est acquitté."""
     staged, unstaged = get_stitch_status(repo_root)
     total = len(staged) + len(unstaged)
@@ -598,7 +686,8 @@ def cmd_next(repo_root: Path) -> None:
             commit_msg = f"chore(stitch): sync and integrate all screens {timestamp}"
             print(f"[*] Création automatique du commit Git de clôture : « {commit_msg} »...")
             try:
-                subprocess.run(["git", "commit", "-m", commit_msg], cwd=repo_root, check=True)
+                # Confinement strict au sanctuaire stitch/ : ne commite aucun fichier hors stitch/
+                subprocess.run(["git", "commit", "-m", commit_msg, "--", "stitch/"], cwd=repo_root, check=True)
                 print(f"✅ Commit de clôture créé avec succès dans {repo_root}.")
             except subprocess.CalledProcessError as e:
                 print(f"[!] Erreur lors de la création du commit Git : {e}", file=sys.stderr)
@@ -617,41 +706,55 @@ def cmd_next(repo_root: Path) -> None:
     print("="*70)
 
     full_path = repo_root / target_path
+    use_color = should_use_color(no_color)
+    color_arg = "--color=always" if use_color else "--no-color"
 
     if target_type == "nouveau":
         file_size = full_path.stat().st_size if full_path.exists() else 0
         print(f"--- NOUVEL ÉCRAN DÉTECTÉ ({file_size} octets) ---")
         try:
-            content = full_path.read_text(encoding="utf-8", errors="replace")
-            lines = content.splitlines()
-            print(f"Aperçu des 60 premières lignes (sur {len(lines)} lignes au total) :\n")
-            print("\n".join(lines[:60]))
-            if len(lines) > 60:
-                print(f"\n... [{len(lines) - 60} lignes supplémentaires dans {target_path}]")
-        except Exception as e:
-            print(f"[!] Erreur lors de la lecture du fichier : {e}", file=sys.stderr)
-    else:
-        try:
             diff_proc = subprocess.run(
-                ["git", "diff", "--color=always", "--", target_path],
+                ["git", "diff", "--no-index", color_arg, "--", "/dev/null", target_path],
                 cwd=repo_root,
                 capture_output=True,
                 text=True,
                 encoding="utf-8",
                 errors="replace"
             )
-            if diff_proc.returncode == 0 and diff_proc.stdout.strip():
-                print(diff_proc.stdout)
+            output = diff_proc.stdout
+            if not use_color:
+                output = strip_ansi(output)
+            if output.strip():
+                print(output)
             else:
+                content = full_path.read_text(encoding="utf-8", errors="replace")
+                print(content[:2000])
+        except Exception as e:
+            print(f"[!] Erreur lors de l'exécution de git diff (nouvel écran) : {e}", file=sys.stderr)
+    else:
+        try:
+            diff_proc = subprocess.run(
+                ["git", "diff", color_arg, "--", target_path],
+                cwd=repo_root,
+                capture_output=True,
+                text=True,
+                encoding="utf-8",
+                errors="replace"
+            )
+            output = diff_proc.stdout
+            if not output.strip():
                 diff_cached = subprocess.run(
-                    ["git", "diff", "--cached", "--color=always", "--", target_path],
+                    ["git", "diff", "--cached", color_arg, "--", target_path],
                     cwd=repo_root,
                     capture_output=True,
                     text=True,
                     encoding="utf-8",
                     errors="replace"
                 )
-                print(diff_cached.stdout or "(Aucune modification textuelle)")
+                output = diff_cached.stdout or "(Aucune modification textuelle)"
+            if not use_color:
+                output = strip_ansi(output)
+            print(output)
         except Exception as e:
             print(f"[!] Erreur lors de l'exécution de git diff : {e}", file=sys.stderr)
 
@@ -663,7 +766,7 @@ def cmd_next(repo_root: Path) -> None:
     print("="*70)
 
 
-def cmd_ack(repo_root: Path, file_arg: str) -> None:
+def cmd_ack(repo_root: Path, file_arg: str, no_color: bool = False) -> None:
     """Acquitte un écran via git add, affiche la confirmation, puis enchaîne sur --next."""
     target_path = resolve_stitch_file(repo_root, file_arg)
     rel_path = target_path.relative_to(repo_root).as_posix()
@@ -675,7 +778,7 @@ def cmd_ack(repo_root: Path, file_arg: str) -> None:
         print(f"[!] Erreur lors de l'exécution de git add pour {rel_path} : {e}", file=sys.stderr)
         sys.exit(1)
 
-    cmd_next(repo_root)
+    cmd_next(repo_root, no_color=no_color)
 
 
 def cmd_status(repo_root: Path) -> None:
@@ -744,6 +847,11 @@ def main():
         help="Affiche la jauge de progression des écrans traités vs restants"
     )
     parser.add_argument(
+        "--no-color",
+        action="store_true",
+        help="Désactive les codes couleur ANSI dans les diffs (défaut automatique si stdout n'est pas un TTY)"
+    )
+    parser.add_argument(
         "--target",
         default=None,
         help="Chemin vers le dépôt git cible ou un sous-dossier (défaut : dossier courant)"
@@ -769,12 +877,12 @@ def main():
 
     # 2. Mode Ack
     if args.ack:
-        cmd_ack(repo_root, args.ack)
+        cmd_ack(repo_root, args.ack, no_color=args.no_color)
         return
 
     # 3. Mode Next
     if getattr(args, "next", False):
-        cmd_next(repo_root)
+        cmd_next(repo_root, no_color=args.no_color)
         return
 
     # 4. Mode Fetch / Sync / Dry-run

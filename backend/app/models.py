@@ -3,16 +3,22 @@ from sqlalchemy import Column, Integer, String, Text, DateTime, ForeignKey, Floa
 from sqlalchemy.orm import relationship
 from .database import Base
 
-class User(Base):
-    __tablename__ = "users"
+class Member(Base):
+    __tablename__ = "members"
 
     id = Column(Integer, primary_key=True, index=True)
-    prenom = Column(String, unique=True, index=True, nullable=False)
-    name = Column(String, nullable=False)
-    email = Column(String, unique=True, index=True, nullable=True)
-    password = Column(String, nullable=False, default="pass123")
-    role = Column(String, default="Membre Associé")  # e.g., "Coordinateur", "Membre Associé", "Artisan"
-    avatar_color = Column(String, default="cyan")
+    prenom = Column(String(100), unique=True, index=True, nullable=False)
+    name = Column(String(255), nullable=False)
+    email = Column(String(255), unique=True, index=True, nullable=True)
+    password = Column(String(255), nullable=False, default="pass123")
+    role = Column(String(150), default="Membre Associé")  # e.g., "Coordinateur", "Membre Associé", "Artisan"
+    avatar_color = Column(String(50), default="cyan")
+    created_at = Column(DateTime, default=datetime.utcnow)
+
+    tasks = relationship("Task", back_populates="assignee", foreign_keys="Task.assignee_id")
+    task_comments = relationship("TaskComment", back_populates="author", foreign_keys="TaskComment.author_id")
+
+User = Member
 
 class Property(Base):
     __tablename__ = "properties"
@@ -111,6 +117,8 @@ class Reservation(Base):
     week_number = Column(Integer, nullable=False)
     start_date = Column(String, nullable=False)  # YYYY-MM-DD
     end_date = Column(String, nullable=False)    # YYYY-MM-DD
+    arrival_time = Column(String(10), default="15:00", nullable=True)    # HH:MM
+    departure_time = Column(String(10), default="11:00", nullable=True)  # HH:MM
     status = Column(String, default="Demande en attente")  # Demande en attente, Confirmée, Refusée
     guest_count = Column(Integer, default=1, nullable=True)
     chambers_used = Column(Integer, default=1, nullable=True)
@@ -240,5 +248,61 @@ class VademecumItem(Base):
     updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
 
     property = relationship("Property", back_populates="vademecum_items")
+
+
+class Task(Base):
+    __tablename__ = "tasks"
+
+    id = Column(Integer, primary_key=True, index=True)
+    ref = Column(String(50), unique=True, index=True, nullable=True)  # ex: T-2026-088
+    title = Column(String(255), nullable=False)
+    description = Column(Text, nullable=False)
+    subject = Column(String(100), nullable=False, default="SCI")  # Rosing, Presbytère, Piscine, Jardin, SCI
+    category = Column(String(100), nullable=True)
+    priority = Column(String(50), nullable=False, default="Normale")  # Critique, Haute, Normale, Planifié
+    status = Column(String(50), nullable=False, default="EN_COURS")  # A_FAIRE, EN_COURS, TERMINE, ARCHIVEE, SOUMIS
+    complexity = Column(String(50), default="Modérée")  # Faible, Modérée, Élevée, Expertise requise
+    budget = Column(Float, default=0.0)
+    budget_notes = Column(String(255), nullable=True)
+    assignee_id = Column(Integer, ForeignKey("members.id", ondelete="SET NULL"), nullable=True)
+    assigned_members = Column(Text, nullable=True)  # JSON array string: ["Henri Jamet", "Hortense Jamet"]
+    deadline = Column(String(50), nullable=True)  # e.g. "2026-08-31"
+    checklist = Column(Text, nullable=True)  # JSON array: [{"text": "...", "completed": true}]
+    documents = Column(Text, nullable=True)  # JSON array: [{"name": "...", "url": "...", "type": "PDF", "size": "1.2 Mo"}]
+    completion_notes = Column(Text, nullable=True)  # Mandatory synthesis note on closure
+    completion_docs = Column(Text, nullable=True)  # JSON or comma-separated document URLs
+    created_by = Column(String(100), nullable=False)
+    created_at = Column(DateTime, default=datetime.utcnow)
+    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+
+    assignee = relationship("Member", back_populates="tasks", foreign_keys=[assignee_id])
+    comments = relationship("TaskComment", back_populates="task", cascade="all, delete-orphan", order_by="TaskComment.created_at.asc()")
+
+
+class TaskComment(Base):
+    __tablename__ = "task_comments"
+
+    id = Column(Integer, primary_key=True, index=True)
+    task_id = Column(Integer, ForeignKey("tasks.id", ondelete="CASCADE"), nullable=False)
+    author_id = Column(Integer, ForeignKey("members.id", ondelete="SET NULL"), nullable=True)
+    author_name = Column(String(100), nullable=False)
+    author_role = Column(String(100), nullable=True)
+    content = Column(Text, nullable=False)
+    reactions = Column(Text, default="{}")  # JSON map: {"👍": 2, "❤️": 1, "👏": 2, "💡": 1}
+    created_at = Column(DateTime, default=datetime.utcnow)
+
+    task = relationship("Task", back_populates="comments")
+    author = relationship("Member", back_populates="task_comments", foreign_keys=[author_id])
+
+
+class Log(Base):
+    __tablename__ = "logs"
+
+    id = Column(Integer, primary_key=True, index=True)
+    action = Column(String(100), nullable=False)  # LOGIN, TASK_UPDATE, TASK_CLOSE, RESERVATION_CREATE, etc.
+    user_name = Column(String(100), nullable=True)
+    details = Column(Text, nullable=True)
+    ip_address = Column(String(100), nullable=True)
+    created_at = Column(DateTime, default=datetime.utcnow)
 
 

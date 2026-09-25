@@ -13,7 +13,8 @@ if raw_db_url:
         raw_db_url = raw_db_url.replace("postgres://", "postgresql://", 1)
     SQLALCHEMY_DATABASE_URL = raw_db_url
 else:
-    db_path = os.getenv("DATABASE_PATH", "./sci_family.db")
+    default_db = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "sci_family.db")
+    db_path = os.getenv("DATABASE_PATH", default_db)
     SQLALCHEMY_DATABASE_URL = f"sqlite:///{db_path}"
 
 # Detect if dialect is SQLite
