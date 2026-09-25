@@ -20,6 +20,10 @@ ENV/
 backend/.env
 *.save
 *token*.json
+*.pem
+*.crt
+backend/certs/
+certs/
 
 # SQLite databases
 *.db

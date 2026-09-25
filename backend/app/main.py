@@ -8,7 +8,7 @@ from typing import List, Optional
 from fastapi import FastAPI, Depends, HTTPException, Query, UploadFile, File, Form, status, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
-from fastapi.responses import FileResponse, Response
+from fastapi.responses import FileResponse, Response, RedirectResponse
 from sqlalchemy.orm import Session
 from sqlalchemy import func
 
@@ -16,7 +16,8 @@ from .database import engine, Base, get_db
 from .models import (
     Property, User, Issue, Comment, IssueComment, Reservation, Project,
     ProjectVote, ProjectComment, AdminDocument, MemberAvailability,
-    VademecumItem, MaintenanceTask, StayTaskAssignment, Task, TaskComment, Log
+    VademecumItem, MaintenanceTask, StayTaskAssignment, Task, TaskComment, Log,
+    BankAccount, BankTransaction, BankAuthSession
 )
 from .schemas import (
     LoginRequest, PropertyResponse, UserResponse, TokenResponse,
@@ -34,11 +35,14 @@ from .schemas import (
     HeatingStatusResponse, HeatingModeRequest, HeatingTemperatureRequest,
     PiscineStatusResponse, StayBalanceResponse, StayBalanceMember,
     TaskCreate, TaskUpdate, TaskResponse, TaskCommentCreate, TaskCommentResponse, TaskCommentReactRequest, TaskCloseRequest,
-    ALLOWED_REACTION_EMOJIS
+    ALLOWED_REACTION_EMOJIS,
+    BankAuthStartRequest, BankAuthStartResponse, BankAuthCallbackRequest,
+    BankAccountResponse, BankTransactionResponse, BankSyncResponse, BankStatusResponse
 )
 from .seed import seed_database
 from .services.workload_balancer import calculate_workload_distribution
 from .services.vicare_service import ViCareService
+from .services.banking import enable_banking_service
 from .security import (
     rate_limiter, verify_password, create_access_token, decode_access_token, normalize_prenom
 )
@@ -2360,6 +2364,191 @@ def set_piscine_control_interlock():
             "type": "SecurityInterlockError"
         }
     )
+
+
+# --- Open Banking DSP2 (Enable Banking & Swan France) Endpoints ---
+
+@app.get("/api/banking/status", response_model=BankStatusResponse, tags=["Banking"])
+def get_banking_status(db: Session = Depends(get_db)):
+    """Retourne l'état réactif de l'intégration Open Banking DSP2 et les soldes consolidés de la SCI."""
+    status_data = enable_banking_service.check_connection_status(db=db)
+
+    return BankStatusResponse(
+        application_id=enable_banking_service.app_id,
+        aspsp_name=enable_banking_service.aspsp_name,
+        aspsp_bic=enable_banking_service.aspsp_bic,
+        aspsp_country=enable_banking_service.aspsp_country,
+        active_accounts_count=status_data.get("active_accounts_count", 0),
+        total_balance=status_data.get("total_balance", 0.0),
+        currency="EUR",
+        last_synced_at=status_data.get("last_synced_at"),
+        last_successful_sync=status_data.get("last_successful_sync"),
+        status=status_data.get("status", "ok"),
+        needs_reauth=status_data.get("needs_reauth", False),
+        days_left=status_data.get("days_left"),
+        valid_until=status_data.get("valid_until"),
+        message=status_data.get("message"),
+        reauth_url=status_data.get("reauth_url")
+    )
+
+
+@app.get("/api/banking/aspsps", tags=["Banking"])
+def list_banking_aspsps(country: str = Query("FR", description="Code pays ISO")):
+    """Liste les banques disponibles via Enable Banking pour le pays demandé."""
+    try:
+        aspsps = enable_banking_service.get_aspsps(country=country)
+        return {"country": country, "count": len(aspsps), "aspsps": aspsps}
+    except Exception as e:
+        logger.error(f"Erreur récupération ASPSPs : {e}")
+        return {
+            "country": country,
+            "count": 1,
+            "aspsps": [{
+                "name": enable_banking_service.aspsp_name,
+                "country": enable_banking_service.aspsp_country,
+                "bic": enable_banking_service.aspsp_bic,
+                "note": "Configuration locale active"
+            }]
+        }
+
+
+@app.post("/api/banking/auth/start", response_model=BankAuthStartResponse, tags=["Banking"])
+def start_banking_auth(payload: BankAuthStartRequest = None, db: Session = Depends(get_db)):
+    """Démarre le flux d'autorisation DSP2 pour Swan et retourne le lien de consentement bancaire."""
+    req_payload = payload or BankAuthStartRequest()
+    try:
+        auth_data = enable_banking_service.create_auth_session(
+            aspsp_name=req_payload.aspsp_name,
+            psu_type=req_payload.psu_type or "business",
+            redirect_url=req_payload.redirect_url
+        )
+
+        valid_until_dt = None
+        if auth_data.get("valid_until"):
+            try:
+                valid_until_dt = datetime.fromisoformat(auth_data["valid_until"].replace("Z", "+00:00"))
+            except Exception:
+                pass
+
+        # Enregistrement de la session d'autorisation en base
+        new_session = BankAuthSession(
+            session_id=auth_data["session_id"] or auth_data["state"],
+            aspsp_name=auth_data["aspsp_name"],
+            psu_type=req_payload.psu_type or "business",
+            status="INITIATED",
+            auth_url=auth_data["url"],
+            redirect_url=req_payload.redirect_url or enable_banking_service.redirect_url,
+            expires_at=valid_until_dt
+        )
+        db.add(new_session)
+        db.commit()
+
+        return BankAuthStartResponse(
+            url=auth_data["url"],
+            session_id=auth_data["session_id"] or auth_data["state"],
+            state=auth_data["state"],
+            aspsp_name=auth_data["aspsp_name"],
+            valid_until=auth_data["valid_until"]
+        )
+    except Exception as e:
+        logger.error(f"Échec démarrage auth Enable Banking : {e}")
+        raise HTTPException(
+            status_code=status.HTTP_502_BAD_GATEWAY,
+            detail=f"Erreur de communication avec Enable Banking : {str(e)}"
+        )
+
+
+@app.get("/api/banking/callback", tags=["Banking"])
+def banking_callback_redirect(
+    code: Optional[str] = Query(None),
+    state: Optional[str] = Query(None),
+    error: Optional[str] = Query(None),
+    db: Session = Depends(get_db)
+):
+    """Callback de redirection bancaire suite au consentement de l'associé."""
+    if error:
+        logger.warning(f"Retour d'erreur lors du consentement bancaire : {error}")
+        return RedirectResponse(url=f"/admin?banking=error&msg={error}")
+
+    if not code:
+        raise HTTPException(status_code=400, detail="Code d'autorisation manquant dans le callback bancaire")
+
+    try:
+        session_info = enable_banking_service.authorize_session(code=code)
+        session_id = session_info.get("session_id")
+
+        # Mise à jour de la session en base
+        db_sess = db.query(BankAuthSession).filter(BankAuthSession.session_id == (state or session_id)).first()
+        if not db_sess and session_id:
+            db_sess = db.query(BankAuthSession).filter(BankAuthSession.session_id == session_id).first()
+
+        if db_sess:
+            db_sess.status = "AUTHORIZED"
+            db_sess.authorized_at = datetime.utcnow()
+            db_sess.expires_at = datetime.utcnow() + timedelta(days=180)
+            db_sess.accounts_data = json.dumps(session_info.get("accounts", []))
+            db.commit()
+
+        # Synchronisation immédiate des soldes et transactions
+        enable_banking_service.sync_database(db=db, session_id=session_id)
+
+        return RedirectResponse(url="/admin?banking=success")
+    except Exception as e:
+        logger.error(f"Échec finalisation callback bancaire : {e}")
+        return RedirectResponse(url=f"/admin?banking=error&msg={str(e)}")
+
+
+@app.post("/api/banking/callback", tags=["Banking"])
+def banking_callback_post(payload: BankAuthCallbackRequest, db: Session = Depends(get_db)):
+    """Validation programmatique du code d'autorisation."""
+    try:
+        session_info = enable_banking_service.authorize_session(code=payload.code)
+        sync_result = enable_banking_service.sync_database(db=db, session_id=payload.session_id)
+        return {
+            "success": True,
+            "session": session_info,
+            "sync": sync_result
+        }
+    except Exception as e:
+        logger.error(f"Échec callback post : {e}")
+        raise HTTPException(status_code=400, detail=str(e))
+
+
+@app.get("/api/banking/accounts", response_model=List[BankAccountResponse], tags=["Banking"])
+def get_banking_accounts(db: Session = Depends(get_db)):
+    """Retourne la liste des comptes bancaires de la SCI avec soldes et transactions."""
+    accounts = db.query(BankAccount).all()
+    return accounts
+
+
+@app.get("/api/banking/transactions", response_model=List[BankTransactionResponse], tags=["Banking"])
+def get_banking_transactions(
+    category: Optional[str] = Query(None, description="Filtrer par catégorie"),
+    limit: int = Query(100, ge=1, le=500),
+    db: Session = Depends(get_db)
+):
+    """Retourne les transactions bancaires enregistrées, triées par date décroissante."""
+    query = db.query(BankTransaction)
+    if category:
+        query = query.filter(BankTransaction.category == category)
+    transactions = query.order_by(BankTransaction.booking_date.desc()).limit(limit).all()
+    return transactions
+
+
+@app.post("/api/banking/sync", response_model=BankSyncResponse, tags=["Banking"])
+def trigger_banking_sync(db: Session = Depends(get_db)):
+    """Déclenche la synchronisation manuelle des comptes et transactions bancaires."""
+    try:
+        result = enable_banking_service.sync_database(db=db)
+        return BankSyncResponse(
+            success=result.get("success", True),
+            accounts_synced=result.get("accounts_synced", 0),
+            transactions_synced=result.get("transactions_synced", 0),
+            timestamp=result.get("timestamp", datetime.utcnow().isoformat())
+        )
+    except Exception as e:
+        logger.error(f"Erreur synchronisation bancaire : {e}")
+        raise HTTPException(status_code=500, detail=f"Échec de la synchronisation : {str(e)}")
 
 
 # --- Serve Frontend Production Build (Single Combined FastAPI server) ---

@@ -306,3 +306,61 @@ class Log(Base):
     created_at = Column(DateTime, default=datetime.utcnow)
 
 
+# --- Open Banking DSP2 (Enable Banking) Models ---
+
+class BankAccount(Base):
+    __tablename__ = "bank_accounts"
+
+    id = Column(Integer, primary_key=True, index=True)
+    account_id = Column(String(255), unique=True, index=True, nullable=False)
+    iban = Column(String(100), nullable=True)
+    name = Column(String(255), default="Compte Courant SCI Hellenvilliers")
+    currency = Column(String(10), default="EUR")
+    balance = Column(Float, default=0.0)
+    balance_type = Column(String(50), default="interimAvailable")
+    last_synced_at = Column(DateTime, nullable=True)
+    aspsp_name = Column(String(100), default="Swan")
+    session_id = Column(String(255), nullable=True)
+    created_at = Column(DateTime, default=datetime.utcnow)
+    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+
+    transactions = relationship("BankTransaction", back_populates="account", cascade="all, delete-orphan", order_by="BankTransaction.booking_date.desc()")
+
+
+class BankTransaction(Base):
+    __tablename__ = "bank_transactions"
+
+    id = Column(Integer, primary_key=True, index=True)
+    transaction_id = Column(String(255), unique=True, index=True, nullable=False)
+    account_id = Column(Integer, ForeignKey("bank_accounts.id", ondelete="CASCADE"), nullable=False)
+    booking_date = Column(String(50), nullable=False)
+    value_date = Column(String(50), nullable=True)
+    amount = Column(Float, nullable=False)
+    currency = Column(String(10), default="EUR")
+    remittance_information = Column(Text, nullable=True)
+    creditor_name = Column(String(255), nullable=True)
+    debtor_name = Column(String(255), nullable=True)
+    category = Column(String(100), nullable=True)
+    raw_json = Column(Text, nullable=True)
+    created_at = Column(DateTime, default=datetime.utcnow)
+
+    account = relationship("BankAccount", back_populates="transactions")
+
+
+class BankAuthSession(Base):
+    __tablename__ = "bank_auth_sessions"
+
+    id = Column(Integer, primary_key=True, index=True)
+    session_id = Column(String(255), unique=True, index=True, nullable=False)
+    aspsp_name = Column(String(100), default="Swan")
+    psu_type = Column(String(50), default="business")
+    status = Column(String(50), default="INITIATED")  # INITIATED, AUTHORIZED, EXPIRED, REVOKED
+    auth_url = Column(Text, nullable=True)
+    redirect_url = Column(Text, nullable=True)
+    authorized_at = Column(DateTime, nullable=True)
+    expires_at = Column(DateTime, nullable=True)
+    accounts_data = Column(Text, nullable=True)
+    created_at = Column(DateTime, default=datetime.utcnow)
+
+
+

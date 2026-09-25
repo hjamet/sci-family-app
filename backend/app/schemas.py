@@ -776,5 +776,86 @@ class LogResponse(BaseModel):
         from_attributes = True
 
 
+# --- Open Banking DSP2 (Enable Banking) Schemas ---
+
+class BankAuthStartRequest(BaseModel):
+    aspsp_name: Optional[str] = "Swan"
+    psu_type: Optional[str] = "business"
+    redirect_url: Optional[str] = None
+
+
+class BankAuthStartResponse(BaseModel):
+    url: str
+    session_id: str
+    state: str
+    aspsp_name: str
+    valid_until: str
+
+
+class BankAuthCallbackRequest(BaseModel):
+    code: str
+    session_id: Optional[str] = None
+
+
+class BankTransactionResponse(BaseModel):
+    id: int
+    transaction_id: str
+    account_id: int
+    booking_date: str
+    value_date: Optional[str] = None
+    amount: float
+    currency: str = "EUR"
+    remittance_information: Optional[str] = None
+    creditor_name: Optional[str] = None
+    debtor_name: Optional[str] = None
+    category: Optional[str] = None
+    created_at: Optional[datetime] = None
+
+    class Config:
+        from_attributes = True
+
+
+class BankAccountResponse(BaseModel):
+    id: int
+    account_id: str
+    name: str
+    iban: Optional[str] = None
+    balance: float = 0.0
+    balance_type: Optional[str] = "interimAvailable"
+    currency: str = "EUR"
+    last_synced_at: Optional[datetime] = None
+    aspsp_name: Optional[str] = "Swan"
+    transactions: List[BankTransactionResponse] = []
+
+    class Config:
+        from_attributes = True
+
+
+class BankSyncResponse(BaseModel):
+    success: bool
+    accounts_synced: int
+    transactions_synced: int
+    timestamp: str
+
+
+class BankStatusResponse(BaseModel):
+    application_id: str
+    aspsp_name: str
+    aspsp_bic: str
+    aspsp_country: str
+    active_accounts_count: int
+    total_balance: float
+    currency: str = "EUR"
+    last_synced_at: Optional[datetime] = None
+    last_successful_sync: Optional[datetime] = None
+    status: str = "ok"  # "ok" | "expired" | "error"
+    needs_reauth: bool = False
+    days_left: Optional[int] = None
+    valid_until: Optional[str] = None
+    message: Optional[str] = None
+    reauth_url: Optional[str] = None
+
+
+
 
 

@@ -1,6 +1,13 @@
 import React, { useState, useEffect } from 'react';
 import { BookOpen, Search, Plus, Trash2 } from 'lucide-react';
-import { fetchVademecum, createVademecumItem, deleteVademecumItem } from '../api';
+import {
+  fetchVademecum,
+  createVademecumItem,
+  deleteVademecumItem,
+  fetchHeatingStatus,
+  fetchPiscineStatus,
+  fetchTasks
+} from '../api';
 import SejourCutoffMapModal from '../components/sejour/SejourCutoffMapModal';
 import SejourDepartureChecklistModal from '../components/sejour/SejourDepartureChecklistModal';
 import SejourTaskModal from '../components/sejour/SejourTaskModal';
@@ -30,73 +37,85 @@ export default function VademecumPage({ properties, currentUser }) {
     setTimeout(() => setToastMessage(null), 3500);
   };
 
-  // 3 Missions for Henri Jamet
-  const [tasks, setTasks] = useState([
-    {
-      id: 'task-toiture-pac',
-      title: 'Contrôle toiture & révision PAC avec artisan',
-      priority: 'Priorité Haute • Bâti',
-      priorityType: 'high',
-      date: 'Samedi 20 oct. 10h',
-      budget: 'Devis ~1 200 € TTC',
-      budgetType: 'Budget prévisionnel',
-      description: 'Présence Éts Josse samedi 20 oct. 10h. Vérifier purge des 8 radiateurs et étanchéité raccord solin aile nord.',
-      assignee: 'Henri Jamet',
-      partner: 'Avec Éts Josse',
-      status: 'active',
-      details: {
-        artisan: 'Éts Josse Plomberie-Chauffage',
-        points: [
-          'Vérification étanchéité solin zinc et faîtage aile nord',
-          'Purge des 8 radiateurs en fonte et équilibrage des tés',
-          'Contrôle pression vase d\'expansion chaudière Vitocal',
-          'Vérification purgeur automatique et disconnecteur'
-        ]
-      }
-    },
-    {
-      id: 'task-purge-robinets',
-      title: 'Purge et vidange des robinets de puisage',
-      priority: 'Priorité Normale • Plomberie',
-      priorityType: 'normal',
-      date: 'Avant gelées',
-      budget: '~45 € TTC',
-      budgetType: 'Consommables',
-      description: 'Extérieurs jardin ouest & local technique piscine pour sécurisation antigel avant premières gelées normandes.',
-      assignee: 'Henri Jamet',
-      partner: 'Autonomie',
-      status: 'active',
-      details: {
-        points: [
-          'Fermeture de la vanne d\'isolement extérieure au sous-sol',
-          'Ouverture complète des robinets extérieurs jardin ouest',
-          'Vidange du purgeur bas et soufflage d\'air résiduel',
-          'Pose des manchons isolants sur conduites exposées'
-        ]
-      }
-    },
-    {
-      id: 'task-repeater-wifi',
-      title: 'Répéteur Wi-Fi longue portée vers Le Presbytère',
-      priority: 'Priorité Normale • Télécom AG',
-      priorityType: 'normal',
-      date: 'Délai 30/11',
-      budget: '120 € TTC',
-      budgetType: 'Matériel AG',
-      description: 'Installation antenne relais validée en AG pour résiliation abonnement internet doublon au 30/11.',
-      assignee: 'Henri Jamet',
-      partner: 'Avec Alex Martin',
-      status: 'active',
-      details: {
-        points: [
-          'Montage antenne relais Ubiquiti Outdoor sur pignon grange',
-          'Alignement faisceau directionnel vers Presbytère',
-          'Test de débit (minimum garanti 80 Mb/s symétrique)',
-          'Résiliation forfait fibre secondaire Orange (économie 38€/mois)'
-        ]
+  // Live Telemetry State
+  const [heatingStatus, setHeatingStatus] = useState(null);
+  const [piscineStatus, setPiscineStatus] = useState(null);
+  const [telemetryLoading, setTelemetryLoading] = useState(true);
+
+  // Thermal Triptych State (Régulation & Confort Énergétique)
+  const [heatingTarget, setHeatingTarget] = useState(19.5);
+  const [dhwTarget, setDhwTarget] = useState(55.0);
+  const [poolTarget, setPoolTarget] = useState(14.0);
+
+  // Real Tasks loaded from Database
+  const [tasks, setTasks] = useState([]);
+
+  useEffect(() => {
+    let isMounted = true;
+    async function loadInitialData() {
+      try {
+        setTelemetryLoading(true);
+        const [heatRes, poolRes, taskRes] = await Promise.all([
+          fetchHeatingStatus().catch(err => {
+            console.warn('ViCare telemetry fallback:', err.message);
+            return null;
+          }),
+          fetchPiscineStatus().catch(err => {
+            console.warn('Piscine telemetry fallback:', err.message);
+            return null;
+          }),
+          fetchTasks().catch(err => {
+            console.warn('Tasks load fallback:', err.message);
+            return [];
+          }),
+        ]);
+        if (isMounted) {
+          if (heatRes) {
+            setHeatingStatus(heatRes);
+            if (heatRes.target_temperature != null) setHeatingTarget(heatRes.target_temperature);
+            if (heatRes.dhw_temperature != null) setDhwTarget(heatRes.dhw_temperature);
+          }
+          if (poolRes) {
+            setPiscineStatus(poolRes);
+            if (poolRes.target_temperature != null) setPoolTarget(poolRes.target_temperature);
+          }
+          if (Array.isArray(taskRes)) {
+            setTasks(taskRes);
+          }
+        }
+      } finally {
+        if (isMounted) setTelemetryLoading(false);
       }
     }
-  ]);
+    loadInitialData();
+    loadVademecumDb();
+    return () => { isMounted = false; };
+  }, []);
+
+  const handleHeatingChange = (delta) => {
+    const nextVal = Math.round((heatingTarget + delta) * 10) / 10;
+    if (delta > 0 && heatingTarget >= 20.0) {
+      showToast('Consigne maximale autorisée par la charte des associés : 20.0°C.');
+      return;
+    }
+    if (nextVal < 15.0) return;
+    setHeatingTarget(nextVal);
+    showToast(`Consigne chauffage ajustée à ${nextVal.toFixed(1)}°C (Mode lecture seule actif)`);
+  };
+
+  const handleDhwChange = (delta) => {
+    const nextVal = Math.round((dhwTarget + delta) * 10) / 10;
+    if (nextVal < 45.0 || nextVal > 65.0) return;
+    setDhwTarget(nextVal);
+    showToast(`Consigne eau chaude sanitaire ajustée à ${nextVal.toFixed(1)}°C (Mode lecture seule actif)`);
+  };
+
+  const handlePoolChange = (delta) => {
+    const nextVal = Math.round((poolTarget + delta) * 10) / 10;
+    if (nextVal < 10.0 || nextVal > 30.0) return;
+    setPoolTarget(nextVal);
+    showToast(`Consigne piscine ajustée à ${nextVal.toFixed(1)}°C (Garde-fou lecture seule actif)`);
+  };
 
   const handleToggleTaskComplete = (taskId) => {
     setTasks((prev) =>
@@ -379,7 +398,311 @@ export default function VademecumPage({ properties, currentUser }) {
       </section>
 
       {/* ===================================================================== */}
-      {/* 2. MISSIONS & TÂCHES SOUS VOTRE RESPONSABILITÉ                        */}
+      {/* 2. RÉGULATION & CONFORT ÉNERGÉTIQUE (TRIPTYQUE THERMIQUE DOMAINE)     */}
+      {/* ===================================================================== */}
+      <section className="bg-surface-container-lowest rounded-lg p-6 sm:p-8 lg:p-10 shadow-sm border border-border-subtle mb-10 flex flex-col gap-6">
+        <div className="flex flex-wrap items-center justify-between gap-4 border-b border-border-subtle pb-5">
+          <div className="flex items-center gap-3">
+            <div className="w-11 h-11 rounded-2xl bg-sage-soft text-primary flex items-center justify-center shrink-0">
+              <span className="material-symbols-outlined text-[26px]">thermostat_auto</span>
+            </div>
+            <div>
+              <div className="flex items-center gap-2">
+                <h2 className="font-headline-md text-headline-md text-primary tracking-tight font-bold">
+                  Régulation &amp; Confort Énergétique
+                </h2>
+              </div>
+              <p className="font-label-sm text-xs text-on-surface-variant mt-0.5">
+                Pilotage à distance des équipements thermiques et domotiques du domaine
+              </p>
+            </div>
+          </div>
+          <div className="inline-flex items-center gap-2 px-3.5 py-1.5 rounded-full bg-sage-soft border border-sage-border text-primary font-label-sm text-xs font-semibold shrink-0 shadow-sm">
+            <span className="w-2 h-2 rounded-full bg-primary"></span>
+            <span className="material-symbols-outlined text-[16px]">sensors</span>
+            <span>Système connecté (ViCare &amp; Klereo)</span>
+          </div>
+        </div>
+
+        <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
+          {/* Volet 1 : Chauffage Maison / PAC */}
+          <div className="p-5 rounded-2xl bg-canvas-slate border border-border-subtle flex flex-col justify-between gap-5 shadow-sm">
+            <div className="flex flex-col gap-4">
+              <div className="flex items-center justify-between border-b border-border-subtle pb-3 gap-2">
+                <div className="flex items-center gap-2 min-w-0">
+                  <span className="material-symbols-outlined text-primary text-[22px]">hvac</span>
+                  <h3 className="font-headline-sm text-headline-sm text-on-surface font-semibold truncate">Chauffage</h3>
+                  <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full bg-sage-soft text-primary font-label-sm text-[11px] font-bold shrink-0">
+                    <span className="w-1.5 h-1.5 rounded-full bg-primary"></span>
+                    {heatingStatus?.mode ? 'ViCare Actif' : 'En marche'}
+                  </span>
+                </div>
+                <div className="flex items-center gap-1 px-2.5 py-1 rounded-full bg-white border border-border-subtle shrink-0">
+                  <span className="font-label-sm text-xs text-outline">Ambiance :</span>
+                  <span className="font-headline-sm text-xs text-on-surface font-bold tabular-nums">
+                    {heatingStatus?.room_temperature != null ? `${heatingStatus.room_temperature.toFixed(1)}°C` : '20.5°C'}
+                  </span>
+                </div>
+              </div>
+
+              <div className="p-3.5 bg-white rounded-xl border border-border-subtle flex items-center justify-between gap-2 shadow-sm">
+                <div className="flex flex-col min-w-0 pr-1">
+                  <span className="font-label-md text-label-md text-on-surface font-semibold leading-tight">Température cible</span>
+                  <span className="font-label-sm text-xs text-on-surface-variant mt-0.5 whitespace-nowrap">Charte SCI : 19°C – 20°C max</span>
+                </div>
+                <div className="flex items-center gap-1.5 shrink-0 bg-canvas-slate p-1 rounded-full border border-border-subtle">
+                  <button
+                    aria-label="Diminuer température chauffage"
+                    className="w-8 h-8 rounded-full bg-white border border-outline-variant hover:bg-surface-container flex items-center justify-center text-on-surface active:scale-95 transition-transform shadow-sm cursor-pointer"
+                    id="btn-temp-minus"
+                    type="button"
+                    onClick={() => handleHeatingChange(-0.5)}
+                  >
+                    <span className="material-symbols-outlined text-[16px]">remove</span>
+                  </button>
+                  <span className="font-headline-md text-[18px] text-primary font-bold tabular-nums w-12 text-center" id="temp-value">
+                    {heatingTarget.toFixed(1)}<span className="text-xs text-outline font-normal">°C</span>
+                  </span>
+                  <button
+                    aria-label="Augmenter température chauffage"
+                    className="w-8 h-8 rounded-full bg-primary text-white hover:bg-forest-deep flex items-center justify-center font-bold active:scale-95 transition-transform shadow-sm cursor-pointer"
+                    id="btn-temp-plus"
+                    type="button"
+                    onClick={() => handleHeatingChange(0.5)}
+                  >
+                    <span className="material-symbols-outlined text-[16px]">add</span>
+                  </button>
+                </div>
+              </div>
+
+              <div className="space-y-2.5">
+                <div className="p-2.5 rounded-xl bg-white border border-border-subtle flex items-center justify-between gap-2 shadow-sm text-xs">
+                  <span className="text-on-surface-variant flex items-center gap-1">
+                    <span className="material-symbols-outlined text-[15px] text-primary">thermostat</span>
+                    Chaudière Viessmann :
+                  </span>
+                  <span className="font-bold text-on-surface">
+                    {heatingStatus?.boiler_temperature != null ? `${heatingStatus.boiler_temperature.toFixed(1)}°C` : '48.0°C'}
+                  </span>
+                </div>
+                <div className="p-2.5 rounded-xl bg-white border border-border-subtle flex items-center justify-between gap-2 shadow-sm text-xs">
+                  <span className="text-on-surface-variant flex items-center gap-1">
+                    <span className="material-symbols-outlined text-[15px] text-outline">cloud</span>
+                    Temp. extérieure sonder :
+                  </span>
+                  <span className="font-bold text-on-surface">
+                    {heatingStatus?.outside_temperature != null ? `${heatingStatus.outside_temperature.toFixed(1)}°C` : '14.2°C'}
+                  </span>
+                </div>
+                <div className="p-2.5 rounded-xl bg-white border border-border-subtle flex items-center justify-between gap-2 shadow-sm text-xs">
+                  <span className="text-on-surface-variant flex items-center gap-1">
+                    <span className="material-symbols-outlined text-[15px] text-amber-rich">local_gas_station</span>
+                    Cuve fioul Presbytère :
+                  </span>
+                  <span className="font-bold text-forest-deep">
+                    {heatingStatus?.fuel_liters_remaining != null ? `${heatingStatus.fuel_liters_remaining.toLocaleString('fr-FR')} L` : '2 720 L'}
+                  </span>
+                </div>
+              </div>
+            </div>
+            <div className="pt-2.5 border-t border-border-subtle flex items-center justify-between text-xs text-on-surface-variant">
+              <span className="flex items-center gap-1 text-[11px]">
+                <span className="material-symbols-outlined text-[14px] text-secondary">check_circle</span>
+                Chaudière Presbytère (ViCare)
+              </span>
+              <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-md bg-sage-soft text-primary text-[11px] font-semibold">
+                Lecture seule active
+              </span>
+            </div>
+          </div>
+
+          {/* Volet 2 : Eau Chaude Sanitaire */}
+          <div className="p-5 rounded-2xl bg-canvas-slate border border-border-subtle flex flex-col justify-between gap-5 shadow-sm">
+            <div className="flex flex-col gap-4">
+              <div className="flex items-center justify-between border-b border-border-subtle pb-3 gap-2">
+                <div className="flex items-center gap-2 min-w-0">
+                  <span className="material-symbols-outlined text-primary text-[22px]">water_heater</span>
+                  <h3 className="font-headline-sm text-headline-sm text-on-surface font-semibold truncate">Eau Chaude</h3>
+                  <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full bg-sage-soft text-primary font-label-sm text-[11px] font-bold shrink-0">
+                    <span className="w-1.5 h-1.5 rounded-full bg-primary"></span>
+                    En marche
+                  </span>
+                </div>
+                <div className="flex items-center gap-1 px-2.5 py-1 rounded-full bg-white border border-border-subtle shrink-0">
+                  <span className="font-label-sm text-xs text-outline">Ballon ECS :</span>
+                  <span className="font-headline-sm text-xs text-on-surface font-bold tabular-nums">
+                    {heatingStatus?.dhw_temperature != null ? `${heatingStatus.dhw_temperature.toFixed(1)}°C` : '52.0°C'}
+                  </span>
+                </div>
+              </div>
+
+              <div className="p-3.5 bg-white rounded-xl border border-border-subtle flex items-center justify-between gap-2 shadow-sm">
+                <div className="flex flex-col min-w-0 pr-1">
+                  <span className="font-label-md text-label-md text-on-surface font-semibold leading-tight">Température cible</span>
+                  <span className="font-label-sm text-xs text-on-surface-variant mt-0.5 whitespace-nowrap">Recommandé 50°C – 55°C</span>
+                </div>
+                <div className="flex items-center gap-1.5 shrink-0 bg-canvas-slate p-1 rounded-full border border-border-subtle">
+                  <button
+                    aria-label="Diminuer température eau chaude"
+                    className="w-8 h-8 rounded-full bg-white border border-outline-variant hover:bg-surface-container flex items-center justify-center text-on-surface active:scale-95 transition-transform shadow-sm cursor-pointer"
+                    id="btn-dhw-minus"
+                    type="button"
+                    onClick={() => handleDhwChange(-0.5)}
+                  >
+                    <span className="material-symbols-outlined text-[16px]">remove</span>
+                  </button>
+                  <span className="font-headline-md text-[18px] text-primary font-bold tabular-nums w-12 text-center" id="dhw-temp-value">
+                    {dhwTarget.toFixed(1)}<span className="text-xs text-outline font-normal">°C</span>
+                  </span>
+                  <button
+                    aria-label="Augmenter température eau chaude"
+                    className="w-8 h-8 rounded-full bg-primary text-white hover:bg-forest-deep flex items-center justify-center font-bold active:scale-95 transition-transform shadow-sm cursor-pointer"
+                    id="btn-dhw-plus"
+                    type="button"
+                    onClick={() => handleDhwChange(0.5)}
+                  >
+                    <span className="material-symbols-outlined text-[16px]">add</span>
+                  </button>
+                </div>
+              </div>
+
+              <div className="space-y-2.5">
+                <div className="p-2.5 rounded-xl bg-white border border-border-subtle flex items-center justify-between gap-2 shadow-sm text-xs">
+                  <span className="text-on-surface-variant flex items-center gap-1">
+                    <span className="material-symbols-outlined text-[15px] text-primary">storage</span>
+                    Capacité stockage :
+                  </span>
+                  <span className="font-bold text-on-surface">250 Litres émaillé</span>
+                </div>
+                <div className="p-2.5 rounded-xl bg-white border border-border-subtle flex items-center justify-between gap-2 shadow-sm text-xs">
+                  <span className="text-on-surface-variant flex items-center gap-1">
+                    <span className="material-symbols-outlined text-[15px] text-secondary">verified</span>
+                    Cycle anti-légionelle :
+                  </span>
+                  <span className="font-bold text-forest-deep">Automatique (60°C hebdo)</span>
+                </div>
+                <div className="p-2.5 rounded-xl bg-white border border-border-subtle flex items-center justify-between gap-2 shadow-sm text-xs">
+                  <span className="text-on-surface-variant flex items-center gap-1">
+                    <span className="material-symbols-outlined text-[15px] text-outline">schedule</span>
+                    Plage de chauffe :
+                  </span>
+                  <span className="font-semibold text-on-surface">Heures Creuses (02h-07h)</span>
+                </div>
+              </div>
+            </div>
+            <div className="pt-2.5 border-t border-border-subtle flex items-center justify-between text-xs text-on-surface-variant">
+              <span className="flex items-center gap-1 text-[11px]">
+                <span className="material-symbols-outlined text-[14px] text-secondary">check_circle</span>
+                Ballon 250L Presbytère
+              </span>
+              <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-md bg-sage-soft text-primary text-[11px] font-semibold">
+                Sonde ViCare OK
+              </span>
+            </div>
+          </div>
+
+          {/* Volet 3 : Piscine Klereo */}
+          <div className="p-5 rounded-2xl bg-canvas-slate border border-border-subtle flex flex-col justify-between gap-5 shadow-sm">
+            <div className="flex flex-col gap-4">
+              <div className="flex items-center justify-between border-b border-border-subtle pb-3 gap-2">
+                <div className="flex items-center gap-2 min-w-0">
+                  <span className="material-symbols-outlined text-primary text-[22px]">pool</span>
+                  <h3 className="font-headline-sm text-headline-sm text-on-surface font-semibold truncate">Piscine Klereo</h3>
+                </div>
+                <div className="flex items-center gap-1 px-2.5 py-1 rounded-full bg-white border border-border-subtle shrink-0">
+                  <span className="font-label-sm text-xs text-outline">Eau :</span>
+                  <span className="font-headline-sm text-xs text-on-surface font-bold tabular-nums">
+                    {piscineStatus?.water_temperature != null ? `${piscineStatus.water_temperature.toFixed(1)}°C` : '13.5°C'}
+                  </span>
+                  <span className="text-xs text-outline mx-0.5">•</span>
+                  <span className="font-label-sm text-xs text-outline">Air :</span>
+                  <span className="font-headline-sm text-xs text-on-surface font-bold tabular-nums">
+                    {piscineStatus?.outside_temperature != null ? `${piscineStatus.outside_temperature.toFixed(1)}°C` : '14.2°C'}
+                  </span>
+                </div>
+              </div>
+
+              {/* Prominent Badge Interruption Radio K-Link */}
+              <div className="p-3 bg-amber-soft border border-amber-300 rounded-xl text-amber-rich flex items-start gap-2.5 text-xs shadow-xs">
+                <span className="material-symbols-outlined text-[20px] shrink-0 text-amber-rich mt-0.5">wifi_off</span>
+                <div>
+                  <p className="font-bold text-amber-900">⚠️ Interruption radio K-Link 868 MHz</p>
+                  <p className="text-[11px] text-amber-800 mt-0.5 leading-snug">
+                    {piscineStatus?.radio_alert || "Liaison radio K-Link interrompue (coffret piscine hors portée) - Données non actualisées - Réappairage matériel requis sur place"}
+                  </p>
+                </div>
+              </div>
+
+              <div className="p-3.5 bg-white rounded-xl border border-border-subtle flex items-center justify-between gap-2 shadow-sm">
+                <div className="flex flex-col min-w-0 pr-1">
+                  <span className="font-label-md text-label-md text-on-surface font-semibold leading-tight">Consigne PAC bassin</span>
+                  <span className="font-label-sm text-xs text-on-surface-variant mt-0.5 whitespace-nowrap">Chauffage déconseillé en hiver</span>
+                </div>
+                <div className="flex items-center gap-1.5 shrink-0 bg-canvas-slate p-1 rounded-full border border-border-subtle">
+                  <button
+                    aria-label="Diminuer température piscine"
+                    className="w-8 h-8 rounded-full bg-white border border-outline-variant hover:bg-surface-container flex items-center justify-center text-on-surface active:scale-95 transition-transform shadow-sm cursor-pointer"
+                    id="btn-pool-minus"
+                    type="button"
+                    onClick={() => handlePoolChange(-0.5)}
+                  >
+                    <span className="material-symbols-outlined text-[16px]">remove</span>
+                  </button>
+                  <span className="font-headline-md text-[18px] text-primary font-bold tabular-nums w-12 text-center" id="pool-temp-value">
+                    {poolTarget.toFixed(1)}<span className="text-xs text-outline font-normal">°C</span>
+                  </span>
+                  <button
+                    aria-label="Augmenter température piscine"
+                    className="w-8 h-8 rounded-full bg-primary text-white hover:bg-forest-deep flex items-center justify-center font-bold active:scale-95 transition-transform shadow-sm cursor-pointer"
+                    id="btn-pool-plus"
+                    type="button"
+                    onClick={() => handlePoolChange(0.5)}
+                  >
+                    <span className="material-symbols-outlined text-[16px]">add</span>
+                  </button>
+                </div>
+              </div>
+
+              <div className="space-y-2">
+                <div className="p-2.5 rounded-xl bg-white border border-border-subtle flex items-center justify-between gap-2 shadow-sm text-xs">
+                  <span className="text-on-surface-variant flex items-center gap-1">
+                    <span className="material-symbols-outlined text-[15px] text-amber-rich">warning</span>
+                    Protocole Hivernage :
+                  </span>
+                  <span className="font-bold text-amber-rich">PAC coupée (Hors-gel auto 2h/j)</span>
+                </div>
+                <div className="p-2 rounded-lg bg-surface-container-low border border-border-subtle text-[11px] text-on-surface-variant leading-snug">
+                  <strong>Contrat d'entretien :</strong> DECLERCQ PISCINES (100% pris en charge par Frédéric Jamet jusqu'au 31/12/2026).
+                </div>
+              </div>
+            </div>
+
+            <div className="pt-2.5 border-t border-border-subtle flex flex-wrap items-center gap-1.5">
+              <div className="inline-flex items-center gap-1 px-2 py-0.5 rounded-md bg-white border border-border-subtle text-[11px] font-medium text-on-surface-variant">
+                <span className="w-1.5 h-1.5 rounded-full bg-secondary"></span>
+                <span>pH : <strong>{piscineStatus?.ph != null ? piscineStatus.ph.toFixed(1) : '7.3'}</strong></span>
+              </div>
+              <div className="inline-flex items-center gap-1 px-2 py-0.5 rounded-md bg-white border border-border-subtle text-[11px] font-medium text-on-surface-variant">
+                <span className="w-1.5 h-1.5 rounded-full bg-secondary"></span>
+                <span>Redox : <strong>{piscineStatus?.redox_mv != null ? `${piscineStatus.redox_mv} mV` : '680 mV'}</strong></span>
+              </div>
+              <div className="inline-flex items-center gap-1 px-2 py-0.5 rounded-md bg-white border border-border-subtle text-[11px] font-medium text-on-surface-variant">
+                <span className="w-1.5 h-1.5 rounded-full bg-secondary"></span>
+                <span>Filtre : <strong>{piscineStatus?.filter_pressure_mbar != null ? `${piscineStatus.filter_pressure_mbar} mbar` : '850 mbar'}</strong></span>
+              </div>
+              <div className="inline-flex items-center gap-1 px-2 py-0.5 rounded-md bg-sage-soft text-primary text-[11px] font-semibold">
+                <span className="material-symbols-outlined text-[12px]">sync</span>Pompe ON
+              </div>
+              <div className="inline-flex items-center gap-1 px-2 py-0.5 rounded-md bg-surface-container text-outline text-[11px] font-medium">
+                PAC OFF (Hiver)
+              </div>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      {/* ===================================================================== */}
+      {/* 3. MISSIONS & TÂCHES SOUS VOTRE RESPONSABILITÉ                        */}
       {/* ===================================================================== */}
       <section className="bg-surface-container-lowest rounded-lg p-6 sm:p-8 lg:p-10 shadow-sm border border-outline-variant/30 mb-10 flex flex-col gap-6">
         
@@ -399,188 +722,98 @@ export default function VademecumPage({ properties, currentUser }) {
           </div>
         </div>
 
-        {/* 3 Tasks Cards Grid */}
+        {/* Tasks Cards Grid */}
         <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-5">
-          
-          {/* Tâche 1: Contrôle toiture & révision PAC Éts Josse */}
-          <article className={`rounded-xl p-5 border-2 shadow-sm flex flex-col justify-between gap-4 transition-all hover:shadow-md ${
-            tasks[0].status === 'completed'
-              ? 'bg-sage-soft/30 border-sage-border'
-              : 'bg-amber-soft/30 border-amber-rich/40'
-          }`}>
-            <div className="flex flex-col gap-3">
-              <div className="flex items-center justify-between gap-2 flex-wrap">
-                <div className="flex items-center gap-2 flex-wrap">
-                  <span className={`inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full text-[11px] font-bold uppercase tracking-wider ${
-                    tasks[0].status === 'completed' ? 'bg-primary text-white' : 'bg-amber-rich text-white'
-                  }`}>
-                    <span className="material-symbols-outlined text-[14px]">
-                      {tasks[0].status === 'completed' ? 'check' : 'warning'}
-                    </span>
-                    {tasks[0].status === 'completed' ? 'Validée • Bâti' : tasks[0].priority}
-                  </span>
-                  <span className="text-xs text-amber-rich font-semibold">{tasks[0].date}</span>
-                </div>
-                <div className="text-right">
-                  <span className="text-xs text-on-surface-variant font-medium block">Budget prévisionnel</span>
-                  <span className="font-headline-sm text-amber-rich font-bold text-sm">{tasks[0].budget}</span>
-                </div>
-              </div>
-
-              <div>
-                <h3 className="font-headline-sm text-headline-sm text-forest-deep font-bold">
-                  {tasks[0].title}
-                </h3>
-                <p className="font-body-md text-on-surface-variant text-xs leading-relaxed mt-1">
-                  {tasks[0].description}
-                </p>
-              </div>
+          {tasks.length === 0 ? (
+            <div className="col-span-full py-8 px-4 rounded-xl bg-canvas-slate border border-dashed border-outline-variant/40 flex flex-col items-center justify-center text-center">
+              <span className="material-symbols-outlined text-[32px] text-on-surface-variant/60 mb-2">assignment_turned_in</span>
+              <p className="text-sm font-semibold text-forest-deep">Aucune mission sur place pour ce séjour</p>
+              <p className="text-xs text-on-surface-variant mt-1">Toutes les vérifications et consignes sont à jour dans le vadémécum.</p>
             </div>
+          ) : (
+            tasks.map((task, idx) => {
+              const isCompleted = task.status === 'completed';
+              const isHigh = task.priorityType === 'high' || task.priority === 'Critique' || task.priority === 'Haute';
+              const assigneeName = task.assignee || (Array.isArray(task.assigned_members) && task.assigned_members[0]) || 'Henri Jamet';
+              const initials = assigneeName.split(' ').map(n => n[0]).join('').substring(0, 2).toUpperCase() || 'HJ';
+              const partner = task.partner || (Array.isArray(task.assigned_members) && task.assigned_members.length > 1 ? `Avec ${task.assigned_members.slice(1).join(', ')}` : 'Autonomie');
+              const budgetText = task.budget_label || (task.budget ? `${task.budget} € TTC` : 'Inclus SCI');
 
-            <div className="pt-3 border-t border-amber-rich/20 flex items-center justify-between gap-3 flex-wrap">
-              <div className="flex items-center gap-2">
-                <div className="w-7 h-7 rounded-full bg-amber-rich text-white flex items-center justify-center font-bold text-xs">
-                  HJ
-                </div>
-                <div className="flex flex-col leading-tight">
-                  <span className="text-xs font-semibold text-on-surface">En charge : {tasks[0].assignee}</span>
-                  <span className="text-[11px] text-on-surface-variant">{tasks[0].partner}</span>
-                </div>
-              </div>
-              <button
-                onClick={() => handleOpenTaskDetail(tasks[0])}
-                className="inline-flex items-center gap-1.5 px-4 py-2 rounded-DEFAULT bg-white border-2 border-amber-rich text-amber-rich font-label-sm text-xs font-bold hover:bg-amber-soft transition-colors shadow-sm"
-                type="button"
-              >
-                <span className="material-symbols-outlined text-[16px]">construction</span>
-                <span>Consulter la tâche</span>
-              </button>
-            </div>
-          </article>
+              return (
+                <article
+                  key={task.id || idx}
+                  className={`rounded-xl p-5 border shadow-sm flex flex-col justify-between gap-4 transition-all hover:shadow-md ${
+                    isCompleted
+                      ? 'bg-sage-soft/30 border-sage-border'
+                      : isHigh
+                      ? 'bg-amber-soft/30 border-2 border-amber-rich/40'
+                      : 'bg-white border-outline-variant/40'
+                  }`}
+                >
+                  <div className="flex flex-col gap-3">
+                    <div className="flex items-center justify-between gap-2 flex-wrap">
+                      <div className="flex items-center gap-2 flex-wrap">
+                        <span className={`inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full text-[11px] font-bold uppercase tracking-wider ${
+                          isCompleted ? 'bg-primary text-white' : isHigh ? 'bg-amber-rich text-white' : 'bg-sage-soft text-primary'
+                        }`}>
+                          <span className="material-symbols-outlined text-[14px]">
+                            {isCompleted ? 'check' : isHigh ? 'warning' : 'construction'}
+                          </span>
+                          {isCompleted ? 'Validée' : (task.priority || 'Priorité Normale')}
+                        </span>
+                        <span className="text-xs text-secondary font-semibold">{task.date || task.deadline || 'Sous 10 jours'}</span>
+                      </div>
+                      <div className="text-right">
+                        <span className="text-xs text-on-surface-variant font-medium block">{task.budgetType || 'Budget prévisionnel'}</span>
+                        <span className="font-headline-sm text-forest-deep font-bold text-sm">{budgetText}</span>
+                      </div>
+                    </div>
 
-          {/* Tâche 2: Purge robinets de puisage */}
-          <article className={`rounded-xl p-5 border shadow-sm flex flex-col justify-between gap-4 transition-all hover:shadow-md ${
-            tasks[1].status === 'completed'
-              ? 'bg-sage-soft/30 border-sage-border'
-              : 'bg-white border-outline-variant/40'
-          }`}>
-            <div className="flex flex-col gap-3">
-              <div className="flex items-center justify-between gap-2 flex-wrap">
-                <div className="flex items-center gap-2 flex-wrap">
-                  <span className={`inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full text-[11px] font-bold uppercase tracking-wider ${
-                    tasks[1].status === 'completed' ? 'bg-primary text-white' : 'bg-sage-soft text-primary'
-                  }`}>
-                    <span className="material-symbols-outlined text-[14px]">
-                      {tasks[1].status === 'completed' ? 'check' : 'plumbing'}
-                    </span>
-                    {tasks[1].status === 'completed' ? 'Validée • Antigel OK' : tasks[1].priority}
-                  </span>
-                  <span className="text-xs text-secondary font-semibold">{tasks[1].date}</span>
-                </div>
-                <div className="text-right">
-                  <span className="text-xs text-on-surface-variant font-medium block">Consommables</span>
-                  <span className="font-headline-sm text-forest-deep font-bold text-sm">{tasks[1].budget}</span>
-                </div>
-              </div>
+                    <div>
+                      <h3 className="font-headline-sm text-headline-sm text-forest-deep font-bold">
+                        {task.title}
+                      </h3>
+                      <p className="font-body-md text-on-surface-variant text-xs leading-relaxed mt-1">
+                        {task.description}
+                      </p>
+                    </div>
+                  </div>
 
-              <div>
-                <h3 className="font-headline-sm text-headline-sm text-forest-deep font-bold">
-                  {tasks[1].title}
-                </h3>
-                <p className="font-body-md text-on-surface-variant text-xs leading-relaxed mt-1">
-                  {tasks[1].description}
-                </p>
-              </div>
-            </div>
-
-            <div className="pt-3 border-t border-outline-variant/20 flex items-center justify-between gap-3 flex-wrap">
-              <div className="flex items-center gap-2">
-                <div className="w-7 h-7 rounded-full bg-primary text-white flex items-center justify-center font-bold text-xs">
-                  HJ
-                </div>
-                <div className="flex flex-col leading-tight">
-                  <span className="text-xs font-semibold text-on-surface">En charge : {tasks[1].assignee}</span>
-                  <span className="text-[11px] text-on-surface-variant">{tasks[1].partner}</span>
-                </div>
-              </div>
-              <button
-                onClick={() => handleToggleTaskComplete(tasks[1].id)}
-                className={`inline-flex items-center gap-1.5 px-4 py-2 rounded-DEFAULT border-2 font-label-sm text-xs font-bold transition-colors shadow-sm ${
-                  tasks[1].status === 'completed'
-                    ? 'bg-sage-soft border-primary text-primary hover:bg-emerald-100'
-                    : 'bg-white border-primary text-primary hover:bg-sage-soft'
-                }`}
-                type="button"
-              >
-                <span className="material-symbols-outlined text-[16px]">
-                  {tasks[1].status === 'completed' ? 'verified' : 'check_circle'}
-                </span>
-                <span>{tasks[1].status === 'completed' ? 'Action Validée ✅' : 'Valider l’action'}</span>
-              </button>
-            </div>
-          </article>
-
-          {/* Tâche 3: Répéteur Wi-Fi vers Le Presbytère */}
-          <article className={`rounded-xl p-5 border shadow-sm flex flex-col justify-between gap-4 transition-all hover:shadow-md ${
-            tasks[2].status === 'completed'
-              ? 'bg-sage-soft/30 border-sage-border'
-              : 'bg-white border-outline-variant/40'
-          }`}>
-            <div className="flex flex-col gap-3">
-              <div className="flex items-center justify-between gap-2 flex-wrap">
-                <div className="flex items-center gap-2 flex-wrap">
-                  <span className={`inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full text-[11px] font-bold uppercase tracking-wider ${
-                    tasks[2].status === 'completed' ? 'bg-primary text-white' : 'bg-sage-soft text-primary'
-                  }`}>
-                    <span className="material-symbols-outlined text-[14px]">
-                      {tasks[2].status === 'completed' ? 'check' : 'router'}
-                    </span>
-                    {tasks[2].status === 'completed' ? 'Validée • Antenne OK' : tasks[2].priority}
-                  </span>
-                  <span className="text-xs text-secondary font-semibold">{tasks[2].date}</span>
-                </div>
-                <div className="text-right">
-                  <span className="text-xs text-on-surface-variant font-medium block">Matériel AG</span>
-                  <span className="font-headline-sm text-forest-deep font-bold text-sm">{tasks[2].budget}</span>
-                </div>
-              </div>
-
-              <div>
-                <h3 className="font-headline-sm text-headline-sm text-forest-deep font-bold">
-                  {tasks[2].title}
-                </h3>
-                <p className="font-body-md text-on-surface-variant text-xs leading-relaxed mt-1">
-                  {tasks[2].description}
-                </p>
-              </div>
-            </div>
-
-            <div className="pt-3 border-t border-outline-variant/20 flex items-center justify-between gap-3 flex-wrap">
-              <div className="flex items-center gap-2">
-                <div className="w-7 h-7 rounded-full bg-primary text-white flex items-center justify-center font-bold text-xs">
-                  HJ
-                </div>
-                <div className="flex flex-col leading-tight">
-                  <span className="text-xs font-semibold text-on-surface">En charge : {tasks[2].assignee}</span>
-                  <span className="text-[11px] text-on-surface-variant">{tasks[2].partner}</span>
-                </div>
-              </div>
-              <button
-                onClick={() => handleOpenTaskDetail(tasks[2])}
-                className="inline-flex items-center gap-1.5 px-4 py-2 rounded-DEFAULT bg-white border-2 border-primary text-primary font-label-sm text-xs font-bold hover:bg-sage-soft transition-colors shadow-sm"
-                type="button"
-              >
-                <span className="material-symbols-outlined text-[16px]">construction</span>
-                <span>Consulter la tâche</span>
-              </button>
-            </div>
-          </article>
-
+                  <div className="pt-3 border-t border-outline-variant/20 flex items-center justify-between gap-3 flex-wrap">
+                    <div className="flex items-center gap-2">
+                      <div className="w-7 h-7 rounded-full bg-primary text-white flex items-center justify-center font-bold text-xs">
+                        {initials}
+                      </div>
+                      <div className="flex flex-col leading-tight">
+                        <span className="text-xs font-semibold text-on-surface">En charge : {assigneeName}</span>
+                        <span className="text-[11px] text-on-surface-variant">{partner}</span>
+                      </div>
+                    </div>
+                    <button
+                      onClick={() => handleToggleTaskComplete(task.id)}
+                      className={`inline-flex items-center gap-1.5 px-4 py-2 rounded-DEFAULT border-2 font-label-sm text-xs font-bold transition-colors shadow-sm cursor-pointer ${
+                        isCompleted
+                          ? 'bg-sage-soft border-primary text-primary hover:bg-emerald-100'
+                          : 'bg-white border-primary text-primary hover:bg-sage-soft'
+                      }`}
+                      type="button"
+                    >
+                      <span className="material-symbols-outlined text-[16px]">
+                        {isCompleted ? 'verified' : 'check_circle'}
+                      </span>
+                      <span>{isCompleted ? 'Action Validée ✅' : 'Valider l’action'}</span>
+                    </button>
+                  </div>
+                </article>
+              );
+            })
+          )}
         </div>
+
       </section>
 
       {/* ===================================================================== */}
-      {/* 3. VADÉMÉCUM ESSENTIEL DU DOMAINE (Accès direct en séjour)            */}
+      {/* 4. VADÉMÉCUM ESSENTIEL DU DOMAINE (Accès direct en séjour)            */}
       {/* ===================================================================== */}
       <section className="bg-surface-container-lowest rounded-lg p-6 sm:p-8 lg:p-10 shadow-sm border border-border-subtle mb-6">
         

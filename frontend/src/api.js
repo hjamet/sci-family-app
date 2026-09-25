@@ -688,3 +688,65 @@ export async function fetchPiscineStatus() {
   return res.json();
 }
 
+// Open Banking DSP2 (Enable Banking & Swan France)
+export async function fetchBankStatus() {
+  const res = await fetch(`${API_BASE}/banking/status`, {
+    headers: getAuthHeaders()
+  });
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({}));
+    throw new Error(err.detail || 'Erreur lors de la récupération du statut bancaire');
+  }
+  return res.json();
+}
+
+export async function fetchBankAccounts() {
+  const res = await fetch(`${API_BASE}/banking/accounts`, {
+    headers: getAuthHeaders()
+  });
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({}));
+    throw new Error(err.detail || 'Erreur lors de la récupération des comptes bancaires');
+  }
+  return res.json();
+}
+
+export async function fetchBankTransactions(params = {}) {
+  const query = new URLSearchParams();
+  if (params.category) query.append('category', params.category);
+  if (params.limit) query.append('limit', params.limit);
+  const res = await fetch(`${API_BASE}/banking/transactions?${query.toString()}`, {
+    headers: getAuthHeaders()
+  });
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({}));
+    throw new Error(err.detail || 'Erreur lors de la récupération des transactions bancaires');
+  }
+  return res.json();
+}
+
+export async function triggerBankSync() {
+  const res = await fetch(`${API_BASE}/banking/sync`, {
+    method: 'POST',
+    headers: getAuthJsonHeaders()
+  });
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({}));
+    throw new Error(err.detail || 'Erreur lors de la synchronisation bancaire');
+  }
+  return res.json();
+}
+
+export async function startBankAuth(redirectUrl) {
+  const res = await fetch(`${API_BASE}/banking/auth/start`, {
+    method: 'POST',
+    headers: getAuthJsonHeaders(),
+    body: JSON.stringify({ redirect_url: redirectUrl })
+  });
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({}));
+    throw new Error(err.detail || 'Erreur lors de l\'initialisation de l\'authentification bancaire');
+  }
+  return res.json();
+}
+

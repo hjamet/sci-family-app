@@ -1,15 +1,13 @@
 import React, { useState, useRef, useEffect } from 'react';
 
-const LOGO_SRC = "https://lh3.googleusercontent.com/aida/AEtjO1XPkJA9U7CARtYXRqiCPhIByczBnBdNtGuBGIaMyna0c8Ams8nQu_bL_xLUxSm0ss6S3OHFS_n6B7nd2shejRa7UOjp65THsDhEKTpK_c7vICASOxbWet3Npaq5uEjMp0n1qWBqzcIJLOA643R5lKnnpnipatsdqzLoRZFTH3yd8h6IRXGs4HV3UIq2aiKXLu8bVu7FO6vMLYXv5-ilXUTx3C0CaKLCNIbtx6bjoStN";
+const LOGO_SRC = "https://lh3.googleusercontent.com/aida/AEtjO1XJm77TR1PDDNkcRQ9wWXxqn7aRo_l5hBaVlxguOsGLSAEvUQBa_nqdAg31UW1TezCKGNFt3GFJwyKeQv07MfT07ONtxL2DjvfDlafbm8teXhd6aAGg-ajmno0damHQ6wtW2VZebF2ID6B0aVF-oS4x2zJ1SSQ4WPcrozSEnp3AL0fRy0KHJ85J1QLs7mZLubByQeBQ3BoGjtCN2g_5WB9RxvuZBi7OfOQP58Z2Jo9q";
 
 const NAV_ITEMS = [
   { id: 'home', label: 'Tableau de bord', path: '/', icon: 'dashboard' },
-  { id: 'tasks', label: 'Tâches', path: '/tasks', icon: 'checklist' },
-  { id: 'votes', label: 'Votes', path: '/votes', icon: 'how_to_vote' },
-  { id: 'admin', label: 'Administratif', path: '/admin', icon: 'folder_shared' },
-  { id: 'reservations', label: 'Calendrier', path: '/reservations', icon: 'calendar_month' },
   { id: 'sejour', label: 'Séjour', path: '/sejour', icon: 'cottage' },
-  { id: 'energie', label: 'Énergie', path: '/energie', icon: 'thermostat_auto' },
+  { id: 'calendrier', label: 'Calendrier', path: '/calendrier', icon: 'calendar_month' },
+  { id: 'taches', label: 'Tâches & Chantiers', path: '/taches', icon: 'checklist' },
+  { id: 'admin', label: 'Administratif', path: '/admin', icon: 'folder_shared' },
 ];
 
 export default function Header({
@@ -28,13 +26,6 @@ export default function Header({
   const displayName = typeof currentUser === 'object'
     ? (currentUser?.prenom ? `${currentUser.prenom} ${currentUser.nom || 'Jamet'}` : 'Henri Jamet')
     : (currentUser || 'Henri Jamet');
-
-  const initials = displayName
-    .split(' ')
-    .map(p => p[0])
-    .join('')
-    .substring(0, 2)
-    .toUpperCase() || 'HJ';
 
   useEffect(() => {
     function handleClickOutside(event) {
@@ -64,48 +55,50 @@ export default function Header({
 
   const isItemActive = (item) => {
     if (activeTab === item.id) return true;
-    if (item.id === 'votes' && activeTab === 'projects_vote') return true;
-    if (item.id === 'tasks' && activeTab === 'stay_tasks') return true;
-    if ((item.id === 'sejour' || item.id === 'vademecum') && (activeTab === 'sejour' || activeTab === 'vademecum')) return true;
-    if ((item.id === 'energie' || item.id === 'chauffage') && (activeTab === 'energie' || activeTab === 'chauffage')) return true;
+    if (item.id === 'home' && (activeTab === 'home' || activeTab === '')) return true;
+    if (item.id === 'sejour' && (activeTab === 'sejour' || activeTab === 'vademecum')) return true;
+    if (item.id === 'calendrier' && (activeTab === 'calendrier' || activeTab === 'reservations')) return true;
+    if (item.id === 'taches' && (activeTab === 'taches' || activeTab === 'tasks')) return true;
+    if (item.id === 'admin' && activeTab === 'admin') return true;
     return false;
   };
 
   return (
-    <header className="sticky top-0 inset-x-0 z-50 bg-surface-container-lowest/95 backdrop-blur-xl shadow-[0_1px_8px_rgba(6,95,70,0.06)] border-b border-border-subtle transition-colors">
-      <div className="max-w-[1360px] mx-auto px-gutter h-20 flex items-center justify-between gap-space-sm sm:gap-gutter">
+    <header className="sticky top-0 inset-x-0 z-50 bg-surface-container-lowest/90 backdrop-blur-xl border-b border-border-subtle shadow-[0_1px_8px_rgba(6,95,70,0.06)] transition-colors">
+      <div className="h-20 max-w-[1360px] mx-auto px-6 lg:px-12 flex items-center justify-between gap-6">
         
         {/* Brand Logo & Title */}
         <div
           onClick={() => handleTabClick(NAV_ITEMS[0])}
-          className="flex items-center gap-space-xs sm:gap-space-md cursor-pointer select-none group shrink-0"
+          className="flex items-center gap-3 shrink-0 cursor-pointer select-none group"
         >
-          <div className="w-10 h-10 rounded-xl bg-white shadow-sm border border-emerald-500/20 p-1 flex items-center justify-center transition-transform group-hover:scale-105">
-            {!logoError ? (
-              <img
-                alt="Blason Domaine d'Hellenvilliers"
-                className="w-full h-full object-contain rounded-lg"
-                src={LOGO_SRC}
-                onError={() => setLogoError(true)}
-              />
-            ) : (
-              <div className="w-full h-full bg-forest-deep text-white font-bold text-sm flex items-center justify-center rounded-lg">
-                H
-              </div>
-            )}
-          </div>
+          {!logoError ? (
+            <img
+              alt="Blason Domaine d'Hellenvilliers"
+              className="h-9 w-auto object-contain transition-transform group-hover:scale-105"
+              src={LOGO_SRC}
+              onError={() => setLogoError(true)}
+            />
+          ) : (
+            <div className="w-10 h-10 rounded-xl bg-sage-soft text-primary flex items-center justify-center font-bold shadow-sm transition-transform group-hover:scale-105">
+              <span className="material-symbols-outlined text-[24px]">castle</span>
+            </div>
+          )}
           <div className="flex flex-col">
-            <span className="font-headline-sm text-headline-sm text-forest-deep tracking-tight leading-none">
+            <span className="font-headline-sm text-headline-sm text-primary leading-tight tracking-tight">
               Domaine d'Hellenvilliers
             </span>
-            <span className="text-[11px] text-on-surface-variant font-medium mt-0.5 hidden sm:block">
-              SCI Familiale • 7 associés
+            <span className="font-label-sm text-label-sm text-on-surface-variant font-normal">
+              Portail Familial &amp; Patrimonial
             </span>
           </div>
         </div>
 
-        {/* Center Nav Items (Desktop) */}
-        <nav className="hidden lg:flex items-center gap-1 xl:gap-space-xs">
+        {/* Center Nav Items (Stitch Canonical Pill Navigation) */}
+        <nav
+          className="hidden lg:flex items-center gap-1 bg-surface-container-low/70 p-1.5 rounded-full shadow-[0_1px_4px_rgba(6,95,70,0.03)]"
+          data-active-classes="bg-sage-soft text-primary font-bold rounded-full"
+        >
           {NAV_ITEMS.map((item) => {
             const isActive = isItemActive(item);
 
@@ -114,29 +107,26 @@ export default function Header({
                 key={item.id}
                 type="button"
                 onClick={() => handleTabClick(item)}
-                className={`px-2.5 xl:px-3 py-2 transition-all cursor-pointer font-label-sm text-xs xl:text-label-sm flex items-center gap-1.5 ${
+                className={`px-4 py-2 rounded-full font-label-md text-label-md transition-all cursor-pointer ${
                   isActive
-                    ? 'bg-sage-soft text-primary font-bold rounded-DEFAULT shadow-xs'
-                    : 'text-on-surface-variant hover:text-on-surface rounded-DEFAULT hover:bg-canvas-slate'
+                    ? 'bg-sage-soft text-primary font-bold shadow-xs'
+                    : 'text-on-surface-variant hover:text-on-surface'
                 }`}
               >
-                <span className={`material-symbols-outlined text-[17px] ${isActive ? 'text-primary' : 'text-outline'}`}>
-                  {item.icon}
-                </span>
-                <span>{item.label}</span>
+                {item.label}
               </button>
             );
           })}
         </nav>
 
         {/* User Profile, Mobile Menu Button & Logout Dropdown */}
-        <div className="flex items-center gap-2 sm:gap-space-sm" ref={dropdownRef}>
+        <div className="flex items-center gap-3 shrink-0" ref={dropdownRef}>
           <div className="hidden sm:flex flex-col text-right">
-            <span className="font-label-sm text-label-sm text-on-surface font-semibold leading-tight">
+            <span className="font-label-md text-label-md text-on-surface leading-tight font-semibold">
               {displayName}
             </span>
-            <span className="text-[11px] text-emerald-800 font-medium">
-              Associé SCI
+            <span className="font-label-sm text-xs text-on-surface-variant">
+              Gérant / Coordinateur
             </span>
           </div>
 
@@ -144,33 +134,33 @@ export default function Header({
           <button
             type="button"
             onClick={() => setIsUserMenuOpen(!isUserMenuOpen)}
-            className="w-10 h-10 rounded-full bg-primary hover:bg-primary-container text-white flex items-center justify-center shadow-sm transition-all focus:outline-none focus:ring-2 focus:ring-emerald-500 cursor-pointer"
+            className="w-9 h-9 rounded-full bg-primary hover:bg-primary-container text-white flex items-center justify-center ring-2 ring-primary/20 shadow-sm transition-all focus:outline-none focus:ring-2 focus:ring-emerald-500 cursor-pointer"
             title="Menu profil"
             aria-label="Menu profil"
           >
-            <span className="material-symbols-outlined text-[20px]">person</span>
+            <span className="material-symbols-outlined text-[18px]">person</span>
           </button>
 
           {/* Mobile Menu Hamburger Button */}
           <button
             type="button"
             onClick={() => setIsMobileMenuOpen(!isMobileMenuOpen)}
-            className="lg:hidden w-10 h-10 rounded-xl bg-canvas-slate hover:bg-surface-container border border-border-subtle text-forest-deep flex items-center justify-center transition-all focus:outline-none focus:ring-2 focus:ring-emerald-500 cursor-pointer"
+            className="lg:hidden w-9 h-9 rounded-xl bg-canvas-slate hover:bg-surface-container border border-border-subtle text-forest-deep flex items-center justify-center transition-all focus:outline-none focus:ring-2 focus:ring-emerald-500 cursor-pointer"
             title="Menu de navigation"
             aria-label="Menu de navigation"
           >
-            <span className="material-symbols-outlined text-[22px]">
+            <span className="material-symbols-outlined text-[20px]">
               {isMobileMenuOpen ? 'close' : 'menu'}
             </span>
           </button>
 
           {/* User Profile Dropdown Menu */}
           {isUserMenuOpen && (
-            <div className="absolute right-0 top-14 mt-2 w-56 rounded-2xl bg-white shadow-xl border border-border-subtle py-2 z-50 animate-in fade-in zoom-in-95 duration-150">
+            <div className="absolute right-6 top-16 mt-2 w-56 rounded-2xl bg-white shadow-xl border border-border-subtle py-2 z-50 animate-in fade-in zoom-in-95 duration-150">
               <div className="px-4 py-2 border-b border-slate-100">
                 <p className="text-xs text-on-surface-variant">Connecté en tant que</p>
                 <p className="font-bold text-sm text-emerald-950 truncate">{displayName}</p>
-                <p className="text-[11px] text-emerald-700 font-medium">Membre associé</p>
+                <p className="text-[11px] text-emerald-700 font-medium">Gérant / Coordinateur</p>
               </div>
 
               {/* Mobile nav links inside dropdown fallback */}
@@ -211,8 +201,8 @@ export default function Header({
 
       {/* Fluid Mobile Navigation Drawer */}
       {isMobileMenuOpen && (
-        <div ref={mobileMenuRef} className="lg:hidden border-t border-border-subtle bg-surface-container-lowest/98 backdrop-blur-xl px-gutter py-3 shadow-md animate-in slide-in-from-top-2 duration-150">
-          <div className="grid grid-cols-2 sm:grid-cols-3 gap-2">
+        <div ref={mobileMenuRef} className="lg:hidden border-t border-border-subtle bg-surface-container-lowest/98 backdrop-blur-xl px-6 py-3 shadow-md animate-in slide-in-from-top-2 duration-150">
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
             {NAV_ITEMS.map((item) => {
               const active = isItemActive(item);
               return (
@@ -220,7 +210,7 @@ export default function Header({
                   key={item.id}
                   type="button"
                   onClick={() => handleTabClick(item)}
-                  className={`p-3 rounded-xl text-left font-label-sm text-xs font-semibold flex items-center gap-2 transition-all cursor-pointer ${
+                  className={`p-3 rounded-xl text-left font-label-md text-xs font-semibold flex items-center gap-2 transition-all cursor-pointer ${
                     active
                       ? 'bg-sage-soft text-primary font-bold shadow-xs'
                       : 'text-on-surface hover:bg-canvas-slate'

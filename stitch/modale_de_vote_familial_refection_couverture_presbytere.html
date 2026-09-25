@@ -1,0 +1,331 @@
+<!DOCTYPE html>
+
+<html data-lt-installed="true" lang="fr" style=""><head><meta charset="utf-8"/><meta content="width=device-width, initial-scale=1.0" name="viewport"/><meta content="web_blank" name="shell-type"/><link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;600&amp;family=Plus+Jakarta+Sans:wght@600;700&amp;display=swap" rel="stylesheet"/><link href="https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined:opsz,wght,FILL,GRAD@24,400,0,0" rel="stylesheet"/>
+<link href="https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined:wght,FILL@100..700,0..1&amp;display=swap" rel="stylesheet"/>
+<link href="https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined:wght,FILL@100..700,0..1&amp;display=swap" rel="stylesheet"/><style>@layer base{html,body{margin:0;padding:0;}body{overscroll-behavior:none;}main>:first-child{margin-top:0!important;}main>:last-child{margin-bottom:0!important;}}::-webkit-scrollbar{display:none;}</style><script src="https://cdn.tailwindcss.com"></script><script id="tailwind-config">tailwind.config={darkMode:"class",theme:{extend:{"colors":{"inverse-surface":"#283044","canvas-slate":"#f8fafc","on-primary-container":"#8bd6b7","on-secondary-container":"#00714e","on-secondary-fixed":"#002114","surface-variant":"#dae2fd","on-tertiary-container":"#ffb87e","surface-container-high":"#e2e7ff","on-background":"#131b2e","primary-container":"#065f46","secondary-fixed-dim":"#68dba9","primary-fixed-dim":"#8bd6b6","primary":"#004532","on-surface":"#131b2e","amber-soft":"#fef3c7","surface":"#faf8ff","error-container":"#ffdad6","secondary-container":"#82f5c1","sage-soft":"#e6f4ea","on-tertiary-fixed":"#2f1500","on-primary":"#ffffff","on-tertiary-fixed-variant":"#6e3900","on-secondary-fixed-variant":"#005137","on-secondary":"#ffffff","on-error-container":"#93000a","forest-deep":"#064e3b","on-primary-fixed-variant":"#00513b","on-surface-variant":"#3f4944","on-error":"#ffffff","background":"#faf8ff","outline":"#6f7973","tertiary":"#5e3000","amber-rich":"#b45309","on-tertiary":"#ffffff","surface-bright":"#faf8ff","surface-tint":"#1b6b51","outline-variant":"#bec9c2","tertiary-fixed-dim":"#ffb77d","surface-container-low":"#f2f3ff","secondary":"#006c4a","error":"#ba1a1a","inverse-primary":"#8bd6b6","secondary-fixed":"#85f8c4","tertiary-fixed":"#ffdcc3","surface-container-lowest":"#ffffff","border-subtle":"#e2e8f0","surface-container":"#eaedff","surface-container-highest":"#dae2fd","surface-dim":"#d2d9f4","tertiary-container":"#804300","primary-fixed":"#a6f2d1","sage-border":"#a7f3d0","inverse-on-surface":"#eef0ff","on-primary-fixed":"#002116"},"borderRadius":{"DEFAULT":"1rem","lg":"2rem","xl":"3rem","full":"9999px"},"spacing":{"gutter-mobile":"1rem","margin-mobile":"1.25rem","space-sm":"0.75rem","margin":"3rem","space-md":"1.25rem","space-xs":"0.5rem","space-xl":"3rem","space-lg":"2rem","gutter":"1.5rem"},"fontFamily":{"headline-sm":["Plus Jakarta Sans"],"body-xl":["Inter"],"display-lg-mobile":["Plus Jakarta Sans"],"label-md":["Inter"],"body-lg":["Inter"],"headline-lg-mobile":["Plus Jakarta Sans"],"label-lg":["Inter"],"display-lg":["Plus Jakarta Sans"],"headline-md":["Plus Jakarta Sans"],"body-md":["Inter"],"headline-lg":["Plus Jakarta Sans"],"label-sm":["Inter"]},"fontSize":{"headline-sm":["1.25rem",{"lineHeight":"1.75rem","fontWeight":"600"}],"body-xl":["1.125rem",{"lineHeight":"1.875rem","fontWeight":"400"}],"display-lg-mobile":["2rem",{"lineHeight":"2.5rem","letterSpacing":"-0.015em","fontWeight":"700"}],"label-md":["0.9375rem",{"lineHeight":"1.375rem","fontWeight":"600"}],"body-lg":["1rem",{"lineHeight":"1.625rem","fontWeight":"400"}],"headline-lg-mobile":["1.625rem",{"lineHeight":"2.125rem","letterSpacing":"-0.01em","fontWeight":"600"}],"label-lg":["1.0625rem",{"lineHeight":"1.5rem","fontWeight":"600"}],"display-lg":["2.5rem",{"lineHeight":"3rem","letterSpacing":"-0.02em","fontWeight":"700"}],"headline-md":["1.5rem",{"lineHeight":"2rem","fontWeight":"600"}],"body-md":["0.9375rem",{"lineHeight":"1.5rem","fontWeight":"400"}],"headline-lg":["2rem",{"lineHeight":"2.5rem","letterSpacing":"-0.01em","fontWeight":"600"}],"label-sm":["0.875rem",{"lineHeight":"1.25rem","fontWeight":"600"}]}}}};</script></head><body class="bg-slate-900/60 font-body-md text-on-surface antialiased min-h-screen flex items-center justify-center p-space-md"><main class="w-full max-w-4xl"><div class="flex flex-col w-full">
+<!-- Modal Container Card -->
+<div class="relative w-full bg-surface-container-lowest rounded-xl shadow-2xl overflow-hidden flex flex-col max-h-[942px]">
+<!-- En-tête de la Modale -->
+<header class="w-full bg-canvas-slate px-space-md py-space-sm md:px-space-lg md:py-space-md flex flex-wrap items-center justify-between gap-space-sm">
+<div class="flex flex-wrap items-center gap-space-xs">
+<!-- Badge État -->
+<span class="inline-flex items-center gap-1.5 px-3 py-1 rounded-full bg-sage-soft text-primary font-label-sm text-label-sm">
+<span class="w-2 h-2 rounded-full bg-primary animate-pulse"></span>
+          VOTE EN COURS • Clôture dans 3 jours (27 mai)
+        </span>
+<!-- Badge Budget -->
+<span class="inline-flex items-center gap-1.5 px-3 py-1 rounded-full bg-surface-container text-on-surface font-label-sm text-label-sm">
+<span class="material-symbols-outlined text-[16px] text-forest-deep">payments</span>
+          Enveloppe : 4 850 € TTC
+        </span>
+<!-- Badge Seuil Statuts -->
+<span class="inline-flex items-center gap-1.5 px-3 py-1 rounded-full bg-amber-soft text-amber-rich font-label-sm text-label-sm">
+<span class="material-symbols-outlined text-[16px]">gavel</span>
+          Seuil &gt; 300 € (Art. 12 des Statuts)
+        </span>
+</div>
+<!-- Action Quitter / Fermer -->
+<button aria-label="Fermer la fenêtre" class="w-10 h-10 rounded-full flex items-center justify-center text-on-surface-variant hover:bg-surface-container-highest transition-colors" type="button">
+<span class="material-symbols-outlined text-2xl">close</span>
+</button>
+</header>
+<!-- Corps de la Modale : 2 Colonnes -->
+<div class="grid grid-cols-1 lg:grid-cols-12 flex-1 overflow-y-auto min-h-0">
+<!-- COLONNE GAUCHE (7 cols) : Détails, Documents, Tendance & Vote -->
+<section class="lg:col-span-7 p-space-md md:p-space-lg flex flex-col gap-space-lg bg-surface-container-lowest overflow-y-auto">
+<!-- Titre & Contexte du scrutin -->
+<div class="flex flex-col gap-space-xs">
+<div class="flex flex-wrap items-center gap-space-xs">
+<span class="px-2.5 py-0.5 rounded-full bg-surface-container text-on-surface-variant font-label-sm text-label-sm">Bâti &amp; Toiture</span>
+<span class="px-2.5 py-0.5 rounded-full bg-surface-container text-on-surface-variant font-label-sm text-label-sm">Le Presbytère</span>
+<span class="px-2.5 py-0.5 rounded-full bg-sage-soft text-forest-deep font-label-sm text-label-sm">Chantier Prioritaire 2026</span>
+</div>
+<h1 class="font-headline-lg text-headline-lg text-on-surface tracking-tight mt-1">
+            Réfection Couverture &amp; Isolation Combles Presbytère
+          </h1>
+<div class="flex items-center gap-space-xs text-on-surface-variant font-body-md text-body-md">
+<span>Réf. VOTE-2026-04</span>
+<span>•</span>
+<span class="flex items-center gap-1">
+<span class="material-symbols-outlined text-[18px] text-primary">account_circle</span>
+              Soumis par <strong>Henri Jamet</strong> (Gérance SCI) le 12 mai 2026
+            </span>
+</div>
+</div>
+<!-- Description & Objectifs -->
+<div class="flex flex-col gap-space-xs bg-canvas-slate rounded-lg p-space-md">
+<h2 class="font-headline-sm text-headline-sm text-on-surface flex items-center gap-2">
+<span class="material-symbols-outlined text-forest-deep">description</span>
+            Description des travaux &amp; Enjeux
+          </h2>
+<p class="font-body-md text-body-md text-on-surface-variant leading-relaxed">
+            Remplacement complet des ardoises vétustes sur le versant Nord du Presbytère, reprise des liteaux et pose d'un isolant en laine de bois haute densité (R=7 m²·K/W). Ce chantier fait suite aux infiltrations constatées lors des pluies d'avril et sécurise la charpente avant les expertises de plâtrerie intérieure.
+          </p>
+<!-- Bannière impact financier -->
+<div class="mt-2 bg-sage-soft rounded-DEFAULT p-space-sm flex items-start gap-space-xs text-forest-deep">
+<span class="material-symbols-outlined text-primary-container text-xl mt-0.5">savings</span>
+<div class="flex flex-col text-body-md font-body-md">
+<span class="font-label-md text-label-md text-primary">Impact financier direct et subvention</span>
+<span>4 850 € TTC intégralement couverts par le fonds de roulement récurrent de la SCI Hellenvilliers, avec <strong>500 € d'éco-subvention communale</strong> déjà déduits du règlement net.</span>
+</div>
+</div>
+</div>
+<!-- Documents & Justificatifs rattachés -->
+<div class="flex flex-col gap-space-xs">
+<div class="flex items-center justify-between">
+<h2 class="font-headline-sm text-headline-sm text-on-surface flex items-center gap-2">
+<span class="material-symbols-outlined text-forest-deep">folder_open</span>
+              Documents &amp; Justificatifs rattachés
+            </h2>
+<span class="font-label-sm text-label-sm text-on-surface-variant">3 pièces certifiées</span>
+</div>
+<div class="flex flex-col gap-2">
+<!-- Doc 1 -->
+<div class="flex items-center justify-between p-space-sm bg-canvas-slate hover:bg-surface-container transition-colors rounded-DEFAULT">
+<div class="flex items-center gap-space-xs min-w-0">
+<div class="w-10 h-10 rounded-DEFAULT bg-error-container text-error flex items-center justify-center shrink-0">
+<span class="material-symbols-outlined text-xl">picture_as_pdf</span>
+</div>
+<div class="flex flex-col min-w-0">
+<span class="font-label-md text-label-md text-on-surface truncate">Devis-2026-Charpente-Normandie.pdf</span>
+<span class="font-body-md text-body-md text-on-surface-variant text-xs">Poste par poste • 4 850,00 € TTC • 1.4 Mo</span>
+</div>
+</div>
+<button class="shrink-0 ml-2 px-3 py-1.5 rounded-DEFAULT bg-surface-container-lowest text-primary hover:bg-sage-soft font-label-sm text-label-sm flex items-center gap-1 shadow-sm transition-all" type="button">
+<span class="material-symbols-outlined text-[18px]">download</span>
+<span>Consulter</span>
+</button>
+</div>
+<!-- Doc 2 -->
+<div class="flex items-center justify-between p-space-sm bg-canvas-slate hover:bg-surface-container transition-colors rounded-DEFAULT">
+<div class="flex items-center gap-space-xs min-w-0">
+<div class="w-10 h-10 rounded-DEFAULT bg-error-container text-error flex items-center justify-center shrink-0">
+<span class="material-symbols-outlined text-xl">picture_as_pdf</span>
+</div>
+<div class="flex flex-col min-w-0">
+<span class="font-label-md text-label-md text-on-surface truncate">Rapport-Diagnostic-Infiltrations-Avril2026.pdf</span>
+<span class="font-body-md text-body-md text-on-surface-variant text-xs">Constat photos &amp; humidimétrie • 850 Ko</span>
+</div>
+</div>
+<button class="shrink-0 ml-2 px-3 py-1.5 rounded-DEFAULT bg-surface-container-lowest text-primary hover:bg-sage-soft font-label-sm text-label-sm flex items-center gap-1 shadow-sm transition-all" type="button">
+<span class="material-symbols-outlined text-[18px]">download</span>
+<span>Consulter</span>
+</button>
+</div>
+<!-- Doc 3 -->
+<div class="flex items-center justify-between p-space-sm bg-canvas-slate hover:bg-surface-container transition-colors rounded-DEFAULT">
+<div class="flex items-center gap-space-xs min-w-0">
+<div class="w-10 h-10 rounded-DEFAULT bg-error-container text-error flex items-center justify-center shrink-0">
+<span class="material-symbols-outlined text-xl">picture_as_pdf</span>
+</div>
+<div class="flex flex-col min-w-0">
+<span class="font-label-md text-label-md text-on-surface truncate">Extrait-PV-AG-Aout2025-Poutres.pdf</span>
+<span class="font-body-md text-body-md text-on-surface-variant text-xs">Mandat cadre &amp; délégation de gérance • 420 Ko</span>
+</div>
+</div>
+<button class="shrink-0 ml-2 px-3 py-1.5 rounded-DEFAULT bg-surface-container-lowest text-primary hover:bg-sage-soft font-label-sm text-label-sm flex items-center gap-1 shadow-sm transition-all" type="button">
+<span class="material-symbols-outlined text-[18px]">download</span>
+<span>Consulter</span>
+</button>
+</div>
+</div>
+</div>
+<!-- Section Progression & Tendance du Scrutin -->
+<div class="bg-canvas-slate p-space-md rounded-lg flex flex-col gap-space-xs">
+<div class="flex items-center justify-between">
+<span class="font-label-lg text-label-lg text-on-surface">Participation : 5 / 7 voix (71%)</span>
+<span class="font-label-sm text-label-sm text-primary font-bold">Majorité qualifiée atteinte</span>
+</div>
+<!-- Barre de progression segmentée harmonisée -->
+<div class="w-full h-3 rounded-full bg-surface-container overflow-hidden flex">
+<!-- Pour : 4/7 = 57.1% -->
+<div class="h-full bg-forest-deep transition-all" style="width: 57.1%" title="4 Pour"></div>
+<!-- Contre : 0% -->
+<div class="h-full bg-error transition-all" style="width: 0%" title="0 Contre"></div>
+<!-- Abstention : 1/7 = 14.3% -->
+<div class="h-full bg-amber-rich transition-all" style="width: 14.3%" title="1 Abstention"></div>
+<!-- En attente : 2/7 = 28.6% -->
+<div class="h-full bg-surface-dim transition-all" style="width: 28.6%" title="2 En attente"></div>
+</div>
+<!-- Détail nominatif des voix -->
+<div class="grid grid-cols-1 md:grid-cols-3 gap-2 mt-1 font-body-md text-body-md">
+<div class="flex items-center gap-1.5 text-forest-deep">
+<span class="w-2.5 h-2.5 rounded-full bg-forest-deep shrink-0"></span>
+<span><strong>4 Pour :</strong> Hortense, Henri, Marc, Louise</span>
+</div>
+<div class="flex items-center gap-1.5 text-amber-rich">
+<span class="w-2.5 h-2.5 rounded-full bg-amber-rich shrink-0"></span>
+<span><strong>1 Abstention :</strong> Alexandre</span>
+</div>
+<div class="flex items-center gap-1.5 text-on-surface-variant">
+<span class="w-2.5 h-2.5 rounded-full bg-outline-variant shrink-0"></span>
+<span><strong>2 En attente :</strong> Élisabeth, Frédéric</span>
+</div>
+</div>
+</div>
+<!-- Section Action de Vote du Membre -->
+<div class="p-space-md rounded-lg bg-surface-container-low flex flex-col gap-space-sm shadow-sm">
+<div class="flex items-center justify-between">
+<div class="flex items-center gap-2">
+<span class="material-symbols-outlined text-forest-deep">how_to_vote</span>
+<h3 class="font-headline-sm text-headline-sm text-on-surface">Votre voix au scrutin (Henri Jamet)</h3>
+</div>
+<span class="font-label-sm text-label-sm px-2.5 py-0.5 rounded-full bg-sage-soft text-primary">Règle 1 membre = 1 voix</span>
+</div>
+<!-- 3 Boutons d'action statutaire -->
+<div aria-label="Choix du vote" class="grid grid-cols-1 md:grid-cols-3 gap-space-xs mt-1" role="group">
+<!-- Bouton POUR -->
+<button class="group relative flex flex-col items-center justify-center p-space-sm rounded-DEFAULT bg-forest-deep text-on-primary hover:bg-primary shadow-sm transition-all focus:outline-none min-h-[58px]" type="button">
+<div class="flex items-center gap-1.5 font-label-lg text-label-lg">
+<span class="material-symbols-outlined text-[20px]">check_circle</span>
+<span>OUI — J'approuve</span>
+</div>
+<span class="text-xs text-primary-fixed opacity-90 font-body-md mt-0.5">Validation des dépenses</span>
+</button>
+<!-- Bouton CONTRE -->
+<button class="group relative flex flex-col items-center justify-center p-space-sm rounded-DEFAULT bg-surface-container-lowest text-error hover:bg-error-container shadow-sm transition-all focus:outline-none min-h-[58px]" type="button">
+<div class="flex items-center gap-1.5 font-label-lg text-label-lg">
+<span class="material-symbols-outlined text-[20px]">cancel</span>
+<span>NON — Je refuse</span>
+</div>
+<span class="text-xs text-on-surface-variant font-body-md mt-0.5">Demande de révision</span>
+</button>
+<!-- Bouton ABSTENTION -->
+<button class="group relative flex flex-col items-center justify-center p-space-sm rounded-DEFAULT bg-surface-container-lowest text-tertiary-container hover:bg-amber-soft shadow-sm transition-all focus:outline-none min-h-[58px]" type="button">
+<div class="flex items-center gap-1.5 font-label-lg text-label-lg">
+<span class="material-symbols-outlined text-[20px]">pause_circle</span>
+<span>JE M'ABSTIENS</span>
+</div>
+<span class="text-xs text-on-surface-variant font-body-md mt-0.5">Voix neutre au quorum</span>
+</button>
+</div>
+<!-- Note et enregistrement -->
+<div class="flex flex-col sm:flex-row items-center gap-space-xs mt-2">
+<div class="relative w-full flex-1">
+<input class="w-full h-11 px-3 rounded-DEFAULT bg-surface-container-lowest text-on-surface placeholder:text-outline text-body-md font-body-md focus:outline-none focus:ring-2 focus:ring-forest-deep" placeholder="Ajouter une note ou justification à votre vote (facultatif)..." type="text"/>
+</div>
+<button class="w-full sm:w-auto px-space-md h-11 rounded-DEFAULT bg-primary text-on-primary hover:bg-forest-deep font-label-md text-label-md flex items-center justify-center gap-1.5 shrink-0 transition-colors" type="button">
+<span class="material-symbols-outlined text-[18px]">verified</span>
+<span>Enregistrer</span>
+</button>
+</div>
+</div>
+</section>
+<!-- COLONNE DROITE (5 cols) : Fil de discussion familial en direct -->
+<aside class="lg:col-span-5 bg-canvas-slate flex flex-col justify-between overflow-hidden">
+<!-- En-tête fil de discussion -->
+<div class="p-space-md bg-surface-container-lowest shadow-sm flex items-center justify-between shrink-0">
+<div class="flex items-center gap-2">
+<span class="material-symbols-outlined text-forest-deep text-2xl">forum</span>
+<div class="flex flex-col">
+<h2 class="font-headline-sm text-headline-sm text-on-surface">Fil de discussion familial</h2>
+<span class="text-xs font-body-md text-on-surface-variant">4 messages • Transparence des débats</span>
+</div>
+</div>
+<span class="inline-flex items-center gap-1 px-2.5 py-1 rounded-full bg-sage-soft text-forest-deep font-label-sm text-label-sm">
+<span class="w-1.5 h-1.5 rounded-full bg-forest-deep"></span>
+            Actif
+          </span>
+</div>
+<!-- Zone défilable des messages -->
+<div class="p-space-md flex-1 overflow-y-auto flex flex-col gap-space-md">
+<!-- Message 1 : Hortense Jamet -->
+<div class="flex items-start gap-space-xs">
+<div class="w-9 h-9 rounded-full bg-surface-container-highest text-on-surface font-label-md text-label-md flex items-center justify-center shrink-0">
+              HJ
+            </div>
+<div class="flex flex-col max-w-[85%]">
+<div class="flex items-center gap-1.5 mb-1">
+<span class="font-label-md text-label-md text-on-surface">Hortense Jamet</span>
+<span class="text-xs text-outline font-body-md">14 mai, 10:15</span>
+</div>
+<div class="bg-surface-container-lowest p-space-sm rounded-DEFAULT rounded-tl-none shadow-sm text-body-md font-body-md text-on-surface leading-normal">
+                J'ai lu le devis de Charpente Normandie, la garantie décennale est bien incluse et ils s'engagent à intervenir dès la première semaine de juin. Ça me paraît essentiel avant l'été !
+              </div>
+<!-- Réactions -->
+<div class="flex items-center gap-1 mt-1">
+<span class="inline-flex items-center gap-1 px-2 py-0.5 rounded-full bg-surface-container-lowest text-xs text-on-surface-variant shadow-sm">👍 2</span>
+<span class="inline-flex items-center gap-1 px-2 py-0.5 rounded-full bg-surface-container-lowest text-xs text-on-surface-variant shadow-sm">❤️ 1</span>
+</div>
+</div>
+</div>
+<!-- Message 2 : Henri Jamet (Gérant) -->
+<div class="flex items-start gap-space-xs">
+<div class="w-9 h-9 rounded-full bg-sage-soft text-forest-deep font-label-md text-label-md flex items-center justify-center shrink-0">
+              HJ
+            </div>
+<div class="flex flex-col max-w-[85%]">
+<div class="flex items-center gap-1.5 mb-1">
+<span class="font-label-md text-label-md text-on-surface">Henri Jamet</span>
+<span class="px-1.5 py-0.2 rounded bg-sage-border text-forest-deep text-[10px] font-bold">GÉRANCE</span>
+<span class="text-xs text-outline font-body-md">14 mai, 11:42</span>
+</div>
+<div class="bg-surface-container-lowest p-space-sm rounded-DEFAULT rounded-tl-none shadow-sm text-body-md font-body-md text-on-surface leading-normal">
+                Exactement Hortense. De plus, le montant reste inférieur à l'enveloppe prévisionnelle votée lors de la dernière AG. La trésorerie sur le compte Crédit Agricole est suffisante sans appel de fonds exceptionnel.
+              </div>
+<!-- Réactions -->
+<div class="flex items-center gap-1 mt-1">
+<span class="inline-flex items-center gap-1 px-2 py-0.5 rounded-full bg-surface-container-lowest text-xs text-on-surface-variant shadow-sm">👍 3</span>
+<span class="inline-flex items-center gap-1 px-2 py-0.5 rounded-full bg-surface-container-lowest text-xs text-on-surface-variant shadow-sm">💡 1</span>
+</div>
+</div>
+</div>
+<!-- Message 3 : Alexandre Jamet -->
+<div class="flex items-start gap-space-xs">
+<div class="w-9 h-9 rounded-full bg-surface-container-highest text-on-surface font-label-md text-label-md flex items-center justify-center shrink-0">
+              AJ
+            </div>
+<div class="flex flex-col max-w-[85%]">
+<div class="flex items-center gap-1.5 mb-1">
+<span class="font-label-md text-label-md text-on-surface">Alexandre Jamet</span>
+<span class="text-xs text-outline font-body-md">15 mai, 09:12</span>
+</div>
+<div class="bg-surface-container-lowest p-space-sm rounded-DEFAULT rounded-tl-none shadow-sm text-body-md font-body-md text-on-surface leading-normal">
+                Je me suis abstenu car je voulais vérifier si l'artisan incluait la reprise de la gouttière en zinc côté jardin ?
+              </div>
+</div>
+</div>
+<!-- Message 4 : Henri Jamet (Gérant) -->
+<div class="flex items-start gap-space-xs">
+<div class="w-9 h-9 rounded-full bg-sage-soft text-forest-deep font-label-md text-label-md flex items-center justify-center shrink-0">
+              HJ
+            </div>
+<div class="flex flex-col max-w-[85%]">
+<div class="flex items-center gap-1.5 mb-1">
+<span class="font-label-md text-label-md text-on-surface">Henri Jamet</span>
+<span class="px-1.5 py-0.2 rounded bg-sage-border text-forest-deep text-[10px] font-bold">GÉRANCE</span>
+<span class="text-xs text-outline font-body-md">15 mai, 09:30</span>
+</div>
+<div class="bg-surface-container-lowest p-space-sm rounded-DEFAULT rounded-tl-none shadow-sm text-body-md font-body-md text-on-surface leading-normal">
+                Oui Alex, vérifié en page 3 du devis, remplacement de 12 mètres linéaires de chéneau en zinc compris. Tout est intégré.
+              </div>
+<!-- Réactions -->
+<div class="flex items-center gap-1 mt-1">
+<span class="inline-flex items-center gap-1 px-2 py-0.5 rounded-full bg-surface-container-lowest text-xs text-on-surface-variant shadow-sm">👌 2</span>
+</div>
+</div>
+</div>
+</div>
+<!-- Zone de saisie d'input ancrée en bas -->
+<div class="p-space-md bg-surface-container-lowest shadow-md shrink-0">
+<form class="flex items-center gap-space-xs" onsubmit="event.preventDefault();">
+<button aria-label="Joindre un fichier" class="w-10 h-10 rounded-full flex items-center justify-center text-outline hover:text-primary hover:bg-canvas-slate transition-colors" type="button">
+<span class="material-symbols-outlined text-[22px]">attach_file</span>
+</button>
+<div class="relative flex-1">
+<input class="w-full h-11 pl-3 pr-9 rounded-DEFAULT bg-canvas-slate text-on-surface placeholder:text-outline text-body-md font-body-md focus:outline-none focus:ring-2 focus:ring-forest-deep" placeholder="Votre message à la famille..." type="text"/>
+<button aria-label="Ajouter un emoji" class="absolute right-2 top-1/2 -translate-y-1/2 text-outline hover:text-primary" type="button">
+<span class="material-symbols-outlined text-[20px]">sentiment_satisfied</span>
+</button>
+</div>
+<button class="h-11 px-4 rounded-DEFAULT bg-forest-deep text-on-primary hover:bg-primary font-label-md text-label-md flex items-center justify-center gap-1 transition-colors" type="submit">
+<span>Envoyer</span>
+<span class="material-symbols-outlined text-[18px]">send</span>
+</button>
+</form>
+</div>
+</aside>
+</div>
+</div>
+</div></main>
+</body></html>
