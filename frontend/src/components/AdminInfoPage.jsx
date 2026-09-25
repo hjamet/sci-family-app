@@ -4,9 +4,10 @@ import {
   Euro, PieChart, Info, ArrowUpRight, CheckCircle2, UserCheck, AlertCircle, FileCheck,
   ChevronDown, ChevronUp, Calendar, Users, Sparkles, BookOpen, X, Plus, Upload,
   Trash2, Paperclip, FileCode, Image as ImageIcon, File, Eye, AlertTriangle, RefreshCw,
-  Pencil, Lock, User
+  Pencil, Lock, User, Receipt, Wallet, FileSpreadsheet
 } from 'lucide-react';
 import WorkloadDashboard from './WorkloadDashboard';
+import FinancialLedgerModal from './FinancialLedgerModal';
 import { fetchAdminDocuments, deleteAdminDocument } from '../api';
 
 function renderMarkdownLine(line, idx) {
@@ -61,6 +62,10 @@ export default function AdminInfoPage({ currentUser }) {
   const [selectedMeeting, setSelectedMeeting] = useState(null);
   const [isMeetingAccordionOpen, setIsMeetingAccordionOpen] = useState(false);
   const [loadError, setLoadError] = useState(null);
+
+  // Financial Ledger & CCA Modal State (Stitch Parity)
+  const [isFinancialModalOpen, setIsFinancialModalOpen] = useState(false);
+  const [financialModalTab, setFinancialModalTab] = useState('grand_livre');
 
   // Admin Documents State (/api/admin-documents)
   const [adminDocs, setAdminDocs] = useState([]);
@@ -1057,6 +1062,146 @@ export default function AdminInfoPage({ currentUser }) {
         </div>
       </div>
 
+      {/* SECTION STITCH : Synthèse Financière & Trésorerie Dédiée */}
+      <div className="bg-white rounded-3xl p-6 sm:p-8 border border-slate-200 shadow-sm space-y-6">
+        <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 border-b border-slate-100 pb-4">
+          <div className="flex items-center space-x-3">
+            <div className="p-2.5 rounded-2xl bg-emerald-50 text-emerald-800 border border-emerald-200">
+              <Landmark className="h-6 w-6 text-emerald-700" />
+            </div>
+            <div>
+              <h2 className="text-xl font-extrabold text-slate-900 tracking-tight">
+                Synthèse Financière & Trésorerie Dédiée
+              </h2>
+              <p className="text-xs text-slate-500">
+                Livre des comptes & Comptes Courants d'Associés (CCA) • Compte étanche Crédit Agricole
+              </p>
+            </div>
+          </div>
+
+          <div className="flex items-center space-x-3">
+            <span className="hidden sm:inline-flex items-center gap-1.5 px-3 py-1.5 bg-emerald-50 rounded-full text-emerald-800 border border-emerald-200 text-xs font-semibold">
+              <ShieldCheck className="w-4 h-4 text-emerald-600" />
+              <span>Exercice 2026 Clôturé</span>
+            </span>
+            <button
+              type="button"
+              onClick={() => {
+                setFinancialModalTab('grand_livre');
+                setIsFinancialModalOpen(true);
+              }}
+              className="px-4 py-2 bg-emerald-700 hover:bg-emerald-800 text-white font-bold text-xs rounded-xl shadow transition flex items-center space-x-1.5"
+            >
+              <Receipt className="w-4 h-4" />
+              <span>Consulter le Grand Livre</span>
+            </button>
+          </div>
+        </div>
+
+        {/* 3 Cartes Financières Stitch (Cliquables) */}
+        <div className="grid grid-cols-1 md:grid-cols-3 gap-5">
+          
+          {/* Card 1: Entrées (CCA & Apports) */}
+          <div
+            onClick={() => {
+              setFinancialModalTab('entrees');
+              setIsFinancialModalOpen(true);
+            }}
+            className="bg-white rounded-2xl p-5 border border-slate-200 shadow-sm flex flex-col justify-between hover:border-emerald-600 hover:shadow-md transition-all cursor-pointer group"
+          >
+            <div className="flex items-start justify-between gap-2">
+              <div>
+                <span className="text-slate-500 text-xs font-bold uppercase tracking-wider block">
+                  Entrées (CCA & Apports)
+                </span>
+                <div className="text-2xl font-black text-emerald-900 mt-1 tabular-nums">
+                  +4 200,00 €
+                </div>
+              </div>
+              <span className="inline-flex items-center gap-1 px-2.5 py-1 rounded-full bg-emerald-50 text-emerald-800 border border-emerald-200 text-xs font-bold">
+                <span className="w-2 h-2 rounded-full bg-emerald-600"></span>
+                Flux régulier
+              </span>
+            </div>
+            <div className="mt-4 pt-3 border-t border-slate-100 flex items-center justify-between text-xs text-slate-500">
+              <span className="flex items-center gap-1.5 font-medium">
+                <Users className="w-4 h-4 text-emerald-600" />
+                50 €/mois par associé
+              </span>
+              <span className="text-emerald-700 font-bold group-hover:underline flex items-center gap-0.5">
+                100% perçues →
+              </span>
+            </div>
+          </div>
+
+          {/* Card 2: Sorties & Charges */}
+          <div
+            onClick={() => {
+              setFinancialModalTab('sorties');
+              setIsFinancialModalOpen(true);
+            }}
+            className="bg-white rounded-2xl p-5 border border-slate-200 shadow-sm flex flex-col justify-between hover:border-amber-600 hover:shadow-md transition-all cursor-pointer group"
+          >
+            <div className="flex items-start justify-between gap-2">
+              <div>
+                <span className="text-slate-500 text-xs font-bold uppercase tracking-wider block">
+                  Sorties & Charges engagées
+                </span>
+                <div className="text-2xl font-black text-amber-700 mt-1 tabular-nums">
+                  -2 450,00 €
+                </div>
+              </div>
+              <span className="inline-flex items-center gap-1 px-2.5 py-1 rounded-full bg-amber-50 text-amber-800 border border-amber-200 text-xs font-bold">
+                <span className="w-2 h-2 rounded-full bg-amber-600"></span>
+                Budget maîtrisé
+              </span>
+            </div>
+            <div className="mt-4 pt-3 border-t border-slate-100 flex items-center justify-between text-xs text-slate-500">
+              <span className="flex items-center gap-1.5 font-medium truncate">
+                <Receipt className="w-4 h-4 text-amber-600" />
+                Parc, Assurance & Piscine
+              </span>
+              <span className="text-amber-700 font-bold group-hover:underline flex items-center gap-0.5">
+                3 factures →
+              </span>
+            </div>
+          </div>
+
+          {/* Card 3: Solde Net de Période */}
+          <div
+            onClick={() => {
+              setFinancialModalTab('synthese');
+              setIsFinancialModalOpen(true);
+            }}
+            className="bg-emerald-50/60 rounded-2xl p-5 border border-emerald-200 shadow-sm flex flex-col justify-between hover:border-emerald-700 hover:shadow-md transition-all cursor-pointer group"
+          >
+            <div className="flex items-start justify-between gap-2">
+              <div>
+                <span className="text-emerald-800 text-xs font-bold uppercase tracking-wider block">
+                  Solde Net de Période
+                </span>
+                <div className="text-2xl font-black text-emerald-950 mt-1 tabular-nums">
+                  +1 750,00 €
+                </div>
+              </div>
+              <span className="inline-flex items-center gap-1 px-2.5 py-1 rounded-full bg-white text-emerald-800 border border-emerald-200 text-xs font-bold shadow-sm">
+                <Wallet className="w-3.5 h-3.5 text-emerald-600" />
+                Excédent
+              </span>
+            </div>
+            <div className="mt-4 pt-3 border-t border-emerald-200/60 flex items-center justify-between text-xs text-emerald-900">
+              <span className="font-medium">
+                Trésorerie saine (CA)
+              </span>
+              <span className="text-emerald-800 font-bold group-hover:underline flex items-center gap-0.5">
+                Voir synthèse →
+              </span>
+            </div>
+          </div>
+
+        </div>
+      </div>
+
       {/* Grid Section 1: RIB & Financial Summary Cards */}
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
         
@@ -1787,6 +1932,13 @@ export default function AdminInfoPage({ currentUser }) {
           </div>
         </div>
       )}
+
+      {/* MODAL 4 : Grand Livre & Détail des Opérations Financières (Stitch Parity) */}
+      <FinancialLedgerModal
+        isOpen={isFinancialModalOpen}
+        onClose={() => setIsFinancialModalOpen(false)}
+        initialTab={financialModalTab}
+      />
 
     </div>
   );
