@@ -30,8 +30,14 @@ def hash_password(password: str) -> str:
 
 def verify_password(plain_password: str, hashed_password: str) -> bool:
     """Verifies plain password against bcrypt hashed password."""
-    if not hashed_password:
+    if not hashed_password or not plain_password:
         return False
+    try:
+        import bcrypt
+        if isinstance(hashed_password, str) and (hashed_password.startswith("$2b$") or hashed_password.startswith("$2a$")):
+            return bcrypt.checkpw(plain_password.encode("utf-8"), hashed_password.encode("utf-8"))
+    except Exception:
+        pass
     try:
         return pwd_context.verify(plain_password, hashed_password)
     except Exception:
