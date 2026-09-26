@@ -15,6 +15,8 @@ import SejourCutoffMapModal from '../components/sejour/SejourCutoffMapModal';
 import SejourDepartureChecklistModal from '../components/sejour/SejourDepartureChecklistModal';
 import SejourTaskModal from '../components/sejour/SejourTaskModal';
 import BookingModal from '../components/BookingModal';
+import { ThermalMetricSkeleton, StayCardSkeleton } from '../components/SkeletonLoaders';
+import CustomSelect from '../components/CustomSelect';
 
 function resolveCurrentUserFullName(user) {
   if (typeof user === 'string' && user.trim()) return user.trim();
@@ -549,7 +551,9 @@ export default function VademecumPage({ properties, currentUser }) {
           </h2>
 
           <p className="text-xs text-on-surface-variant mt-0.5 truncate max-w-full">
-            {currentPageIndex === 0
+            {stayLoading
+              ? 'Recherche et chargement de vos prochains séjours...'
+              : currentPageIndex === 0
               ? (totalStays > 0
                   ? `${totalStays} séjour(s) planifié(s) • Naviguez avec les flèches pour consulter chaque séjour`
                   : 'Aucun séjour planifié • Supervision thermique et intendance permanente du domaine')
@@ -561,10 +565,10 @@ export default function VademecumPage({ properties, currentUser }) {
         <button
           type="button"
           onClick={() => setCurrentPageIndex((prev) => Math.min(totalStays, prev + 1))}
-          disabled={currentPageIndex >= totalStays || totalStays === 0}
+          disabled={currentPageIndex >= totalStays || totalStays === 0 || stayLoading}
           aria-label="Séjour suivant"
           className={`flex items-center gap-2 px-4 py-3 rounded-xl font-label-md text-sm font-bold transition-all shadow-xs shrink-0 select-none ${
-            currentPageIndex < totalStays && totalStays > 0
+            currentPageIndex < totalStays && totalStays > 0 && !stayLoading
               ? 'bg-white hover:bg-canvas-slate text-forest-deep border-2 border-border-subtle hover:border-primary active:scale-95 cursor-pointer'
               : 'bg-canvas-slate text-on-surface-variant/40 border border-border-subtle cursor-not-allowed opacity-50'
           }`}
@@ -577,9 +581,13 @@ export default function VademecumPage({ properties, currentUser }) {
       </section>
 
       {/* ===================================================================== */}
-      {/* 2. DÉTAIL DU SÉJOUR AU DOMAINE (Pages 1 à N uniquement)                */}
+      {/* 2. DÉTAIL DU SÉJOUR AU DOMAINE (Pages 1 à N uniquement ou Skeleton)    */}
       {/* ===================================================================== */}
-      {currentPageIndex > 0 && currentStay && (
+      {stayLoading ? (
+        <div className="mb-10">
+          <StayCardSkeleton />
+        </div>
+      ) : currentPageIndex > 0 && currentStay && (
         <section className="relative bg-surface-container-lowest rounded-2xl p-6 sm:p-8 shadow-sm border border-border-subtle mb-10 overflow-hidden w-full max-w-full">
           <div className="relative z-10 flex flex-col xl:flex-row items-start justify-between gap-6">
             
@@ -760,11 +768,15 @@ export default function VademecumPage({ properties, currentUser }) {
               </div>
             </div>
           </div>
-        )}
-
-        <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
-          
-          {/* Volet 1 : Chauffage (ViCare) */}
+        {telemetryLoading ? (
+          <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
+            <ThermalMetricSkeleton title="Supervision Chauffage (ViCare)..." />
+            <ThermalMetricSkeleton title="Supervision Eau Chaude (250L)..." />
+            <ThermalMetricSkeleton title="Supervision Piscine (Klereo)..." />
+          </div>
+        ) : (
+          <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
+            {/* Volet 1 : Chauffage (ViCare) */}
           <div className="p-5 rounded-2xl bg-canvas-slate border border-border-subtle flex flex-col justify-between gap-5 shadow-sm min-w-0">
             <div className="flex flex-col gap-4">
               <div className="flex items-center justify-between border-b border-border-subtle pb-3 gap-2 flex-wrap">
