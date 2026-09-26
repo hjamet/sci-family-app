@@ -1,4 +1,5 @@
 import React, { useState, useEffect } from 'react';
+import { MarkdownContent } from './common/RichTextEditor';
 
 export default function VoteRoofModal({ isOpen, onClose, currentUser = 'Henri Jamet', onVoteSubmit }) {
   // Liste nominative des 7 associés statutaires de la SCI Hellenvilliers
@@ -9,7 +10,6 @@ export default function VoteRoofModal({ isOpen, onClose, currentUser = 'Henri Ja
       role: 'Gérance SCI',
       isGerance: true,
       vote: 'POUR',
-      note: 'Validation des dépenses conforme au mandat AG. Devis Éts Josse très complet.',
       date: '12 mai 2026, 14:30',
       initials: 'HJ'
     },
@@ -19,7 +19,6 @@ export default function VoteRoofModal({ isOpen, onClose, currentUser = 'Henri Ja
       role: 'Associée',
       isGerance: false,
       vote: 'POUR',
-      note: 'Garantie décennale bien incluse et intervention première semaine de juin.',
       date: '14 mai 2026, 10:20',
       initials: 'HJ'
     },
@@ -29,7 +28,6 @@ export default function VoteRoofModal({ isOpen, onClose, currentUser = 'Henri Ja
       role: 'Associée',
       isGerance: false,
       vote: 'POUR',
-      note: 'Chantier prioritaire pour sécuriser la charpente avant les pluies d\'automne.',
       date: '14 mai 2026, 16:45',
       initials: 'MJ'
     },
@@ -39,7 +37,6 @@ export default function VoteRoofModal({ isOpen, onClose, currentUser = 'Henri Ja
       role: 'Associée',
       isGerance: false,
       vote: 'POUR',
-      note: 'Très favorable à l\'isolant laine de bois haute densité R=7.',
       date: '15 mai 2026, 08:15',
       initials: 'EJ'
     },
@@ -49,7 +46,6 @@ export default function VoteRoofModal({ isOpen, onClose, currentUser = 'Henri Ja
       role: 'Associée',
       isGerance: false,
       vote: 'ABSTENTION',
-      note: 'Attente de confirmation sur le chéneau en zinc côté jardin (confirmé par Henri).',
       date: '15 mai 2026, 09:15',
       initials: 'JJ'
     },
@@ -59,7 +55,6 @@ export default function VoteRoofModal({ isOpen, onClose, currentUser = 'Henri Ja
       role: 'Associée',
       isGerance: false,
       vote: 'EN_ATTENTE',
-      note: '',
       date: null,
       initials: 'EJ'
     },
@@ -69,7 +64,6 @@ export default function VoteRoofModal({ isOpen, onClose, currentUser = 'Henri Ja
       role: 'Associé',
       isGerance: false,
       vote: 'EN_ATTENTE',
-      note: '',
       date: null,
       initials: 'FJ'
     },
@@ -123,9 +117,8 @@ export default function VoteRoofModal({ isOpen, onClose, currentUser = 'Henri Ja
     }
   ]);
 
-  // Formulaire de vote interactif
+  // Formulaire de vote interactif direct (Annotation 13)
   const [selectedVote, setSelectedVote] = useState('POUR');
-  const [voteNote, setVoteNote] = useState('');
   const [toastMessage, setToastMessage] = useState(null);
 
   // Formulaire de discussion
@@ -143,13 +136,8 @@ export default function VoteRoofModal({ isOpen, onClose, currentUser = 'Henri Ja
 
   // Synchroniser le vote actuel de l'utilisateur
   useEffect(() => {
-    if (currentAssociate) {
-      if (currentAssociate.vote !== 'EN_ATTENTE') {
-        setSelectedVote(currentAssociate.vote);
-      }
-      if (currentAssociate.note) {
-        setVoteNote(currentAssociate.note);
-      }
+    if (currentAssociate && currentAssociate.vote !== 'EN_ATTENTE') {
+      setSelectedVote(currentAssociate.vote);
     }
   }, [currentAssociate]);
 
@@ -172,30 +160,34 @@ export default function VoteRoofModal({ isOpen, onClose, currentUser = 'Henri Ja
 
   if (!isOpen) return null;
 
-  // Calculs statistiques en temps réel
+  // Calculs statistiques en temps réel avec prise en compte du report AG
   const totalAssociates = 7;
   const pourVotes = associatesVotes.filter(a => a.vote === 'POUR');
   const contreVotes = associatesVotes.filter(a => a.vote === 'CONTRE');
   const abstentionVotes = associatesVotes.filter(a => a.vote === 'ABSTENTION');
+  const reportAgVotes = associatesVotes.filter(a => a.vote === 'REPORT_AG' || a.vote === 'REPORT_PROCHAINE_AG');
   const attenteVotes = associatesVotes.filter(a => a.vote === 'EN_ATTENTE');
 
   const pourCount = pourVotes.length;
   const contreCount = contreVotes.length;
   const abstentionCount = abstentionVotes.length;
+  const reportAgCount = reportAgVotes.length;
   const attenteCount = attenteVotes.length;
-  const totalVotesCast = pourCount + contreCount + abstentionCount;
+  const totalVotesCast = pourCount + contreCount + abstentionCount + reportAgCount;
 
   const pourPct = ((pourCount / totalAssociates) * 100).toFixed(1);
   const contrePct = ((contreCount / totalAssociates) * 100).toFixed(1);
   const abstentionPct = ((abstentionCount / totalAssociates) * 100).toFixed(1);
-  const attentePct = ((attenteCount / totalAssociates) * 100).toFixed(1);
+  const reportAgPct = ((reportAgCount / totalAssociates) * 100).toFixed(1);
+  const attentePct = Math.max(0, 100 - parseFloat(pourPct) - parseFloat(contrePct) - parseFloat(abstentionPct) - parseFloat(reportAgPct)).toFixed(1);
   const participationPct = Math.round((totalVotesCast / totalAssociates) * 100);
 
+  const isAgReportRequested = reportAgCount > 0;
   const isMajoriteAtteinte = pourCount >= 4;
 
-  // Soumission du vote
-  const handleSaveVote = () => {
-    if (!selectedVote) return;
+  // Enregistrement direct du vote en 1 clic (Annotation 13)
+  const handleCastVote = (voteChoice) => {
+    setSelectedVote(voteChoice);
     const now = new Date();
     const formattedDate = `${now.getDate()} mai 2026, ${now.getHours().toString().padStart(2, '0')}:${now.getMinutes().toString().padStart(2, '0')}`;
 
@@ -203,22 +195,27 @@ export default function VoteRoofModal({ isOpen, onClose, currentUser = 'Henri Ja
       if (a.id === currentAssociate.id) {
         return {
           ...a,
-          vote: selectedVote,
-          note: voteNote.trim(),
+          vote: voteChoice,
           date: formattedDate
         };
       }
       return a;
     }));
 
-    setToastMessage(`Vote « ${selectedVote} » enregistré avec succès pour ${currentAssociate.name} !`);
-    setTimeout(() => setToastMessage(null), 4000);
+    const voteLabels = {
+      POUR: 'Approuvé',
+      CONTRE: 'Refusé',
+      ABSTENTION: 'Abstention',
+      REPORT_AG: 'Report en AG demandé'
+    };
+
+    setToastMessage(`Vote « ${voteLabels[voteChoice] || voteChoice} » enregistré pour ${currentAssociate.name} !`);
+    setTimeout(() => setToastMessage(null), 3500);
 
     if (onVoteSubmit) {
       onVoteSubmit({
         associate: currentAssociate.name,
-        vote: selectedVote,
-        note: voteNote.trim()
+        vote: voteChoice
       });
     }
   };
@@ -297,31 +294,18 @@ export default function VoteRoofModal({ isOpen, onClose, currentUser = 'Henri Ja
           </div>
         )}
 
-        {/* 1. EN-TÊTE DE LA MODALE */}
-        <header className="w-full bg-canvas-slate px-4 py-3 sm:px-space-lg sm:py-space-md flex flex-wrap items-center justify-between gap-space-sm border-b border-border-subtle shrink-0">
-          <div className="flex flex-wrap items-center gap-2">
-            {/* Badge État */}
-            <span className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full bg-sage-soft text-primary font-label-sm text-xs font-semibold">
-              <span className="w-2 h-2 rounded-full bg-primary animate-pulse"></span>
-              VOTE EN COURS • Clôture dans 3 jours (27 mai)
-            </span>
-            {/* Badge Budget & Prestataire */}
-            <span className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full bg-surface-container text-on-surface font-label-sm text-xs font-semibold">
-              <span className="material-symbols-outlined text-[16px] text-forest-deep">payments</span>
-              Enveloppe : 4 850 € TTC (Devis Éts Josse)
-            </span>
-            {/* Badge Seuil Statuts */}
-            <span className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full bg-amber-soft text-amber-rich font-label-sm text-xs font-semibold">
-              <span className="material-symbols-outlined text-[16px]">gavel</span>
-              Seuil &gt; 300 € (Art. 12 des Statuts)
-            </span>
+        {/* 1. EN-TÊTE ÉPURÉ DE LA MODALE (Annotation 14 : suppression des 3 badges fictifs) */}
+        <header className="w-full bg-canvas-slate px-4 py-3 sm:px-space-lg sm:py-space-md flex items-center justify-between gap-space-sm border-b border-border-subtle shrink-0">
+          <div className="flex items-center gap-2">
+            <span className="material-symbols-outlined text-forest-deep text-xl">how_to_vote</span>
+            <span className="font-semibold text-xs sm:text-sm text-slate-800">Scrutin &amp; Délibération des Associés</span>
           </div>
 
           {/* Action Quitter / Fermer */}
           <button 
             onClick={onClose}
             aria-label="Fermer la fenêtre" 
-            className="w-9 h-9 rounded-full flex items-center justify-center text-on-surface-variant hover:bg-surface-container-highest hover:text-on-surface transition-colors focus:outline-none" 
+            className="w-9 h-9 rounded-full flex items-center justify-center text-on-surface-variant hover:bg-surface-container-highest hover:text-on-surface transition-colors focus:outline-none cursor-pointer" 
             type="button"
           >
             <span className="material-symbols-outlined text-2xl">close</span>
@@ -354,25 +338,14 @@ export default function VoteRoofModal({ isOpen, onClose, currentUser = 'Henri Ja
               </div>
             </div>
 
-            {/* Description & Objectifs */}
+            {/* Description & Objectifs (Annotation 8 : suppression bloc impact financier & subvention) */}
             <div className="flex flex-col gap-3 bg-canvas-slate rounded-xl p-4 border border-border-subtle">
               <h2 className="font-headline-sm text-sm sm:text-base font-bold text-on-surface flex items-center gap-2">
                 <span className="material-symbols-outlined text-forest-deep text-xl">description</span>
                 Description des travaux &amp; Enjeux
               </h2>
-              <p className="text-xs sm:text-sm text-on-surface-variant leading-relaxed text-slate-600">
-                Remplacement complet des ardoises vétustes sur le versant Nord du Presbytère, reprise des liteaux et pose d'un isolant en laine de bois haute densité (R=7 m²·K/W). Ce chantier fait suite aux infiltrations constatées lors des pluies d'avril et sécurise la charpente avant les expertises de plâtrerie intérieure.
-              </p>
-              
-              {/* Bannière impact financier & subvention */}
-              <div className="mt-1 bg-sage-soft rounded-xl p-3 flex items-start gap-2.5 text-forest-deep border border-sage-border/50">
-                <span className="material-symbols-outlined text-primary-container text-xl mt-0.5 shrink-0">savings</span>
-                <div className="flex flex-col text-xs sm:text-sm">
-                  <span className="font-semibold text-primary">Impact financier direct et subvention</span>
-                  <span className="text-slate-700 mt-0.5 leading-snug">
-                    <strong>4 850 € TTC</strong> (Devis Éts Josse) intégralement couverts par le fonds de roulement récurrent de la SCI Hellenvilliers, avec <strong>500 € d'éco-subvention communale</strong> déjà déduits du règlement net. Zéro appel de fonds exceptionnel.
-                  </span>
-                </div>
+              <div className="text-xs sm:text-sm text-on-surface-variant leading-relaxed text-slate-700">
+                <MarkdownContent content="Remplacement complet des ardoises vétustes sur le versant Nord du Presbytère, reprise des liteaux et pose d'un isolant en laine de bois haute densité (R=7 m²·K/W). Ce chantier fait suite aux infiltrations constatées lors des pluies d'avril et sécurise la charpente avant les expertises de plâtrerie intérieure." />
               </div>
             </div>
 
@@ -470,12 +443,18 @@ export default function VoteRoofModal({ isOpen, onClose, currentUser = 'Henri Ja
                 <span className="text-xs sm:text-sm font-bold text-on-surface">
                   Participation : {totalVotesCast} / {totalAssociates} voix ({participationPct}%)
                 </span>
-                <span className={`text-xs font-bold px-2 py-0.5 rounded-full ${
-                  isMajoriteAtteinte 
+                <span className={`text-xs font-bold px-2.5 py-0.5 rounded-full ${
+                  isAgReportRequested
+                    ? 'bg-purple-100 text-purple-800 border border-purple-200'
+                    : isMajoriteAtteinte 
                     ? 'bg-sage-soft text-forest-deep border border-sage-border' 
                     : 'bg-amber-soft text-amber-rich'
                 }`}>
-                  {isMajoriteAtteinte ? '✓ Majorité qualifiée atteinte' : 'En attente de majorité'}
+                  {isAgReportRequested 
+                    ? '🏛️ Décision suspendue — Débat en AG requis'
+                    : isMajoriteAtteinte 
+                    ? '✓ Majorité qualifiée atteinte' 
+                    : 'En attente de majorité'}
                 </span>
               </div>
 
@@ -499,6 +478,12 @@ export default function VoteRoofModal({ isOpen, onClose, currentUser = 'Henri Ja
                   style={{ width: `${abstentionPct}%` }} 
                   title={`Abstention : ${abstentionCount} voix (${abstentionPct}%)`}
                 ></div>
+                {/* Report AG */}
+                <div 
+                  className="h-full bg-purple-700 transition-all duration-500 relative" 
+                  style={{ width: `${reportAgPct}%` }} 
+                  title={`Report AG : ${reportAgCount} voix (${reportAgPct}%)`}
+                ></div>
                 {/* En attente */}
                 <div 
                   className="h-full bg-slate-300 transition-all duration-500 relative" 
@@ -508,23 +493,34 @@ export default function VoteRoofModal({ isOpen, onClose, currentUser = 'Henri Ja
               </div>
 
               {/* Détail synthétique des voix */}
-              <div className="grid grid-cols-1 sm:grid-cols-3 gap-2 mt-1 text-xs">
+              <div className="grid grid-cols-2 sm:grid-cols-4 gap-2 mt-1 text-xs">
                 <div className="flex items-center gap-1.5 text-forest-deep font-medium">
                   <span className="w-2.5 h-2.5 rounded-full bg-forest-deep shrink-0"></span>
                   <span><strong>{pourCount} Pour :</strong> {pourVotes.map(a => a.name.split(' ')[0]).join(', ') || 'Aucun'}</span>
                 </div>
+                <div className="flex items-center gap-1.5 text-rose-700 font-medium">
+                  <span className="w-2.5 h-2.5 rounded-full bg-rose-600 shrink-0"></span>
+                  <span><strong>{contreCount} Contre :</strong> {contreVotes.map(a => a.name.split(' ')[0]).join(', ') || 'Aucun'}</span>
+                </div>
                 <div className="flex items-center gap-1.5 text-amber-rich font-medium">
                   <span className="w-2.5 h-2.5 rounded-full bg-amber-rich shrink-0"></span>
-                  <span><strong>{abstentionCount} Abstention :</strong> {abstentionVotes.map(a => a.name.split(' ')[0]).join(', ') || 'Aucune'}</span>
+                  <span><strong>{abstentionCount} Abst. :</strong> {abstentionVotes.map(a => a.name.split(' ')[0]).join(', ') || 'Aucune'}</span>
                 </div>
-                <div className="flex items-center gap-1.5 text-slate-500 font-medium">
-                  <span className="w-2.5 h-2.5 rounded-full bg-slate-400 shrink-0"></span>
-                  <span><strong>{attenteCount} En attente :</strong> {attenteVotes.map(a => a.name.split(' ')[0]).join(', ') || 'Aucun'}</span>
-                </div>
+                {reportAgCount > 0 ? (
+                  <div className="flex items-center gap-1.5 text-purple-800 font-medium">
+                    <span className="w-2.5 h-2.5 rounded-full bg-purple-700 shrink-0"></span>
+                    <span><strong>{reportAgCount} Report AG :</strong> {reportAgVotes.map(a => a.name.split(' ')[0]).join(', ')}</span>
+                  </div>
+                ) : (
+                  <div className="flex items-center gap-1.5 text-slate-500 font-medium">
+                    <span className="w-2.5 h-2.5 rounded-full bg-slate-400 shrink-0"></span>
+                    <span><strong>{attenteCount} En attente :</strong> {attenteVotes.map(a => a.name.split(' ')[0]).join(', ') || 'Aucun'}</span>
+                  </div>
+                )}
               </div>
             </div>
 
-            {/* 4. TABLEAU NOMINATIF DES 7 ASSOCIÉS AVEC STATUT DE VOTE */}
+            {/* 4. TABLEAU NOMINATIF DES 7 ASSOCIÉS ÉPURÉ (Annotations 11 & 12 : suppression Rôle SCI et Remarque) */}
             <div className="bg-surface-container-lowest rounded-xl border border-border-subtle p-4 flex flex-col gap-3">
               <div className="flex items-center justify-between">
                 <div className="flex items-center gap-2">
@@ -536,7 +532,7 @@ export default function VoteRoofModal({ isOpen, onClose, currentUser = 'Henri Ja
                 <button
                   type="button"
                   onClick={() => setShowFullTable(!showFullTable)}
-                  className="text-xs text-primary hover:underline font-semibold flex items-center gap-1"
+                  className="text-xs text-primary hover:underline font-semibold flex items-center gap-1 cursor-pointer"
                 >
                   <span>{showFullTable ? 'Masquer détails' : 'Afficher détails'}</span>
                   <span className="material-symbols-outlined text-[16px]">
@@ -550,11 +546,8 @@ export default function VoteRoofModal({ isOpen, onClose, currentUser = 'Henri Ja
                   <table className="w-full text-left text-xs border-collapse">
                     <thead>
                       <tr className="border-b border-border-subtle text-slate-500 font-semibold bg-canvas-slate">
-                        <th className="py-2 px-3">Associé(e)</th>
-                        <th className="py-2 px-3">Rôle SCI</th>
-                        <th className="py-2 px-3">Statut du Vote</th>
-                        <th className="py-2 px-3">Remarque / Justification</th>
-                        <th className="py-2 px-3 text-right">Horodatage</th>
+                        <th className="py-2.5 px-4">Associé(e)</th>
+                        <th className="py-2.5 px-4 text-right">Choix du vote &amp; Date</th>
                       </tr>
                     </thead>
                     <tbody className="divide-y divide-border-subtle">
@@ -567,65 +560,55 @@ export default function VoteRoofModal({ isOpen, onClose, currentUser = 'Henri Ja
                               isUserRow ? 'bg-sage-soft/30 font-medium' : ''
                             }`}
                           >
-                            <td className="py-2.5 px-3">
-                              <div className="flex items-center gap-2">
+                            <td className="py-2.5 px-4">
+                              <div className="flex items-center gap-2.5">
                                 <div className={`w-7 h-7 rounded-full flex items-center justify-center text-[11px] font-bold shrink-0 ${
                                   associate.isGerance ? 'bg-sage-soft text-forest-deep' : 'bg-surface-container-highest text-on-surface'
-                                }`}>
+                                }}`}>
                                   {associate.initials}
                                 </div>
                                 <span className="font-semibold text-slate-900 truncate">
                                   {associate.name}
-                                  {isUserRow && <span className="ml-1 text-[10px] text-primary font-bold">(Vous)</span>}
+                                  {isUserRow && <span className="ml-1.5 text-[10px] text-primary font-bold">(Vous)</span>}
                                 </span>
                               </div>
                             </td>
-                            <td className="py-2.5 px-3">
-                              {associate.isGerance ? (
-                                <span className="px-1.5 py-0.5 rounded bg-sage-border text-forest-deep text-[10px] font-bold">
-                                  GÉRANCE
+                            <td className="py-2.5 px-4 text-right">
+                              <div className="flex flex-col sm:flex-row items-end sm:items-center justify-end gap-1.5 sm:gap-3">
+                                {associate.vote === 'POUR' && (
+                                  <span className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full text-[11px] font-bold bg-emerald-100 text-emerald-800 border border-emerald-200">
+                                    <span className="material-symbols-outlined text-[14px]">check_circle</span>
+                                    Approuvé
+                                  </span>
+                                )}
+                                {associate.vote === 'CONTRE' && (
+                                  <span className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full text-[11px] font-bold bg-rose-100 text-rose-800 border border-rose-200">
+                                    <span className="material-symbols-outlined text-[14px]">cancel</span>
+                                    Refusé
+                                  </span>
+                                )}
+                                {associate.vote === 'ABSTENTION' && (
+                                  <span className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full text-[11px] font-bold bg-amber-100 text-amber-800 border border-amber-200">
+                                    <span className="material-symbols-outlined text-[14px]">pause_circle</span>
+                                    Abstention
+                                  </span>
+                                )}
+                                {(associate.vote === 'REPORT_AG' || associate.vote === 'REPORT_PROCHAINE_AG') && (
+                                  <span className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full text-[11px] font-bold bg-purple-100 text-purple-800 border border-purple-200">
+                                    <span>🏛️</span>
+                                    Report AG
+                                  </span>
+                                )}
+                                {associate.vote === 'EN_ATTENTE' && (
+                                  <span className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full text-[11px] font-semibold bg-slate-100 text-slate-600 border border-slate-200">
+                                    <span className="material-symbols-outlined text-[14px]">schedule</span>
+                                    En attente
+                                  </span>
+                                )}
+                                <span className="text-[11px] text-slate-500 whitespace-nowrap">
+                                  {associate.date || '—'}
                                 </span>
-                              ) : (
-                                <span className="text-slate-500 text-[11px]">Associé</span>
-                              )}
-                            </td>
-                            <td className="py-2.5 px-3">
-                              {associate.vote === 'POUR' && (
-                                <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[11px] font-bold bg-emerald-100 text-emerald-800 border border-emerald-200">
-                                  <span className="material-symbols-outlined text-[14px]">check_circle</span>
-                                  POUR
-                                </span>
-                              )}
-                              {associate.vote === 'CONTRE' && (
-                                <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[11px] font-bold bg-rose-100 text-rose-800 border border-rose-200">
-                                  <span className="material-symbols-outlined text-[14px]">cancel</span>
-                                  CONTRE
-                                </span>
-                              )}
-                              {associate.vote === 'ABSTENTION' && (
-                                <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[11px] font-bold bg-amber-100 text-amber-800 border border-amber-200">
-                                  <span className="material-symbols-outlined text-[14px]">pause_circle</span>
-                                  ABSTENTION
-                                </span>
-                              )}
-                              {associate.vote === 'EN_ATTENTE' && (
-                                <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[11px] font-semibold bg-slate-100 text-slate-600 border border-slate-200">
-                                  <span className="material-symbols-outlined text-[14px]">schedule</span>
-                                  En attente
-                                </span>
-                              )}
-                            </td>
-                            <td className="py-2.5 px-3 max-w-[220px]">
-                              {associate.note ? (
-                                <span className="text-slate-600 italic text-[11px] line-clamp-2" title={associate.note}>
-                                  « {associate.note} »
-                                </span>
-                              ) : (
-                                <span className="text-slate-400 text-[10px]">—</span>
-                              )}
-                            </td>
-                            <td className="py-2.5 px-3 text-right text-[11px] text-slate-500 whitespace-nowrap">
-                              {associate.date || '—'}
+                              </div>
                             </td>
                           </tr>
                         );
@@ -636,105 +619,73 @@ export default function VoteRoofModal({ isOpen, onClose, currentUser = 'Henri Ja
               )}
             </div>
 
-            {/* 5. FORMULAIRE DE VOTE INTERACTIF DU MEMBRE */}
+            {/* 5. SECTION DE VOTE SOBRE & DIRECTE EN 1 CLIC (Annotation 13) */}
             <div className="p-4 rounded-xl bg-surface-container-low border border-border-subtle flex flex-col gap-3 shadow-sm">
-              <div className="flex items-center justify-between">
-                <div className="flex items-center gap-2">
-                  <span className="material-symbols-outlined text-forest-deep text-xl">how_to_vote</span>
-                  <h3 className="text-xs sm:text-sm font-bold text-on-surface">
-                    Votre voix au scrutin ({currentAssociate.name})
-                  </h3>
-                </div>
-                <span className="text-xs px-2.5 py-0.5 rounded-full bg-sage-soft text-primary font-semibold">
-                  Règle 1 membre = 1 voix
-                </span>
-              </div>
-
-              {/* 3 Boutons d'action statutaire */}
-              <div aria-label="Choix du vote" className="grid grid-cols-1 sm:grid-cols-3 gap-2 mt-1" role="group">
-                {/* Bouton POUR */}
-                <button 
-                  onClick={() => setSelectedVote('POUR')}
-                  className={`group relative flex flex-col items-center justify-center p-3 rounded-xl transition-all focus:outline-none min-h-[58px] ${
+              {/* Les 3 boutons principaux de vote direct en 1 clic */}
+              <div aria-label="Choix du vote direct" className="grid grid-cols-1 sm:grid-cols-3 gap-2.5" role="group">
+                {/* 1. Approuver */}
+                <button
+                  type="button"
+                  onClick={() => handleCastVote('POUR')}
+                  className={`group relative flex items-center justify-center gap-2 py-3 px-4 rounded-xl border text-xs sm:text-sm font-semibold transition-all cursor-pointer ${
                     selectedVote === 'POUR'
-                      ? 'bg-forest-deep text-on-primary ring-2 ring-forest-deep shadow-md'
-                      : 'bg-surface-container-lowest text-forest-deep border border-sage-border/60 hover:bg-sage-soft shadow-sm'
-                  }`} 
-                  type="button"
+                      ? 'bg-emerald-600 text-white border-emerald-600 shadow-md ring-2 ring-emerald-500/30 font-bold'
+                      : 'bg-white hover:bg-emerald-50 text-slate-700 hover:text-emerald-800 border-slate-200 hover:border-emerald-300 shadow-sm'
+                  }`}
                 >
-                  <div className="flex items-center gap-1.5 font-bold text-xs sm:text-sm">
-                    <span className="material-symbols-outlined text-[18px]">check_circle</span>
-                    <span>OUI — J'approuve</span>
-                  </div>
-                  <span className={`text-[11px] mt-0.5 ${
-                    selectedVote === 'POUR' ? 'text-primary-fixed opacity-90' : 'text-slate-500'
-                  }`}>
-                    Validation des dépenses
-                  </span>
+                  <span className="material-symbols-outlined text-[20px] shrink-0">check_circle</span>
+                  <span>Approuver</span>
                 </button>
 
-                {/* Bouton CONTRE */}
-                <button 
-                  onClick={() => setSelectedVote('CONTRE')}
-                  className={`group relative flex flex-col items-center justify-center p-3 rounded-xl transition-all focus:outline-none min-h-[58px] ${
+                {/* 2. Refuser */}
+                <button
+                  type="button"
+                  onClick={() => handleCastVote('CONTRE')}
+                  className={`group relative flex items-center justify-center gap-2 py-3 px-4 rounded-xl border text-xs sm:text-sm font-semibold transition-all cursor-pointer ${
                     selectedVote === 'CONTRE'
-                      ? 'bg-error text-on-error ring-2 ring-error shadow-md'
-                      : 'bg-surface-container-lowest text-error border border-error-container hover:bg-error-container/50 shadow-sm'
-                  }`} 
-                  type="button"
+                      ? 'bg-rose-600 text-white border-rose-600 shadow-md ring-2 ring-rose-500/30 font-bold'
+                      : 'bg-white hover:bg-rose-50 text-slate-700 hover:text-rose-800 border-slate-200 hover:border-rose-300 shadow-sm'
+                  }`}
                 >
-                  <div className="flex items-center gap-1.5 font-bold text-xs sm:text-sm">
-                    <span className="material-symbols-outlined text-[18px]">cancel</span>
-                    <span>NON — Je refuse</span>
-                  </div>
-                  <span className={`text-[11px] mt-0.5 ${
-                    selectedVote === 'CONTRE' ? 'text-red-100 opacity-90' : 'text-slate-500'
-                  }`}>
-                    Demande de révision
-                  </span>
+                  <span className="material-symbols-outlined text-[20px] shrink-0">cancel</span>
+                  <span>Refuser</span>
                 </button>
 
-                {/* Bouton ABSTENTION */}
-                <button 
-                  onClick={() => setSelectedVote('ABSTENTION')}
-                  className={`group relative flex flex-col items-center justify-center p-3 rounded-xl transition-all focus:outline-none min-h-[58px] ${
-                    selectedVote === 'ABSTENTION'
-                      ? 'bg-amber-rich text-white ring-2 ring-amber-rich shadow-md'
-                      : 'bg-surface-container-lowest text-amber-rich border border-amber-soft hover:bg-amber-soft/60 shadow-sm'
-                  }`} 
+                {/* 3. S'abstenir */}
+                <button
                   type="button"
+                  onClick={() => handleCastVote('ABSTENTION')}
+                  className={`group relative flex items-center justify-center gap-2 py-3 px-4 rounded-xl border text-xs sm:text-sm font-semibold transition-all cursor-pointer ${
+                    selectedVote === 'ABSTENTION'
+                      ? 'bg-slate-700 text-white border-slate-700 shadow-md ring-2 ring-slate-400/30 font-bold'
+                      : 'bg-white hover:bg-slate-100 text-slate-700 hover:text-slate-900 border-slate-200 hover:border-slate-300 shadow-sm'
+                  }`}
                 >
-                  <div className="flex items-center gap-1.5 font-bold text-xs sm:text-sm">
-                    <span className="material-symbols-outlined text-[18px]">pause_circle</span>
-                    <span>JE M'ABSTIENS</span>
-                  </div>
-                  <span className={`text-[11px] mt-0.5 ${
-                    selectedVote === 'ABSTENTION' ? 'text-amber-100 opacity-90' : 'text-slate-500'
-                  }`}>
-                    Voix neutre au quorum
-                  </span>
+                  <span className="material-symbols-outlined text-[20px] shrink-0">pause_circle</span>
+                  <span>S'abstenir</span>
                 </button>
               </div>
 
-              {/* Note et enregistrement */}
-              <div className="flex flex-col sm:flex-row items-center gap-2 mt-2">
-                <div className="relative w-full flex-1">
-                  <input 
-                    className="w-full h-11 px-3 rounded-xl bg-surface-container-lowest text-on-surface placeholder:text-outline text-xs sm:text-sm border border-border-subtle focus:outline-none focus:ring-2 focus:ring-forest-deep" 
-                    placeholder="Ajouter une note ou justification à votre vote (facultatif)..." 
-                    type="text"
-                    value={voteNote}
-                    onChange={(e) => setVoteNote(e.target.value)}
-                  />
-                </div>
-                <button 
-                  onClick={handleSaveVote}
-                  className="w-full sm:w-auto px-5 h-11 rounded-xl bg-primary text-on-primary hover:bg-forest-deep font-semibold text-xs sm:text-sm flex items-center justify-center gap-1.5 shrink-0 transition-colors shadow-sm" 
+              {/* Option statutaire séparée : Reporter à la prochaine Assemblée Générale */}
+              <div className="pt-3 border-t border-slate-200/80 flex flex-col gap-2">
+                <button
                   type="button"
+                  onClick={() => handleCastVote('REPORT_AG')}
+                  className={`w-full py-2.5 px-4 rounded-xl border text-xs font-semibold flex items-center justify-center gap-2 transition-all cursor-pointer ${
+                    selectedVote === 'REPORT_AG'
+                      ? 'bg-purple-700 text-white border-purple-700 shadow-md ring-2 ring-purple-400/30 font-bold'
+                      : 'bg-white hover:bg-purple-50 text-slate-700 hover:text-purple-900 border-slate-200 hover:border-purple-300 shadow-sm'
+                  }`}
                 >
-                  <span className="material-symbols-outlined text-[18px]">verified</span>
-                  <span>Enregistrer mon vote</span>
+                  <span className="text-base">🏛️</span>
+                  <span>Demander un débat en Assemblée Générale</span>
+                  {selectedVote === 'REPORT_AG' && (
+                    <span className="material-symbols-outlined text-[16px] text-white ml-1">check</span>
+                  )}
                 </button>
+                <p className="text-[11px] text-slate-500 italic leading-relaxed px-1">
+                  Conformément aux statuts de la SCI, dès lors qu'un associé sollicite un débat en AG, la décision à distance est suspendue. Les votes exprimés restent visibles à titre indicatif et la résolution sera portée à l'ordre du jour de la prochaine AG.
+                </p>
               </div>
             </div>
 

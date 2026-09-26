@@ -1,6 +1,7 @@
 import React, { useState } from 'react';
 import { PlusCircle, X, Image as ImageIcon, Camera, AlertCircle, Sparkles, Trash2, Upload } from 'lucide-react';
 import { uploadPhotos } from '../api';
+import RichTextEditor from './common/RichTextEditor';
 
 export default function NewProjectModal({ isOpen, onClose, properties, currentUser, onSubmit }) {
   const [propertyId, setPropertyId] = useState(properties[0]?.id || 1);
@@ -74,7 +75,7 @@ export default function NewProjectModal({ isOpen, onClose, properties, currentUs
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-900/60 backdrop-blur-sm animate-in fade-in duration-200">
-      <div className="bg-white border border-slate-200 rounded-2xl max-w-lg w-full max-h-[85vh] overflow-y-auto p-6 sm:p-7 shadow-2xl relative text-slate-900">
+      <div className="bg-white border border-slate-200 rounded-2xl max-w-2xl w-full max-h-[90vh] overflow-y-auto p-6 sm:p-7 shadow-2xl relative text-slate-900">
         
         {/* Close Button */}
         <button
@@ -123,20 +124,16 @@ export default function NewProjectModal({ isOpen, onClose, properties, currentUs
             />
           </div>
 
-          {/* Description */}
-          <div>
-            <label className="block text-xs font-bold text-slate-700 mb-1 uppercase tracking-wider">
-              Description détaillée *
-            </label>
-            <textarea
-              rows={4}
-              placeholder="Expliquez précisément le problème ou votre idée, l'emplacement dans la maison et ce qui doit être fait..."
-              value={description}
-              onChange={(e) => setDescription(e.target.value)}
-              className="w-full px-3.5 py-2.5 bg-slate-50 border border-slate-200 rounded-xl text-xs text-slate-900 placeholder-slate-400 focus:outline-none focus:ring-2 focus:ring-amber-500 transition"
-              required
-            ></textarea>
-          </div>
+          {/* Description riche avec Markdown, split view et aperçu (Annotation 10) */}
+          <RichTextEditor
+            label="Description détaillée"
+            required={true}
+            value={description}
+            onChange={setDescription}
+            placeholder="Expliquez précisément le problème ou votre idée, l'emplacement dans la maison et ce qui doit être fait..."
+            rows={5}
+            helperText="Support du formatage simple (gras, listes, titres, liens) avec aperçu en temps réel."
+          />
 
           {/* Multiple Photos Upload */}
           <div>

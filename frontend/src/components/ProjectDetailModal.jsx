@@ -678,7 +678,7 @@ export default function ProjectDetailModal({ project, isOpen, onClose, currentUs
             </div>
 
             <p className="text-xs text-slate-700 leading-relaxed bg-amber-50/80 p-4 rounded-2xl border border-amber-200 font-medium">
-              Confirmation de report à l'AG : Êtes-vous sûr de vouloir reporter ce projet à la prochaine Assemblée Générale ? Cette action exercera un droit de veto individuel et réorientera le projet vers l'ordre du jour de la prochaine AG.
+              Conformément aux statuts de la SCI, dès lors qu'un associé sollicite un débat en AG, la décision à distance est suspendue. Les votes exprimés restent visibles à titre indicatif et la résolution sera portée à l'ordre du jour de la prochaine AG.
             </p>
 
             <div className="flex items-center justify-end space-x-3 pt-2">

@@ -8,6 +8,7 @@ import {
 } from 'lucide-react';
 import FinancialLedgerModal from '../components/FinancialLedgerModal';
 import BankReauthBanner from '../components/BankReauthBanner';
+import DocumentViewerModal from '../components/DocumentViewerModal';
 import { BankMetricSkeleton } from '../components/SkeletonLoaders';
 import CustomSelect from '../components/CustomSelect';
 import {
@@ -236,11 +237,43 @@ export default function AdminInfoPage({ currentUser }) {
   const [isFinancialModalOpen, setIsFinancialModalOpen] = useState(false);
   const [financialModalTab, setFinancialModalTab] = useState('grand_livre');
 
+  // Visionneuse universelle intégrée (Annotation 9)
+  const [viewerDoc, setViewerDoc] = useState(null);
+  const [isViewerOpen, setIsViewerOpen] = useState(false);
+
+  const handleViewDocument = (doc) => {
+    let resolved = null;
+    if (typeof doc === 'string') {
+      resolved = {
+        filename: doc,
+        file_url: `/api/documents/${encodeURIComponent(doc)}/download`
+      };
+    } else if (doc) {
+      resolved = {
+        ...doc,
+        filename: doc.filename || doc.file_name || doc.name || doc.title || 'document.pdf',
+        file_url: doc.file_url || doc.url || (doc.id ? `/api/documents/${doc.id}/download` : '')
+      };
+    }
+    if (resolved) {
+      setViewerDoc(resolved);
+      setIsViewerOpen(true);
+    }
+  };
+
   // Téléchargement réel de document
   const handleDownload = (doc) => {
-    if (doc.file_url || doc.url) {
-      const targetUrl = doc.file_url || doc.url;
-      const targetName = doc.filename || doc.file_name || doc.name || doc.title || 'document.pdf';
+    let targetUrl = '';
+    let targetName = 'document.pdf';
+    if (typeof doc === 'string') {
+      targetName = doc;
+      targetUrl = `/api/documents/${encodeURIComponent(doc)}/download`;
+    } else if (doc) {
+      targetUrl = doc.file_url || doc.url || (doc.id ? `/api/documents/${doc.id}/download` : '');
+      targetName = doc.filename || doc.file_name || doc.name || doc.title || 'document.pdf';
+    }
+
+    if (targetUrl) {
       const a = document.createElement('a');
       a.href = targetUrl;
       a.download = targetName;
@@ -822,8 +855,9 @@ export default function AdminInfoPage({ currentUser }) {
                   <td className="py-3.5 px-4 whitespace-nowrap">
                     <button
                       type="button"
-                      onClick={() => handleDownload(inv.filename, inv.filename)}
+                      onClick={() => handleViewDocument(inv.filename)}
                       className="btn-download inline-flex items-center gap-1.5 px-2.5 py-1 rounded bg-surface-container-low text-forest-deep hover:bg-sage-soft border border-border-subtle transition-all text-xs font-semibold cursor-pointer"
+                      title="Consulter le justificatif dans la visionneuse"
                     >
                       <span className="material-symbols-outlined text-error text-[16px]">picture_as_pdf</span>
                       <span>{inv.filename}</span>
@@ -835,18 +869,29 @@ export default function AdminInfoPage({ currentUser }) {
                     <div className="inline-flex items-center justify-end gap-1.5">
                       <button
                         type="button"
-                        onClick={() => handleDownload(inv.filename, inv.filename)}
-                        className="btn-download px-3 h-8 rounded-DEFAULT bg-surface-container-lowest border border-primary text-primary hover:bg-sage-soft transition-all text-xs font-semibold inline-flex items-center gap-1 cursor-pointer"
+                        onClick={() => handleViewDocument(inv.filename)}
+                        className="btn-view px-2.5 h-8 rounded-DEFAULT bg-surface-container-lowest border border-primary text-primary hover:bg-sage-soft transition-all text-xs font-semibold inline-flex items-center gap-1 cursor-pointer"
+                        title="Consulter dans la visionneuse"
                       >
                         <span className="material-symbols-outlined text-[15px]">visibility</span>
                         <span>Consulter</span>
+                      </button>
+
+                      <button
+                        type="button"
+                        onClick={() => handleDownload(inv.filename)}
+                        className="btn-download px-2.5 h-8 rounded-DEFAULT bg-surface-container-lowest border border-border-subtle text-on-surface-variant hover:text-primary hover:border-primary transition-all text-xs font-semibold inline-flex items-center gap-1 cursor-pointer"
+                        title="Télécharger une copie du fichier"
+                      >
+                        <span className="material-symbols-outlined text-[15px]">download</span>
+                        <span>Télécharger</span>
                       </button>
 
                       {inv.statusType === 'pending' ? (
                         <button
                           type="button"
                           onClick={() => openPayInvoiceOperation(inv)}
-                          className="px-3 h-8 rounded-DEFAULT bg-primary text-on-primary hover:bg-forest-deep transition-all text-xs font-semibold inline-flex items-center gap-1 cursor-pointer"
+                          className="px-3 h-8 rounded-DEFAULT bg-primary text-on-primary hover:bg-forest-deep transition-all text-xs font-semibold inline-flex items-center gap-1 cursor-pointer ml-1"
                         >
                           <span className="material-symbols-outlined text-[15px]">payments</span>
                           <span>Régler</span>
@@ -854,22 +899,14 @@ export default function AdminInfoPage({ currentUser }) {
                       ) : inv.statusType === 'paid' ? (
                         <button
                           type="button"
-                          onClick={() => handleDownload(`Recu-${inv.filename}`, `Recu-${inv.filename}`)}
-                          className="btn-download px-3 h-8 rounded-DEFAULT bg-primary text-on-primary hover:bg-forest-deep transition-all text-xs font-semibold inline-flex items-center gap-1 cursor-pointer"
+                          onClick={() => handleDownload(`Recu-${inv.filename}`)}
+                          className="btn-download px-2.5 h-8 rounded-DEFAULT bg-emerald-50 border border-emerald-200 text-emerald-800 hover:bg-emerald-100 transition-all text-xs font-semibold inline-flex items-center gap-1 cursor-pointer ml-1"
+                          title="Télécharger le reçu"
                         >
-                          <span className="material-symbols-outlined text-[15px]">download</span>
+                          <span className="material-symbols-outlined text-[15px]">verified</span>
                           <span>Reçu</span>
                         </button>
-                      ) : (
-                        <button
-                          type="button"
-                          onClick={() => handleDownload(inv.filename, inv.filename)}
-                          className="btn-download px-3 h-8 rounded-DEFAULT bg-surface-container-lowest border border-border-subtle text-on-surface-variant hover:text-primary hover:border-primary transition-all text-xs font-semibold inline-flex items-center gap-1 cursor-pointer"
-                        >
-                          <span className="material-symbols-outlined text-[15px]">download</span>
-                          <span>PDF</span>
-                        </button>
-                      )}
+                      ) : null}
                     </div>
                   </td>
 
@@ -1111,9 +1148,19 @@ export default function AdminInfoPage({ currentUser }) {
                 <div className="mt-4 pt-3 border-t border-border-subtle flex items-center justify-between gap-1.5">
                   <button
                     type="button"
+                    onClick={() => handleViewDocument(doc)}
+                    className="btn-view flex-1 h-[40px] px-2 rounded-DEFAULT bg-surface-container-lowest border-2 border-primary text-primary font-label-sm text-xs hover:bg-sage-soft transition-all flex items-center justify-center gap-1 cursor-pointer font-bold"
+                    title="Consulter le document sans télécharger"
+                  >
+                    <span className="material-symbols-outlined text-[16px]">visibility</span>
+                    <span>Consulter</span>
+                  </button>
+
+                  <button
+                    type="button"
                     onClick={() => handleDownload(doc)}
-                    className="btn-download flex-1 h-[40px] px-2 rounded-DEFAULT bg-surface-container-lowest border-2 border-primary text-primary font-label-sm text-xs hover:bg-sage-soft transition-all flex items-center justify-center gap-1 cursor-pointer font-bold"
-                    title="Télécharger le document"
+                    className="btn-download flex-1 h-[40px] px-2 rounded-DEFAULT bg-primary text-white font-label-sm text-xs hover:bg-forest-deep transition-all flex items-center justify-center gap-1 cursor-pointer font-bold shadow-xs"
+                    title="Télécharger une copie locale"
                   >
                     <span className="material-symbols-outlined text-[16px]">download</span>
                     <span>Télécharger</span>
@@ -1122,7 +1169,7 @@ export default function AdminInfoPage({ currentUser }) {
                   <button
                     type="button"
                     onClick={() => openRenameModal(doc)}
-                    className="btn-rename p-2 h-[40px] w-[40px] rounded-DEFAULT bg-surface-container-lowest border-2 border-border-subtle text-on-surface-variant hover:text-primary hover:border-primary transition-all flex items-center justify-center cursor-pointer"
+                    className="btn-rename p-2 h-[40px] w-[40px] rounded-DEFAULT bg-surface-container-lowest border-2 border-border-subtle text-on-surface-variant hover:text-primary hover:border-primary transition-all flex items-center justify-center cursor-pointer shrink-0"
                     title="Renommer le fichier"
                   >
                     <span className="material-symbols-outlined text-[18px]">edit</span>
@@ -1131,7 +1178,7 @@ export default function AdminInfoPage({ currentUser }) {
                   <button
                     type="button"
                     onClick={() => handleDeleteDoc(doc)}
-                    className="p-2 h-[40px] w-[40px] rounded-DEFAULT bg-surface-container-lowest border-2 border-rose-200 text-rose-600 hover:bg-rose-50 transition-all flex items-center justify-center cursor-pointer"
+                    className="p-2 h-[40px] w-[40px] rounded-DEFAULT bg-surface-container-lowest border-2 border-rose-200 text-rose-600 hover:bg-rose-50 transition-all flex items-center justify-center cursor-pointer shrink-0"
                     title="Supprimer définitivement"
                   >
                     <span className="material-symbols-outlined text-[18px]">delete</span>
@@ -1176,8 +1223,18 @@ export default function AdminInfoPage({ currentUser }) {
                 <div className="flex items-center gap-2 self-end md:self-auto shrink-0">
                   <button
                     type="button"
+                    onClick={() => handleViewDocument(doc)}
+                    className="btn-view h-[38px] px-3 rounded-DEFAULT bg-surface-container-lowest border-2 border-primary text-primary font-label-sm text-xs hover:bg-sage-soft transition-all flex items-center gap-1 cursor-pointer font-bold"
+                    title="Consulter sans télécharger"
+                  >
+                    <span className="material-symbols-outlined text-[16px]">visibility</span>
+                    <span>Consulter</span>
+                  </button>
+                  <button
+                    type="button"
                     onClick={() => handleDownload(doc)}
-                    className="btn-download h-[38px] px-3 rounded-DEFAULT bg-surface-container-lowest border-2 border-primary text-primary font-label-sm text-xs hover:bg-sage-soft transition-all flex items-center gap-1 cursor-pointer font-bold"
+                    className="btn-download h-[38px] px-3 rounded-DEFAULT bg-primary text-white font-label-sm text-xs hover:bg-forest-deep transition-all flex items-center gap-1 cursor-pointer font-bold shadow-xs"
+                    title="Télécharger une copie locale"
                   >
                     <span className="material-symbols-outlined text-[16px]">download</span>
                     <span>Télécharger</span>
@@ -1749,6 +1806,19 @@ export default function AdminInfoPage({ currentUser }) {
         isOpen={isFinancialModalOpen}
         onClose={() => setIsFinancialModalOpen(false)}
         initialTab={financialModalTab}
+      />
+
+      {/* ========================================================================= */}
+      {/* MODAL 6 : VISIONNEUSE UNIVERSELLE INTÉGRÉE (Annotation 9)                */}
+      {/* ========================================================================= */}
+      <DocumentViewerModal
+        isOpen={isViewerOpen}
+        onClose={() => {
+          setIsViewerOpen(false);
+          setViewerDoc(null);
+        }}
+        document={viewerDoc}
+        onDownload={handleDownload}
       />
 
       {/* ========================================================================= */}
