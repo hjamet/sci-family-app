@@ -223,28 +223,6 @@ export default function Header({
                 ))}
               </div>
 
-              {/* Accès Paramètres dans le menu utilisateur */}
-              <div className="py-1 border-b border-slate-100">
-                <button
-                  type="button"
-                  onClick={() => {
-                    setIsUserMenuOpen(false);
-                    if (setActiveTab) setActiveTab('parametres');
-                    if (onNavigate) onNavigate('/parametres', 'parametres');
-                  }}
-                  className={`w-full px-4 py-2 text-left text-xs font-semibold flex items-center gap-2 cursor-pointer transition-colors ${
-                    activeTab === 'parametres'
-                      ? 'bg-sage-soft text-primary font-bold'
-                      : 'text-on-surface hover:bg-sage-soft/70'
-                  }`}
-                >
-                  <span className="material-symbols-outlined text-[17px] text-primary">
-                    settings
-                  </span>
-                  Paramètres &amp; Préférences
-                </button>
-              </div>
-
               <div className="pt-1">
                 <button
                   type="button"
