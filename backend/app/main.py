@@ -17,7 +17,7 @@ from sqlalchemy import func, or_
 from .database import engine, Base, get_db
 from .models import (
     Property, User, Member, Issue, Comment, IssueComment, Reservation, Project,
-    ProjectVote, ProjectComment, AdminDocument, MemberAvailability,
+    ProjectVote, ProjectComment, AdminDocument, DocumentCategory, MemberAvailability,
     VademecumItem, MaintenanceTask, StayTaskAssignment, Task, TaskComment, Log,
     BankAccount, BankTransaction, BankAuthSession, MemberSettings, ThermalSettings
 )
@@ -29,6 +29,7 @@ from .schemas import (
     ProjectCreate, ProjectReview, ProjectApprove, ProjectVoteCreate, ProjectVoteResponse, ProjectResponse, VoteEnum,
     ProjectCommentCreate, ProjectCommentResponse,
     AdminDocumentCreate, AdminDocumentResponse,
+    DocumentCategoryCreate, DocumentCategoryResponse,
     ClassificationEnum, TaskWeightEnum,
     AvailabilitySet, AvailabilityBatchCreate, AvailabilityResponse, SmartMatchItem,
     VademecumItemCreate, VademecumItemUpdate, VademecumItemResponse,
@@ -2618,14 +2619,64 @@ def validate_task_completion(
         "admin_document": created_docs[0] if created_docs else None
     }
 
-@app.get("/api/admin-documents")
-def list_admin_documents(
+# --- Document Categories (Annotation 5) ---
+DEFAULT_DOCUMENT_CATEGORIES = [
+    {"name": "Actes & Statuts", "emoji": "🏛️", "color": "slate"},
+    {"name": "Banque & Finances", "emoji": "💶", "color": "emerald"},
+    {"name": "Travaux & Factures", "emoji": "🔧", "color": "amber"},
+    {"name": "Fiscalité & Impôts", "emoji": "⚖️", "color": "purple"},
+    {"name": "Assurances & Police", "emoji": "🛡️", "color": "sky"},
+    {"name": "Procès-Verbaux AG", "emoji": "📜", "color": "rose"},
+]
+
+@app.get("/api/documents/categories", response_model=List[DocumentCategoryResponse], tags=["Documents"])
+def get_document_categories(db: Session = Depends(get_db)):
+    """Retourne la liste des catégories de documents triées par nom, avec auto-seed si vide."""
+    cats = db.query(DocumentCategory).order_by(DocumentCategory.name.asc()).all()
+    if not cats:
+        for item in DEFAULT_DOCUMENT_CATEGORIES:
+            new_cat = DocumentCategory(name=item["name"], emoji=item["emoji"], color=item["color"])
+            db.add(new_cat)
+        db.commit()
+        cats = db.query(DocumentCategory).order_by(DocumentCategory.name.asc()).all()
+    return cats
+
+@app.post("/api/documents/categories", response_model=DocumentCategoryResponse, status_code=status.HTTP_201_CREATED, tags=["Documents"])
+def create_document_category(payload: DocumentCategoryCreate, db: Session = Depends(get_db)):
+    """Crée une nouvelle catégorie de document personnalisée."""
+    clean_name = payload.name.strip()
+    if not clean_name:
+        raise HTTPException(status_code=400, detail="Le nom de la catégorie ne peut être vide.")
+    
+    existing = db.query(DocumentCategory).filter(DocumentCategory.name.ilike(clean_name)).first()
+    if existing:
+        return existing
+    
+    new_cat = DocumentCategory(
+        name=clean_name,
+        emoji=payload.emoji.strip() if payload.emoji else "📁",
+        color=payload.color.strip() if payload.color else "slate"
+    )
+    db.add(new_cat)
+    db.commit()
+    db.refresh(new_cat)
+    return new_cat
+
+
+# --- Real Documents Endpoints (Annotations 5 & 6) ---
+
+@app.get("/api/admin-documents", tags=["Documents"])
+@app.get("/api/documents", tags=["Documents"])
+def list_documents(
     category: Optional[str] = Query(None),
     source_type: Optional[str] = Query(None),
     db: Session = Depends(get_db)
 ):
+    """
+    Retourne STRICTEMENT les vrais documents stockés en base de données (zéro document fictif inventé).
+    """
     query = db.query(AdminDocument)
-    if category and category != "Toutes":
+    if category and category not in ("Toutes", "all"):
         query = query.filter(AdminDocument.category == category)
     if source_type:
         query = query.filter(AdminDocument.source_type == source_type)
@@ -2633,78 +2684,126 @@ def list_admin_documents(
     db_docs = query.order_by(AdminDocument.created_at.desc()).all()
 
     results = []
-    seen_urls = set()
-
     for doc in db_docs:
-        seen_urls.add(doc.file_url)
         results.append({
             "id": doc.id,
             "title": doc.title,
             "category": doc.category,
             "file_url": doc.file_url,
-            "file_name": doc.file_name,
-            "file_type": doc.file_type,
-            "file_size": doc.file_size,
-            "source_type": doc.source_type,
+            "file_name": doc.file_name or doc.title,
+            "file_type": doc.file_type or "PDF",
+            "file_size": doc.file_size or 0,
+            "source_type": doc.source_type or "MANUAL",
             "source_id": doc.source_id,
-            "uploaded_by": doc.uploaded_by,
+            "uploaded_by": doc.uploaded_by or "Henri Jamet",
             "notes": doc.notes,
             "created_at": doc.created_at,
             "name": doc.title,
             "filename": doc.file_name or os.path.basename(doc.file_url),
             "url": doc.file_url,
             "type": doc.file_type or "PDF",
-            "size": f"{doc.file_size or 0} B",
+            "size": f"{round((doc.file_size or 0) / 1024, 1)} Ko" if doc.file_size else "—",
             "upload_date": doc.created_at.strftime("%d/%m/%Y") if doc.created_at else "",
             "source": doc.category
         })
 
-    if os.path.exists(DOCUMENTS_DIR):
-        for fname in os.listdir(DOCUMENTS_DIR):
-            fpath = os.path.join(DOCUMENTS_DIR, fname)
-            if os.path.isfile(fpath):
-                url = f"/uploads/documents/{fname}"
-                if url not in seen_urls:
-                    stat = os.stat(fpath)
-                    ext = os.path.splitext(fname)[1].lstrip(".").upper() or "FILE"
-                    mtime = datetime.fromtimestamp(stat.st_mtime)
-                    display_name = fname.split("_", 1)[-1] if "_" in fname else fname
-                    results.append({
-                        "id": fname,
-                        "title": display_name,
-                        "category": "Documents de Fin de Tâche / Réparation",
-                        "file_url": url,
-                        "file_name": fname,
-                        "file_type": ext,
-                        "file_size": stat.st_size,
-                        "source_type": "FILE",
-                        "source_id": None,
-                        "uploaded_by": "Système",
-                        "notes": "Fichier stocké dans /uploads/documents/",
-                        "created_at": mtime,
-                        "name": display_name,
-                        "filename": fname,
-                        "url": url,
-                        "type": ext,
-                        "size": f"{round(stat.st_size / 1024, 1)} KB",
-                        "upload_date": mtime.strftime("%d/%m/%Y"),
-                        "source": "Fin de Tâche / Réparation"
-                    })
-
     return results
 
-@app.post("/api/admin-documents", response_model=AdminDocumentResponse, status_code=status.HTTP_201_CREATED)
+@app.post("/api/documents/upload", status_code=status.HTTP_201_CREATED, tags=["Documents"])
+async def upload_document_canonical(
+    file: UploadFile = File(...),
+    organisme: str = Form(...),
+    title: str = Form(...),
+    category: str = Form(...),
+    uploaded_by: Optional[str] = Form("Henri Jamet"),
+    db: Session = Depends(get_db)
+):
+    """
+    Téléversement d'un document selon la convention de nommage canonique officielle :
+    [ORGANISME] [MMAAAA actuel] [Titre du document].[ext]
+    Ex: SPoMi 092026 Permis B Fribourg.pdf
+    """
+    clean_org = organisme.strip()
+    clean_title = title.strip()
+    if not clean_org:
+        clean_org = "SCI"
+    if not clean_title:
+        clean_title = "Document"
+
+    # Date MMAAAA d'aujourd'hui (Mois 2 chiffres, Année 4 chiffres)
+    now = datetime.utcnow()
+    mmaaaa = now.strftime("%m%Y")
+
+    # Extension du fichier
+    original_name = file.filename or "document.pdf"
+    _, ext = os.path.splitext(original_name)
+    if not ext:
+        ext = ".pdf"
+
+    # Format canonique strict : séparateurs = espaces simples, aucun tiret ni underscore
+    canonical_filename = f"{clean_org} {mmaaaa} {clean_title}{ext}"
+
+    # Sauvegarde physique sécurisée
+    file_bytes = await file.read()
+    file_size = len(file_bytes)
+
+    dest_path = os.path.join(DOCUMENTS_DIR, canonical_filename)
+    try:
+        with open(dest_path, "wb") as f:
+            f.write(file_bytes)
+    except Exception as e:
+        logger.warning(f"Erreur écriture fichier {canonical_filename}: {e}")
+
+    file_url = f"/uploads/documents/{canonical_filename}"
+
+    # Enregistrement en base de données
+    db_doc = AdminDocument(
+        title=clean_title,
+        category=category,
+        file_url=file_url,
+        file_name=canonical_filename,
+        file_type=file.content_type or "application/pdf",
+        file_size=file_size,
+        source_type="MANUAL",
+        uploaded_by=uploaded_by or "Henri Jamet",
+        notes=clean_org
+    )
+    db.add(db_doc)
+    db.commit()
+    db.refresh(db_doc)
+
+    return {
+        "id": db_doc.id,
+        "title": db_doc.title,
+        "category": db_doc.category,
+        "file_url": db_doc.file_url,
+        "file_name": db_doc.file_name,
+        "file_type": db_doc.file_type,
+        "file_size": db_doc.file_size,
+        "source_type": db_doc.source_type,
+        "uploaded_by": db_doc.uploaded_by,
+        "notes": db_doc.notes,
+        "created_at": db_doc.created_at,
+        "name": db_doc.title,
+        "filename": db_doc.file_name,
+        "url": db_doc.file_url,
+        "size": f"{round(file_size / 1024, 1)} Ko",
+        "upload_date": db_doc.created_at.strftime("%d/%m/%Y")
+    }
+
+@app.post("/api/admin-documents", response_model=AdminDocumentResponse, status_code=status.HTTP_201_CREATED, tags=["Documents"])
+@app.post("/api/documents", response_model=AdminDocumentResponse, status_code=status.HTTP_201_CREATED, tags=["Documents"])
 def create_admin_document(doc: AdminDocumentCreate, db: Session = Depends(get_db)):
     db_doc = AdminDocument(
         title=doc.title,
-        category=doc.category or "Documents de Fin de Tâche / Réparation",
+        category=doc.category or "Actes & Statuts",
         file_url=doc.file_url,
         file_name=doc.file_name or os.path.basename(doc.file_url),
         file_type=doc.file_type or "application/pdf",
         file_size=doc.file_size or 0,
         source_type=doc.source_type or "MANUAL",
         source_id=doc.source_id,
-        uploaded_by=doc.uploaded_by or "Henri",
+        uploaded_by=doc.uploaded_by or "Henri Jamet",
         notes=doc.notes
     )
     db.add(db_doc)
@@ -2712,7 +2811,8 @@ def create_admin_document(doc: AdminDocumentCreate, db: Session = Depends(get_db
     db.refresh(db_doc)
     return db_doc
 
-@app.delete("/api/admin-documents/{doc_id}")
+@app.delete("/api/admin-documents/{doc_id}", tags=["Documents"])
+@app.delete("/api/documents/{doc_id}", tags=["Documents"])
 def delete_admin_document(doc_id: str, db: Session = Depends(get_db)):
     doc = None
     if doc_id.isdigit():

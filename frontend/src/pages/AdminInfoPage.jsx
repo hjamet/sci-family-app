@@ -8,7 +8,28 @@ import {
 } from 'lucide-react';
 import FinancialLedgerModal from '../components/FinancialLedgerModal';
 import BankReauthBanner from '../components/BankReauthBanner';
-import { fetchAdminDocuments, deleteAdminDocument, fetchBankStatus } from '../api';
+import {
+  fetchDocuments,
+  fetchDocumentCategories,
+  createDocumentCategory,
+  uploadDocument,
+  deleteDocument,
+  fetchBankStatus
+} from '../api';
+
+// Palette de 8 couleurs sobres pour les catégories personnalisées (Annotation 5)
+const COLOR_OPTIONS = [
+  { id: 'slate', name: 'Ardoise', bg: 'bg-slate-500', text: 'text-slate-700', border: 'border-slate-500', badgeBg: 'bg-slate-100 text-slate-800 border-slate-200' },
+  { id: 'emerald', name: 'Émeraude', bg: 'bg-emerald-500', text: 'text-emerald-700', border: 'border-emerald-500', badgeBg: 'bg-emerald-100 text-emerald-800 border-emerald-200' },
+  { id: 'amber', name: 'Ambre', bg: 'bg-amber-500', text: 'text-amber-700', border: 'border-amber-500', badgeBg: 'bg-amber-100 text-amber-800 border-amber-200' },
+  { id: 'purple', name: 'Pourpre', bg: 'bg-purple-500', text: 'text-purple-700', border: 'border-purple-500', badgeBg: 'bg-purple-100 text-purple-800 border-purple-200' },
+  { id: 'rose', name: 'Bordeaux', bg: 'bg-rose-700', text: 'text-rose-700', border: 'border-rose-700', badgeBg: 'bg-rose-100 text-rose-800 border-rose-200' },
+  { id: 'sky', name: 'Bleu ciel', bg: 'bg-sky-500', text: 'text-sky-700', border: 'border-sky-500', badgeBg: 'bg-sky-100 text-sky-800 border-sky-200' },
+  { id: 'teal', name: 'Vert sauge', bg: 'bg-teal-600', text: 'text-teal-700', border: 'border-teal-600', badgeBg: 'bg-teal-100 text-teal-800 border-teal-200' },
+  { id: 'wood', name: 'Chêne', bg: 'bg-yellow-800', text: 'text-yellow-800', border: 'border-yellow-800', badgeBg: 'bg-amber-100 text-amber-900 border-amber-200' }
+];
+
+const EMOJI_PRESETS = ['🏛️', '💶', '🔧', '⚖️', '🛡️', '📜', '📬', '🏠', '📝', '💡', '🌳', '📁'];
 
 function renderMarkdownLine(line, idx) {
   const trimmed = line.trim();
@@ -37,120 +58,6 @@ function renderMarkdownLine(line, idx) {
   }
   return <p key={idx} className="text-xs text-slate-700 leading-relaxed font-normal">{line}</p>;
 }
-
-// Documents Authentiques de la SCI Hellenvilliers
-const INITIAL_STITCH_DOCUMENTS = [
-  {
-    id: 'doc-statuts-1',
-    title: 'Statuts Constitutifs Certifiés — SCI Hellenvilliers.pdf',
-    category: 'notaire',
-    categoryLabel: 'Acte Notarié',
-    date: '2023-08-07',
-    formattedDate: '7 août 2023',
-    size: '2.4 Mo',
-    sizeBytes: 2400000,
-    author: 'Me Goumard-Geffré',
-    thumbType: 'pdf',
-    thumbIcon: 'gavel',
-    thumbCenterTitle: 'ACTE AUTHENTIQUE',
-    thumbCenterSub: 'Étude Goumard-Geffré',
-    thumbBottomLeft: 'Enregistré au SIE',
-    thumbBottomRight: 'Signé',
-    topBadge: { text: 'PDF', bg: 'bg-error text-on-error' },
-    topIcon: 'verified',
-    topIconColor: 'text-tertiary-container',
-    centerCircleStyle: 'border-2 border-dashed border-tertiary-container/40 text-tertiary-container',
-    bottomRightColor: 'text-primary'
-  },
-  {
-    id: 'doc-kbis-3',
-    title: 'Extrait Kbis Récent — RCS Évreux 977529312.pdf',
-    category: 'notaire',
-    categoryLabel: 'Juridique & Greffe',
-    date: '2026-04-10',
-    formattedDate: '10 avril 2026',
-    size: '1.1 Mo',
-    sizeBytes: 1100000,
-    author: 'Henri Jamet',
-    thumbType: 'pdf',
-    thumbIcon: 'corporate_fare',
-    thumbCenterTitle: 'GREFFE DU TRIBUNAL',
-    thumbCenterSub: 'RCS Évreux 977 529 312',
-    thumbBottomLeft: 'Validité légale : Active',
-    thumbBottomRight: 'Conforme',
-    topBadge: { text: 'PDF', bg: 'bg-error text-on-error' },
-    topIcon: 'domain_verification',
-    topIconColor: 'text-secondary',
-    centerCircleStyle: 'bg-surface-container-lowest border border-border-subtle text-on-surface',
-    bottomRightColor: 'text-primary'
-  },
-  {
-    id: 'doc-ag-2026-4',
-    title: 'PV Assemblée Générale du 8 Août 2026 — Consensus & Budget.pdf',
-    category: 'ag',
-    categoryLabel: 'Procès-Verbaux AG',
-    date: '2026-08-08',
-    formattedDate: '8 août 2026',
-    size: '1.8 Mo',
-    sizeBytes: 1800000,
-    author: 'Frédéric & Henri J.',
-    thumbType: 'pdf',
-    thumbIcon: 'history_edu',
-    thumbCenterTitle: 'ASSEMBLÉE ANNUELLE',
-    thumbCenterSub: 'Résolutions votées à l\'unanimité',
-    thumbBottomLeft: 'Tous associés présents',
-    thumbBottomRight: 'Adopté',
-    topBadge: { text: 'PDF', bg: 'bg-error text-on-error' },
-    topIcon: 'how_to_vote',
-    topIconColor: 'text-secondary',
-    centerCircleStyle: 'bg-surface-container-lowest border border-border-subtle text-primary',
-    bottomRightColor: 'text-primary'
-  },
-  {
-    id: 'doc-assurance-axa-5',
-    title: 'Attestation Assurance Multirisque Rosing & Presbytère — AXA.pdf',
-    category: 'assurance',
-    categoryLabel: 'Assurances & Fiscal',
-    date: '2026-01-15',
-    formattedDate: '15 janv. 2026',
-    size: '920 Ko',
-    sizeBytes: 920000,
-    author: 'Henri Jamet',
-    thumbType: 'pdf',
-    thumbIcon: 'shield',
-    thumbCenterTitle: 'POLICE PNO AXA',
-    thumbCenterSub: 'Bâtiments & Parcs',
-    thumbBottomLeft: 'Échéance 31/12/2026',
-    thumbBottomRight: 'À jour',
-    topBadge: { text: 'PDF', bg: 'bg-error text-on-error' },
-    topIcon: 'security',
-    topIconColor: 'text-secondary',
-    centerCircleStyle: 'bg-surface-container-lowest border border-border-subtle text-primary',
-    bottomRightColor: 'text-secondary'
-  },
-  {
-    id: 'doc-rib-ca-7',
-    title: 'RIB Officiel — Compte Dédié Crédit Agricole SCI.pdf',
-    category: 'banque',
-    categoryLabel: 'Bancaire & Trésorerie',
-    date: '2026-01-02',
-    formattedDate: '2 janv. 2026',
-    size: '340 Ko',
-    sizeBytes: 340000,
-    author: 'Henri Jamet',
-    thumbType: 'pdf',
-    thumbIcon: 'credit_card',
-    thumbCenterTitle: 'CRÉDIT AGRICOLE NORMANDIE',
-    thumbCenterSub: 'IBAN FR76 •••• 9214',
-    thumbBottomLeft: 'Pour virements cotisations',
-    thumbBottomRight: 'Vérifié',
-    topBadge: { text: 'PDF', bg: 'bg-error text-on-error' },
-    topIcon: 'account_balance',
-    topIconColor: 'text-primary',
-    centerCircleStyle: 'bg-surface-container-lowest border border-border-subtle text-primary',
-    bottomRightColor: 'text-secondary'
-  }
-];
 
 // Initial Invoices Models — Vide par défaut pour n'afficher aucun faux document / facture inventée
 const INITIAL_INVOICES = [];
@@ -184,21 +91,10 @@ export default function AdminInfoPage({ currentUser }) {
     }
   };
 
-  useEffect(() => {
-    loadBankStatus();
-  }, []);
-
-  // Détermine si des données bancaires réelles et actives sont disponibles
-  const hasRealBankData = Boolean(
-    bankStatus &&
-    bankStatus.status === 'ok' &&
-    !bankStatus.needs_reauth &&
-    bankStatus.total_balance !== undefined &&
-    bankStatus.total_balance !== null
-  );
-
-  // Documents State
-  const [documents, setDocuments] = useState(INITIAL_STITCH_DOCUMENTS);
+  // Documents State (Zéro document fictif — branché sur /api/documents)
+  const [documents, setDocuments] = useState([]);
+  const [isDocsLoading, setIsDocsLoading] = useState(true);
+  const [categoriesList, setCategoriesList] = useState([]);
   const [searchQuery, setSearchQuery] = useState('');
   const [selectedCategory, setSelectedCategory] = useState('all');
   const [sortCriteria, setSortCriteria] = useState('recent');
@@ -214,11 +110,21 @@ export default function AdminInfoPage({ currentUser }) {
   const [selectedRenamingDoc, setSelectedRenamingDoc] = useState(null);
   const [renameInputValue, setRenameInputValue] = useState('');
 
-  // Forms State
+  // Upload Modal State (Annotation 5 : Organisme, Titre, Format Canonique, Catégories Custom)
+  const [uploadOrganisme, setUploadOrganisme] = useState('');
   const [uploadTitle, setUploadTitle] = useState('');
-  const [uploadCategory, setUploadCategory] = useState('devis');
+  const [uploadCategory, setUploadCategory] = useState('');
   const [uploadAuthor, setUploadAuthor] = useState(typeof activeUser === 'string' ? activeUser : 'Henri Jamet');
+  const [uploadFile, setUploadFile] = useState(null);
   const [uploadedFileName, setUploadedFileName] = useState('');
+  const [isSubmittingUpload, setIsSubmittingUpload] = useState(false);
+
+  // Création catégorie personnalisée inline
+  const [isNewCategoryOpen, setIsNewCategoryOpen] = useState(false);
+  const [newCatName, setNewCatName] = useState('');
+  const [newCatEmoji, setNewCatEmoji] = useState('📁');
+  const [newCatColor, setNewCatColor] = useState('slate');
+  const [isCreatingCat, setIsCreatingCat] = useState(false);
 
   const [operationType, setOperationType] = useState('in'); // 'in' | 'out'
   const [operationAmount, setOperationAmount] = useState('');
@@ -243,6 +149,41 @@ export default function AdminInfoPage({ currentUser }) {
     }, 3500);
   };
 
+  // Chargement réel des documents depuis /api/documents (Annotation 6)
+  const loadDocuments = async () => {
+    setIsDocsLoading(true);
+    try {
+      const data = await fetchDocuments();
+      setDocuments(Array.isArray(data) ? data : []);
+    } catch (err) {
+      console.warn('Erreur chargement documents réels:', err.message);
+      setDocuments([]);
+    } finally {
+      setIsDocsLoading(false);
+    }
+  };
+
+  // Chargement des catégories depuis /api/documents/categories (Annotation 5)
+  const loadCategories = async () => {
+    try {
+      const cats = await fetchDocumentCategories();
+      if (Array.isArray(cats) && cats.length > 0) {
+        setCategoriesList(cats);
+        if (!uploadCategory) {
+          setUploadCategory(cats[0].name);
+        }
+      }
+    } catch (err) {
+      console.warn('Erreur chargement catégories:', err.message);
+    }
+  };
+
+  useEffect(() => {
+    loadBankStatus();
+    loadDocuments();
+    loadCategories();
+  }, []);
+
   useEffect(() => {
     // Traitement du retour de consentement Open Banking Tilisy / Swan
     const searchParams = new URLSearchParams(window.location.search);
@@ -262,25 +203,41 @@ export default function AdminInfoPage({ currentUser }) {
   const [isFinancialModalOpen, setIsFinancialModalOpen] = useState(false);
   const [financialModalTab, setFinancialModalTab] = useState('grand_livre');
 
-  // Download simulation with real text/markdown Blob
-  const handleDownload = (docTitle, fileName) => {
-    const targetName = fileName || docTitle || 'document.pdf';
-    const blob = new Blob([`%PDF-1.4 Mock Document Archive SCI Hellenvilliers\nTitre: ${targetName}\nDate: ${new Date().toISOString()}\nAuthentifié conforme.`], { type: 'application/pdf' });
-    const url = URL.createObjectURL(blob);
-    const a = document.createElement('a');
-    a.href = url;
-    a.download = targetName;
-    document.body.appendChild(a);
-    a.click();
-    document.body.removeChild(a);
-    URL.revokeObjectURL(url);
-    showToast('Téléchargement lancé', targetName, 'download');
+  // Téléchargement réel de document
+  const handleDownload = (doc) => {
+    if (doc.file_url || doc.url) {
+      const targetUrl = doc.file_url || doc.url;
+      const targetName = doc.filename || doc.file_name || doc.name || doc.title || 'document.pdf';
+      const a = document.createElement('a');
+      a.href = targetUrl;
+      a.download = targetName;
+      document.body.appendChild(a);
+      a.click();
+      document.body.removeChild(a);
+      showToast('Téléchargement lancé', targetName, 'download');
+    } else {
+      showToast('Document indisponible', 'Le fichier lié n\'a pas pu être localisé.', 'warning');
+    }
+  };
+
+  // Suppression d'un document réel
+  const handleDeleteDoc = async (doc) => {
+    const docId = doc.id || doc.filename;
+    const docTitle = doc.title || doc.filename;
+    if (!window.confirm(`Confirmez-vous la suppression du document « ${docTitle} » ?`)) return;
+    try {
+      await deleteDocument(docId);
+      setDocuments((prev) => prev.filter((d) => d.id !== doc.id && d.filename !== doc.filename));
+      showToast('Document supprimé', `« ${docTitle} » a été supprimé.`, 'delete');
+    } catch (err) {
+      showToast('Erreur suppression', err.message, 'error');
+    }
   };
 
   // Rename document workflow
   const openRenameModal = (doc) => {
     setSelectedRenamingDoc(doc);
-    setRenameInputValue(doc.title);
+    setRenameInputValue(doc.title || doc.name || '');
     setIsRenameModalOpen(true);
   };
 
@@ -290,54 +247,88 @@ export default function AdminInfoPage({ currentUser }) {
 
     const newTitle = renameInputValue.trim();
     setDocuments((prev) =>
-      prev.map((d) => (d.id === selectedRenamingDoc.id ? { ...d, title: newTitle } : d))
+      prev.map((d) => (d.id === selectedRenamingDoc.id ? { ...d, title: newTitle, name: newTitle } : d))
     );
     setIsRenameModalOpen(false);
     showToast('Document renommé', 'Le titre a été actualisé.', 'edit');
   };
 
-  // Upload document workflow
-  const handleUploadSubmit = (e) => {
+  // Création d'une catégorie maison en base (Annotation 5)
+  const handleCreateCategorySubmit = async (e) => {
     e.preventDefault();
-    if (!uploadTitle.trim()) return;
+    if (!newCatName.trim()) return;
+    setIsCreatingCat(true);
+    try {
+      const created = await createDocumentCategory({
+        name: newCatName.trim(),
+        emoji: newCatEmoji || '📁',
+        color: newCatColor || 'slate'
+      });
+      setCategoriesList((prev) => {
+        const exists = prev.find((c) => c.name.toLowerCase() === created.name.toLowerCase());
+        if (exists) return prev;
+        return [...prev, created];
+      });
+      setUploadCategory(created.name);
+      setNewCatName('');
+      setIsNewCategoryOpen(false);
+      showToast('Catégorie créée', `Catégorie « ${created.name} » enregistrée en base.`, 'category');
+    } catch (err) {
+      showToast('Erreur', err.message, 'error');
+    } finally {
+      setIsCreatingCat(false);
+    }
+  };
 
-    const catLabels = {
-      notaire: 'Acte Notarié',
-      devis: 'Devis & Factures',
-      ag: 'Procès-Verbaux AG',
-      assurance: 'Assurances & Fiscal',
-      banque: 'Bancaire & Trésorerie',
-      travaux: 'Travaux & Diagnostics'
-    };
+  // Calcul dynamique du nom de fichier canonique : [ORGANISME] [MMAAAA] [Titre].[ext]
+  const getCanonicalFileName = useMemo(() => {
+    const org = (uploadOrganisme || '').trim() || 'ORGANISME';
+    const title = (uploadTitle || '').trim() || 'Titre du document';
+    const now = new Date();
+    const mm = String(now.getMonth() + 1).padStart(2, '0');
+    const yyyy = String(now.getFullYear());
+    const mmaaaa = `${mm}${yyyy}`;
 
-    const newDoc = {
-      id: `doc-upload-${Date.now()}`,
-      title: uploadTitle.trim().endsWith('.pdf') ? uploadTitle.trim() : `${uploadTitle.trim()}.pdf`,
-      category: uploadCategory,
-      categoryLabel: catLabels[uploadCategory] || 'Document',
-      date: new Date().toISOString().split('T')[0],
-      formattedDate: new Date().toLocaleDateString('fr-FR', { day: 'numeric', month: 'short', year: 'numeric' }),
-      size: '1.2 Mo',
-      sizeBytes: 1200000,
-      author: uploadAuthor || 'Henri Jamet',
-      thumbType: 'pdf',
-      thumbIcon: uploadCategory === 'notaire' ? 'gavel' : uploadCategory === 'travaux' ? 'construction' : 'description',
-      thumbCenterTitle: uploadTitle.substring(0, 20).toUpperCase(),
-      thumbCenterSub: catLabels[uploadCategory] || 'Archive SCI',
-      thumbBottomLeft: 'Déposé récemment',
-      thumbBottomRight: 'Nouveau',
-      topBadge: { text: 'PDF', bg: 'bg-error text-on-error' },
-      topIcon: 'verified',
-      topIconColor: 'text-primary',
-      centerCircleStyle: 'bg-sage-soft text-primary',
-      bottomRightColor: 'text-primary'
-    };
+    let ext = '.pdf';
+    if (uploadedFileName) {
+      const lastDot = uploadedFileName.lastIndexOf('.');
+      if (lastDot !== -1) {
+        ext = uploadedFileName.substring(lastDot);
+      }
+    }
+    return `${org} ${mmaaaa} ${title}${ext}`;
+  }, [uploadOrganisme, uploadTitle, uploadedFileName]);
 
-    setDocuments([newDoc, ...documents]);
-    setIsUploadModalOpen(false);
-    setUploadTitle('');
-    setUploadedFileName('');
-    showToast('Document téléversé', `« ${newDoc.title} » a été archivé dans le coffre SCI.`, 'cloud_done');
+  // Upload document workflow (Annotation 5 : Enregistrement réel avec format canonique et catégorie)
+  const handleUploadSubmit = async (e) => {
+    e.preventDefault();
+    if (!uploadOrganisme.trim() || !uploadTitle.trim() || !uploadFile) {
+      showToast('Champs requis', 'Veuillez renseigner l\'organisme, le titre et sélectionner un fichier.', 'warning');
+      return;
+    }
+
+    setIsSubmittingUpload(true);
+    try {
+      const formData = new FormData();
+      formData.append('file', uploadFile);
+      formData.append('organisme', uploadOrganisme.trim());
+      formData.append('title', uploadTitle.trim());
+      formData.append('category', uploadCategory || (categoriesList[0]?.name || 'Actes & Statuts'));
+      formData.append('uploaded_by', uploadAuthor || 'Henri Jamet');
+
+      const newDoc = await uploadDocument(formData);
+      setDocuments((prev) => [newDoc, ...prev]);
+      setIsUploadModalOpen(false);
+      setUploadOrganisme('');
+      setUploadTitle('');
+      setUploadFile(null);
+      setUploadedFileName('');
+      showToast('Document archivé', `« ${newDoc.filename || newDoc.name} » a été archivé avec succès.`, 'cloud_done');
+    } catch (err) {
+      showToast('Erreur de téléversement', err.message, 'error');
+    } finally {
+      setIsSubmittingUpload(false);
+    }
   };
 
   // Operation workflow
@@ -380,30 +371,36 @@ export default function AdminInfoPage({ currentUser }) {
     setIsOperationModalOpen(true);
   };
 
-  // Filter & Search Documents
+  // Filter & Search Documents (Données réelles)
   const filteredDocuments = useMemo(() => {
     const q = searchQuery.toLowerCase().trim();
 
     return documents
       .filter((doc) => {
-        const matchesCategory = selectedCategory === 'all' || doc.category === selectedCategory;
+        const docCat = doc.category || '';
+        const matchesCategory = selectedCategory === 'all' || docCat === selectedCategory;
+        const docTitle = (doc.title || doc.name || doc.filename || '').toLowerCase();
+        const docAuthor = (doc.uploaded_by || doc.author || '').toLowerCase();
+        const docOrg = (doc.notes || '').toLowerCase();
+
         const matchesSearch =
           q === '' ||
-          doc.title.toLowerCase().includes(q) ||
-          (doc.author && doc.author.toLowerCase().includes(q)) ||
-          (doc.categoryLabel && doc.categoryLabel.toLowerCase().includes(q)) ||
-          (doc.thumbCenterTitle && doc.thumbCenterTitle.toLowerCase().includes(q)) ||
-          (doc.formattedDate && doc.formattedDate.toLowerCase().includes(q));
+          docTitle.includes(q) ||
+          docAuthor.includes(q) ||
+          docOrg.includes(q) ||
+          docCat.toLowerCase().includes(q);
 
         return matchesCategory && matchesSearch;
       })
       .sort((a, b) => {
+        const titleA = a.title || a.name || a.filename || '';
+        const titleB = b.title || b.name || b.filename || '';
         if (sortCriteria === 'name') {
-          return a.title.localeCompare(b.title);
+          return titleA.localeCompare(titleB);
         } else if (sortCriteria === 'size') {
-          return (b.sizeBytes || 0) - (a.sizeBytes || 0);
+          return (b.file_size || b.sizeBytes || 0) - (a.file_size || a.sizeBytes || 0);
         } else {
-          return new Date(b.date).getTime() - new Date(a.date).getTime();
+          return new Date(b.created_at || b.date || 0).getTime() - new Date(a.created_at || a.date || 0).getTime();
         }
       });
   }, [documents, searchQuery, selectedCategory, sortCriteria]);
@@ -412,20 +409,43 @@ export default function AdminInfoPage({ currentUser }) {
   const categoryCounts = useMemo(() => {
     const counts = { all: documents.length };
     documents.forEach((d) => {
-      counts[d.category] = (counts[d.category] || 0) + 1;
+      const cat = d.category || 'Autre';
+      counts[cat] = (counts[cat] || 0) + 1;
     });
     return counts;
   }, [documents]);
 
-  const categories = [
-    { key: 'all', label: `Tous (${categoryCounts.all || 0})` },
-    { key: 'notaire', label: `Actes & Notarié (${categoryCounts.notaire || 0})` },
-    { key: 'devis', label: `Devis & Factures (${categoryCounts.devis || 0})` },
-    { key: 'ag', label: `Procès-Verbaux AG (${categoryCounts.ag || 0})` },
-    { key: 'assurance', label: `Assurances & Fiscal (${categoryCounts.assurance || 0})` },
-    { key: 'banque', label: `Bancaire & RIB (${categoryCounts.banque || 0})` },
-    { key: 'travaux', label: `Travaux & Diagnostics (${categoryCounts.travaux || 0})` }
-  ];
+  // Fusion dynamique des catégories en base et des documents existants
+  const categories = useMemo(() => {
+    const base = [{ key: 'all', label: `Tous (${documents.length})`, emoji: '📁' }];
+    
+    // Ajout des catégories issues de la base
+    const seen = new Set();
+    categoriesList.forEach((c) => {
+      seen.add(c.name);
+      base.push({
+        key: c.name,
+        label: `${c.emoji || '📁'} ${c.name} (${categoryCounts[c.name] || 0})`,
+        emoji: c.emoji || '📁',
+        color: c.color || 'slate'
+      });
+    });
+
+    // Compléter avec les catégories présentes dans les documents qui ne seraient pas dans categoriesList
+    documents.forEach((d) => {
+      if (d.category && !seen.has(d.category)) {
+        seen.add(d.category);
+        base.push({
+          key: d.category,
+          label: `📁 ${d.category} (${categoryCounts[d.category] || 0})`,
+          emoji: '📁',
+          color: 'slate'
+        });
+      }
+    });
+
+    return base;
+  }, [categoriesList, documents, categoryCounts]);
 
   return (
     <div className="w-full pb-16 animate-in fade-in duration-200">
@@ -616,10 +636,6 @@ export default function AdminInfoPage({ currentUser }) {
                 <h2 className="font-headline-sm text-headline-sm text-forest-deep font-semibold">
                   Mes Dernières Factures &amp; Règlements — Henri Jamet
                 </h2>
-                <span className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full text-xs font-semibold bg-sage-soft text-forest-deep border border-sage-border">
-                  <span className="material-symbols-outlined text-[14px]">priority_high</span>
-                  <span>Priorité Membre</span>
-                </span>
               </div>
               <p className="font-body-md text-xs text-on-surface-variant mt-0.5">
                 Suivi des factures, dépenses directes et remboursements SCI rattachés à votre profil
@@ -895,17 +911,41 @@ export default function AdminInfoPage({ currentUser }) {
       {/* ========================================================================= */}
       {/* SECTION 4 : DOCUMENTS DISPLAY (GRID VS LIST)                             */}
       {/* ========================================================================= */}
-      {filteredDocuments.length === 0 ? (
-        /* Empty State */
-        <div id="no-docs-empty" className="mt-space-lg p-space-xl bg-surface-container-lowest rounded-lg border border-border-subtle text-center flex flex-col items-center justify-center">
+      {isDocsLoading ? (
+        <div className="mt-space-lg p-space-xl bg-surface-container-lowest rounded-2xl border border-border-subtle text-center flex flex-col items-center justify-center shadow-xs">
+          <div className="w-12 h-12 rounded-full border-4 border-primary border-t-transparent animate-spin mb-3"></div>
+          <span className="text-sm font-semibold text-slate-700">Chargement des documents officiels...</span>
+        </div>
+      ) : documents.length === 0 ? (
+        /* État vide sobre et net (Annotation 6) */
+        <div id="documents-container" className="mt-space-lg p-space-xl bg-surface-container-lowest rounded-2xl border border-border-subtle text-center flex flex-col items-center justify-center shadow-xs">
           <div className="w-16 h-16 rounded-full bg-surface-container flex items-center justify-center text-outline mb-space-sm">
-            <span className="material-symbols-outlined text-[32px]">folder_off</span>
+            <span className="material-symbols-outlined text-[36px] text-slate-400">folder_open</span>
           </div>
-          <h3 className="font-headline-sm text-headline-sm text-on-surface font-semibold">
-            Aucun document trouvé
+          <h3 className="font-headline-sm text-base sm:text-lg text-forest-deep font-semibold max-w-lg leading-relaxed">
+            Aucun document archivé pour le moment. Cliquez sur « + Déposer une pièce » pour archiver un document.
           </h3>
-          <p className="font-body-md text-body-md text-on-surface-variant mt-1 max-w-md">
-            Aucun justificatif ou acte ne correspond à vos critères de recherche ou au filtre sélectionné.
+          <button
+            id="btn-empty-upload"
+            type="button"
+            onClick={() => setIsUploadModalOpen(true)}
+            className="mt-space-md inline-flex items-center gap-2 h-[48px] px-6 rounded-DEFAULT bg-primary text-white font-label-md text-sm font-bold shadow-xs hover:bg-forest-deep transition-all cursor-pointer"
+          >
+            <span className="material-symbols-outlined text-[20px]">upload_file</span>
+            <span>+ Déposer une pièce</span>
+          </button>
+        </div>
+      ) : filteredDocuments.length === 0 ? (
+        /* Filtre / Recherche sans résultat */
+        <div id="no-docs-empty" className="mt-space-lg p-space-xl bg-surface-container-lowest rounded-2xl border border-border-subtle text-center flex flex-col items-center justify-center shadow-xs">
+          <div className="w-16 h-16 rounded-full bg-surface-container flex items-center justify-center text-outline mb-space-sm">
+            <span className="material-symbols-outlined text-[32px] text-slate-400">search_off</span>
+          </div>
+          <h3 className="font-headline-sm text-base text-on-surface font-semibold">
+            Aucun document trouvé pour cette recherche
+          </h3>
+          <p className="font-body-md text-xs text-on-surface-variant mt-1 max-w-md">
+            Aucun document ne correspond à vos filtres actuels.
           </p>
           <button
             id="btn-reset-filters"
@@ -914,180 +954,192 @@ export default function AdminInfoPage({ currentUser }) {
               setSearchQuery('');
               setSelectedCategory('all');
             }}
-            className="mt-space-md inline-flex items-center gap-2 h-[48px] px-5 rounded-DEFAULT bg-surface-container-lowest border-2 border-primary text-primary font-label-md text-label-md hover:bg-sage-soft transition-all cursor-pointer"
+            className="mt-space-md inline-flex items-center gap-2 h-[44px] px-5 rounded-DEFAULT bg-surface-container-lowest border-2 border-primary text-primary font-label-md text-xs font-semibold hover:bg-sage-soft transition-all cursor-pointer"
           >
-            <span className="material-symbols-outlined text-[20px]">refresh</span>
+            <span className="material-symbols-outlined text-[18px]">refresh</span>
             <span>Réinitialiser les filtres</span>
           </button>
         </div>
       ) : viewMode === 'grid' ? (
-        /* Grid Layout (4 columns on lg) */
+        /* Grid Layout (4 colonnes) */
         <div id="documents-container" className="mt-space-md grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-gutter transition-opacity duration-200">
-          {filteredDocuments.map((doc) => (
-            <div
-              key={doc.id}
-              className="doc-card group bg-surface-container-lowest rounded-lg border border-border-subtle p-space-sm flex flex-col justify-between shadow-[0_2px_8px_-2px_rgba(6,95,70,0.04),0_6px_20px_-4px_rgba(15,23,42,0.05)] hover:border-sage-border hover:shadow-[0_8px_24px_-4px_rgba(6,95,70,0.09)] transition-all"
-            >
-              <div>
-                
-                {/* Document Thumbnail Mockup */}
-                <div className="relative w-full h-44 rounded-DEFAULT bg-surface-container overflow-hidden flex flex-col justify-between p-3 border border-border-subtle/60">
-                  <div className="flex items-center justify-between">
-                    <span className={`inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full text-xs font-semibold ${doc.topBadge?.bg || 'bg-error text-on-error'} uppercase`}>
-                      {doc.topBadge?.text || 'PDF'}
-                    </span>
-                    {doc.topRightBadge ? (
-                      <span className={`inline-flex items-center px-2 py-0.5 rounded text-[11px] ${doc.topRightBadge.bg}`}>
-                        {doc.topRightBadge.text}
-                      </span>
-                    ) : doc.topIcon ? (
-                      <span className={`material-symbols-outlined ${doc.topIconColor || 'text-tertiary-container'} text-[20px]`}>
-                        {doc.topIcon}
-                      </span>
-                    ) : null}
-                  </div>
+          {filteredDocuments.map((doc) => {
+            const docExt = (doc.filename || doc.file_name || doc.file_url || '').split('.').pop()?.toUpperCase() || 'PDF';
+            const catObj = categoriesList.find((c) => c.name === doc.category);
+            const badgeColorClass = COLOR_OPTIONS.find((c) => c.id === catObj?.color)?.badgeBg || 'bg-slate-100 text-slate-800 border-slate-200';
 
-                  {/* Stamp Graphic & Title in Center */}
-                  <div className="flex flex-col items-center justify-center my-auto text-center px-2">
-                    <div className={`w-12 h-12 rounded-full flex items-center justify-center mb-1 ${doc.centerCircleStyle || 'bg-sage-soft text-primary'}`}>
-                      <span className="material-symbols-outlined text-[24px]">
-                        {doc.thumbIcon || 'description'}
+            return (
+              <div
+                key={doc.id || doc.filename}
+                className="doc-card group bg-surface-container-lowest rounded-lg border border-border-subtle p-space-sm flex flex-col justify-between shadow-[0_2px_8px_-2px_rgba(6,95,70,0.04),0_6px_20px_-4px_rgba(15,23,42,0.05)] hover:border-sage-border hover:shadow-[0_8px_24px_-4px_rgba(6,95,70,0.09)] transition-all"
+              >
+                <div>
+                  {/* Document Thumbnail Card */}
+                  <div className="relative w-full h-44 rounded-DEFAULT bg-surface-container overflow-hidden flex flex-col justify-between p-3 border border-border-subtle/60">
+                    <div className="flex items-center justify-between">
+                      <span className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full text-xs font-semibold bg-emerald-700 text-white uppercase shadow-xs">
+                        {docExt}
+                      </span>
+                      <span className="text-xs text-on-surface-variant font-mono">
+                        {doc.size || '—'}
                       </span>
                     </div>
-                    <span className="font-headline-sm text-xs font-bold text-forest-deep line-clamp-1">
-                      {doc.thumbCenterTitle}
-                    </span>
-                    <span className="text-[11px] text-on-surface-variant font-label-sm">
-                      {doc.thumbCenterSub}
-                    </span>
+
+                    {/* Stamp & Category Center */}
+                    <div className="flex flex-col items-center justify-center my-auto text-center px-2">
+                      <div className="w-12 h-12 rounded-full flex items-center justify-center mb-1 bg-sage-soft text-primary">
+                        <span className="text-2xl">{catObj?.emoji || '📁'}</span>
+                      </div>
+                      <span className="font-headline-sm text-xs font-bold text-forest-deep line-clamp-1" title={doc.title || doc.name}>
+                        {doc.title || doc.name}
+                      </span>
+                      <span className="text-[11px] text-on-surface-variant font-label-sm truncate max-w-full">
+                        {doc.notes ? `Org : ${doc.notes}` : doc.category}
+                      </span>
+                    </div>
+
+                    {/* Bottom Strip */}
+                    <div className="flex items-center justify-between text-[11px] text-on-surface-variant bg-surface-container-lowest/80 backdrop-blur-xs px-2 py-1 rounded">
+                      <span className="truncate max-w-[120px]">{doc.uploaded_by || 'Henri Jamet'}</span>
+                      <span className="font-semibold text-primary">{doc.upload_date || 'Archivé'}</span>
+                    </div>
                   </div>
 
-                  {/* Bottom Strip */}
-                  <div className="flex items-center justify-between text-[11px] text-on-surface-variant bg-surface-container-lowest/80 backdrop-blur-xs px-2 py-1 rounded">
-                    <span>{doc.thumbBottomLeft}</span>
-                    <span className={`font-semibold ${doc.bottomRightColor || 'text-primary'}`}>
-                      {doc.thumbBottomRight}
+                  {/* Document Metadata */}
+                  <div className="mt-3">
+                    <span className={`inline-flex items-center gap-1 px-2.5 py-0.5 rounded text-[11px] font-semibold border ${badgeColorClass} mb-1.5`}>
+                      <span>{catObj?.emoji || '📁'}</span>
+                      <span>{doc.category || 'Général'}</span>
                     </span>
+                    <h3
+                      className="font-headline-sm text-sm text-forest-deep font-bold line-clamp-2 leading-tight doc-title-text"
+                      title={doc.filename || doc.title}
+                    >
+                      {doc.filename || doc.title}
+                    </h3>
+                    <p className="font-body-md text-xs text-on-surface-variant mt-1">
+                      {doc.upload_date || 'Date non renseignée'} • {doc.size || '—'} • {doc.uploaded_by || 'Henri Jamet'}
+                    </p>
                   </div>
                 </div>
 
-                {/* Document Metadata */}
-                <div className="mt-3">
-                  <span className="inline-block px-2 py-0.5 rounded text-[11px] font-semibold bg-sage-soft text-forest-deep mb-1">
-                    {doc.categoryLabel}
-                  </span>
-                  <h3
-                    className="font-headline-sm text-sm text-forest-deep font-bold line-clamp-2 leading-tight doc-title-text"
-                    title={doc.title}
+                {/* Card Actions */}
+                <div className="mt-4 pt-3 border-t border-border-subtle flex items-center justify-between gap-1.5">
+                  <button
+                    type="button"
+                    onClick={() => handleDownload(doc)}
+                    className="btn-download flex-1 h-[40px] px-2 rounded-DEFAULT bg-surface-container-lowest border-2 border-primary text-primary font-label-sm text-xs hover:bg-sage-soft transition-all flex items-center justify-center gap-1 cursor-pointer font-bold"
+                    title="Télécharger le document"
                   >
-                    {doc.title}
-                  </h3>
-                  <p className="font-body-md text-xs text-on-surface-variant mt-1">
-                    {doc.formattedDate} • {doc.size} • {doc.author}
-                  </p>
+                    <span className="material-symbols-outlined text-[16px]">download</span>
+                    <span>Télécharger</span>
+                  </button>
+
+                  <button
+                    type="button"
+                    onClick={() => openRenameModal(doc)}
+                    className="btn-rename p-2 h-[40px] w-[40px] rounded-DEFAULT bg-surface-container-lowest border-2 border-border-subtle text-on-surface-variant hover:text-primary hover:border-primary transition-all flex items-center justify-center cursor-pointer"
+                    title="Renommer le fichier"
+                  >
+                    <span className="material-symbols-outlined text-[18px]">edit</span>
+                  </button>
+
+                  <button
+                    type="button"
+                    onClick={() => handleDeleteDoc(doc)}
+                    className="p-2 h-[40px] w-[40px] rounded-DEFAULT bg-surface-container-lowest border-2 border-rose-200 text-rose-600 hover:bg-rose-50 transition-all flex items-center justify-center cursor-pointer"
+                    title="Supprimer définitivement"
+                  >
+                    <span className="material-symbols-outlined text-[18px]">delete</span>
+                  </button>
                 </div>
-
               </div>
-
-              {/* Card Action Buttons */}
-              <div className="mt-4 pt-3 border-t border-border-subtle flex items-center justify-between gap-1">
-                <button
-                  type="button"
-                  onClick={() => handleDownload(doc.title, doc.title)}
-                  className="btn-download flex-1 h-[42px] px-2 rounded-DEFAULT bg-surface-container-lowest border-2 border-primary text-primary font-label-sm text-xs hover:bg-sage-soft transition-all flex items-center justify-center gap-1 cursor-pointer"
-                  title="Télécharger le document"
-                >
-                  <span className="material-symbols-outlined text-[16px]">download</span>
-                  <span>Télécharger</span>
-                </button>
-
-                <button
-                  type="button"
-                  onClick={() => openRenameModal(doc)}
-                  className="btn-rename p-2 h-[42px] w-[42px] rounded-DEFAULT bg-surface-container-lowest border-2 border-border-subtle text-on-surface-variant hover:text-primary hover:border-primary transition-all flex items-center justify-center cursor-pointer"
-                  title="Renommer le fichier"
-                >
-                  <span className="material-symbols-outlined text-[18px]">edit</span>
-                </button>
-              </div>
-
-            </div>
-          ))}
+            );
+          })}
         </div>
       ) : (
         /* List Layout */
         <div id="documents-container" className="mt-space-md flex flex-col gap-3 transition-opacity duration-200">
-          {filteredDocuments.map((doc) => (
-            <div
-              key={doc.id}
-              className="doc-card group bg-surface-container-lowest rounded-DEFAULT border border-border-subtle p-3 flex flex-col md:flex-row md:items-center justify-between gap-3 shadow-xs hover:border-sage-border transition-all"
-            >
-              <div className="flex items-center gap-3">
-                <div className={`w-10 h-10 rounded-full flex items-center justify-center shrink-0 ${doc.centerCircleStyle || 'bg-sage-soft text-primary'}`}>
-                  <span className="material-symbols-outlined text-[20px]">
-                    {doc.thumbIcon || 'description'}
-                  </span>
-                </div>
-                <div>
-                  <div className="flex items-center gap-2">
-                    <span className="px-2 py-0.5 rounded text-[10px] font-semibold bg-sage-soft text-forest-deep">
-                      {doc.categoryLabel}
-                    </span>
-                    <span className="text-xs font-mono text-on-surface-variant">{doc.size}</span>
-                  </div>
-                  <h3 className="font-headline-sm text-sm text-forest-deep font-bold line-clamp-1 doc-title-text mt-0.5" title={doc.title}>
-                    {doc.title}
-                  </h3>
-                  <p className="font-body-md text-xs text-on-surface-variant">
-                    {doc.formattedDate} • Associé : {doc.author}
-                  </p>
-                </div>
-              </div>
+          {filteredDocuments.map((doc) => {
+            const catObj = categoriesList.find((c) => c.name === doc.category);
+            const badgeColorClass = COLOR_OPTIONS.find((c) => c.id === catObj?.color)?.badgeBg || 'bg-slate-100 text-slate-800 border-slate-200';
 
-              <div className="flex items-center gap-2 self-end md:self-auto shrink-0">
-                <button
-                  type="button"
-                  onClick={() => handleDownload(doc.title, doc.title)}
-                  className="btn-download h-[38px] px-3 rounded-DEFAULT bg-surface-container-lowest border-2 border-primary text-primary font-label-sm text-xs hover:bg-sage-soft transition-all flex items-center gap-1 cursor-pointer"
-                >
-                  <span className="material-symbols-outlined text-[16px]">download</span>
-                  <span>Télécharger</span>
-                </button>
-                <button
-                  type="button"
-                  onClick={() => openRenameModal(doc)}
-                  className="btn-rename p-2 h-[38px] w-[38px] rounded-DEFAULT bg-surface-container-lowest border-2 border-border-subtle text-on-surface-variant hover:text-primary hover:border-primary transition-all flex items-center justify-center cursor-pointer"
-                  title="Renommer"
-                >
-                  <span className="material-symbols-outlined text-[18px]">edit</span>
-                </button>
+            return (
+              <div
+                key={doc.id || doc.filename}
+                className="doc-card group bg-surface-container-lowest rounded-DEFAULT border border-border-subtle p-3 flex flex-col md:flex-row md:items-center justify-between gap-3 shadow-xs hover:border-sage-border transition-all"
+              >
+                <div className="flex items-center gap-3">
+                  <div className="w-10 h-10 rounded-full flex items-center justify-center shrink-0 bg-sage-soft text-primary text-xl">
+                    {catObj?.emoji || '📁'}
+                  </div>
+                  <div>
+                    <div className="flex items-center gap-2 flex-wrap">
+                      <span className={`px-2 py-0.5 rounded text-[10px] font-semibold border ${badgeColorClass}`}>
+                        {catObj?.emoji || '📁'} {doc.category}
+                      </span>
+                      <span className="text-xs font-mono text-on-surface-variant">{doc.size || '—'}</span>
+                    </div>
+                    <h3 className="font-headline-sm text-sm text-forest-deep font-bold line-clamp-1 doc-title-text mt-0.5" title={doc.filename || doc.title}>
+                      {doc.filename || doc.title}
+                    </h3>
+                    <p className="font-body-md text-xs text-on-surface-variant">
+                      {doc.upload_date || 'Date'} • Déposant : {doc.uploaded_by || 'Henri Jamet'} {doc.notes ? `• Org : ${doc.notes}` : ''}
+                    </p>
+                  </div>
+                </div>
+
+                <div className="flex items-center gap-2 self-end md:self-auto shrink-0">
+                  <button
+                    type="button"
+                    onClick={() => handleDownload(doc)}
+                    className="btn-download h-[38px] px-3 rounded-DEFAULT bg-surface-container-lowest border-2 border-primary text-primary font-label-sm text-xs hover:bg-sage-soft transition-all flex items-center gap-1 cursor-pointer font-bold"
+                  >
+                    <span className="material-symbols-outlined text-[16px]">download</span>
+                    <span>Télécharger</span>
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => openRenameModal(doc)}
+                    className="btn-rename p-2 h-[38px] w-[38px] rounded-DEFAULT bg-surface-container-lowest border-2 border-border-subtle text-on-surface-variant hover:text-primary hover:border-primary transition-all flex items-center justify-center cursor-pointer"
+                    title="Renommer"
+                  >
+                    <span className="material-symbols-outlined text-[18px]">edit</span>
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => handleDeleteDoc(doc)}
+                    className="p-2 h-[38px] w-[38px] rounded-DEFAULT bg-surface-container-lowest border-2 border-rose-200 text-rose-600 hover:bg-rose-50 transition-all flex items-center justify-center cursor-pointer"
+                    title="Supprimer"
+                  >
+                    <span className="material-symbols-outlined text-[18px]">delete</span>
+                  </button>
+                </div>
               </div>
-            </div>
-          ))}
+            );
+          })}
         </div>
       )}
 
-
-
       {/* ========================================================================= */}
-      {/* MODAL 1 : TÉLÉVERSER UN DOCUMENT (#modal-upload)                           */}
+      {/* MODAL 1 : TÉLÉVERSER UN DOCUMENT CANONIQUE (#modal-upload) (Annotation 5)   */}
       {/* ========================================================================= */}
       {isUploadModalOpen && (
         <div id="modal-upload" className="fixed inset-0 z-50 bg-inverse-surface/45 backdrop-blur-xs flex items-center justify-center p-4">
-          <div className="bg-surface-container-lowest w-full max-w-xl rounded-lg p-space-lg shadow-[0_20px_48px_-12px_rgba(15,23,42,0.20)] border border-border-subtle relative max-h-[90vh] overflow-y-auto">
+          <div className="bg-surface-container-lowest w-full max-w-xl rounded-2xl p-space-lg shadow-[0_20px_48px_-12px_rgba(15,23,42,0.20)] border border-border-subtle relative max-h-[92vh] overflow-y-auto">
             
             {/* Modal Header */}
             <div className="flex items-center justify-between pb-space-sm border-b border-border-subtle">
-              <div className="flex items-center gap-2">
+              <div className="flex items-center gap-2.5">
                 <div className="w-10 h-10 rounded-full bg-sage-soft flex items-center justify-center text-primary">
                   <span className="material-symbols-outlined text-[22px]">upload_file</span>
                 </div>
                 <div>
-                  <h3 className="font-headline-sm text-headline-sm text-forest-deep font-semibold">
-                    Téléverser un document
+                  <h3 className="font-headline-sm text-base sm:text-lg text-forest-deep font-bold">
+                    Téléverser un document officiel
                   </h3>
                   <p className="font-body-md text-xs text-on-surface-variant">
-                    Archivage sécurisé dans le dossier officiel SCI Hellenvilliers
+                    Nommage canonique automatique &amp; archivage pérenne SCI Hellenvilliers
                   </p>
                 </div>
               </div>
@@ -1102,31 +1154,35 @@ export default function AdminInfoPage({ currentUser }) {
             </div>
 
             {/* Modal Form */}
-            <form id="upload-form" onSubmit={handleUploadSubmit} className="mt-space-md flex flex-col gap-space-md">
+            <form id="upload-form" onSubmit={handleUploadSubmit} className="mt-space-md flex flex-col gap-4">
               
               {/* Drag & Drop Zone */}
               <div>
-                <label className="block font-label-md text-label-md text-on-surface mb-2 font-semibold">
-                  Fichier numérique (PDF, scan ou image)
+                <label className="block font-label-md text-xs font-bold text-on-surface mb-1.5">
+                  Fichier numérique certifié (PDF, Scan, Image) *
                 </label>
-                <label className="border-2 border-dashed border-border-subtle hover:border-primary rounded-DEFAULT p-space-lg flex flex-col items-center justify-center text-center bg-surface-container-low cursor-pointer transition-all block">
-                  <span className="material-symbols-outlined text-[40px] text-primary mb-2">cloud_upload</span>
-                  <span className="font-label-md text-label-md text-on-surface font-semibold">
+                <label className="border-2 border-dashed border-border-subtle hover:border-primary rounded-DEFAULT p-space-md flex flex-col items-center justify-center text-center bg-surface-container-low cursor-pointer transition-all block">
+                  <span className="material-symbols-outlined text-[36px] text-primary mb-1">cloud_upload</span>
+                  <span className="font-label-md text-sm text-on-surface font-semibold">
                     {uploadedFileName ? uploadedFileName : "Glissez votre document ici ou parcourez vos dossiers"}
                   </span>
-                  <span className="font-body-md text-xs text-on-surface-variant mt-1">
-                    PDF certifié, PNG ou JPEG haute résolution (Max 25 Mo)
+                  <span className="font-body-md text-xs text-on-surface-variant mt-0.5">
+                    Format officiel PDF recommandé, scan ou image (Max 25 Mo)
                   </span>
                   <input
                     id="file-drop-input"
                     type="file"
-                    accept=".pdf,.png,.jpg,.jpeg"
+                    required
+                    accept=".pdf,.png,.jpg,.jpeg,.doc,.docx"
                     className="hidden"
                     onChange={(e) => {
                       if (e.target.files && e.target.files[0]) {
-                        setUploadedFileName(e.target.files[0].name);
+                        const file = e.target.files[0];
+                        setUploadFile(file);
+                        setUploadedFileName(file.name);
                         if (!uploadTitle) {
-                          setUploadTitle(e.target.files[0].name);
+                          const base = file.name.substring(0, file.name.lastIndexOf('.')) || file.name;
+                          setUploadTitle(base);
                         }
                       }
                     }}
@@ -1134,73 +1190,206 @@ export default function AdminInfoPage({ currentUser }) {
                 </label>
               </div>
 
-              {/* Document Title */}
+              {/* Champ 1 : Organisme émetteur ou destinataire */}
               <div>
-                <label htmlFor="doc-title-input" className="block font-label-md text-label-md text-on-surface mb-2 font-semibold">
-                  Intitulé exact du document
+                <label htmlFor="doc-organisme-input" className="block font-label-md text-xs font-bold text-on-surface mb-1">
+                  1. Organisme émetteur ou destinataire *
+                </label>
+                <input
+                  id="doc-organisme-input"
+                  type="text"
+                  required
+                  placeholder="Ex : SPoMi, Postfinance, Notaire, Declercq, Enedis, AXA..."
+                  value={uploadOrganisme}
+                  onChange={(e) => setUploadOrganisme(e.target.value)}
+                  className="w-full h-[48px] px-4 bg-surface-container-lowest border-2 border-border-subtle rounded-DEFAULT font-body-md text-sm text-on-surface focus:outline-none focus:border-primary focus:ring-4 focus:ring-primary/10 transition-all"
+                />
+              </div>
+
+              {/* Champ 2 : Titre du document */}
+              <div>
+                <label htmlFor="doc-title-input" className="block font-label-md text-xs font-bold text-on-surface mb-1">
+                  2. Titre du document *
                 </label>
                 <input
                   id="doc-title-input"
                   type="text"
                   required
-                  placeholder="Ex : Facture Chauffage Électrique Presbytère 2026..."
+                  placeholder="Ex : Permis B Fribourg, Extrait RNE, Facture entretien chaudière..."
                   value={uploadTitle}
                   onChange={(e) => setUploadTitle(e.target.value)}
-                  className="w-full h-[52px] px-4 bg-surface-container-lowest border-2 border-border-subtle rounded-DEFAULT font-body-md text-body-md text-on-surface focus:outline-none focus:border-primary focus:ring-4 focus:ring-primary/10 transition-all"
+                  className="w-full h-[48px] px-4 bg-surface-container-lowest border-2 border-border-subtle rounded-DEFAULT font-body-md text-sm text-on-surface focus:outline-none focus:border-primary focus:ring-4 focus:ring-primary/10 transition-all"
                 />
               </div>
 
-              {/* Category & Author */}
-              <div className="grid grid-cols-1 sm:grid-cols-2 gap-space-sm">
-                <div>
-                  <label htmlFor="doc-category-select" className="block font-label-md text-label-md text-on-surface mb-2 font-semibold">
-                    Catégorie d'archive
-                  </label>
-                  <select
-                    id="doc-category-select"
-                    value={uploadCategory}
-                    onChange={(e) => setUploadCategory(e.target.value)}
-                    className="w-full h-[52px] px-3 bg-surface-container-lowest border-2 border-border-subtle rounded-DEFAULT font-body-md text-body-md text-on-surface focus:outline-none focus:border-primary transition-all cursor-pointer"
-                  >
-                    <option value="devis">Devis &amp; Factures</option>
-                    <option value="notaire">Actes &amp; Notarié</option>
-                    <option value="ag">Procès-Verbaux AG</option>
-                    <option value="assurance">Assurances &amp; Fiscal</option>
-                    <option value="banque">Bancaire &amp; Trésorerie</option>
-                    <option value="travaux">Travaux &amp; Diagnostics</option>
-                  </select>
+              {/* Champ 3 : Calcul automatique du Nom Canonique en direct */}
+              <div className="p-3.5 bg-surface-container-low rounded-DEFAULT border border-border-subtle text-xs space-y-1">
+                <div className="flex items-center justify-between text-slate-500 font-medium">
+                  <span>Nom d'enregistrement canonique officiel :</span>
+                  <span className="font-mono text-[10px] text-primary bg-white px-2 py-0.5 rounded border border-border-subtle font-bold">
+                    ORGANISME MMAAAA Titre.ext
+                  </span>
                 </div>
-
-                <div>
-                  <label htmlFor="doc-author-input" className="block font-label-md text-label-md text-on-surface mb-2 font-semibold">
-                    Déposant / Associé
-                  </label>
-                  <input
-                    id="doc-author-input"
-                    type="text"
-                    value={uploadAuthor}
-                    onChange={(e) => setUploadAuthor(e.target.value)}
-                    className="w-full h-[52px] px-4 bg-surface-container-lowest border-2 border-border-subtle rounded-DEFAULT font-body-md text-body-md text-on-surface focus:outline-none focus:border-primary transition-all"
-                  />
+                <div className="font-mono text-xs sm:text-sm font-bold text-forest-deep break-all">
+                  {getCanonicalFileName}
                 </div>
               </div>
 
-              {/* Actions */}
-              <div className="mt-space-sm pt-space-sm border-t border-border-subtle flex items-center justify-end gap-space-sm">
+              {/* Sélecteur de Catégorie & Bouton + Nouvelle catégorie (Annotation 5) */}
+              <div>
+                <div className="flex items-center justify-between mb-1.5">
+                  <label htmlFor="doc-category-select" className="font-label-md text-xs font-bold text-on-surface">
+                    Catégorie d'archive *
+                  </label>
+                  <button
+                    type="button"
+                    onClick={() => setIsNewCategoryOpen(!isNewCategoryOpen)}
+                    className="text-xs text-primary hover:text-forest-deep font-bold inline-flex items-center gap-1 cursor-pointer"
+                  >
+                    <span className="material-symbols-outlined text-[16px]">
+                      {isNewCategoryOpen ? 'remove_circle' : 'add_circle'}
+                    </span>
+                    <span>{isNewCategoryOpen ? 'Masquer' : '+ Nouvelle catégorie'}</span>
+                  </button>
+                </div>
+
+                {/* Sous-formulaire de création de catégorie maison */}
+                {isNewCategoryOpen && (
+                  <div className="p-3.5 mb-3 bg-surface-container-low rounded-DEFAULT border border-primary/30 space-y-3 animate-in fade-in duration-150">
+                    <div className="flex items-center justify-between">
+                      <span className="text-xs font-bold text-forest-deep flex items-center gap-1">
+                        <span className="material-symbols-outlined text-[16px] text-primary">palette</span>
+                        Créer une catégorie maison
+                      </span>
+                    </div>
+
+                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+                      <div>
+                        <label className="block text-[11px] font-semibold text-slate-700 mb-1">Nom</label>
+                        <input
+                          type="text"
+                          placeholder="Ex: Assurance Habitation"
+                          value={newCatName}
+                          onChange={(e) => setNewCatName(e.target.value)}
+                          className="w-full h-9 px-2.5 bg-white border border-border-subtle rounded text-xs focus:outline-none focus:border-primary"
+                        />
+                      </div>
+                      <div>
+                        <label className="block text-[11px] font-semibold text-slate-700 mb-1">Émoji</label>
+                        <div className="flex items-center gap-1">
+                          <input
+                            type="text"
+                            value={newCatEmoji}
+                            onChange={(e) => setNewCatEmoji(e.target.value)}
+                            className="w-12 h-9 text-center bg-white border border-border-subtle rounded text-sm focus:outline-none focus:border-primary"
+                            maxLength={3}
+                          />
+                          <div className="flex items-center gap-0.5 overflow-x-auto py-0.5">
+                            {EMOJI_PRESETS.slice(0, 6).map((em) => (
+                              <button
+                                key={em}
+                                type="button"
+                                onClick={() => setNewCatEmoji(em)}
+                                className={`w-7 h-7 text-xs rounded hover:bg-white cursor-pointer ${newCatEmoji === em ? 'ring-2 ring-primary bg-white' : ''}`}
+                              >
+                                {em}
+                              </button>
+                            ))}
+                          </div>
+                        </div>
+                      </div>
+                    </div>
+
+                    {/* Palette de couleurs sobres */}
+                    <div>
+                      <label className="block text-[11px] font-semibold text-slate-700 mb-1.5">Couleur associée</label>
+                      <div className="flex items-center gap-1.5 flex-wrap">
+                        {COLOR_OPTIONS.map((c) => (
+                          <button
+                            key={c.id}
+                            type="button"
+                            onClick={() => setNewCatColor(c.id)}
+                            className={`flex items-center gap-1 px-2.5 py-1 rounded-full text-xs font-medium border cursor-pointer transition-all ${
+                              newCatColor === c.id
+                                ? 'ring-2 ring-primary ring-offset-1 font-bold shadow-xs'
+                                : 'opacity-80 hover:opacity-100'
+                            } ${c.badgeBg}`}
+                          >
+                            <span className={`w-2.5 h-2.5 rounded-full ${c.bg}`}></span>
+                            <span>{c.name}</span>
+                          </button>
+                        ))}
+                      </div>
+                    </div>
+
+                    <div className="flex items-center justify-end gap-2 pt-1 border-t border-border-subtle">
+                      <button
+                        type="button"
+                        onClick={() => setIsNewCategoryOpen(false)}
+                        className="px-3 py-1.5 rounded text-xs text-slate-600 hover:bg-white"
+                      >
+                        Annuler
+                      </button>
+                      <button
+                        type="button"
+                        onClick={handleCreateCategorySubmit}
+                        disabled={isCreatingCat || !newCatName.trim()}
+                        className="px-3 py-1.5 rounded bg-primary text-white text-xs font-bold hover:bg-forest-deep disabled:opacity-50 flex items-center gap-1 cursor-pointer"
+                      >
+                        {isCreatingCat ? 'Création...' : 'Valider la catégorie'}
+                      </button>
+                    </div>
+                  </div>
+                )}
+
+                {/* Liste des catégories disponibles */}
+                <select
+                  id="doc-category-select"
+                  value={uploadCategory}
+                  onChange={(e) => setUploadCategory(e.target.value)}
+                  className="w-full h-[48px] px-3 bg-surface-container-lowest border-2 border-border-subtle rounded-DEFAULT font-body-md text-sm text-on-surface focus:outline-none focus:border-primary transition-all cursor-pointer"
+                >
+                  {categoriesList.map((cat) => (
+                    <option key={cat.id || cat.name} value={cat.name}>
+                      {cat.emoji || '📁'} {cat.name}
+                    </option>
+                  ))}
+                </select>
+              </div>
+
+              {/* Déposant */}
+              <div>
+                <label htmlFor="doc-author-input" className="block font-label-md text-xs font-bold text-on-surface mb-1">
+                  Déposant / Associé
+                </label>
+                <input
+                  id="doc-author-input"
+                  type="text"
+                  value={uploadAuthor}
+                  onChange={(e) => setUploadAuthor(e.target.value)}
+                  className="w-full h-[48px] px-4 bg-surface-container-lowest border-2 border-border-subtle rounded-DEFAULT font-body-md text-sm text-on-surface focus:outline-none focus:border-primary transition-all"
+                />
+              </div>
+
+              {/* Actions de la modale */}
+              <div className="mt-2 pt-space-sm border-t border-border-subtle flex items-center justify-end gap-space-sm">
                 <button
                   id="btn-cancel-upload"
                   type="button"
                   onClick={() => setIsUploadModalOpen(false)}
-                  className="h-[52px] px-6 rounded-DEFAULT bg-surface-container-lowest border-2 border-border-subtle text-on-surface font-label-lg text-label-lg hover:bg-canvas-slate transition-all cursor-pointer"
+                  className="h-[48px] px-5 rounded-DEFAULT bg-surface-container-lowest border-2 border-border-subtle text-on-surface font-label-lg text-sm hover:bg-canvas-slate transition-all cursor-pointer"
                 >
                   Annuler
                 </button>
                 <button
                   type="submit"
-                  className="h-[52px] px-6 rounded-DEFAULT bg-surface-container-lowest border-2 border-primary text-primary font-label-lg text-label-lg hover:bg-sage-soft transition-all flex items-center gap-2 cursor-pointer"
+                  disabled={isSubmittingUpload}
+                  className="h-[48px] px-6 rounded-DEFAULT bg-primary text-white font-label-lg text-sm font-bold hover:bg-forest-deep transition-all flex items-center gap-2 cursor-pointer shadow-xs disabled:opacity-50"
                 >
-                  <span className="material-symbols-outlined text-[20px]">check</span>
-                  <span>Archiver le document</span>
+                  <span className="material-symbols-outlined text-[20px]">
+                    {isSubmittingUpload ? 'sync' : 'check'}
+                  </span>
+                  <span>{isSubmittingUpload ? 'Archivage en cours...' : 'Archiver le document'}</span>
                 </button>
               </div>
 

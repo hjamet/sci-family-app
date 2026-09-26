@@ -442,22 +442,62 @@ export async function validateTaskCompletion(assignmentId) {
   return res.json();
 }
 
-export async function fetchAdminDocuments() {
-  const res = await fetch(`${API_BASE}/admin-documents`, {
+export async function fetchAdminDocuments(params = {}) {
+  const query = new URLSearchParams();
+  if (params.category && params.category !== 'all' && params.category !== 'Toutes') query.append('category', params.category);
+  const res = await fetch(`${API_BASE}/documents?${query.toString()}`, {
     headers: getAuthHeaders()
   });
   if (!res.ok) throw new Error('Erreur lors du chargement des documents administratifs');
   return res.json();
 }
 
-export async function deleteAdminDocument(filename) {
-  const res = await fetch(`${API_BASE}/admin-documents/${encodeURIComponent(filename)}`, {
+export const fetchDocuments = fetchAdminDocuments;
+
+export async function fetchDocumentCategories() {
+  const res = await fetch(`${API_BASE}/documents/categories`, {
+    headers: getAuthHeaders()
+  });
+  if (!res.ok) throw new Error('Erreur lors du chargement des catégories de documents');
+  return res.json();
+}
+
+export async function createDocumentCategory(data) {
+  const res = await fetch(`${API_BASE}/documents/categories`, {
+    method: 'POST',
+    headers: getAuthJsonHeaders(),
+    body: JSON.stringify(data)
+  });
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({}));
+    throw new Error(err.detail || 'Erreur lors de la création de la catégorie');
+  }
+  return res.json();
+}
+
+export async function uploadDocument(formData) {
+  const res = await fetch(`${API_BASE}/documents/upload`, {
+    method: 'POST',
+    headers: getAuthHeaders(),
+    body: formData
+  });
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({}));
+    throw new Error(err.detail || 'Erreur lors du téléversement du document');
+  }
+  return res.json();
+}
+
+export async function deleteAdminDocument(idOrFilename) {
+  const res = await fetch(`${API_BASE}/documents/${encodeURIComponent(idOrFilename)}`, {
     method: 'DELETE',
     headers: getAuthHeaders()
   });
   if (!res.ok) throw new Error('Erreur lors de la suppression du document');
   return res.json();
 }
+
+export const deleteDocument = deleteAdminDocument;
 
 export async function fetchMemberCurrentStayTasks(userName) {
   const res = await fetch(`${API_BASE}/members/${encodeURIComponent(userName)}/current-stay-tasks`, {

@@ -112,9 +112,6 @@ export default function Header({
             <span className="font-headline-sm text-headline-sm text-primary leading-tight tracking-tight">
               Domaine d'Hellenvilliers
             </span>
-            <span className="font-label-sm text-label-sm text-on-surface-variant font-normal">
-              Portail Familial &amp; Patrimonial
-            </span>
           </div>
         </div>
 
@@ -148,9 +145,6 @@ export default function Header({
           <div className="hidden sm:flex flex-col text-right">
             <span className="font-label-md text-label-md text-on-surface leading-tight font-semibold">
               {displayName}
-            </span>
-            <span className="font-label-sm text-xs text-on-surface-variant">
-              Gérant / Coordinateur
             </span>
           </div>
 
@@ -203,7 +197,6 @@ export default function Header({
               <div className="px-4 py-2 border-b border-slate-100">
                 <p className="text-xs text-on-surface-variant">Connecté en tant que</p>
                 <p className="font-bold text-sm text-emerald-950 truncate">{displayName}</p>
-                <p className="text-[11px] text-emerald-700 font-medium">Gérant / Coordinateur</p>
               </div>
 
               {/* Mobile nav links inside dropdown fallback */}

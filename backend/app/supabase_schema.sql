@@ -143,6 +143,25 @@ CREATE TABLE IF NOT EXISTS admin_documents (
     created_at TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP
 );
 
+-- TABLE: document_categories (Catégories maison de documents)
+CREATE TABLE IF NOT EXISTS document_categories (
+    id SERIAL PRIMARY KEY,
+    name VARCHAR(100) NOT NULL UNIQUE,
+    emoji VARCHAR(20) NOT NULL DEFAULT '📁',
+    color VARCHAR(50) NOT NULL DEFAULT 'slate',
+    created_at TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP
+);
+
+-- Données initiales catégories canoniques de documents
+INSERT INTO document_categories (name, emoji, color) VALUES
+    ('Actes & Statuts', '🏛️', 'slate'),
+    ('Banque & Finances', '💶', 'emerald'),
+    ('Travaux & Factures', '🔧', 'amber'),
+    ('Fiscalité & Impôts', '⚖️', 'purple'),
+    ('Assurances & Police', '🛡️', 'sky'),
+    ('Procès-Verbaux AG', '📜', 'rose')
+ON CONFLICT (name) DO NOTHING;
+
 -- TABLE: vademecum_items (Carnet de bord & consignes techniques de maison)
 CREATE TABLE IF NOT EXISTS vademecum_items (
     id SERIAL PRIMARY KEY,

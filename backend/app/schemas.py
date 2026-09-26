@@ -191,6 +191,21 @@ class AdminDocumentResponse(BaseModel):
     class Config:
         from_attributes = True
 
+# Document Category Schemas
+class DocumentCategoryBase(BaseModel):
+    name: str
+    emoji: Optional[str] = "📁"
+    color: Optional[str] = "slate"
+
+class DocumentCategoryCreate(DocumentCategoryBase):
+    pass
+
+class DocumentCategoryResponse(DocumentCategoryBase):
+    id: int
+    created_at: Optional[datetime] = None
+    class Config:
+        from_attributes = True
+
 # Project Comment Schemas
 class ProjectCommentCreate(BaseModel):
     author_name: str

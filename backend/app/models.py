@@ -61,6 +61,15 @@ class AdminDocument(Base):
     notes = Column(Text, nullable=True)
     created_at = Column(DateTime, default=datetime.utcnow)
 
+class DocumentCategory(Base):
+    __tablename__ = "document_categories"
+
+    id = Column(Integer, primary_key=True, index=True)
+    name = Column(String(100), unique=True, index=True, nullable=False)
+    emoji = Column(String(20), default="📁", nullable=False)
+    color = Column(String(50), default="slate", nullable=False)
+    created_at = Column(DateTime, default=datetime.utcnow)
+
 class Issue(Base):
     __tablename__ = "issues"
 
