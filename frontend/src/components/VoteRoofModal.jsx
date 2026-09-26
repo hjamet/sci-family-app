@@ -1,8 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { MarkdownContent } from './common/RichTextEditor';
 import DocumentViewerModal from './DocumentViewerModal';
-
-const CHAT_ALLOWED_EMOJIS = ['👍', '❤️', '👏', '🎉', '👀', '✅', '🔥', '🙏'];
+import FamilyChat from './common/FamilyChat';
 
 export default function VoteRoofModal({ isOpen, onClose, currentUser = 'Henri Jamet', onVoteSubmit }) {
   // Liste nominative des 7 associés statutaires de la SCI Hellenvilliers
@@ -124,9 +123,6 @@ export default function VoteRoofModal({ isOpen, onClose, currentUser = 'Henri Ja
   const [selectedVote, setSelectedVote] = useState('POUR');
   const [toastMessage, setToastMessage] = useState(null);
 
-  // Formulaire de discussion
-  const [newMessageText, setNewMessageText] = useState('');
-
   // Vue détaillée du tableau des associés
   const [showFullTable, setShowFullTable] = useState(true);
 
@@ -224,49 +220,45 @@ export default function VoteRoofModal({ isOpen, onClose, currentUser = 'Henri Ja
   };
 
   // Envoi d'un message dans le fil de discussion
-  const handleSendMessage = (e) => {
-    e.preventDefault();
-    if (!newMessageText.trim()) return;
+  const handleSendMessageText = (text) => {
+    if (!text || !text.trim()) return;
 
     const now = new Date();
     const formattedDate = `${now.getDate()} mai, ${now.getHours().toString().padStart(2, '0')}:${now.getMinutes().toString().padStart(2, '0')}`;
 
     const newMsg = {
       id: Date.now(),
-      author: currentAssociate.name,
-      initials: currentAssociate.initials,
-      isGerance: currentAssociate.isGerance,
+      author: currentAssociate?.name || (typeof currentUser === 'string' ? currentUser : currentUser?.name || 'Associé'),
+      initials: currentAssociate?.initials || 'AJ',
       date: formattedDate,
-      content: newMessageText.trim(),
+      content: text.trim(),
       reactions: []
     };
 
     setMessages(prev => [...prev, newMsg]);
-    setNewMessageText('');
   };
 
   // Réaction à un message
   const handleToggleReaction = (msgId, emoji) => {
     setMessages(prev => prev.map(msg => {
       if (msg.id !== msgId) return msg;
-      const existing = msg.reactions.find(r => r.emoji === emoji);
+      const reactions = Array.isArray(msg.reactions) ? msg.reactions : [];
+      const existing = reactions.find(r => r.emoji === emoji);
       let updatedReactions;
       if (existing) {
-        updatedReactions = msg.reactions.map(r => 
+        updatedReactions = reactions.map(r => 
           r.emoji === emoji ? { ...r, count: r.count + 1 } : r
         );
       } else {
-        updatedReactions = [...msg.reactions, { emoji, count: 1 }];
+        updatedReactions = [...reactions, { emoji, count: 1 }];
       }
       return { ...msg, reactions: updatedReactions };
     }));
-    setActiveEmojiPickerMsgId(null);
   };
 
   // État de la visionneuse intégrée (Annotation 9)
   const [viewerDoc, setViewerDoc] = useState(null);
   const [isViewerOpen, setIsViewerOpen] = useState(false);
-  const [activeEmojiPickerMsgId, setActiveEmojiPickerMsgId] = useState(null);
 
   // Consultation dans la visionneuse sans téléchargement
   const handleViewDoc = (docName, desc) => {
@@ -750,143 +742,16 @@ export default function VoteRoofModal({ isOpen, onClose, currentUser = 'Henri Ja
 
           {/* COLONNE DROITE (5 cols) : Fil de discussion familial en direct */}
           <aside className="lg:col-span-5 bg-canvas-slate flex flex-col justify-between overflow-hidden">
-            
-            {/* En-tête fil de discussion */}
-            <div className="p-4 bg-surface-container-lowest shadow-sm flex items-center justify-between shrink-0 border-b border-border-subtle">
-              <div className="flex items-center gap-2">
-                <span className="material-symbols-outlined text-forest-deep text-2xl">forum</span>
-                <div className="flex flex-col">
-                  <h2 className="text-xs sm:text-sm font-bold text-on-surface">Fil de discussion familial</h2>
-                  <span className="text-[11px] text-on-surface-variant">{messages.length} messages • Transparence des débats</span>
-                </div>
-              </div>
-              <span className="inline-flex items-center gap-1 px-2.5 py-1 rounded-full bg-sage-soft text-forest-deep text-[11px] font-semibold">
-                <span className="w-1.5 h-1.5 rounded-full bg-forest-deep animate-ping"></span>
-                Actif
-              </span>
-            </div>
-
-            {/* Zone défilable des messages */}
-            <div className="p-4 flex-1 overflow-y-auto flex flex-col gap-4 min-h-[300px]">
-              {messages.map((msg) => (
-                <div key={msg.id} className="flex items-start gap-2.5">
-                  <div className={`w-8 h-8 rounded-full flex items-center justify-center text-xs font-bold shrink-0 ${
-                    msg.isGerance ? 'bg-sage-soft text-forest-deep' : 'bg-surface-container-highest text-on-surface'
-                  }`}>
-                    {msg.initials}
-                  </div>
-                  <div className="flex flex-col max-w-[85%]">
-                    <div className="flex items-center gap-1.5 mb-1">
-                      <span className="text-xs font-bold text-on-surface">{msg.author}</span>
-                      {msg.isGerance && (
-                        <span className="px-1.5 py-0.2 rounded bg-sage-border text-forest-deep text-[9px] font-bold">
-                          GÉRANCE
-                        </span>
-                      )}
-                      <span className="text-[10px] text-slate-400">{msg.date}</span>
-                    </div>
-                    <div className="bg-surface-container-lowest p-3 rounded-xl rounded-tl-none shadow-sm text-xs sm:text-sm text-slate-700 leading-normal border border-border-subtle">
-                      {msg.content}
-                    </div>
-                    {/* Réactions */}
-                    {(() => {
-                      const currentUserName = typeof currentUser === 'string' ? currentUser : (currentUser?.name || 'Henri Jamet');
-                      const isOwnMessage = msg.author?.trim().toLowerCase() === currentUserName.trim().toLowerCase();
-
-                      return (
-                        <div className="flex items-center gap-1.5 mt-1.5 flex-wrap">
-                          {msg.reactions.map((r, idx) => (
-                            <button
-                              key={idx}
-                              type="button"
-                              disabled={isOwnMessage}
-                              onClick={() => !isOwnMessage && handleToggleReaction(msg.id, r.emoji)}
-                              className={`inline-flex items-center gap-1 px-2 py-0.5 rounded-full bg-surface-container-lowest text-xs text-on-surface-variant shadow-xs border border-border-subtle transition-colors ${
-                                isOwnMessage ? 'cursor-default opacity-85' : 'hover:bg-emerald-50 hover:text-emerald-900 cursor-pointer'
-                              }`}
-                              title={isOwnMessage ? "Vous ne pouvez pas réagir à votre propre message" : `Réagir avec ${r.emoji}`}
-                            >
-                              <span>{r.emoji}</span>
-                              <span className="text-[10px] font-bold">{r.count}</span>
-                            </button>
-                          ))}
-
-                          {/* Bouton d'ajout multi-emojis (INTERDIT SUR SES PROPRES MESSAGES) */}
-                          {!isOwnMessage && (
-                            <div className="relative inline-block">
-                              <button
-                                type="button"
-                                onClick={() => setActiveEmojiPickerMsgId(activeEmojiPickerMsgId === msg.id ? null : msg.id)}
-                                className="inline-flex items-center justify-center w-6 h-6 rounded-full bg-slate-100 hover:bg-slate-200 text-slate-600 text-xs transition-colors border border-slate-200 cursor-pointer"
-                                title="Ajouter une réaction"
-                              >
-                                +
-                              </button>
-
-                              {/* Popover flottant multi-emojis */}
-                              {activeEmojiPickerMsgId === msg.id && (
-                                <div className="absolute left-0 bottom-8 z-30 bg-white shadow-xl border border-slate-200 rounded-xl p-1.5 flex gap-1 animate-in zoom-in-95 duration-100">
-                                  {CHAT_ALLOWED_EMOJIS.map((emoji) => (
-                                    <button
-                                      key={emoji}
-                                      type="button"
-                                      onClick={() => handleToggleReaction(msg.id, emoji)}
-                                      className="p-1 hover:bg-emerald-50 rounded text-base cursor-pointer transition-transform hover:scale-125"
-                                      title={emoji}
-                                    >
-                                      {emoji}
-                                    </button>
-                                  ))}
-                                </div>
-                              )}
-                            </div>
-                          )}
-                        </div>
-                      );
-                    })()}
-                  </div>
-                </div>
-              ))}
-            </div>
-
-            {/* Zone de saisie ancrée en bas */}
-            <div className="p-3 sm:p-4 bg-surface-container-lowest shadow-md shrink-0 border-t border-border-subtle">
-              <form className="flex items-center gap-2" onSubmit={handleSendMessage}>
-                <button 
-                  aria-label="Joindre un fichier" 
-                  className="w-9 h-9 rounded-full flex items-center justify-center text-slate-400 hover:text-primary hover:bg-canvas-slate transition-colors" 
-                  type="button"
-                  onClick={() => alert("Ajout de pièce jointe réservé aux administrateurs.")}
-                >
-                  <span className="material-symbols-outlined text-[20px]">attach_file</span>
-                </button>
-                <div className="relative flex-1">
-                  <input 
-                    className="w-full h-10 pl-3 pr-8 rounded-xl bg-canvas-slate text-on-surface placeholder:text-outline text-xs sm:text-sm border border-border-subtle focus:outline-none focus:ring-2 focus:ring-forest-deep" 
-                    placeholder="Votre message à la famille..." 
-                    type="text"
-                    value={newMessageText}
-                    onChange={(e) => setNewMessageText(e.target.value)}
-                  />
-                  <button 
-                    aria-label="Ajouter un emoji" 
-                    className="absolute right-2 top-1/2 -translate-y-1/2 text-slate-400 hover:text-primary" 
-                    type="button"
-                    onClick={() => setNewMessageText(prev => prev + ' 👍')}
-                  >
-                    <span className="material-symbols-outlined text-[18px]">sentiment_satisfied</span>
-                  </button>
-                </div>
-                <button 
-                  className="h-10 px-3.5 rounded-xl bg-forest-deep text-on-primary hover:bg-primary text-xs font-semibold flex items-center justify-center gap-1 transition-colors shadow-sm shrink-0" 
-                  type="submit"
-                >
-                  <span>Envoyer</span>
-                  <span className="material-symbols-outlined text-[16px]">send</span>
-                </button>
-              </form>
-            </div>
-
+            <FamilyChat
+              messages={messages}
+              onSendMessage={handleSendMessageText}
+              onAddReaction={handleToggleReaction}
+              currentUser={currentUser}
+              title="Fil de discussion familial"
+              placeholder="Votre message à la famille..."
+              onAttachClick={() => alert("Ajout de pièce jointe réservé aux administrateurs.")}
+              className="h-full"
+            />
           </aside>
         </div>
       </div>

@@ -12,8 +12,7 @@ import {
 } from '../api';
 import CustomSelect from './CustomSelect';
 import DocumentViewerModal from './DocumentViewerModal';
-
-const ALLOWED_EMOJIS = ['👍', '❤️', '👏', '🎉', '👀', '✅', '🔥', '🙏'];
+import FamilyChat from './common/FamilyChat';
 
 const SUBJECTS = [
   'Rosing',
@@ -51,9 +50,6 @@ export default function TaskDetailModal({
   const [task, setTask] = useState(initialTask || {});
   const [mode, setMode] = useState(isNewTask ? 'edit' : (initialMode || 'view')); // 'view' | 'edit'
   const [comments, setComments] = useState([]);
-  const [newComment, setNewComment] = useState('');
-  const [submittingComment, setSubmittingComment] = useState(false);
-  const [activeEmojiPickerForComment, setActiveEmojiPickerForComment] = useState(null);
 
   // Visionneuse universelle intégrée (Annotation 9)
   const [viewerDoc, setViewerDoc] = useState(null);
@@ -121,7 +117,6 @@ export default function TaskDetailModal({
   const [closeNotes, setCloseNotes] = useState('');
   const [closingSubmitting, setClosingSubmitting] = useState(false);
 
-  const chatBottomRef = useRef(null);
   const fileUploadRef = useRef(null);
 
   const handleFileUpload = async (e) => {
@@ -151,9 +146,13 @@ export default function TaskDetailModal({
   const currentUserName = typeof currentUser === 'object'
     ? (currentUser?.name || currentUser?.prenom || '')
     : (currentUser || '');
-  const isCoordinator = COORDINATOR_NAMES.some(
-    (name) => name.toLowerCase() === currentUserName.toLowerCase()
-  ) || currentUserName.toLowerCase().includes('henri') || currentUserName.toLowerCase().includes('joséphine') || currentUserName.toLowerCase().includes('josephine');
+  const isCoordinator = (
+    COORDINATOR_NAMES.some((name) => name.toLowerCase() === currentUserName.toLowerCase()) ||
+    currentUserName.toLowerCase().includes('henri') ||
+    currentUserName.toLowerCase().includes('joséphine') ||
+    currentUserName.toLowerCase().includes('josephine') ||
+    (typeof currentUser === 'object' && currentUser?.is_coordinator)
+  );
 
   // Load latest task details and comments when opened
   useEffect(() => {
@@ -204,13 +203,6 @@ export default function TaskDetailModal({
       isMounted = false;
     };
   }, [isOpen, initialTask, initialMode, isEditing]);
-
-  // Scroll chat to bottom on new comments
-  useEffect(() => {
-    if (chatBottomRef.current) {
-      chatBottomRef.current.scrollIntoView({ behavior: 'smooth' });
-    }
-  }, [comments]);
 
   const syncEditFields = (t) => {
     if (!t) return;
@@ -349,22 +341,20 @@ export default function TaskDetailModal({
     }
   };
 
-  // Background server sync for Optimistic Chat (Annotation 13)
-  const sendCommentToServer = async (tempId, textToSend, authorName, authorRole) => {
+  // Background server sync for Optimistic Chat (Annotation 13 & 3)
+  const sendCommentToServer = async (tempId, textToSend, authorName) => {
     try {
       let confirmedComment;
       if (task?.id) {
         confirmedComment = await addTaskComment(task.id, {
           content: textToSend,
           author_name: authorName,
-          author_role: authorRole,
         });
       } else {
         // Fallback local demo comment
         confirmedComment = {
           id: Date.now(),
           author_name: authorName,
-          author_role: authorRole,
           content: textToSend,
           reactions: {},
           created_at: new Date().toISOString(),
@@ -406,20 +396,16 @@ export default function TaskDetailModal({
   };
 
   // Add Comment (Optimistic UI - Instantané)
-  const handleSendComment = (e) => {
-    if (e) e.preventDefault();
-    const text = newComment.trim();
-    if (!text) return;
+  const handleSendCommentText = (text) => {
+    if (!text || !text.trim()) return;
 
     const tempId = `temp-${Date.now()}`;
     const authorName = currentUserName || 'Henri Jamet';
-    const authorRole = isCoordinator ? 'Gérant' : 'Membre Associé';
 
     const tempMessage = {
       id: tempId,
-      content: text,
+      content: text.trim(),
       author_name: authorName,
-      author_role: authorRole,
       created_at: new Date().toISOString(),
       reactions: {},
       isOptimistic: true,
@@ -428,11 +414,9 @@ export default function TaskDetailModal({
 
     // 1 & 2. Ajout optimiste immédiat dans le state des messages
     setComments((prev) => [...prev, tempMessage]);
-    // 3. Vidage immédiat du champ de saisie
-    setNewComment('');
 
-    // 5. Appel réseau en tâche de fond
-    sendCommentToServer(tempId, text, authorName, authorRole);
+    // 3. Appel réseau en tâche de fond
+    sendCommentToServer(tempId, text.trim(), authorName);
   };
 
   // Retry sending failed comment
@@ -444,7 +428,7 @@ export default function TaskDetailModal({
           : c
       )
     );
-    sendCommentToServer(comment.id, comment.content, comment.author_name, comment.author_role);
+    sendCommentToServer(comment.id, comment.content, comment.author_name);
   };
 
   // Emoji Reactions
@@ -468,7 +452,6 @@ export default function TaskDetailModal({
           })
         );
       }
-      setActiveEmojiPickerForComment(null);
     } catch (err) {
       console.error('Erreur réaction:', err);
     }
@@ -536,15 +519,15 @@ export default function TaskDetailModal({
               </button>
             )}
 
-            {/* Delete Task Button (Annotation 6) */}
-            {!isNewTask && (
+            {/* Delete Task Button (Annotation 2: Style harmonisé et restriction stricte aux coordinateurs) */}
+            {!isNewTask && isCoordinator && (
               <button
                 type="button"
                 onClick={handleDeleteTask}
-                className="px-3 py-1.5 rounded-xl border border-rose-200 bg-rose-50 hover:bg-rose-100 text-rose-700 text-xs font-semibold flex items-center gap-1 transition-colors cursor-pointer"
+                className="px-3.5 py-1.5 h-11 rounded-xl border border-rose-200 bg-rose-50 hover:bg-rose-100 text-rose-700 text-xs sm:text-sm font-semibold flex items-center gap-1.5 transition-colors shadow-sm cursor-pointer"
                 title="Supprimer la tâche"
               >
-                <span className="material-symbols-outlined text-sm">delete</span>
+                <span className="material-symbols-outlined text-base">delete</span>
                 <span>Supprimer</span>
               </button>
             )}
@@ -725,11 +708,6 @@ export default function TaskDetailModal({
                       </div>
                     </div>
                   </div>
-
-                  <p className="font-body-md text-[11px] text-outline italic flex items-center gap-1.5 pt-1">
-                    <span className="material-symbols-outlined text-[14px]">info</span>
-                    Modifications réservées aux membres assignés et aux co-gérants de la SCI.
-                  </p>
                 </div>
 
               </div>
@@ -955,211 +933,17 @@ export default function TaskDetailModal({
           {/* ========================================== */}
           {!isNewTask && (
             <section className="lg:col-span-5 bg-canvas-slate flex flex-col h-full min-h-0">
-            
-            {/* Chat Header */}
-            <div className="px-4 py-3.5 bg-surface-container-lowest border-b border-border-subtle flex items-center justify-between shrink-0">
-              <div className="flex items-center gap-2">
-                <span className="material-symbols-outlined text-primary text-[20px]">forum</span>
-                <h2 className="font-headline-sm text-sm font-bold text-forest-deep">
-                  Fil de discussion familial
-                </h2>
-              </div>
-              <span className="px-2.5 py-0.5 rounded-full bg-sage-soft text-primary font-label-sm text-xs font-semibold">
-                {comments.length} message{comments.length > 1 ? 's' : ''}
-              </span>
-            </div>
-
-            {/* Chat Messages Container */}
-            <div className="custom-chat-scrollbar p-4 flex flex-col space-y-4 overflow-y-auto flex-1 min-h-0">
-              {comments.length === 0 ? (
-                <div className="text-center py-10 text-on-surface-variant text-xs space-y-2">
-                  <span className="material-symbols-outlined text-3xl text-emerald-600">chat_bubble_outline</span>
-                  <p>Aucun message sur cette tâche. Soyez le premier à commenter !</p>
-                </div>
-              ) : (
-                comments.map((c) => {
-                  const reactions = c.reactions || {};
-                  return (
-                    <article
-                      key={c.id}
-                      className={`flex flex-col gap-1 items-start w-full transition-opacity duration-150 ${
-                        c.isOptimistic ? 'opacity-70' : 'opacity-100'
-                      }`}
-                    >
-                      <div className="flex items-center gap-2 px-1 text-xs">
-                        <span className="font-bold text-primary">{c.author_name}</span>
-                        {c.author_role && (
-                          <span className="px-2 py-0.2 rounded-full bg-surface-container text-[10px] font-semibold text-on-surface-variant border border-slate-200">
-                            {c.author_role}
-                          </span>
-                        )}
-                        <span className="text-[11px] text-outline flex items-center gap-1">
-                          {c.isOptimistic ? (
-                            <span className="inline-flex items-center gap-1 text-amber-700 font-medium">
-                              <span className="material-symbols-outlined text-[13px] animate-spin">schedule</span>
-                              En cours de transmission...
-                            </span>
-                          ) : c.created_at ? (
-                            new Date(c.created_at).toLocaleTimeString('fr-FR', {
-                              hour: '2-digit',
-                              minute: '2-digit',
-                            })
-                          ) : (
-                            '14:20'
-                          )}
-                        </span>
-                      </div>
-
-                      <div
-                        className={`border shadow-xs rounded-2xl p-3.5 w-full text-on-surface text-xs sm:text-sm leading-relaxed relative ${
-                          c.isError
-                            ? 'border-rose-400 bg-rose-50/70 text-rose-950'
-                            : 'border-slate-200 bg-white'
-                        }`}
-                      >
-                        <p className="whitespace-pre-wrap">{c.content}</p>
-
-                        {/* Fail-Fast Erreur & Bouton Réessayer (Annotation 13) */}
-                        {c.isError && (
-                          <div className="flex items-center justify-between gap-2 mt-2 pt-2 border-t border-rose-200 text-xs">
-                            <span className="text-rose-700 font-semibold flex items-center gap-1">
-                              <span className="material-symbols-outlined text-[15px]">error</span>
-                              Échec de transmission ({c.errorMessage || 'Erreur réseau'})
-                            </span>
-                            <button
-                              type="button"
-                              onClick={() => handleRetryComment(c)}
-                              className="px-2.5 py-1 rounded-lg bg-rose-600 hover:bg-rose-700 text-white text-xs font-semibold flex items-center gap-1 transition-colors cursor-pointer shadow-xs"
-                            >
-                              <span className="material-symbols-outlined text-[14px]">refresh</span>
-                              Réessayer
-                            </button>
-                          </div>
-                        )}
-
-                        {/* Reactions Bar (masquée si message temporaire ou en erreur - Annotation 15) */}
-                        {!c.isOptimistic && !c.isError && (() => {
-                          const isOwnMessage = Boolean(
-                            (c.author_name && currentUserName && c.author_name.trim().toLowerCase() === currentUserName.trim().toLowerCase()) ||
-                            (c.author && currentUserName && c.author.trim().toLowerCase() === currentUserName.trim().toLowerCase()) ||
-                            (currentUser?.id && (c.user_id === currentUser.id || c.author_id === currentUser.id))
-                          );
-
-                          return (
-                            <div className="flex flex-wrap items-center gap-1.5 mt-3 pt-2.5 border-t border-slate-100">
-                              {Object.entries(reactions).map(([emoji, count]) => (
-                                <button
-                                  key={emoji}
-                                  type="button"
-                                  disabled={isOwnMessage}
-                                  onClick={() => !isOwnMessage && handleEmojiReact(c.id, emoji)}
-                                  className={`inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full text-xs border border-slate-200 transition-colors ${
-                                    isOwnMessage
-                                      ? 'bg-slate-50 text-slate-500 cursor-default opacity-85'
-                                      : 'bg-slate-50 hover:bg-emerald-50 text-slate-700 hover:text-emerald-800 cursor-pointer'
-                                  }`}
-                                  title={isOwnMessage ? "Vous ne pouvez pas réagir à votre propre message" : `Réagir avec ${emoji}`}
-                                >
-                                  <span>{emoji}</span>
-                                  <span className="font-bold">{count}</span>
-                                </button>
-                              ))}
-
-                              {/* + Add reaction button (INTERDIT SUR SES PROPRES MESSAGES - Annotation 15) */}
-                              {!isOwnMessage && (
-                                <div className="relative inline-block">
-                                  <button
-                                    type="button"
-                                    onClick={() =>
-                                      setActiveEmojiPickerForComment(
-                                        activeEmojiPickerForComment === c.id ? null : c.id
-                                      )
-                                    }
-                                    className="inline-flex items-center justify-center w-6 h-6 rounded-full bg-slate-100 hover:bg-slate-200 text-slate-600 text-xs transition-colors border border-slate-200 cursor-pointer"
-                                    title="Ajouter une réaction"
-                                  >
-                                    +
-                                  </button>
-
-                                  {/* Emoji Palette Dropdown */}
-                                  {activeEmojiPickerForComment === c.id && (
-                                    <div className="absolute left-0 bottom-8 z-30 bg-white shadow-xl border border-slate-200 rounded-xl p-1.5 flex gap-1 animate-in zoom-in-95 duration-100">
-                                      {ALLOWED_EMOJIS.map((emoji) => (
-                                        <button
-                                          key={emoji}
-                                          type="button"
-                                          onClick={() => handleEmojiReact(c.id, emoji)}
-                                          className="p-1 hover:bg-emerald-50 rounded text-base cursor-pointer transition-transform hover:scale-125"
-                                          title={emoji}
-                                        >
-                                          {emoji}
-                                        </button>
-                                      ))}
-                                    </div>
-                                  )}
-                                </div>
-                              )}
-                            </div>
-                          );
-                        })()}
-                      </div>
-                    </article>
-                  );
-                })
-              )}
-              <div ref={chatBottomRef} />
-            </div>
-
-            {/* Chat Input Console */}
-            <form onSubmit={handleSendComment} className="p-3.5 bg-white flex flex-col gap-2 border-t border-slate-200 shadow-sm shrink-0">
-              <div className="relative">
-                <textarea
-                  rows={2}
-                  value={newComment}
-                  onChange={(e) => setNewComment(e.target.value)}
-                  placeholder="Votre message à la famille..."
-                  className="w-full bg-canvas-slate rounded-xl p-3 text-xs sm:text-sm text-on-surface placeholder:text-outline border border-slate-300 focus:border-emerald-600 focus:ring-1 focus:ring-emerald-600 shadow-inner resize-none outline-none"
-                  onKeyDown={(e) => {
-                    if (e.key === 'Enter' && !e.shiftKey) {
-                      e.preventDefault();
-                      handleSendComment(e);
-                    }
-                  }}
-                />
-              </div>
-
-              <div className="flex items-center justify-between pt-1">
-                <div className="flex items-center gap-1.5">
-                  <button
-                    type="button"
-                    onClick={() => fileUploadRef.current?.click()}
-                    className="w-8 h-8 flex items-center justify-center rounded-lg bg-white text-slate-500 hover:text-emerald-800 hover:bg-sage-soft transition-colors border border-slate-200 cursor-pointer"
-                    title="Joindre un document"
-                  >
-                    <span className="material-symbols-outlined text-[18px]">attach_file</span>
-                  </button>
-
-                  <button
-                    type="button"
-                    onClick={() => setNewComment(newComment + ' 👍 ')}
-                    className="w-8 h-8 flex items-center justify-center rounded-lg bg-white text-slate-500 hover:text-emerald-800 hover:bg-sage-soft transition-colors border border-slate-200 cursor-pointer"
-                    title="Ajouter un emoji"
-                  >
-                    <span className="material-symbols-outlined text-[18px]">sentiment_satisfied</span>
-                  </button>
-                </div>
-
-                <button
-                  type="submit"
-                  disabled={!newComment.trim()}
-                  className="inline-flex items-center gap-1.5 bg-white border-2 border-emerald-600 text-emerald-800 font-bold px-4 py-1.5 rounded-xl shadow-xs hover:bg-emerald-50 transition-colors cursor-pointer text-xs disabled:opacity-40"
-                >
-                  <span className="material-symbols-outlined text-[16px] text-emerald-800">send</span>
-                  <span>Envoyer</span>
-                </button>
-              </div>
-            </form>
-
+              <FamilyChat
+                messages={comments}
+                onSendMessage={handleSendCommentText}
+                onAddReaction={handleEmojiReact}
+                currentUser={currentUser}
+                title="Fil de discussion familial"
+                placeholder="Votre message à la famille..."
+                onRetryMessage={handleRetryComment}
+                onAttachClick={() => fileUploadRef.current?.click()}
+                className="h-full"
+              />
             </section>
           )}
 

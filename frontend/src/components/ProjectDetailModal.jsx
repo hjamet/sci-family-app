@@ -6,6 +6,7 @@ import { reviewProject, castProjectVote, fetchProjectComments, addProjectComment
 import CoordinatorApprovalModal from './CoordinatorApprovalModal';
 import DocumentViewerModal from './DocumentViewerModal';
 import CustomSelect from './CustomSelect';
+import FamilyChat from './common/FamilyChat';
 
 
 export default function ProjectDetailModal({ project, isOpen, onClose, currentUser, onRefresh }) {
@@ -33,7 +34,6 @@ export default function ProjectDetailModal({ project, isOpen, onClose, currentUs
   const [showApprovalModal, setShowApprovalModal] = useState(false);
 
   // Thread comment state
-  const [commentText, setCommentText] = useState('');
   const [submittingComment, setSubmittingComment] = useState(false);
   const [localComments, setLocalComments] = useState(project.comments || []);
 
@@ -112,18 +112,17 @@ export default function ProjectDetailModal({ project, isOpen, onClose, currentUs
     }
   }, [project?.id]);
 
-  const handleAddThreadComment = async (e) => {
-    e.preventDefault();
-    if (!commentText.trim()) return;
+  const handleSendThreadMessage = async (text) => {
+    if (!text || !text.trim()) return;
 
     try {
       setSubmittingComment(true);
+      const author = typeof currentUser === 'string' ? currentUser : currentUser?.name || 'Henri Jamet';
       const createdComment = await addProjectComment(project.id, {
-        author_name: currentUser,
-        content: commentText.trim()
+        author_name: author,
+        content: text.trim()
       });
       setLocalComments(prev => [...prev, createdComment]);
-      setCommentText('');
     } catch (err) {
       setErrorMsg(err.message || 'Impossible d\'ajouter le commentaire');
     } finally {
@@ -631,66 +630,17 @@ export default function ProjectDetailModal({ project, isOpen, onClose, currentUs
               )}
             </div>
 
-            {/* BOTTOM RIGHT: ProjectCommentThread (Discussion Feed & Input - 100% Light Theme) */}
-            <div className="p-5 rounded-2xl bg-slate-50 text-slate-900 border border-slate-200 flex-1 flex flex-col justify-between min-h-[300px]">
-              <div>
-                <h3 className="text-xs font-bold uppercase tracking-wider text-slate-700 mb-3 flex items-center justify-between">
-                  <div className="flex items-center space-x-1.5">
-                    <MessageSquare className="h-4 w-4 text-blue-600" />
-                    <span>Fil de Discussion (Projet)</span>
-                  </div>
-                  <span className="bg-blue-50 text-blue-700 border border-blue-200 px-2 py-0.5 rounded-full text-[10px] font-mono font-bold">
-                    {localComments.length}
-                  </span>
-                </h3>
-
-                {/* Comment Feed Stream */}
-                <div className="space-y-3 max-h-60 overflow-y-auto pr-1">
-                  {localComments.length > 0 ? (
-                    localComments.map((c) => (
-                      <div
-                        key={c.id}
-                        className={`p-3 rounded-xl border text-xs leading-relaxed ${
-                          c.author_name === currentUser
-                            ? 'bg-blue-50 border-blue-200 text-slate-900 ml-3'
-                            : 'bg-white border-slate-200 text-slate-800 mr-3 shadow-sm'
-                        }`}
-                      >
-                        <div className="flex items-center justify-between text-[11px] mb-1">
-                          <span className="font-extrabold text-blue-700">{c.author_name}</span>
-                          <span className="text-[9px] text-slate-500 font-mono">
-                            {new Date(c.created_at).toLocaleTimeString('fr-FR', { hour: '2-digit', minute: '2-digit' })}
-                          </span>
-                        </div>
-                        <p>{c.content}</p>
-                      </div>
-                    ))
-                  ) : (
-                    <p className="text-xs text-slate-500 italic text-center py-6 bg-white/80 rounded-xl border border-dashed border-slate-300">
-                      Aucun message. Posez une question ou commentez ce projet !
-                    </p>
-                  )}
-                </div>
-              </div>
-
-              {/* Chat Input Form */}
-              <form onSubmit={handleAddThreadComment} className="pt-3 border-t border-slate-200 flex items-center space-x-2 mt-3">
-                <input
-                  type="text"
-                  placeholder="Poser une question ou commenter..."
-                  value={commentText}
-                  onChange={(e) => setCommentText(e.target.value)}
-                  className="flex-1 bg-white border border-slate-300 rounded-xl px-3.5 py-2 text-xs text-slate-900 focus:outline-none focus:border-blue-500"
-                />
-                <button
-                  type="submit"
-                  disabled={submittingComment || !commentText.trim()}
-                  className="px-3.5 py-2 rounded-xl bg-blue-600 hover:bg-blue-700 text-white font-bold text-xs flex items-center space-x-1 transition disabled:opacity-40 shadow"
-                >
-                  <Send className="h-3.5 w-3.5" />
-                  <span>Envoyer</span>
-                </button>
-              </form>
+            {/* BOTTOM RIGHT: FamilyChat (Discussion Feed & Input) */}
+            <div className="rounded-2xl overflow-hidden border border-slate-200 flex-1 flex flex-col min-h-[320px]">
+              <FamilyChat
+                messages={localComments}
+                onSendMessage={handleSendThreadMessage}
+                currentUser={currentUser}
+                title="Fil de discussion (Projet)"
+                placeholder="Poser une question ou commenter..."
+                disabled={submittingComment}
+                className="h-full"
+              />
             </div>
 
           </div>

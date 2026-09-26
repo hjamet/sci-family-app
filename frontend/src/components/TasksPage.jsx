@@ -274,30 +274,86 @@ export default function TasksPage({ currentUser = 'Henri Jamet' }) {
     Planifié: tasks.filter(t => t.priority === 'Planifié').length,
   };
 
-  const currentUserName = typeof currentUser === 'string' ? currentUser : 'Henri Jamet';
-  const myTasksCount = tasks.filter(t => 
-    t.assignee === currentUserName || 
-    t.assignee_name === currentUserName || 
-    (Array.isArray(t.assigned_members) && t.assigned_members.includes(currentUserName))
-  ).length;
+  const currentUserName = typeof currentUser === 'string'
+    ? currentUser
+    : (currentUser?.name || currentUser?.prenom || 'Henri Jamet');
+  const currentUserId = typeof currentUser === 'object' ? currentUser?.id : null;
+  const currentUserFirst = currentUserName.trim().split(' ')[0].toLowerCase();
 
-  const completedTasksCount = tasks.filter(t => 
-    t.status === 'TERMINÉE' || 
-    t.status === 'TERMINEE' || 
-    t.status === 'VALIDÉ' || 
-    t.status === 'VALIDE' || 
-    t.status === 'ARCHIVÉ' || 
-    t.status === 'ARCHIVEE' || 
-    t.status === 'completed'
-  ).length;
+  // 1. Calculs des Tâches
+  const completedTasksCount = tasks.filter(t => {
+    const st = (t.status || '').toUpperCase();
+    return (
+      st === 'TERMINÉE' ||
+      st === 'TERMINEE' ||
+      st === 'VALIDÉ' ||
+      st === 'VALIDE' ||
+      st === 'ARCHIVÉ' ||
+      st === 'ARCHIVEE' ||
+      st === 'COMPLETED'
+    );
+  }).length;
 
   const totalTasks = tasks.length;
-  const openTasksCount = Math.max(0, totalTasks - completedTasksCount);
+  const totalOpenTasksCount = Math.max(0, totalTasks - completedTasksCount);
 
-  // ANNOTATION 4 : Avec 0 tâche (ou 0 tâche ouverte restante), l'avancement doit être strictement de 100% !
-  const avgProgress = totalTasks === 0 || openTasksCount === 0 
-    ? 100 
+  // Mes tâches parmi les tâches ouvertes
+  const myOpenTasksCount = tasks.filter(t => {
+    const st = (t.status || '').toUpperCase();
+    const isOpen = (
+      st !== 'TERMINÉE' &&
+      st !== 'TERMINEE' &&
+      st !== 'VALIDÉ' &&
+      st !== 'VALIDE' &&
+      st !== 'ARCHIVÉ' &&
+      st !== 'ARCHIVEE' &&
+      st !== 'COMPLETED'
+    );
+    if (!isOpen) return false;
+
+    const assignee = (t.assignee || t.assignee_name || '').toLowerCase();
+    const members = Array.isArray(t.assigned_members)
+      ? t.assigned_members.map(m => (typeof m === 'string' ? m : m?.name || '').toLowerCase())
+      : [];
+
+    const isMatch = (str) => {
+      const s = String(str).toLowerCase();
+      return s.includes(currentUserName.toLowerCase()) || (currentUserFirst.length >= 3 && s.includes(currentUserFirst));
+    };
+
+    return isMatch(assignee) || members.some(isMatch);
+  }).length;
+
+  // Avancement global
+  const avgProgress = totalTasks === 0 || totalOpenTasksCount === 0
+    ? 100
     : Math.round((completedTasksCount / totalTasks) * 100);
+
+  // 2. Calculs des Votes (Annotation 1)
+  const openVotes = useMemo(() => {
+    if (!projects || !Array.isArray(projects)) return [];
+    return projects.filter(p => {
+      const st = (p.status || '').toUpperCase();
+      return st === 'EN_VOTE' || st === 'VOTE_EN_COURS' || st === 'OPEN' || p.decision_mode === 'SOUMETTRE_AU_VOTE';
+    });
+  }, [projects]);
+
+  const totalOpenVotesCount = openVotes.length;
+
+  const myPendingVotesCount = useMemo(() => {
+    return openVotes.filter(p => {
+      const votes = Array.isArray(p.votes) ? p.votes : [];
+      const hasVoted = votes.some(v => {
+        const voter = (v.user_name || v.author || v.user || v.name || '').toLowerCase();
+        return (
+          voter.includes(currentUserName.toLowerCase()) ||
+          (currentUserFirst.length >= 3 && voter.includes(currentUserFirst)) ||
+          (currentUserId && v.user_id === currentUserId)
+        );
+      });
+      return !hasVoted;
+    }).length;
+  }, [openVotes, currentUserName, currentUserFirst, currentUserId]);
 
   return (
     <div className="flex flex-col w-full pb-16">
@@ -348,111 +404,103 @@ export default function TasksPage({ currentUser = 'Henri Jamet' }) {
       </section>
 
       {/* ========================================================================= */}
-      {/* 2. KPI OVERVIEW STRIP: 3 METRIC CARDS (Stitch)                            */}
+      {/* 2. KPI OVERVIEW STRIP: 3 METRIC CARDS UNIFIÉES (Annotation 1)              */}
       {/* ========================================================================= */}
-      <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 gap-space-md mb-space-lg max-w-[1100px] mx-auto w-full">
+      <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 gap-4 mb-8 max-w-[1100px] mx-auto w-full">
         
-        {/* KPI 1 : Tâches Ouvertes */}
-        <div className="bg-surface-container-lowest rounded-lg p-space-md shadow-sm flex flex-col justify-between relative overflow-hidden group hover:shadow-md transition-shadow">
+        {/* Élément 1 : Avancement global */}
+        <div className="bg-white dark:bg-slate-900 rounded-2xl p-5 shadow-sm border border-slate-200/80 dark:border-slate-800 flex flex-col justify-between relative overflow-hidden group hover:shadow-md transition-all">
           <div className="flex items-start justify-between">
             <div>
-              <span className="font-label-sm text-label-sm text-on-surface-variant uppercase tracking-wider block">
-                Tâches Ouvertes
+              <span className="text-xs font-bold uppercase tracking-wider text-slate-500 dark:text-slate-400 block">
+                Avancement global
               </span>
-              <div className="flex items-baseline gap-2 mt-1">
+              <div className="flex items-baseline gap-1 mt-2">
                 {loading ? (
-                  <span className="w-12 h-7 bg-slate-200 dark:bg-slate-700 rounded animate-pulse inline-block"></span>
-                ) : (
-                  <span className="font-display-lg text-display-lg text-forest-deep font-bold leading-none">
-                    {tasks.length}
-                  </span>
-                )}
-                <span className="font-label-sm text-label-sm text-on-surface-variant">chantiers</span>
-              </div>
-            </div>
-            <div className="w-11 h-11 rounded-DEFAULT bg-sage-soft flex items-center justify-center text-primary-container">
-              <span className="material-symbols-outlined text-[24px]">construction</span>
-            </div>
-          </div>
-          <div className="mt-4 pt-3 flex items-center gap-2">
-            <span className={`w-2 h-2 rounded-full ${countsByPriority.Critique + countsByPriority.Haute > 0 ? 'bg-error animate-pulse' : 'bg-outline-variant'}`}></span>
-            <span className={`font-label-sm text-label-sm ${countsByPriority.Critique + countsByPriority.Haute > 0 ? 'text-error font-semibold' : 'text-on-surface-variant'}`}>
-              {loading ? 'Calcul des urgences...' : `${countsByPriority.Critique + countsByPriority.Haute} chantiers prioritaires`}
-            </span>
-            {!loading && <span className="text-on-surface-variant font-body-md text-body-md">à traiter</span>}
-          </div>
-        </div>
-
-        {/* KPI 2 : Mes Tâches Directes */}
-        <div className="bg-surface-container-lowest rounded-lg p-space-md shadow-sm flex flex-col justify-between relative overflow-hidden group hover:shadow-md transition-shadow">
-          <div className="flex items-start justify-between">
-            <div>
-              <span className="font-label-sm text-label-sm text-on-surface-variant uppercase tracking-wider block">
-                Mes Tâches Directes
-              </span>
-              <div className="flex items-baseline gap-2 mt-1">
-                {loading ? (
-                  <span className="w-12 h-7 bg-slate-200 dark:bg-slate-700 rounded animate-pulse inline-block"></span>
-                ) : (
-                  <span className="font-display-lg text-display-lg text-primary font-bold leading-none">
-                    {myTasksCount}
-                  </span>
-                )}
-                <span className="font-label-sm text-label-sm text-on-surface-variant">chantiers actifs</span>
-              </div>
-            </div>
-            <div className="w-11 h-11 rounded-DEFAULT bg-surface-container-high flex items-center justify-center text-primary">
-              <span className="material-symbols-outlined text-[24px]">assignment_ind</span>
-            </div>
-          </div>
-          <div className="mt-4 pt-3 flex items-center gap-1.5 text-on-surface-variant font-label-sm text-label-sm">
-            <span className="w-2 h-2 rounded-full bg-primary"></span>
-            <span>{currentUserName} (Gérance SCI)</span>
-          </div>
-        </div>
-
-        {/* KPI 3 : Avancement Global */}
-        <div className="bg-surface-container-lowest rounded-lg p-space-md shadow-sm flex flex-col justify-between relative overflow-hidden group hover:shadow-md transition-shadow">
-          <div className="flex items-start justify-between">
-            <div>
-              <span className="font-label-sm text-label-sm text-on-surface-variant uppercase tracking-wider block">
-                Avancement Global
-              </span>
-              <div className="flex items-baseline gap-1 mt-1">
-                {loading ? (
-                  <span className="w-12 h-7 bg-slate-200 dark:bg-slate-700 rounded animate-pulse inline-block"></span>
+                  <span className="w-16 h-8 bg-slate-200 dark:bg-slate-700 rounded animate-pulse inline-block"></span>
                 ) : (
                   <>
-                    <span className="font-display-lg text-display-lg text-forest-deep font-bold leading-none">{avgProgress}</span>
-                    <span className="font-headline-sm text-headline-sm text-forest-deep font-semibold">%</span>
+                    <span className="text-3xl font-extrabold text-forest-deep dark:text-slate-100 leading-none">
+                      {avgProgress}
+                    </span>
+                    <span className="text-lg font-bold text-forest-deep dark:text-slate-200">%</span>
                   </>
                 )}
               </div>
             </div>
-            <div className="w-12 h-12 relative flex items-center justify-center">
-              <svg className="w-12 h-12 transform -rotate-90" viewBox="0 0 44 44">
-                <circle className="text-surface-container" cx="22" cy="22" fill="none" r="18" stroke="currentColor" strokeWidth="4"></circle>
-                <circle
-                  className="text-primary-container"
-                  cx="22"
-                  cy="22"
-                  fill="none"
-                  r="18"
-                  stroke="currentColor"
-                  strokeDasharray="113.1"
-                  strokeDashoffset={113.1 - (113.1 * (avgProgress / 100))}
-                  strokeLinecap="round"
-                  strokeWidth="4"
-                ></circle>
-              </svg>
-              <span className="absolute text-[11px] font-bold text-forest-deep">
-                {totalTasks === 0 ? '100%' : `${completedTasksCount}/${totalTasks}`}
-              </span>
+            <div className="w-12 h-12 rounded-xl bg-emerald-50 text-emerald-700 dark:bg-emerald-950/40 dark:text-emerald-300 flex items-center justify-center shrink-0 border border-emerald-100 dark:border-emerald-900/40">
+              <span className="material-symbols-outlined text-[24px]">task_alt</span>
             </div>
           </div>
-          <div className="mt-4 pt-3 flex items-center justify-between text-on-surface-variant font-label-sm text-label-sm">
-            <span>{completedTasksCount} chantiers achevés</span>
-            <span className="text-primary font-semibold">{openTasksCount} en cours</span>
+          <div className="mt-4 pt-3 border-t border-slate-100 dark:border-slate-800 flex items-center justify-between text-xs text-slate-500 dark:text-slate-400">
+            <span>{completedTasksCount} / {totalTasks} chantiers achevés</span>
+            <span className={`font-semibold ${totalOpenTasksCount > 0 ? 'text-primary' : 'text-emerald-700 dark:text-emerald-400'}`}>
+              {totalOpenTasksCount > 0 ? `${totalOpenTasksCount} en cours` : '100% à jour'}
+            </span>
+          </div>
+        </div>
+
+        {/* Élément 2 : Mes votes à exprimer */}
+        <div className="bg-white dark:bg-slate-900 rounded-2xl p-5 shadow-sm border border-slate-200/80 dark:border-slate-800 flex flex-col justify-between relative overflow-hidden group hover:shadow-md transition-all">
+          <div className="flex items-start justify-between">
+            <div>
+              <span className="text-xs font-bold uppercase tracking-wider text-slate-500 dark:text-slate-400 block">
+                Votes à exprimer
+              </span>
+              <div className="flex items-baseline gap-2 mt-2">
+                {loading ? (
+                  <span className="w-16 h-8 bg-slate-200 dark:bg-slate-700 rounded animate-pulse inline-block"></span>
+                ) : (
+                  <span className="text-3xl font-extrabold text-forest-deep dark:text-slate-100 leading-none">
+                    {myPendingVotesCount} / {totalOpenVotesCount}
+                  </span>
+                )}
+                <span className="text-xs text-slate-500 dark:text-slate-400 font-medium">scrutins ouverts</span>
+              </div>
+            </div>
+            <div className="w-12 h-12 rounded-xl bg-blue-50 text-blue-700 dark:bg-blue-950/40 dark:text-blue-300 flex items-center justify-center shrink-0 border border-blue-100 dark:border-blue-900/40">
+              <span className="material-symbols-outlined text-[24px]">how_to_vote</span>
+            </div>
+          </div>
+          <div className="mt-4 pt-3 border-t border-slate-100 dark:border-slate-800 flex items-center gap-2 text-xs">
+            <span className={`w-2 h-2 rounded-full ${myPendingVotesCount > 0 ? 'bg-amber-500 animate-pulse' : 'bg-emerald-500'}`}></span>
+            <span className={myPendingVotesCount > 0 ? 'text-amber-800 dark:text-amber-300 font-semibold' : 'text-slate-500 dark:text-slate-400'}>
+              {myPendingVotesCount > 0
+                ? `${myPendingVotesCount} vote${myPendingVotesCount > 1 ? 's' : ''} en attente de votre voix`
+                : 'Tous vos votes sont exprimés'}
+            </span>
+          </div>
+        </div>
+
+        {/* Élément 3 : Mes tâches confiées */}
+        <div className="bg-white dark:bg-slate-900 rounded-2xl p-5 shadow-sm border border-slate-200/80 dark:border-slate-800 flex flex-col justify-between relative overflow-hidden group hover:shadow-md transition-all">
+          <div className="flex items-start justify-between">
+            <div>
+              <span className="text-xs font-bold uppercase tracking-wider text-slate-500 dark:text-slate-400 block">
+                Mes tâches
+              </span>
+              <div className="flex items-baseline gap-2 mt-2">
+                {loading ? (
+                  <span className="w-16 h-8 bg-slate-200 dark:bg-slate-700 rounded animate-pulse inline-block"></span>
+                ) : (
+                  <span className="text-3xl font-extrabold text-forest-deep dark:text-slate-100 leading-none">
+                    {myOpenTasksCount} / {totalOpenTasksCount}
+                  </span>
+                )}
+                <span className="text-xs text-slate-500 dark:text-slate-400 font-medium">tâches ouvertes</span>
+              </div>
+            </div>
+            <div className="w-12 h-12 rounded-xl bg-amber-50 text-amber-700 dark:bg-amber-950/40 dark:text-amber-300 flex items-center justify-center shrink-0 border border-amber-100 dark:border-amber-900/40">
+              <span className="material-symbols-outlined text-[24px]">assignment_ind</span>
+            </div>
+          </div>
+          <div className="mt-4 pt-3 border-t border-slate-100 dark:border-slate-800 flex items-center gap-2 text-xs">
+            <span className={`w-2 h-2 rounded-full ${myOpenTasksCount > 0 ? 'bg-primary' : 'bg-slate-300 dark:bg-slate-600'}`}></span>
+            <span className="text-slate-600 dark:text-slate-400">
+              {myOpenTasksCount > 0
+                ? `${myOpenTasksCount} mission${myOpenTasksCount > 1 ? 's' : ''} sous votre responsabilité`
+                : 'Aucune tâche assignée'}
+            </span>
           </div>
         </div>
 
