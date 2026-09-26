@@ -1092,6 +1092,7 @@ export default function VademecumPage({ properties, currentUser }) {
           </div>
 
         </div>
+        )}
 
         {/* Action Button: Enregistrer les modifications thermiques (Annotation 2) */}
         <div className="flex flex-col sm:flex-row items-center justify-between gap-4 pt-4 border-t border-border-subtle">
@@ -1585,15 +1586,12 @@ export default function VademecumPage({ properties, currentUser }) {
             <form onSubmit={handleCreateDbItem} className="space-y-4">
               <div>
                 <label className="block text-xs font-bold text-on-surface mb-1">Catégorie</label>
-                <select
+                <CustomSelect
                   value={newCategory}
                   onChange={(e) => setNewCategory(e.target.value)}
-                  className="w-full px-3 py-2 bg-canvas-slate border border-border-subtle rounded-xl text-xs font-semibold text-on-surface focus:outline-none focus:border-primary"
-                >
-                  {categories.filter((c) => c !== 'Toutes').map((c) => (
-                    <option key={c} value={c}>{c}</option>
-                  ))}
-                </select>
+                  options={categories.filter((c) => c !== 'Toutes')}
+                  className="h-10 text-xs"
+                />
               </div>
 
               <div>
@@ -1634,15 +1632,16 @@ export default function VademecumPage({ properties, currentUser }) {
 
                 <div>
                   <label className="block text-xs font-bold text-on-surface mb-1">Importance</label>
-                  <select
+                  <CustomSelect
                     value={newImportance}
                     onChange={(e) => setNewImportance(e.target.value)}
-                    className="w-full px-3 py-2 bg-canvas-slate border border-border-subtle rounded-xl text-xs font-semibold text-on-surface focus:outline-none focus:border-primary"
-                  >
-                    <option value="INFO">INFO (Normal)</option>
-                    <option value="IMPORTANT">IMPORTANT</option>
-                    <option value="CRITIQUE">CRITIQUE</option>
-                  </select>
+                    options={[
+                      { value: 'INFO', label: 'INFO (Normal)', dotColor: 'bg-primary' },
+                      { value: 'IMPORTANT', label: 'IMPORTANT', dotColor: 'bg-amber-rich' },
+                      { value: 'CRITIQUE', label: 'CRITIQUE', dotColor: 'bg-error' },
+                    ]}
+                    className="h-10 text-xs"
+                  />
                 </div>
               </div>
 
