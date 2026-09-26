@@ -327,7 +327,7 @@ export default function VademecumPage({ properties, currentUser }) {
       {/* ===================================================================== */}
       {/* 1. EN-TÊTE HARMONISÉ HERO                                             */}
       {/* ===================================================================== */}
-      <section className="relative overflow-hidden rounded-2xl bg-emerald-50/70 border border-emerald-200/60 dark:bg-emerald-950/20 dark:border-emerald-800/40 p-6 sm:p-8 shadow-sm mb-8">
+      <section className="relative overflow-hidden rounded-2xl bg-gradient-to-r from-emerald-50/80 via-teal-50/60 to-emerald-50/70 border border-emerald-200/60 dark:bg-emerald-950/20 dark:border-emerald-800/40 p-6 sm:p-8 shadow-sm mb-6">
         {/* Subtle decorative glow */}
         <div className="absolute -right-24 -top-24 w-96 h-96 rounded-full bg-emerald-200/40 dark:bg-emerald-900/15 blur-3xl pointer-events-none"></div>
         <div className="absolute -left-12 -bottom-12 w-64 h-64 rounded-full bg-teal-200/30 dark:bg-teal-900/10 blur-2xl pointer-events-none"></div>
@@ -336,10 +336,10 @@ export default function VademecumPage({ properties, currentUser }) {
           <div className="space-y-1.5 max-w-3xl">
             <span className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full bg-emerald-100/90 text-emerald-900 dark:bg-emerald-900/50 dark:text-emerald-200 font-label-sm text-xs font-semibold uppercase tracking-wider">
               <span className="w-2 h-2 rounded-full bg-emerald-600 dark:bg-emerald-400 animate-pulse"></span>
-              VADÉMÉCUM & VIE DU DOMAINE
+              VADÉMÉCUM &amp; CONFORT DU DOMAINE
             </span>
             <h1 className="font-display-lg text-2xl sm:text-3xl lg:text-display-lg text-forest-deep dark:text-emerald-50 tracking-tight font-bold mt-2">
-              Séjour & Intendance
+              Séjour &amp; Intendance
             </h1>
             <p className="font-body-md text-sm sm:text-base text-on-surface-variant dark:text-emerald-200/80 leading-relaxed">
               Consignes d'arrivée et départ, équipements et confort thermique du domaine.
@@ -350,7 +350,7 @@ export default function VademecumPage({ properties, currentUser }) {
           <div className="flex flex-wrap sm:flex-nowrap items-center gap-3 shrink-0 pt-2 md:pt-0">
             <button
               onClick={() => setIsEditStayOpen(true)}
-              className="group flex items-center justify-center gap-2 px-5 py-3.5 rounded-xl bg-white dark:bg-slate-900 border-2 border-outline-variant text-on-surface hover:bg-canvas-slate hover:border-outline font-label-lg text-sm sm:text-base transition-all duration-200 shadow-sm cursor-pointer whitespace-nowrap"
+              className="group flex items-center justify-center gap-2 px-5 py-3.5 rounded-DEFAULT bg-white dark:bg-slate-900 border-2 border-outline-variant text-on-surface hover:bg-canvas-slate hover:border-outline font-label-lg text-sm sm:text-base font-semibold transition-all duration-200 shadow-sm cursor-pointer whitespace-nowrap"
               type="button"
             >
               <span className="material-symbols-outlined text-[22px] text-on-surface-variant group-hover:scale-110 transition-transform">edit_calendar</span>
@@ -359,7 +359,7 @@ export default function VademecumPage({ properties, currentUser }) {
 
             <button
               onClick={() => window.print()}
-              className="group flex items-center justify-center gap-2 px-5 py-3.5 rounded-xl bg-white dark:bg-slate-900 border-2 border-primary text-primary hover:bg-sage-soft font-label-lg text-sm sm:text-base font-bold shadow-sm hover:shadow-md transition-all duration-200 cursor-pointer whitespace-nowrap"
+              className="group flex items-center justify-center gap-2 px-5 py-3.5 rounded-DEFAULT bg-white dark:bg-slate-900 border-2 border-primary text-primary hover:bg-sage-soft font-label-lg text-sm sm:text-base font-bold shadow-sm hover:shadow-md transition-all duration-200 cursor-pointer whitespace-nowrap"
               type="button"
             >
               <span className="material-symbols-outlined text-[22px] group-hover:scale-110 transition-transform">print</span>

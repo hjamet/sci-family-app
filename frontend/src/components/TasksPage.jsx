@@ -278,7 +278,7 @@ export default function TasksPage({ currentUser = 'Henri Jamet' }) {
       {/* ========================================================================= */}
       {/* 1. EN-TÊTE HARMONISÉ HERO                                                 */}
       {/* ========================================================================= */}
-      <section className="relative overflow-hidden rounded-2xl bg-slate-100/80 border border-slate-200/80 dark:bg-slate-900/30 dark:border-slate-800/40 p-6 sm:p-8 shadow-sm mb-6">
+      <section className="relative overflow-hidden rounded-2xl bg-gradient-to-r from-slate-100/90 via-blue-50/60 to-slate-100/80 border border-slate-200/80 dark:bg-slate-900/30 dark:border-slate-800/40 p-6 sm:p-8 shadow-sm mb-6">
         {/* Subtle decorative glow */}
         <div className="absolute -right-24 -top-24 w-96 h-96 rounded-full bg-slate-200/50 dark:bg-slate-800/20 blur-3xl pointer-events-none"></div>
         <div className="absolute -left-12 -bottom-12 w-64 h-64 rounded-full bg-blue-100/40 dark:bg-blue-900/10 blur-2xl pointer-events-none"></div>
@@ -287,10 +287,10 @@ export default function TasksPage({ currentUser = 'Henri Jamet' }) {
           <div className="space-y-1.5 max-w-3xl">
             <span className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full bg-slate-200/80 text-slate-800 dark:bg-slate-800/60 dark:text-slate-200 font-label-sm text-xs font-semibold uppercase tracking-wider">
               <span className="w-2 h-2 rounded-full bg-slate-600 dark:bg-slate-400 animate-pulse"></span>
-              ENTRETIEN & DÉCISIONS
+              DOMAINE D'HELLENVILLIERS • TRAVAUX &amp; INTENDANCE
             </span>
             <h1 className="font-display-lg text-2xl sm:text-3xl lg:text-display-lg text-forest-deep dark:text-slate-100 tracking-tight font-bold mt-2">
-              Tâches & Chantiers
+              Tâches, Chantiers &amp; Missions
             </h1>
             <p className="font-body-md text-sm sm:text-base text-on-surface-variant dark:text-slate-300 leading-relaxed">
               Missions réparties entre associés, avancement des travaux et votes décisionnels.
@@ -301,16 +301,16 @@ export default function TasksPage({ currentUser = 'Henri Jamet' }) {
           <div className="flex flex-wrap sm:flex-nowrap items-center gap-3 shrink-0 pt-2 md:pt-0">
             <button
               onClick={() => window.print()}
-              className="group flex items-center justify-center gap-2 px-5 py-3.5 rounded-xl bg-white dark:bg-slate-900 border-2 border-outline-variant text-on-surface hover:bg-canvas-slate hover:border-outline font-label-lg text-sm sm:text-base transition-all duration-200 shadow-sm cursor-pointer whitespace-nowrap"
+              className="group flex items-center justify-center gap-2 px-5 py-3.5 rounded-DEFAULT bg-white dark:bg-slate-900 border-2 border-outline-variant text-on-surface hover:bg-canvas-slate hover:border-outline font-label-lg text-sm sm:text-base font-semibold transition-all duration-200 shadow-sm cursor-pointer whitespace-nowrap"
               type="button"
             >
               <span className="material-symbols-outlined text-[20px] text-on-surface-variant group-hover:scale-110 transition-transform">download</span>
-              <span>Exporter en PDF</span>
+              <span>Exporter PDF</span>
             </button>
 
             <button
               onClick={() => setIsCreateModalOpen(true)}
-              className="group flex items-center justify-center gap-2 px-5 py-3.5 rounded-xl bg-white dark:bg-slate-900 border-2 border-primary text-primary hover:bg-sage-soft font-label-lg text-sm sm:text-base font-bold shadow-sm hover:shadow-md transition-all duration-200 cursor-pointer whitespace-nowrap"
+              className="group flex items-center justify-center gap-2 px-5 py-3.5 rounded-DEFAULT bg-white dark:bg-slate-900 border-2 border-primary text-primary hover:bg-sage-soft font-label-lg text-sm sm:text-base font-bold shadow-sm hover:shadow-md transition-all duration-200 cursor-pointer whitespace-nowrap"
               type="button"
             >
               <span className="material-symbols-outlined text-[22px] group-hover:scale-110 transition-transform">add_task</span>

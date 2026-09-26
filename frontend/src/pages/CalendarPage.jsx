@@ -258,7 +258,7 @@ export default function CalendarPage({ properties, currentUser = 'Henri Jamet' }
       {/* ========================================================================= */}
       {/* 1. EN-TÊTE HARMONISÉ HERO                                                 */}
       {/* ========================================================================= */}
-      <section className="relative overflow-hidden rounded-2xl bg-amber-50/70 border border-amber-200/60 dark:bg-amber-950/20 dark:border-amber-800/40 p-6 sm:p-8 shadow-sm">
+      <section className="relative overflow-hidden rounded-2xl bg-gradient-to-r from-amber-50/80 via-yellow-50/60 to-amber-50/70 border border-amber-200/60 dark:bg-amber-950/20 dark:border-amber-800/40 p-6 sm:p-8 shadow-sm mb-6">
         {/* Subtle decorative glow */}
         <div className="absolute -right-24 -top-24 w-96 h-96 rounded-full bg-amber-200/40 dark:bg-amber-800/10 blur-3xl pointer-events-none"></div>
         <div className="absolute -left-12 -bottom-12 w-64 h-64 rounded-full bg-yellow-200/30 dark:bg-yellow-800/10 blur-2xl pointer-events-none"></div>
@@ -267,7 +267,7 @@ export default function CalendarPage({ properties, currentUser = 'Henri Jamet' }
           <div className="space-y-1.5 max-w-3xl">
             <span className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full bg-amber-100/90 text-amber-900 dark:bg-amber-900/50 dark:text-amber-200 font-label-sm text-xs font-semibold uppercase tracking-wider">
               <span className="w-2 h-2 rounded-full bg-amber-600 dark:bg-amber-400 animate-pulse"></span>
-              PLANNING & OCCUPATION
+              DOMAINE D'HELLENVILLIERS • PLANNING
             </span>
             <h1 className="font-display-lg text-2xl sm:text-3xl lg:text-display-lg text-forest-deep dark:text-amber-50 tracking-tight font-bold mt-2">
               Calendrier des Séjours
@@ -285,10 +285,10 @@ export default function CalendarPage({ properties, currentUser = 'Henri Jamet' }
                 setEditingReservation(null);
                 setIsBookingOpen(true);
               }}
-              className="group flex items-center justify-center gap-2 px-5 py-3.5 rounded-xl bg-white dark:bg-slate-900 border-2 border-primary text-primary dark:text-amber-400 hover:bg-amber-100/50 font-label-lg text-sm sm:text-base font-bold shadow-sm hover:shadow-md transition-all duration-200 cursor-pointer whitespace-nowrap"
+              className="group flex items-center justify-center gap-2 px-5 py-3.5 rounded-DEFAULT bg-white dark:bg-slate-900 border-2 border-primary text-primary hover:bg-sage-soft font-label-lg text-sm sm:text-base font-bold shadow-sm hover:shadow-md transition-all duration-200 cursor-pointer whitespace-nowrap"
             >
               <span className="material-symbols-outlined text-[22px] group-hover:scale-110 transition-transform">
-                edit_calendar
+                event_available
               </span>
               <span>+ Nouveau séjour</span>
             </button>
