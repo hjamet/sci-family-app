@@ -97,12 +97,28 @@ class GoogleDriveJailService:
 
     def upload_file(
         self,
-        filename: str,
-        content: bytes,
-        mimetype: str = "application/octet-stream",
-        description: Optional[str] = None
+        file_content_or_filename: Any = None,
+        filename_or_content: Any = None,
+        mimetype: Optional[str] = None,
+        description: Optional[str] = None,
+        **kwargs
     ) -> Dict[str, Any]:
-        """Téléverse un fichier en forçant impérativement son parent dans ALLOWED_FOLDER_ID (Jail)."""
+        """Téléverse un fichier en forçant impérativement son parent dans ALLOWED_FOLDER_ID (Jail).
+        Prend en charge de manière robuste (content, filename) ou (filename, content).
+        """
+        # Résolution flexible des arguments
+        if isinstance(file_content_or_filename, (bytes, bytearray)):
+            content = bytes(file_content_or_filename)
+            filename = str(filename_or_content or kwargs.get("filename", "document.bin"))
+        elif isinstance(filename_or_content, (bytes, bytearray)):
+            content = bytes(filename_or_content)
+            filename = str(file_content_or_filename or kwargs.get("filename", "document.bin"))
+        else:
+            content = kwargs.get("file_content") or kwargs.get("content") or b""
+            filename = str(kwargs.get("filename") or file_content_or_filename or "document.bin")
+
+        resolved_mimetype = mimetype or kwargs.get("mime_type") or "application/octet-stream"
+
         service = self._get_client()
 
         # CONFINEMENT STRICT : Interdiction absolue de créer hors du dossier autorisé
@@ -113,7 +129,7 @@ class GoogleDriveJailService:
         if description:
             file_metadata["description"] = description
 
-        media = MediaInMemoryUpload(content, mimetype=mimetype, resumable=False)
+        media = MediaInMemoryUpload(content, mimetype=resolved_mimetype, resumable=False)
 
         try:
             file = service.files().create(
@@ -188,6 +204,28 @@ class GoogleDriveJailService:
             return fh.getvalue(), metadata
         except HttpError as err:
             logger.error(f"Erreur API Google Drive lors du téléchargement de {file_id} : {err}")
+            raise HTTPException(status_code=err.resp.status, detail=f"Google Drive Error: {err._get_reason()}")
+
+    def rename_file(self, file_id: str, new_name: str) -> Dict[str, Any]:
+        """Renomme un fichier sur Google Drive après vérification stricte de son confinement."""
+        # Vérification préalable obligatoire (lève SecurityException si hors dossier)
+        self.get_file_metadata(file_id)
+
+        clean_name = os.path.basename(new_name).strip()
+        if not clean_name:
+            raise HTTPException(status_code=400, detail="Le nouveau nom de fichier ne peut être vide.")
+
+        service = self._get_client()
+        try:
+            updated_file = service.files().update(
+                fileId=file_id,
+                body={"name": clean_name},
+                fields="id, name, parents, mimeType, size, createdTime, modifiedTime, webViewLink, webContentLink"
+            ).execute()
+            logger.info(f"Fichier {file_id} renommé en '{clean_name}' avec succès sur Google Drive.")
+            return updated_file
+        except HttpError as err:
+            logger.error(f"Erreur API Google Drive lors du renommage de {file_id} : {err}")
             raise HTTPException(status_code=err.resp.status, detail=f"Google Drive Error: {err._get_reason()}")
 
     def delete_file(self, file_id: str) -> bool:

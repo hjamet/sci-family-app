@@ -574,6 +574,21 @@ export async function deleteAdminDocument(idOrFilename) {
 
 export const deleteDocument = deleteAdminDocument;
 
+export async function updateDocument(id, data) {
+  const res = await fetch(`${API_BASE}/documents/${encodeURIComponent(id)}`, {
+    method: 'PATCH',
+    headers: getAuthJsonHeaders(),
+    body: JSON.stringify(data)
+  });
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({}));
+    throw new Error(err.detail || 'Erreur lors du renommage du document');
+  }
+  return res.json();
+}
+
+export const renameDocument = updateDocument;
+
 export async function fetchMemberCurrentStayTasks(userName) {
   const res = await fetch(`${API_BASE}/members/${encodeURIComponent(userName)}/current-stay-tasks`, {
     headers: getAuthHeaders()

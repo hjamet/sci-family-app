@@ -15,6 +15,7 @@ import {
   fetchDocumentCategories,
   createDocumentCategory,
   uploadDocument,
+  updateDocument,
   deleteDocument,
   fetchBankStatus
 } from '../api';
@@ -273,16 +274,22 @@ export default function AdminInfoPage({ currentUser }) {
     setIsRenameModalOpen(true);
   };
 
-  const handleRenameSubmit = (e) => {
+  const handleRenameSubmit = async (e) => {
     e.preventDefault();
     if (!selectedRenamingDoc || !renameInputValue.trim()) return;
 
     const newTitle = renameInputValue.trim();
-    setDocuments((prev) =>
-      prev.map((d) => (d.id === selectedRenamingDoc.id ? { ...d, title: newTitle, name: newTitle } : d))
-    );
-    setIsRenameModalOpen(false);
-    showToast('Document renommé', 'Le titre a été actualisé.', 'edit');
+    const docId = selectedRenamingDoc.id || selectedRenamingDoc.filename;
+    try {
+      const updated = await updateDocument(docId, { title: newTitle });
+      setDocuments((prev) =>
+        prev.map((d) => (d.id === selectedRenamingDoc.id ? { ...d, ...updated, title: newTitle, name: newTitle } : d))
+      );
+      setIsRenameModalOpen(false);
+      showToast('Document renommé', 'Le titre a été actualisé sur Google Drive et en base.', 'edit');
+    } catch (err) {
+      showToast('Erreur renommage', err.message, 'error');
+    }
   };
 
   // Création d'une catégorie maison en base (Annotation 5)

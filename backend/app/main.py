@@ -28,7 +28,7 @@ from .schemas import (
     ReservationCreate, ReservationUpdate, ReservationResponse,
     ProjectCreate, ProjectReview, ProjectApprove, ProjectVoteCreate, ProjectVoteResponse, ProjectResponse, VoteEnum,
     ProjectCommentCreate, ProjectCommentResponse,
-    AdminDocumentCreate, AdminDocumentResponse,
+    AdminDocumentCreate, AdminDocumentUpdate, AdminDocumentResponse,
     DocumentCategoryCreate, DocumentCategoryResponse,
     ClassificationEnum, TaskWeightEnum,
     AvailabilitySet, AvailabilityBatchCreate, AvailabilityResponse, SmartMatchItem,
@@ -157,11 +157,23 @@ def run_task_migrations():
                 conn.execute(text("ALTER TABLE stay_task_assignments ADD COLUMN completion_notes TEXT"))
             if "completion_docs" not in column_names:
                 conn.execute(text("ALTER TABLE stay_task_assignments ADD COLUMN completion_docs TEXT"))
+def run_document_migrations():
+    if engine.dialect.name != "sqlite":
+        return
+    from sqlalchemy import text
+    with engine.connect() as conn:
+        inspector_query = text("PRAGMA table_info(admin_documents)")
+        result = conn.execute(inspector_query).fetchall()
+        column_names = [row[1] for row in result]
+        if column_names:
+            if "drive_file_id" not in column_names:
+                conn.execute(text("ALTER TABLE admin_documents ADD COLUMN drive_file_id VARCHAR(255)"))
             conn.commit()
 
 try:
     run_project_migrations()
     run_task_migrations()
+    run_document_migrations()
     migrate_engine(engine)
 except Exception as e:
     print(f"Migration notice: {e}")
@@ -2683,7 +2695,7 @@ def create_document_category(payload: DocumentCategoryCreate, db: Session = Depe
     return new_cat
 
 
-# --- Real Documents Endpoints (Annotations 5 & 6) ---
+# --- Real Documents Endpoints avec Intégration Google Drive Complète (Strict Jail) ---
 
 @app.get("/api/admin-documents", tags=["Documents"])
 @app.get("/api/documents", tags=["Documents"])
@@ -2693,7 +2705,7 @@ def list_documents(
     db: Session = Depends(get_db)
 ):
     """
-    Retourne STRICTEMENT les vrais documents stockés en base de données (zéro document fictif inventé).
+    Retourne STRICTEMENT les vrais documents stockés en base de données et reliés à Google Drive.
     """
     query = db.query(AdminDocument)
     if category and category not in ("Toutes", "all"):
@@ -2705,23 +2717,27 @@ def list_documents(
 
     results = []
     for doc in db_docs:
+        # Route sécurisée de téléchargement Drive ou locale
+        download_url = f"/api/documents/{doc.id}/download"
         results.append({
             "id": doc.id,
             "title": doc.title,
             "category": doc.category,
-            "file_url": doc.file_url,
+            "file_url": download_url,
             "file_name": doc.file_name or doc.title,
-            "file_type": doc.file_type or "PDF",
+            "file_type": doc.file_type or "application/pdf",
             "file_size": doc.file_size or 0,
+            "drive_file_id": doc.drive_file_id,
             "source_type": doc.source_type or "MANUAL",
             "source_id": doc.source_id,
             "uploaded_by": doc.uploaded_by or "Henri Jamet",
             "notes": doc.notes,
             "created_at": doc.created_at,
             "name": doc.title,
-            "filename": doc.file_name or os.path.basename(doc.file_url),
-            "url": doc.file_url,
-            "type": doc.file_type or "PDF",
+            "filename": doc.file_name or (os.path.basename(doc.file_url) if doc.file_url else doc.title),
+            "url": download_url,
+            "type": doc.file_type or "application/pdf",
+            "mime_type": doc.file_type or "application/pdf",
             "size": f"{round((doc.file_size or 0) / 1024, 1)} Ko" if doc.file_size else "—",
             "upload_date": doc.created_at.strftime("%d/%m/%Y") if doc.created_at else "",
             "source": doc.category
@@ -2741,7 +2757,7 @@ async def upload_document_canonical(
     """
     Téléversement d'un document selon la convention de nommage canonique officielle :
     [ORGANISME] [MMAAAA actuel] [Titre du document].[ext]
-    Ex: SPoMi 092026 Permis B Fribourg.pdf
+    Téléversement DIRECT dans Google Drive (dossier Hellenvilliers SCI 14RcQbUF7WQb5kmVlfhdHmieV1OA0Pk-J).
     """
     clean_org = organisme.strip()
     clean_title = title.strip()
@@ -2763,27 +2779,44 @@ async def upload_document_canonical(
     # Format canonique strict : séparateurs = espaces simples, aucun tiret ni underscore
     canonical_filename = f"{clean_org} {mmaaaa} {clean_title}{ext}"
 
-    # Sauvegarde physique sécurisée
+    # Lecture du contenu binaire
     file_bytes = await file.read()
     file_size = len(file_bytes)
+    mimetype = file.content_type or "application/pdf"
 
+    # 1. Téléversement DIRECT dans Google Drive avec Strict Drive Jail
+    try:
+        drive_file = drive_jail_service.upload_file(
+            filename=canonical_filename,
+            content=file_bytes,
+            mimetype=mimetype,
+            description=f"SCI Hellenvilliers - {category} - Déposé par {uploaded_by}"
+        )
+        drive_file_id = drive_file.get("id")
+    except Exception as drive_err:
+        logger.error(f"Erreur upload Google Drive pour {canonical_filename} : {drive_err}")
+        raise HTTPException(
+            status_code=500,
+            detail=f"Échec de synchronisation Google Drive : {str(drive_err)}"
+        )
+
+    # 2. Sauvegarde de secours / cache local
     dest_path = os.path.join(DOCUMENTS_DIR, canonical_filename)
     try:
         with open(dest_path, "wb") as f:
             f.write(file_bytes)
     except Exception as e:
-        logger.warning(f"Erreur écriture fichier {canonical_filename}: {e}")
+        logger.warning(f"Erreur écriture cache local {canonical_filename}: {e}")
 
-    file_url = f"/uploads/documents/{canonical_filename}"
-
-    # Enregistrement en base de données
+    # 3. Enregistrement en base de données
     db_doc = AdminDocument(
         title=clean_title,
         category=category,
-        file_url=file_url,
+        file_url=f"/api/documents/drive/{drive_file_id}",
         file_name=canonical_filename,
-        file_type=file.content_type or "application/pdf",
+        file_type=mimetype,
         file_size=file_size,
+        drive_file_id=drive_file_id,
         source_type="MANUAL",
         uploaded_by=uploaded_by or "Henri Jamet",
         notes=clean_org
@@ -2792,23 +2825,156 @@ async def upload_document_canonical(
     db.commit()
     db.refresh(db_doc)
 
+    # Définition de l'URL pérenne de téléchargement
+    download_url = f"/api/documents/{db_doc.id}/download"
+    db_doc.file_url = download_url
+    db.commit()
+    db.refresh(db_doc)
+
     return {
         "id": db_doc.id,
         "title": db_doc.title,
         "category": db_doc.category,
-        "file_url": db_doc.file_url,
+        "file_url": download_url,
         "file_name": db_doc.file_name,
         "file_type": db_doc.file_type,
         "file_size": db_doc.file_size,
+        "drive_file_id": db_doc.drive_file_id,
         "source_type": db_doc.source_type,
         "uploaded_by": db_doc.uploaded_by,
         "notes": db_doc.notes,
         "created_at": db_doc.created_at,
         "name": db_doc.title,
         "filename": db_doc.file_name,
-        "url": db_doc.file_url,
+        "url": download_url,
+        "type": db_doc.file_type,
+        "mime_type": db_doc.file_type,
         "size": f"{round(file_size / 1024, 1)} Ko",
         "upload_date": db_doc.created_at.strftime("%d/%m/%Y")
+    }
+
+@app.get("/api/documents/{doc_id}/download", tags=["Documents"])
+@app.get("/api/admin-documents/{doc_id}/download", tags=["Documents"])
+def download_document(doc_id: str, db: Session = Depends(get_db)):
+    """
+    Télécharge un document en extrayant directement le binaire depuis Google Drive via drive_service.py.
+    Applique le confinement strict (Strict Drive Jail) : HTTP 403 immédiat si hors du dossier Hellenvilliers SCI.
+    """
+    doc = None
+    if doc_id.isdigit():
+        doc = db.query(AdminDocument).filter(AdminDocument.id == int(doc_id)).first()
+    if not doc:
+        doc = db.query(AdminDocument).filter(
+            or_(AdminDocument.drive_file_id == doc_id, AdminDocument.file_name == doc_id)
+        ).first()
+
+    target_drive_id = doc.drive_file_id if (doc and doc.drive_file_id) else (doc_id if not doc_id.isdigit() else None)
+
+    # 1. Extraction binaire prioritaire depuis Google Drive (avec vérification Strict Jail 403)
+    if target_drive_id:
+        content, metadata = drive_jail_service.download_file(target_drive_id)
+        filename = (doc.file_name if doc else None) or metadata.get("name") or f"document_{doc_id}.pdf"
+        mimetype = metadata.get("mimeType") or (doc.file_type if doc else "application/pdf")
+        return Response(
+            content=content,
+            media_type=mimetype,
+            headers={"Content-Disposition": f'attachment; filename="{filename}"'}
+        )
+
+    # 2. Secours cache local si fichier présent sans drive_id
+    if doc and doc.file_name:
+        fpath = os.path.join(DOCUMENTS_DIR, doc.file_name)
+        if os.path.exists(fpath):
+            return FileResponse(
+                path=fpath,
+                filename=doc.file_name,
+                media_type=doc.file_type or "application/pdf"
+            )
+
+    raise HTTPException(status_code=404, detail="Document non trouvé ou indisponible.")
+
+@app.put("/api/documents/{doc_id}", tags=["Documents"])
+@app.patch("/api/documents/{doc_id}", tags=["Documents"])
+@app.put("/api/admin-documents/{doc_id}", tags=["Documents"])
+@app.patch("/api/admin-documents/{doc_id}", tags=["Documents"])
+def rename_document(
+    doc_id: str,
+    payload: AdminDocumentUpdate,
+    db: Session = Depends(get_db)
+):
+    """
+    Renomme un document sur Google Drive via drive_service.py ET dans la base de données.
+    Applique le confinement strict (Strict Drive Jail) : HTTP 403 immédiat si hors du dossier Hellenvilliers SCI.
+    """
+    doc = None
+    if doc_id.isdigit():
+        doc = db.query(AdminDocument).filter(AdminDocument.id == int(doc_id)).first()
+    if not doc:
+        doc = db.query(AdminDocument).filter(
+            or_(AdminDocument.drive_file_id == doc_id, AdminDocument.file_name == doc_id)
+        ).first()
+
+    if not doc:
+        raise HTTPException(status_code=404, detail="Document non trouvé.")
+
+    new_title = (payload.title or payload.name or "").strip()
+    if not new_title:
+        raise HTTPException(status_code=400, detail="Le nouveau titre ne peut être vide.")
+
+    # Conserver ou ajuster l'extension de fichier
+    old_ext = os.path.splitext(doc.file_name or "")[1] or ".pdf"
+    if not new_title.lower().endswith(old_ext.lower()):
+        new_filename = f"{new_title}{old_ext}"
+    else:
+        new_filename = new_title
+        new_title = os.path.splitext(new_title)[0]
+
+    # 1. Renommage sur Google Drive si drive_file_id présent
+    if doc.drive_file_id:
+        drive_res = drive_jail_service.rename_file(doc.drive_file_id, new_filename)
+        logger.info(f"Document renommé sur Google Drive: {drive_res.get('name')}")
+
+    # 2. Renommage fichier local dans DOCUMENTS_DIR si existant
+    if doc.file_name:
+        old_fpath = os.path.join(DOCUMENTS_DIR, doc.file_name)
+        new_fpath = os.path.join(DOCUMENTS_DIR, new_filename)
+        if os.path.exists(old_fpath) and old_fpath != new_fpath:
+            try:
+                os.rename(old_fpath, new_fpath)
+            except Exception as e:
+                logger.warning(f"Erreur renommage fichier local: {e}")
+
+    # 3. Mise à jour en base de données
+    doc.title = new_title
+    doc.file_name = new_filename
+    if payload.category:
+        doc.category = payload.category
+    if payload.notes:
+        doc.notes = payload.notes
+
+    db.commit()
+    db.refresh(doc)
+
+    download_url = f"/api/documents/{doc.id}/download"
+    return {
+        "id": doc.id,
+        "title": doc.title,
+        "name": doc.title,
+        "category": doc.category,
+        "file_url": download_url,
+        "url": download_url,
+        "file_name": doc.file_name,
+        "filename": doc.file_name,
+        "file_type": doc.file_type,
+        "mime_type": doc.file_type,
+        "file_size": doc.file_size,
+        "size": f"{round((doc.file_size or 0) / 1024, 1)} Ko" if doc.file_size else "—",
+        "drive_file_id": doc.drive_file_id,
+        "uploaded_by": doc.uploaded_by,
+        "notes": doc.notes,
+        "created_at": doc.created_at,
+        "upload_date": doc.created_at.strftime("%d/%m/%Y") if doc.created_at else "",
+        "message": "Document renommé avec succès sur Google Drive et en base de données."
     }
 
 @app.post("/api/admin-documents", response_model=AdminDocumentResponse, status_code=status.HTTP_201_CREATED, tags=["Documents"])
@@ -2821,6 +2987,7 @@ def create_admin_document(doc: AdminDocumentCreate, db: Session = Depends(get_db
         file_name=doc.file_name or os.path.basename(doc.file_url),
         file_type=doc.file_type or "application/pdf",
         file_size=doc.file_size or 0,
+        drive_file_id=doc.drive_file_id,
         source_type=doc.source_type or "MANUAL",
         source_id=doc.source_id,
         uploaded_by=doc.uploaded_by or "Henri Jamet",
@@ -2834,12 +3001,37 @@ def create_admin_document(doc: AdminDocumentCreate, db: Session = Depends(get_db
 @app.delete("/api/admin-documents/{doc_id}", tags=["Documents"])
 @app.delete("/api/documents/{doc_id}", tags=["Documents"])
 def delete_admin_document(doc_id: str, db: Session = Depends(get_db)):
+    """
+    Supprime un document sur Google Drive (avec vérification stricte du parent ALLOWED_FOLDER_ID)
+    ET dans la table de base de données.
+    """
     doc = None
     if doc_id.isdigit():
         doc = db.query(AdminDocument).filter(AdminDocument.id == int(doc_id)).first()
+    if not doc:
+        doc = db.query(AdminDocument).filter(
+            or_(AdminDocument.drive_file_id == doc_id, AdminDocument.file_name == doc_id)
+        ).first()
 
     if doc:
-        if doc.file_url and doc.file_url.startswith("/uploads/documents/"):
+        # 1. Suppression sur Google Drive avec Strict Jail
+        if doc.drive_file_id:
+            try:
+                drive_jail_service.delete_file(doc.drive_file_id)
+            except Exception as e:
+                logger.warning(f"Erreur/Notice suppression Drive {doc.drive_file_id}: {e}")
+                if isinstance(e, SecurityException):
+                    raise e
+
+        # 2. Suppression locale si présent
+        if doc.file_name:
+            fpath = os.path.join(DOCUMENTS_DIR, doc.file_name)
+            if os.path.exists(fpath):
+                try:
+                    os.remove(fpath)
+                except Exception:
+                    pass
+        elif doc.file_url and doc.file_url.startswith("/uploads/documents/"):
             fname = os.path.basename(doc.file_url)
             fpath = os.path.join(DOCUMENTS_DIR, fname)
             if os.path.exists(fpath):
@@ -2847,9 +3039,20 @@ def delete_admin_document(doc_id: str, db: Session = Depends(get_db)):
                     os.remove(fpath)
                 except Exception:
                     pass
+
+        # 3. Suppression en base
         db.delete(doc)
         db.commit()
-        return {"message": f"Document {doc_id} supprimé avec succès."}
+        return {"message": f"Document {doc_id} supprimé avec succès de Google Drive et de la base."}
+
+    # Si doc non trouvé en base mais doc_id est un identifiant de fichier Drive direct
+    if not doc_id.isdigit():
+        try:
+            drive_jail_service.delete_file(doc_id)
+            return {"message": f"Fichier {doc_id} supprimé avec succès de Google Drive."}
+        except Exception as e:
+            if isinstance(e, SecurityException):
+                raise e
 
     fpath = os.path.join(DOCUMENTS_DIR, doc_id)
     if os.path.exists(fpath):

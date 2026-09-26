@@ -55,11 +55,17 @@ class AdminDocument(Base):
     file_name = Column(String, nullable=True)
     file_type = Column(String, nullable=True)
     file_size = Column(Integer, nullable=True)
+    drive_file_id = Column(String(255), nullable=True, index=True)
     source_type = Column(String, nullable=True)  # TASK, ISSUE, PROJECT, MANUAL
     source_id = Column(Integer, nullable=True)
     uploaded_by = Column(String, nullable=True)
     notes = Column(Text, nullable=True)
     created_at = Column(DateTime, default=datetime.utcnow)
+
+    # Synonymes d'accès unifiés
+    name = synonym("title")
+    mime_type = synonym("file_type")
+    size = synonym("file_size")
 
 class DocumentCategory(Base):
     __tablename__ = "document_categories"

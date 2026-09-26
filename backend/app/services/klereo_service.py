@@ -51,15 +51,31 @@ CAPTEUR_NAMES = [
 ]
 
 
-def decode_alert(alert_dict: dict) -> str:
-    """Décode un dictionnaire d'alerte brut Klereo en texte clair lisible."""
-    code = alert_dict.get("code", 0)
+def decode_alert(alert_dict: dict) -> Optional[str]:
+    """
+    Décode un dictionnaire d'alerte brut Klereo en texte clair lisible.
+    Retourne None si code == 0 ('Pas d'alerte!') ou si le dictionnaire est vide/invalide.
+    """
+    if not isinstance(alert_dict, dict):
+        return None
+    code = alert_dict.get("code")
+    if code is None or code == 0:
+        return None
     param = alert_dict.get("param", 0)
     
-    code_text = ALERT_NAMES[code] if code < len(ALERT_NAMES) and ALERT_NAMES[code] else f"Alerte #{code}"
-    param_text = CAPTEUR_NAMES[param] if param < len(CAPTEUR_NAMES) and CAPTEUR_NAMES[param] else f"Param #{param}"
+    code_text = ALERT_NAMES[code] if 0 <= code < len(ALERT_NAMES) and ALERT_NAMES[code] else f"Alerte #{code}"
+    param_text = CAPTEUR_NAMES[param] if 0 <= param < len(CAPTEUR_NAMES) and CAPTEUR_NAMES[param] else f"Param #{param}"
     
-    return f"{code_text} ({param_text})"
+    # Précision contextuelle dynamique selon le paramètre
+    context = ""
+    if param == 6:  # Bidon pH
+        context = " (bidon de produit régulateur pH à renouveler)"
+    elif param == 7:  # Bidon Traitement
+        context = " (bidon de produit désinfectant à renouveler)"
+    elif param == 23:  # Bidon Floculant
+        context = " (bidon de floculant à renouveler)"
+
+    return f"{code_text} : {param_text}{context}"
 
 
 class KlereoService:
@@ -201,35 +217,46 @@ class KlereoService:
             pool_details_list = det_json.get("response", [])
             pool_detail = pool_details_list[0] if pool_details_list else {}
 
-            # Analyse des sondes
+            # Analyse dynamique des sondes (Zero-Trust : aucun fallback hardcodé)
             probes = pool_detail.get("probes", sys_0.get("probes", []))
-            water_temp = 13.5
-            air_temp = 24.0
-            ph_val = 7.73
-            redox_val = 730.0
+            water_temp = None
+            air_temp = None
+            ph_val = None
+            redox_val = None
+            filter_pressure = None
 
             for p in probes:
+                if not isinstance(p, dict):
+                    continue
                 p_type = p.get("type")
-                val = p.get("filteredValue") or p.get("directValue")
+                val = p.get("filteredValue") if p.get("filteredValue") is not None else p.get("directValue")
                 if val is not None:
-                    if p_type == 5:  # Sonde Eau
-                        water_temp = round(float(val), 2)
-                    elif p_type == 1:  # Sonde Air
-                        air_temp = round(float(val), 1)
-                    elif p_type == 3:  # Sonde pH
-                        ph_val = round(float(val), 2)
-                    elif p_type == 4:  # Sonde Redox / ORP
-                        redox_val = round(float(val), 1)
+                    try:
+                        f_val = float(val)
+                        if p_type == 5:  # Sonde Eau
+                            water_temp = round(f_val, 2)
+                        elif p_type == 1:  # Sonde Air
+                            air_temp = round(f_val, 1)
+                        elif p_type == 3:  # Sonde pH
+                            ph_val = round(f_val, 2)
+                        elif p_type == 4:  # Sonde Redox / ORP
+                            redox_val = round(f_val, 1)
+                        elif p_type in (2, 21, 22):  # Sonde Pression filtre
+                            filter_pressure = round(f_val, 1)
+                    except (ValueError, TypeError):
+                        pass
 
-            # Analyse de la filtration et PAC (via sorties 'outs' et 'params')
+            # Analyse dynamique de la filtration et PAC (via sorties 'outs' et 'params')
             outs = pool_detail.get("outs", [])
             filtration_active = False
             pac_active = False
 
             for out in outs:
+                if not isinstance(out, dict):
+                    continue
                 idx = out.get("index")
                 out_map = out.get("map")
-                real_st = out.get("realStatus") or out.get("status", 0)
+                real_st = out.get("realStatus") if out.get("realStatus") is not None else out.get("status", 0)
                 if idx == 1 or out_map == 1:
                     filtration_active = (real_st == 1)
                 elif idx == 4 or out_map == 4:
@@ -238,13 +265,19 @@ class KlereoService:
             params = pool_detail.get("params", {})
             pool_mode = params.get("PoolMode", sys_0.get("RegulModes", {}).get("PoolMode", 2))
             mode_desc = "Automatique régulée" if pool_mode == 2 else ("Marche Forcée" if pool_mode == 1 else "Arrêt")
-            filt_today_h = round(params.get("Filtration_TodayTime", 0) / 3600, 1)
-            filt_target_h = round(params.get("RegulDuree", 19.0), 1)
+            filt_today_sec = params.get("Filtration_TodayTime", 0)
+            filt_today_h = round(filt_today_sec / 3600, 1) if filt_today_sec else 0.0
+            
+            regul_duree = params.get("RegulDuree")
+            filt_target_h = round(float(regul_duree), 1) if regul_duree is not None else None
 
             filt_state = f"En marche ({mode_desc})" if filtration_active else f"En veille ({mode_desc})"
-            filt_cycle = f"{filt_target_h}h/jour programmées ({filt_today_h}h réalisées aujourd'hui)"
+            if filt_target_h is not None:
+                filt_cycle = f"{filt_target_h}h/jour programmées ({filt_today_h}h réalisées aujourd'hui)"
+            else:
+                filt_cycle = f"{filt_today_h}h réalisées aujourd'hui"
 
-            # Analyse liaison radio K-Link 868 MHz
+            # Analyse dynamique liaison radio K-Link 868 MHz
             podinfo = pool_detail.get("podinfo", {})
             ping_fail = podinfo.get("pingFail", 0)
             ping_sent = podinfo.get("pingSent", 0)
@@ -252,11 +285,22 @@ class KlereoService:
 
             radio_ok = (ping_fail == 0 and last_ping_s < 300)
             radio_status = f"Liaison radio K-Link active (0 échec, ping {last_ping_s}s)" if radio_ok else "Liaison radio K-Link dégradée ou interrompue"
+            radio_alert_msg = None if radio_ok else f"Liaison radio K-Link interrompue ({ping_fail} échec(s), dernier ping {last_ping_s}s)"
 
-            # Alertes
-            raw_alerts = pool_detail.get("alerts", sys_0.get("alerts", []))
-            decoded_alerts = [decode_alert(a) for a in raw_alerts]
-            radio_alert_msg = ", ".join(decoded_alerts) if decoded_alerts else None
+            # Alertes dynamiques (Zero-Trust : extraction et décodage dynamique)
+            raw_alerts = pool_detail.get("alerts")
+            if raw_alerts is None:
+                raw_alerts = sys_0.get("alerts", [])
+            
+            decoded_alerts = []
+            if isinstance(raw_alerts, list):
+                for a in raw_alerts:
+                    msg = decode_alert(a)
+                    if msg:
+                        decoded_alerts.append(msg)
+
+            consigne_eau = params.get("ConsigneEau")
+            frost_protection_target = float(consigne_eau) if consigne_eau is not None else None
 
             # Timestamp de dernière remontée
             now_ts = sys_0.get("Now", int(time.time()))
@@ -267,7 +311,8 @@ class KlereoService:
                 "air_temperature": air_temp,
                 "ph_value": ph_val,
                 "redox_value": redox_val,
-                "frost_protection_target": float(params.get("ConsigneEau", 10.0)),
+                "filter_pressure": filter_pressure,
+                "frost_protection_target": frost_protection_target,
                 "pac_state": "En chauffe" if pac_active else "Mise en veille / Arrêt consigne",
                 "pac_power": "20 kW",
                 "cover_state": "Verrouillée & tendue",

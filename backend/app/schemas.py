@@ -2,7 +2,7 @@ import json
 from datetime import datetime
 from enum import Enum
 from typing import List, Optional, Dict
-from pydantic import BaseModel, field_validator
+from pydantic import BaseModel, field_validator, Field
 
 class VoteEnum(str, Enum):
     OUI = "OUI"
@@ -170,9 +170,16 @@ class AdminDocumentCreate(BaseModel):
     file_name: Optional[str] = None
     file_type: Optional[str] = None
     file_size: Optional[int] = None
+    drive_file_id: Optional[str] = None
     source_type: Optional[str] = "TASK"
     source_id: Optional[int] = None
     uploaded_by: Optional[str] = None
+    notes: Optional[str] = None
+
+class AdminDocumentUpdate(BaseModel):
+    title: Optional[str] = None
+    name: Optional[str] = None
+    category: Optional[str] = None
     notes: Optional[str] = None
 
 class AdminDocumentResponse(BaseModel):
@@ -183,11 +190,16 @@ class AdminDocumentResponse(BaseModel):
     file_name: Optional[str] = None
     file_type: Optional[str] = None
     file_size: Optional[int] = None
+    drive_file_id: Optional[str] = None
     source_type: Optional[str] = None
     source_id: Optional[int] = None
     uploaded_by: Optional[str] = None
     notes: Optional[str] = None
     created_at: datetime
+    name: Optional[str] = None
+    mime_type: Optional[str] = None
+    size: Optional[int] = None
+
     class Config:
         from_attributes = True
 
@@ -651,33 +663,33 @@ class HeatingTemperatureRequest(BaseModel):
 
 # --- Piscine Schemas ---
 class PiscineStatusResponse(BaseModel):
-    water_temperature: float = 13.5
+    water_temperature: Optional[float] = None
     air_temperature: Optional[float] = None
     ph_value: Optional[float] = None
     redox_value: Optional[float] = None
     filter_pressure: Optional[float] = None
-    frost_protection_target: float = 14.0
-    pac_state: str = "Mise en veille hivernale"
-    pac_power: str = "20 kW"
-    cover_state: str = "Verrouillée & tendue"
-    filtration_state: str = "En veille (Actif 03h00 - 06h00)"
-    filtration_cycle: str = "03h00 — 06h00 (Heures Creuses)"
-    hivernage_status: str = "Hivernage Actif"
-    sensor_location: str = "Sonde Kompact skimmer"
-    winter_warning: str = "Chauffage du bassin déconseillé & formellement proscrit en octobre-mars. Surcoût électrique estimé à plus de 450 €/semaine ! Le bassin est placé en protocole pré-hivernage DECLERCQ PISCINES."
-    frederic_jamet_agreement: str = "Prise en charge contrat DECLERCQ à 100% jusqu’au 31/12/2026."
-    agreement_status: str = "Actif (100% pris en charge par Frédéric Jamet)"
-    contract_provider: str = "DECLERCQ PISCINES"
+    frost_protection_target: Optional[float] = None
+    pac_state: Optional[str] = None
+    pac_power: Optional[str] = "20 kW"
+    cover_state: Optional[str] = "Verrouillée & tendue"
+    filtration_state: Optional[str] = None
+    filtration_cycle: Optional[str] = None
+    hivernage_status: Optional[str] = None
+    sensor_location: Optional[str] = "Sonde Kompact skimmer"
+    winter_warning: Optional[str] = "Chauffage du bassin déconseillé & formellement proscrit en octobre-mars. Surcoût électrique estimé à plus de 450 €/semaine ! Le bassin est placé en protocole DECLERCQ PISCINES."
+    frederic_jamet_agreement: Optional[str] = "Prise en charge contrat DECLERCQ à 100% jusqu’au 31/12/2026."
+    agreement_status: Optional[str] = "Actif (100% pris en charge par Frédéric Jamet)"
+    contract_provider: Optional[str] = "DECLERCQ PISCINES"
     radio_link_ok: bool = True
-    radio_status: str = "Liaison radio K-Link active"
+    radio_status: Optional[str] = "Liaison radio K-Link active"
     radio_alert: Optional[str] = None
     radio_error: bool = False
     test_mode_read_only: bool = True
-    message: str = "Garde-fou de sécurité inviolable actif (Garde-fou Henri #1) : Mode lecture seule permanent. Toute commande actionneur piscine est formellement interdite."
+    message: Optional[str] = "Garde-fou de sécurité inviolable actif (Garde-fou Henri #1) : Mode lecture seule permanent. Toute commande actionneur piscine est formellement interdite."
     pool_nickname: Optional[str] = "Ma piscine"
-    system_id: Optional[int] = 91360
+    system_id: Optional[int] = None
     last_update: Optional[str] = None
-    alerts: Optional[List[str]] = None
+    alerts: List[str] = Field(default_factory=list)
     class Config:
         from_attributes = True
 
