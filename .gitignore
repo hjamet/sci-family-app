@@ -47,6 +47,9 @@ test_*.py
 !backend/tests/test_email_firewall.py
 !backend/tests/test_thermal_notifications.py
 !backend/tests/test_banking_callback.py
+!backend/tests/test_drive_jail.py
+!backend/test_drive_quota.py
+!backend/test_drive_oauth.py
 
 # OS / IDE
 .DS_Store
