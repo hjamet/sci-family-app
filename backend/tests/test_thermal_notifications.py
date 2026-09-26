@@ -10,6 +10,7 @@ if BACKEND_DIR not in sys.path:
 from dotenv import load_dotenv
 load_dotenv(os.path.join(BACKEND_DIR, ".env"))
 
+import app.services.email_service as email_mod
 from fastapi.testclient import TestClient
 from app.main import app
 from app.database import get_db, SessionLocal
@@ -72,35 +73,20 @@ def test_database_members_notif_thermal_changes_values():
         db.close()
 
 
-def test_thermal_change_email_firewall(hermetic_resend_mock):
-    """Vérifie que le pare-feu Resend bloque strictement tout destinataire hors whitelist."""
-    # 1. Envoi vers un associé non whitelisté -> Interception immédiate
-    blocked_res = send_thermal_change_email(
-        target_emails=["josephine_jamet@yahoo.fr", "hortense_jamet@yahoo.fr"],
-        author_name="Henri Jamet",
-        equipment_type="Chauffage ViCare (Presbytère)",
-        details="Consigne modifiée à 20.0°C"
-    )
-    assert blocked_res == {"status": "blocked_by_whitelist", "id": "local_mock_blocked"}
-    assert hermetic_resend_mock.call_count == 0, "Zéro requête Resend ne doit être effectuée pour des e-mails bloqués."
-
-    # 2. Envoi vers l'adresse autorisée hellenvillierssci@gmail.com
-    allowed_res = send_thermal_change_email(
+def test_thermal_change_email_circuit_breaker(hermetic_resend_mock):
+    """Vérifie que le coupe-circuit bloque send_thermal_change_email sans appel API Resend."""
+    res = send_thermal_change_email(
         target_emails=["hellenvillierssci@gmail.com"],
         author_name="Henri Jamet",
         equipment_type="Chauffage ViCare (Presbytère)",
         details="Consigne modifiée à 20.0°C"
     )
-    assert allowed_res.get("id") == "mock_firewall_msg_2026"
-    assert hermetic_resend_mock.call_count == 1
-    payload = hermetic_resend_mock.call_args[1]["json"]
-    assert payload["to"] == ["hellenvillierssci@gmail.com"]
-    assert "Modification des consignes thermiques — Chauffage ViCare (Presbytère)" in payload["subject"]
-    assert "/sejour" in payload["html"]
+    assert res == {"status": "disabled", "id": "mock_emergency_off"}
+    assert hermetic_resend_mock.call_count == 0, "Zéro requête Resend sous coupe-circuit."
 
 
-def test_api_heating_settings_get_and_post(hermetic_resend_mock):
-    """Vérifie GET et POST /api/heating/settings et le déclencheur d'e-mail."""
+def test_api_heating_settings_get_and_post_under_circuit_breaker(hermetic_resend_mock):
+    """Vérifie GET et POST /api/heating/settings : fonctionne normalement sans émettre d'e-mail sous coupe-circuit."""
     # 1. GET
     res_get = client.get("/api/heating/settings")
     assert res_get.status_code == 200
@@ -123,15 +109,12 @@ def test_api_heating_settings_get_and_post(hermetic_resend_mock):
     assert data_post["target_temperature"] == 20.5
     assert data_post["mode"] == "dhwAndHeating"
 
-    # Vérification de l'appel d'e-mail
-    assert hermetic_resend_mock.call_count >= 1
-    call_payload = hermetic_resend_mock.call_args[1]["json"]
-    assert "hellenvillierssci@gmail.com" in call_payload["to"]
-    assert "Chauffage ViCare" in call_payload["subject"]
+    # Vérification : 0 e-mail envoyé sous coupe-circuit
+    assert hermetic_resend_mock.call_count == 0, "Le coupe-circuit doit garantir 0 requête sortante."
 
 
-def test_api_pool_settings_get_and_post(hermetic_resend_mock):
-    """Vérifie GET et POST /api/pool/settings et le déclencheur d'e-mail."""
+def test_api_pool_settings_get_and_post_under_circuit_breaker(hermetic_resend_mock):
+    """Vérifie GET et POST /api/pool/settings : fonctionne normalement sans émettre d'e-mail sous coupe-circuit."""
     # 1. GET
     res_get = client.get("/api/pool/settings")
     assert res_get.status_code == 200
@@ -154,11 +137,8 @@ def test_api_pool_settings_get_and_post(hermetic_resend_mock):
     assert data_post["filtration_mode"] == "marche_forcee"
     assert data_post["target_temperature"] == 15.0
 
-    # Vérification de l'appel d'e-mail
-    assert hermetic_resend_mock.call_count >= 1
-    call_payload = hermetic_resend_mock.call_args[1]["json"]
-    assert "hellenvillierssci@gmail.com" in call_payload["to"]
-    assert "Piscine Klereo" in call_payload["subject"]
+    # Vérification : 0 e-mail envoyé sous coupe-circuit
+    assert hermetic_resend_mock.call_count == 0, "Le coupe-circuit doit garantir 0 requête sortante."
 
 
 def test_api_auth_profile_and_settings_toggle():

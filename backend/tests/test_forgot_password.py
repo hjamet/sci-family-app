@@ -78,31 +78,43 @@ class TestForgotPassword(unittest.TestCase):
 
     @patch("app.services.email_service.send_email")
     def test_email_template_rendering(self, mock_send_email):
-        mock_send_email.return_value = {"id": "mock_template_123"}
-
-        res = send_password_reset_email(
+        # 1. Under circuit breaker (DISABLE_ALL_EMAILS = True)
+        res_blocked = send_password_reset_email(
             to_email="hellenvillierssci@gmail.com",
             member_name="Henri",
             new_temporary_password="Abc123Xyz456Def7"
         )
+        self.assertEqual(res_blocked, {"status": "disabled", "id": "mock_emergency_off"})
+        self.assertFalse(mock_send_email.called)
 
-        self.assertTrue(mock_send_email.called)
-        call_args = mock_send_email.call_args[1]
-        self.assertEqual(call_args["to_email"], "hellenvillierssci@gmail.com")
-        self.assertEqual(call_args["subject"], "[SCI Hellenvilliers] Réinitialisation de votre mot de passe")
-        
-        html = call_args["html_content"]
-        # Brand colors and styling
-        self.assertIn("#1e3a2f", html)
-        self.assertIn("#b89047", html)
-        self.assertIn("#faf9f6", html)
-        self.assertIn("DOMAINE D'HELLENVILLIERS", html)
-        self.assertIn("SCI Familiale", html)
-        # Cartouche styling
-        self.assertIn("font-family: monospace", html)
-        self.assertIn("letter-spacing: 2px", html)
-        self.assertIn("font-size: 18px", html)
-        self.assertIn("border: 1px dashed #b89047", html)
+        # 2. When circuit breaker is temporarily lifted for template validation
+        with patch("app.services.email_service.DISABLE_ALL_EMAILS", False), \
+             patch.dict(os.environ, {"DISABLE_ALL_EMAILS": "false"}):
+            mock_send_email.return_value = {"id": "mock_template_123"}
+            res = send_password_reset_email(
+                to_email="hellenvillierssci@gmail.com",
+                member_name="Henri",
+                new_temporary_password="Abc123Xyz456Def7"
+            )
+
+            self.assertTrue(mock_send_email.called)
+            call_args = mock_send_email.call_args[1]
+            self.assertEqual(call_args["to_email"], "hellenvillierssci@gmail.com")
+            self.assertEqual(call_args["subject"], "[SCI Hellenvilliers] Réinitialisation de votre mot de passe")
+            
+            html = call_args["html_content"]
+            # Brand colors and styling
+            self.assertIn("#1e3a2f", html)
+            self.assertIn("#b89047", html)
+            self.assertIn("#faf9f6", html)
+            self.assertIn("DOMAINE D'HELLENVILLIERS", html)
+            self.assertIn("SCI Familiale", html)
+            # Cartouche styling
+            self.assertIn("font-family: monospace", html)
+            self.assertIn("letter-spacing: 2px", html)
+            self.assertIn("font-size: 18px", html)
+            self.assertIn("border: 1px dashed #b89047", html)
+
         # Password itself
         self.assertIn("Abc123Xyz456Def7", html)
         # Recommendation

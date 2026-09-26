@@ -29,6 +29,31 @@ DEFAULT_FROM_EMAIL = os.environ.get("RESEND_FROM_EMAIL", "SCI Familiale Hellenvi
 FALLBACK_FROM_EMAIL = "SCI Familiale Hellenvilliers <notifications@henri-jamet.com>"
 SANDBOX_FROM_EMAIL = "SCI Familiale Hellenvilliers <onboarding@resend.dev>"
 
+# ==============================================================================
+# COUPE-CIRCUIT D'URGENCE TOTAL & ABSOLU (PHASE DE TEST)
+# ==============================================================================
+# Désactive formellement 100% des envois d'e-mails vers l'extérieur.
+# Aucun appel HTTP vers Resend, zéro consommation de quota, zéro email envoyé.
+DISABLE_ALL_EMAILS: bool = True
+
+def is_email_disabled() -> bool:
+    """
+    Coupe-circuit d'urgence global :
+    Désactive formellement 100% des envois d'e-mails vers l'extérieur.
+    Actif par défaut (DISABLE_ALL_EMAILS=True ou env DISABLE_ALL_EMAILS != 'false').
+    """
+    if DISABLE_ALL_EMAILS:
+        return True
+    env_val = os.getenv("DISABLE_ALL_EMAILS", "true").strip().lower()
+    return env_val not in ("false", "0", "no")
+
+def get_circuit_breaker_response() -> dict:
+    """Retour standardisé du coupe-circuit d'urgence."""
+    log_msg = "[COUPE-CIRCUIT] Envoi d'email totalement désactivé (urgence). Aucun email envoyé."
+    logger.warning(log_msg)
+    print(log_msg)
+    return {"status": "disabled", "id": "mock_emergency_off"}
+
 # PARE-FEU STRICT DE PROTECTION FAMILIALE
 # Tant que l'envoi global n'a pas été formellement débloqué par Henri en production :
 # SEULE l'adresse hellenvillierssci@gmail.com est autorisée à recevoir des e-mails.
@@ -54,8 +79,12 @@ DEFAULT_MEMBER_EMAILS: List[str] = [
 def check_firewall(to_email: Union[str, List[str]]) -> Optional[dict]:
     """
     Vérification pare-feu hermétique avant tout envoi ou rendu HTML :
-    Intercepte immédiatement tout destinataire non autorisé sans appel réseau Resend.
+    1. Si le coupe-circuit global est actif, bloque immédiatement 100% des envois.
+    2. Sinon, intercepte immédiatement tout destinataire non autorisé sans appel réseau Resend.
     """
+    if is_email_disabled():
+        return get_circuit_breaker_response()
+
     allowed_whitelist = {r.strip().lower() for r in ALLOWED_RECIPIENTS}
     if isinstance(to_email, str):
         clean = to_email.strip().lower()
@@ -73,6 +102,7 @@ def check_firewall(to_email: Union[str, List[str]]) -> Optional[dict]:
                 print(log_msg)
             return {"status": "blocked_by_whitelist", "id": "local_mock_blocked"}
     return None
+
 
 
 
@@ -171,11 +201,16 @@ def send_email(
 ) -> dict:
     """
     Sends an email using Resend HTTP API client.
-    Enforces a strict hermetic family firewall:
-    - Only ALLOWED_RECIPIENTS ("hellenvillierssci@gmail.com") is permitted.
+    Enforces a strict circuit breaker and hermetic family firewall:
+    - If DISABLE_ALL_EMAILS is active, 0 network calls, returns {"status": "disabled", "id": "mock_emergency_off"}.
+    - Only ALLOWED_RECIPIENTS ("hellenvillierssci@gmail.com") is permitted if enabled.
     - All other addresses (family members, third parties) are strictly blocked with 0 Resend network calls.
     - Returns {"status": "blocked_by_whitelist", "id": "local_mock_blocked"}.
     """
+    # 0. COUPE-CIRCUIT D'URGENCE TOTAL & ABSOLU
+    if is_email_disabled():
+        return get_circuit_breaker_response()
+
     # 1. VERROU HERMÉTIQUE & PARE-FEU STRICT DE PROTECTION FAMILIALE
     allowed_whitelist = {r.strip().lower() for r in ALLOWED_RECIPIENTS}
 
@@ -786,4 +821,52 @@ def send_thermal_change_email(
     )
 
     return send_email(to_email=target_emails, subject=subject, html_content=html_body)
+
+
+def send_notification_email(
+    to_email: Union[str, List[str]],
+    subject: str,
+    content_html: str,
+    title: str = "Notification Domaine d'Hellenvilliers"
+) -> dict:
+    """Helper générique d'envoi de notification."""
+    if is_email_disabled():
+        return get_circuit_breaker_response()
+    blocked = check_firewall(to_email)
+    if blocked:
+        return blocked
+    layout_html = render_email_layout(title=title, preheader=subject, content_html=content_html)
+    return send_email(to_email=to_email, subject=subject, html_content=layout_html)
+
+
+def send_welcome_email(to_email: str, member_name: str) -> dict:
+    """Envoi d'un email de bienvenue / accès portail."""
+    if is_email_disabled():
+        return get_circuit_breaker_response()
+    return send_notification_email(
+        to_email=to_email,
+        subject="[Domaine d'Hellenvilliers] Bienvenue sur votre espace associé",
+        content_html=f"<p>Bonjour {member_name},</p><p>Votre accès au portail de la SCI d'Hellenvilliers est prêt.</p>",
+        title="Bienvenue sur le portail"
+    )
+
+
+def send_reservation_confirmation(
+    to_email: Union[str, List[str]],
+    member_name: str,
+    start_date: str,
+    end_date: str,
+    property_name: str
+) -> dict:
+    """Alias pour la confirmation de séjour."""
+    if is_email_disabled():
+        return get_circuit_breaker_response()
+    return send_stay_booked_email(
+        to_email=to_email,
+        member_name=member_name,
+        start_date=start_date,
+        end_date=end_date,
+        property_name=property_name
+    )
+
 
