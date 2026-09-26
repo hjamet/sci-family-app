@@ -30,8 +30,8 @@ AUTHENTIC_VADEMECUM = [
     },
     {
         "category": "Accès & Clés",
-        "title": "Boîtier à clé sécurisé (Portail Sud) & Trousseau d'Eva",
-        "content": "Boîtier à code fixé sur le pilier gauche du portail Sud (Code : 4829). Remettre impérativement le passe dans le boîtier dès l'ouverture.\nTrousseau maître 'Clés d'Eva' situé dans la Maison de Rosines (entrée/tableau des clés) regroupant : 2 clés du Swimming Pool House, 1 clé spéciale de la petite cabane en bois, 1 clé de verrouillage de l'abri télescopique, 2 clés de portail et 2 clés de la maison.",
+        "title": "Boîtier à clé sécurisé (Portail Sud) & Trousseau de clés de Rosings",
+        "content": "Boîtier à code fixé sur le pilier gauche du portail Sud (Code : 4829). Remettre impérativement le passe dans le boîtier dès l'ouverture.\nTrousseau de clés de Rosings situé dans la Maison de Rosines (entrée/tableau des clés) regroupant : 2 clés du Swimming Pool House, 1 clé spéciale de la petite cabane en bois, 1 clé de verrouillage de l'abri télescopique, 2 clés de portail et 2 clés de la maison.",
         "code_to_copy": "4829",
         "importance": "CRITIQUE"
     },

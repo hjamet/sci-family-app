@@ -20,6 +20,8 @@ ENV/
 backend/.env
 *.save
 *token*.json
+*service_account*.json
+backend/service_account.json
 *.pem
 *.crt
 backend/certs/

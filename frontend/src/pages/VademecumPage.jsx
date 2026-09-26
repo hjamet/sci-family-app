@@ -395,17 +395,14 @@ export default function VademecumPage({ properties, currentUser }) {
     setTimeout(() => setCopiedDbId(null), 2000);
   };
 
-  // Annotation 8 : Purge stricte de la fiche inventée Accès & Clés / Eva / Boîtier Sud
+  // Annotation 8 : Purge stricte des fiches non validées
   const filteredDbItems = vademecumItems.filter((item) => {
     const titleNorm = (item.title || '').toLowerCase();
     const contentNorm = (item.content || '').toLowerCase();
     if (
       titleNorm.includes('portail sud') ||
-      titleNorm.includes('eva') ||
       titleNorm.includes('boîtier à clé') ||
-      titleNorm.includes('boitier a cle') ||
-      contentNorm.includes("trousseau d'eva") ||
-      contentNorm.includes("trousseau d’eva")
+      titleNorm.includes('boitier a cle')
     ) {
       return false;
     }
