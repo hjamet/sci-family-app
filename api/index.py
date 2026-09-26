@@ -28,9 +28,10 @@ except Exception as err:
                 content={
                     "error": "FastAPI initialization failed on Vercel Serverless",
                     "details": str(err),
-                    "traceback": err_tb.splitlines()[-5:]
+                    "traceback": err_tb.splitlines()[-10:]
                 }
             )
+        app = fallback_app
         handler = fallback_app
     except Exception:
         raise err

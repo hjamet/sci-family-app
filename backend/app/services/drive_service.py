@@ -4,6 +4,9 @@ import json
 import logging
 from typing import Optional, List, Tuple, Dict, Any
 from fastapi import HTTPException
+
+logger = logging.getLogger(__name__)
+
 try:
     from google.oauth2.credentials import Credentials
     from google.oauth2 import service_account
@@ -21,8 +24,6 @@ except ImportError as _import_err:
     MediaIoBaseDownload = None
     HttpError = Exception
     GOOGLE_DRIVE_AVAILABLE = False
-
-logger = logging.getLogger(__name__)
 
 # Strict Drive Jail Invariant
 ALLOWED_FOLDER_ID = os.getenv("GOOGLE_DRIVE_FOLDER_ID", "14RcQbUF7WQb5kmVlfhdHmieV1OA0Pk-J")

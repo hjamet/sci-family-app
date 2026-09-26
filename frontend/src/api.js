@@ -43,11 +43,28 @@ async function monitoredFetch(input, init = {}) {
     throw netErr;
   }
 
+  // Détection fail-fast si l'API retourne du HTML au lieu de JSON (ex: fallback SPA Vercel)
+  const contentType = res.headers.get('content-type') || '';
+  const isApiCall = typeof url === 'string' && (url.startsWith('/api') || url.includes('/api/'));
+  if (isApiCall && contentType.includes('text/html')) {
+    const errorMsg = "Réponse serveur invalide : l'API a retourné une page HTML au lieu de données JSON (Problème de routage Vercel / API hors ligne).";
+    emitAppError({
+      url,
+      method,
+      status: res.status,
+      message: errorMsg,
+    });
+    const customErr = new Error(errorMsg);
+    try {
+      customErr._handledByGlobalAlert = true;
+    } catch (_) {}
+    throw customErr;
+  }
+
   if (!res.ok) {
     let detailMsg = `HTTP ${res.status}${res.statusText ? ` (${res.statusText})` : ''}`;
     try {
       const clone = res.clone();
-      const contentType = clone.headers.get('content-type') || '';
       if (contentType.includes('application/json')) {
         const json = await clone.json();
         if (json) {
