@@ -1094,6 +1094,7 @@ export default function VademecumPage({ properties, currentUser }) {
           </div>
 
         </div>
+        )}
 
         {/* Action Button: Enregistrer les modifications thermiques (Annotation 2) */}
         <div className="flex flex-col sm:flex-row items-center justify-between gap-4 pt-4 border-t border-border-subtle">
