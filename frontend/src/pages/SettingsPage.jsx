@@ -715,14 +715,8 @@ export default function SettingsPage({ currentUser }) {
                   🌡️ Alertes thermiques &amp; piscine
                 </span>
                 <p className="text-xs text-slate-600 mt-1">
-                  m'alerter en cas de modification des consignes de chauffage ou de filtration piscine.
+                  M'alerter en cas de modification des consignes de chauffage ou de filtration piscine.
                 </p>
-                <div className="mt-1.5 flex items-center gap-1.5 text-[11px] text-slate-500">
-                  <span className="inline-flex items-center px-1.5 py-0.5 rounded bg-slate-200/80 text-slate-700 font-medium">
-                    Désactivé par défaut
-                  </span>
-                  <span>• Activé pour la gérance et la coordination</span>
-                </div>
               </div>
             </div>
 

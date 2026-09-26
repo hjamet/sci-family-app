@@ -115,51 +115,61 @@ export default function DashboardPage({
             </p>
           </div>
 
-          {/* Boutons d'Action Rapide : Style Signature (Fond Blanc + Bordure 2px + Icône + Texte) */}
-          <div className="flex flex-wrap items-center gap-2.5 sm:gap-3 shrink-0 pt-space-xs xl:pt-0">
+          {/* Grille 2x2 des 4 Boutons d'Action Rapide */}
+          <div className="grid grid-cols-2 gap-3 w-full sm:w-auto shrink-0 pt-space-xs xl:pt-0">
             <button
               type="button"
               onClick={() => {
                 if (onOpenBooking) onOpenBooking();
                 else navigateTo('/calendrier');
               }}
-              className="group flex items-center justify-center gap-2 px-5 py-3.5 rounded-DEFAULT bg-white border-2 border-primary text-primary hover:bg-sage-soft font-label-lg text-sm sm:text-base font-bold transition-all duration-200 shadow-sm cursor-pointer whitespace-nowrap"
+              className="group rounded-2xl p-3 flex items-center gap-2.5 text-left transition-all hover:scale-[1.02] shadow-sm cursor-pointer bg-amber-500/10 hover:bg-amber-500/20 text-amber-900 dark:text-amber-200 border border-amber-500/20"
             >
-              <span className="material-symbols-outlined text-[22px] group-hover:scale-110 transition-transform">
+              <span className="material-symbols-outlined text-[22px] shrink-0 group-hover:scale-110 transition-transform">
                 event_available
               </span>
-              <span>Réserver un séjour</span>
+              <span className="font-label-lg text-xs sm:text-sm font-semibold leading-tight">
+                Réserver un séjour
+              </span>
             </button>
 
             <button
               type="button"
               onClick={() => setIsNewTaskModalOpen(true)}
-              className="group flex items-center justify-center gap-2 px-5 py-3.5 rounded-DEFAULT bg-white border-2 border-primary text-primary hover:bg-sage-soft font-label-lg text-sm sm:text-base font-bold shadow-sm hover:shadow-md transition-all duration-200 cursor-pointer whitespace-nowrap"
+              className="group rounded-2xl p-3 flex items-center gap-2.5 text-left transition-all hover:scale-[1.02] shadow-sm cursor-pointer bg-sky-500/10 hover:bg-sky-500/20 text-sky-900 dark:text-sky-200 border border-sky-500/20"
             >
-              <span className="material-symbols-outlined text-[22px] group-hover:scale-110 transition-transform">
+              <span className="material-symbols-outlined text-[22px] shrink-0 group-hover:scale-110 transition-transform">
                 add_task
               </span>
-              <span>Proposer une tâche</span>
+              <span className="font-label-lg text-xs sm:text-sm font-semibold leading-tight">
+                Proposer une tâche
+              </span>
             </button>
 
             <button
               type="button"
               onClick={() => navigateTo('/sejour')}
-              className="group flex items-center justify-center gap-2 px-5 py-3.5 rounded-DEFAULT bg-white border-2 border-outline-variant text-on-surface hover:border-outline hover:bg-canvas-slate font-label-lg text-sm sm:text-base transition-all duration-200 shadow-sm cursor-pointer whitespace-nowrap"
+              className="group rounded-2xl p-3 flex items-center gap-2.5 text-left transition-all hover:scale-[1.02] shadow-sm cursor-pointer bg-emerald-500/10 hover:bg-emerald-500/20 text-emerald-900 dark:text-emerald-200 border border-emerald-500/20"
             >
-              <span className="material-symbols-outlined text-[22px] text-primary group-hover:rotate-12 transition-transform">
+              <span className="material-symbols-outlined text-[22px] shrink-0 group-hover:scale-110 transition-transform">
                 key
               </span>
-              <span>Voir le Vadémécum</span>
+              <span className="font-label-lg text-xs sm:text-sm font-semibold leading-tight">
+                Voir le Vadémécum
+              </span>
             </button>
 
             <button
               type="button"
               onClick={() => navigateTo('/taches')}
-              className="group flex items-center justify-center gap-2 px-5 py-3.5 rounded-DEFAULT bg-white border-2 border-outline-variant text-on-surface hover:border-outline hover:bg-canvas-slate font-label-lg text-sm sm:text-base font-semibold transition-all duration-200 shadow-sm cursor-pointer whitespace-nowrap"
+              className="group rounded-2xl p-3 flex items-center gap-2.5 text-left transition-all hover:scale-[1.02] shadow-sm cursor-pointer bg-rose-500/10 hover:bg-rose-500/20 text-rose-900 dark:text-rose-200 border border-rose-500/20"
             >
-              <span className="material-symbols-outlined text-[22px] text-primary">checklist</span>
-              <span>Voir toutes les tâches</span>
+              <span className="material-symbols-outlined text-[22px] shrink-0 group-hover:scale-110 transition-transform">
+                checklist
+              </span>
+              <span className="font-label-lg text-xs sm:text-sm font-semibold leading-tight">
+                Voir les chantiers / tâches
+              </span>
             </button>
           </div>
         </div>
