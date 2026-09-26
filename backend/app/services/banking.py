@@ -3,12 +3,15 @@ import json
 import time
 import uuid
 import logging
+import base64
+import tempfile
 from datetime import datetime, timedelta
 from typing import Optional, Dict, Any, List
 from pathlib import Path
 import urllib.request
 import urllib.error
 
+from dotenv import load_dotenv
 import jwt
 from sqlalchemy.orm import Session
 from ..models import BankAccount, BankTransaction, BankAuthSession
@@ -25,8 +28,14 @@ class EnableBankingService:
     """
 
     def __init__(self):
-        # Chemins de résolution de la clé privée
         backend_dir = Path(__file__).resolve().parent.parent.parent
+        dotenv_path = backend_dir / ".env"
+        if dotenv_path.exists():
+            load_dotenv(dotenv_path)
+        else:
+            load_dotenv()
+
+        # Chemins de résolution de la clé privée
         default_key_path = backend_dir / "certs" / "enable_banking_private_key.pem"
         
         env_key_path = os.getenv("ENABLE_BANKING_KEY_PATH", "certs/enable_banking_private_key.pem")
@@ -45,15 +54,160 @@ class EnableBankingService:
         self._jwt_cache = None
         self._jwt_expires_at = 0
 
-    def _load_private_key(self) -> str:
-        """Charge la clé privée RSA PEM en mémoire."""
+        # Tentative d'initialisation résiliente de la clé pour Vercel Serverless
+        try:
+            self._ensure_key_available()
+        except Exception as e:
+            logger.debug(f"Initialisation différée de la clé Enable Banking : {e}")
+
+    @staticmethod
+    def _normalize_key_content(raw_key: str) -> str:
+        """Nettoie et normalise le contenu d'une clé PEM.
+        
+        Supporte :
+        - Texte brut avec sauts de ligne réels.
+        - Texte avec sauts de ligne échappés (\\n, \\r).
+        - Chaînes entourées de guillemets ("..." ou '...').
+        - Clé encodée en base64 (avec ou sans retours à la ligne).
+        - En-têtes PKCS#1 (-----BEGIN RSA PRIVATE KEY-----) et PKCS#8 (-----BEGIN PRIVATE KEY-----).
+        """
+        if not raw_key:
+            return ""
+        val = raw_key.strip()
+        # Supprimer les guillemets englobants si présents
+        if (val.startswith('"') and val.endswith('"')) or (val.startswith("'") and val.endswith("'")):
+            val = val[1:-1].strip()
+
+        # Si la chaîne contient directement l'en-tête PEM
+        if "-----BEGIN" in val and "PRIVATE KEY" in val:
+            val = val.replace("\\n", "\n").replace("\\r", "\r").strip()
+            return val + "\n"
+
+        # Sinon, tenter le décodage Base64
+        try:
+            compact_b64 = "".join(val.split())
+            decoded_bytes = base64.b64decode(compact_b64, validate=False)
+            decoded_text = decoded_bytes.decode("utf-8", errors="ignore")
+            if "-----BEGIN" in decoded_text and "PRIVATE KEY" in decoded_text:
+                decoded_text = decoded_text.replace("\\n", "\n").replace("\\r", "\r").strip()
+                return decoded_text + "\n"
+        except Exception:
+            pass
+
+        val = val.replace("\\n", "\n").replace("\\r", "\r").strip()
+        return val + "\n" if val else ""
+
+    def _write_key_to_tmp(self, pem_content: str) -> Path:
+        """Écrit la clé privée PEM dans le répertoire temporaire Serverless (/tmp).
+        
+        Sur AWS Lambda et Vercel Serverless, le système de fichiers racine /var/task/
+        est en lecture seule. Seul /tmp est inscriptible.
+        """
+        target_candidates = [
+            Path("/tmp/enable_banking_private_key.pem"),
+            Path(tempfile.gettempdir()) / "enable_banking_private_key.pem"
+        ]
+        last_error = None
+        for target in target_candidates:
+            try:
+                target.parent.mkdir(parents=True, exist_ok=True)
+                # Éviter les réécritures disque redondantes si le contenu est déjà identique
+                if target.exists():
+                    try:
+                        with open(target, "r", encoding="utf-8") as f:
+                            if f.read().strip() == pem_content.strip():
+                                return target
+                    except Exception:
+                        pass
+                with open(target, "w", encoding="utf-8") as f:
+                    f.write(pem_content)
+                if hasattr(os, "chmod") and os.name != "nt":
+                    try:
+                        os.chmod(target, 0o600)
+                    except Exception:
+                        pass
+                logger.info(f"Clé privée Enable Banking initialisée dans le stockage temporaire : {target}")
+                return target
+            except Exception as e:
+                last_error = e
+                continue
+        raise IOError(f"Impossible d'écrire la clé privée Enable Banking dans /tmp : {last_error}")
+
+    def _ensure_key_available(self) -> Optional[Path]:
+        """Assure que la clé privée est accessible sur disque (notamment /tmp sur Vercel) et à jour."""
         env_key = os.getenv("ENABLE_BANKING_PRIVATE_KEY") or os.getenv("ENABLE_BANKING_KEY_PEM")
         if env_key:
-            return env_key.replace("\\n", "\n").strip()
-        if not self.key_path.exists():
-            raise FileNotFoundError(f"Clé privée Enable Banking introuvable à l'emplacement : {self.key_path}")
-        with open(self.key_path, "r", encoding="utf-8") as f:
-            return f.read()
+            pem_content = self._normalize_key_content(env_key)
+            if pem_content:
+                # Si le fichier configuré n'existe pas (ex: /var/task/... en lecture seule sur Vercel),
+                # on matérialise la clé dans /tmp et on redirige key_path
+                if not self.key_path.exists():
+                    self.key_path = self._write_key_to_tmp(pem_content)
+                return self.key_path
+
+        # Si pas d'env var mais que le fichier local existe déjà (dev local)
+        if self.key_path.exists():
+            return self.key_path
+
+        # Vérifier si elle avait déjà été écrite dans /tmp lors d'une précédente invocation
+        tmp_target = Path("/tmp/enable_banking_private_key.pem")
+        if tmp_target.exists():
+            self.key_path = tmp_target
+            return self.key_path
+
+        return None
+
+    def _load_private_key(self) -> str:
+        """Charge et retourne la clé privée RSA PEM en mémoire.
+        
+        Garantit le support de :
+        1. ENABLE_BANKING_PRIVATE_KEY ou ENABLE_BANKING_KEY_PEM (texte brut PEM ou base64).
+        2. Le fichier local backend/certs/enable_banking_private_key.pem (sans régression locale).
+        3. L'écriture dynamique dans /tmp/enable_banking_private_key.pem en environnement Serverless Vercel.
+        """
+        # 1. Priorité aux variables d'environnement
+        env_key = os.getenv("ENABLE_BANKING_PRIVATE_KEY") or os.getenv("ENABLE_BANKING_KEY_PEM")
+        if env_key:
+            pem_content = self._normalize_key_content(env_key)
+            if pem_content:
+                # Si le chemin local n'existe pas, écrire à la volée dans /tmp
+                if not self.key_path.exists():
+                    try:
+                        self.key_path = self._write_key_to_tmp(pem_content)
+                    except Exception as e:
+                        logger.warning(f"Avertissement écriture /tmp clé privée : {e}")
+                return pem_content
+
+        # 2. Si un fichier existe déjà au chemin configuré (ex: dev local)
+        if self.key_path.exists():
+            try:
+                with open(self.key_path, "r", encoding="utf-8") as f:
+                    content = f.read()
+                pem_content = self._normalize_key_content(content)
+                if pem_content:
+                    return pem_content
+            except Exception as e:
+                logger.error(f"Erreur lecture clé privée sur {self.key_path} : {e}")
+
+        # 3. Vérification du fichier dans /tmp si existant
+        tmp_target = Path("/tmp/enable_banking_private_key.pem")
+        if tmp_target.exists():
+            try:
+                self.key_path = tmp_target
+                with open(tmp_target, "r", encoding="utf-8") as f:
+                    content = f.read()
+                pem_content = self._normalize_key_content(content)
+                if pem_content:
+                    return pem_content
+            except Exception as e:
+                logger.error(f"Erreur lecture clé temporaire {tmp_target} : {e}")
+
+        # 4. Si aucune clé n'a pu être trouvée
+        raise FileNotFoundError(
+            f"Clé privée Enable Banking introuvable à l'emplacement : {self.key_path}. "
+            f"Pour Vercel Serverless, veuillez configurer la variable d'environnement "
+            f"ENABLE_BANKING_PRIVATE_KEY (texte PEM brut ou encodé en base64)."
+        )
 
     def get_jwt_token(self, force_refresh: bool = False) -> str:
         """Génère un token JWT signé RS256 pour l'API Enable Banking (valide 1h)."""
