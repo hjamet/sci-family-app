@@ -11,64 +11,8 @@ const ASSOCIATES = [
     nom: 'Jamet',
     fullName: 'Henri Jamet',
     avatar: 'HJ',
-    badge: 'Gérant',
-    role: 'Nu-propriétaire • Gérant & Coordinateur Opérationnel',
-    shortRole: 'Nu-propriétaire • Coordinateur',
     borderClass: 'border-l-emerald-600',
     avatarBg: 'bg-emerald-100 text-emerald-900 border border-emerald-300',
-    badgeBg: 'bg-emerald-50 text-emerald-800 border-emerald-200',
-  },
-  {
-    id: 'frederic',
-    prenom: 'Frédéric',
-    nom: 'Jamet',
-    fullName: 'Frédéric Jamet',
-    avatar: 'FJ',
-    badge: 'Usufruitier',
-    role: 'Usufruitier • Référent Énergie & Accord Piscine',
-    shortRole: 'Usufruitier',
-    borderClass: 'border-l-teal-700',
-    avatarBg: 'bg-teal-100 text-teal-900 border border-teal-300',
-    badgeBg: 'bg-teal-50 text-teal-800 border-teal-200',
-  },
-  {
-    id: 'elisabeth',
-    prenom: 'Élisabeth',
-    nom: 'Jamet',
-    fullName: 'Élisabeth Jamet',
-    avatar: 'ÉJ',
-    badge: 'Usufruitière',
-    role: 'Usufruitière • Garante du Patrimoine Familial',
-    shortRole: 'Usufruitier',
-    borderClass: 'border-l-emerald-800',
-    avatarBg: 'bg-emerald-100 text-emerald-950 border border-emerald-300',
-    badgeBg: 'bg-emerald-50 text-emerald-800 border-emerald-200',
-  },
-  {
-    id: 'josephine',
-    prenom: 'Joséphine',
-    nom: 'Jamet',
-    fullName: 'Joséphine Jamet',
-    avatar: 'JJ',
-    badge: 'Coordination',
-    role: 'Nue-propriétaire • Coordinatrice Adjointe',
-    shortRole: 'Nue-propriétaire • Coordinatrice Adjointe',
-    borderClass: 'border-l-green-700',
-    avatarBg: 'bg-green-100 text-green-900 border border-green-300',
-    badgeBg: 'bg-green-50 text-green-800 border-green-200',
-  },
-  {
-    id: 'hortense',
-    prenom: 'Hortense',
-    nom: 'Jamet',
-    fullName: 'Hortense Jamet',
-    avatar: 'HJ',
-    badge: 'Jardin',
-    role: 'Nue-propriétaire • Référente Espaces Verts & Jardin',
-    shortRole: 'Nue-propriétaire • Référente Espaces Verts',
-    borderClass: 'border-l-lime-700',
-    avatarBg: 'bg-lime-100 text-lime-900 border border-lime-300',
-    badgeBg: 'bg-lime-50 text-lime-800 border-lime-200',
   },
   {
     id: 'marguerite',
@@ -76,12 +20,26 @@ const ASSOCIATES = [
     nom: 'Jamet',
     fullName: 'Marguerite Jamet',
     avatar: 'MJ',
-    badge: 'Maison',
-    role: 'Référente Équipements & Maison',
-    shortRole: 'Référente Équipements & Maison',
     borderClass: 'border-l-emerald-700',
     avatarBg: 'bg-emerald-100 text-emerald-900 border border-emerald-300',
-    badgeBg: 'bg-emerald-50 text-emerald-800 border-emerald-200',
+  },
+  {
+    id: 'hortense',
+    prenom: 'Hortense',
+    nom: 'Jamet',
+    fullName: 'Hortense Jamet',
+    avatar: 'HJ',
+    borderClass: 'border-l-lime-700',
+    avatarBg: 'bg-lime-100 text-lime-900 border border-lime-300',
+  },
+  {
+    id: 'josephine',
+    prenom: 'Joséphine',
+    nom: 'Jamet',
+    fullName: 'Joséphine Jamet',
+    avatar: 'JJ',
+    borderClass: 'border-l-green-700',
+    avatarBg: 'bg-green-100 text-green-900 border border-green-300',
   },
   {
     id: 'eugenie',
@@ -89,12 +47,26 @@ const ASSOCIATES = [
     nom: 'Jamet',
     fullName: 'Eugénie Jamet',
     avatar: 'EJ',
-    badge: 'Peinture & Déco',
-    role: 'Nue-propriétaire • Référente Peintures, Tri & Déco',
-    shortRole: 'Nue-propriétaire • Référente Peintures & Déco',
     borderClass: 'border-l-amber-600',
     avatarBg: 'bg-amber-100 text-amber-900 border border-amber-300',
-    badgeBg: 'bg-amber-50 text-amber-900 border-amber-200',
+  },
+  {
+    id: 'frederic',
+    prenom: 'Frédéric',
+    nom: 'Jamet',
+    fullName: 'Frédéric Jamet',
+    avatar: 'FJ',
+    borderClass: 'border-l-teal-700',
+    avatarBg: 'bg-teal-100 text-teal-900 border border-teal-300',
+  },
+  {
+    id: 'elisabeth',
+    prenom: 'Élisabeth',
+    nom: 'Jamet',
+    fullName: 'Élisabeth Jamet',
+    avatar: 'ÉJ',
+    borderClass: 'border-l-emerald-800',
+    avatarBg: 'bg-emerald-100 text-emerald-950 border border-emerald-300',
   },
 ];
 
@@ -119,7 +91,8 @@ export default function LoginPage({ onLoginSuccess }) {
     try {
       setLoading(true);
       setError(null);
-      const res = await loginUser(selectedMember.prenom, passcode.trim());
+      const identifier = selectedMember.prenom || (selectedMember.fullName ? selectedMember.fullName.split(' ')[0] : 'Henri');
+      const res = await loginUser(identifier, passcode.trim());
       const token = res.access_token || res.token || res.data?.access_token;
       const member = res.user || res.member || res.data?.member || res.data?.user || { prenom: selectedMember.prenom, name: selectedMember.fullName };
 
@@ -222,24 +195,14 @@ export default function LoginPage({ onLoginSuccess }) {
                     >
                       <div className="flex items-center gap-4 min-w-0">
                         <div
-                          className={`w-12 h-12 sm:w-14 sm:h-14 rounded-2xl ${member.avatarBg} flex items-center justify-center font-headline-md text-base sm:text-lg font-bold shrink-0 shadow-inner`}
+                          className={`w-11 h-11 sm:w-12 sm:h-12 rounded-2xl ${member.avatarBg} flex items-center justify-center font-headline-md text-sm sm:text-base font-bold shrink-0 shadow-inner`}
                         >
                           {member.avatar}
                         </div>
                         <div className="min-w-0">
-                          <div className="flex items-center gap-2 flex-wrap">
-                            <span className="font-headline-sm text-sm sm:text-base text-emerald-950 font-bold">
-                              {member.fullName}
-                            </span>
-                            <span
-                              className={`px-2.5 py-0.5 rounded-full ${member.badgeBg} font-label-sm text-[11px] font-semibold border`}
-                            >
-                              {member.badge}
-                            </span>
-                          </div>
-                          <p className="font-body-md text-xs sm:text-sm text-on-surface-variant truncate mt-0.5">
-                            {member.shortRole}
-                          </p>
+                          <span className="font-headline-sm text-base sm:text-lg text-emerald-950 font-bold tracking-tight">
+                            {member.fullName}
+                          </span>
                         </div>
                       </div>
 
@@ -276,11 +239,8 @@ export default function LoginPage({ onLoginSuccess }) {
                     {selectedMember.avatar}
                   </div>
                   <div className="min-w-0">
-                    <p className="font-label-lg text-sm sm:text-base text-emerald-950 truncate font-bold">
+                    <p className="font-headline-sm text-base sm:text-lg text-emerald-950 truncate font-bold">
                       {selectedMember.fullName}
-                    </p>
-                    <p className="font-body-md text-xs text-emerald-800/80 truncate">
-                      {selectedMember.role}
                     </p>
                   </div>
                 </div>
@@ -395,7 +355,7 @@ export default function LoginPage({ onLoginSuccess }) {
                           mark_email_read
                         </span>
                         <span>
-                          Un message d'assistance a été adressé au gérant Henri Jamet pour réinitialiser vos accès.
+                          Un message d'assistance a été adressé à Henri Jamet pour réinitialiser vos accès.
                         </span>
                       </div>
                     )}

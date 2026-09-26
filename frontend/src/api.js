@@ -16,10 +16,11 @@ function getAuthJsonHeaders(extraHeaders = {}) {
 
 // Auth & Users
 export async function loginUser(prenom, password) {
+  const cleanPrenom = (typeof prenom === 'string' && prenom.trim()) ? prenom.trim() : '';
   const res = await fetch(`${API_BASE}/auth/login`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ prenom, password }),
+    body: JSON.stringify({ prenom: cleanPrenom, password: (password || '').trim() }),
   });
   if (!res.ok) {
     const err = await res.json().catch(() => ({}));

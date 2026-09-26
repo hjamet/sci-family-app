@@ -89,20 +89,7 @@ export default function AuthModal({ isOpen, onClose, onLoginSuccess }) {
             >
               <span className="w-2 h-2 rounded-full bg-cyan-400"></span>
               <div className="truncate">
-                <span className="font-semibold block">Henri</span>
-                <span className="text-[10px] text-slate-400">Coordinateur</span>
-              </div>
-            </button>
-
-            <button
-              type="button"
-              onClick={() => quickLogin('Hortense', 'pass123')}
-              className="flex items-center space-x-2 px-3 py-2 bg-slate-800/80 hover:bg-rose-950/50 hover:border-rose-500/40 border border-slate-700/60 rounded-xl text-xs text-slate-200 text-left transition"
-            >
-              <span className="w-2 h-2 rounded-full bg-rose-400"></span>
-              <div className="truncate">
-                <span className="font-semibold block">Hortense</span>
-                <span className="text-[10px] text-slate-400">Associé</span>
+                <span className="font-semibold block">Henri Jamet</span>
               </div>
             </button>
 
@@ -113,20 +100,18 @@ export default function AuthModal({ isOpen, onClose, onLoginSuccess }) {
             >
               <span className="w-2 h-2 rounded-full bg-purple-400"></span>
               <div className="truncate">
-                <span className="font-semibold block">Marguerite</span>
-                <span className="text-[10px] text-slate-400">Associé</span>
+                <span className="font-semibold block">Marguerite Jamet</span>
               </div>
             </button>
 
             <button
               type="button"
-              onClick={() => quickLogin('Eugénie', 'pass123')}
-              className="flex items-center space-x-2 px-3 py-2 bg-slate-800/80 hover:bg-amber-950/50 hover:border-amber-500/40 border border-slate-700/60 rounded-xl text-xs text-slate-200 text-left transition"
+              onClick={() => quickLogin('Hortense', 'pass123')}
+              className="flex items-center space-x-2 px-3 py-2 bg-slate-800/80 hover:bg-rose-950/50 hover:border-rose-500/40 border border-slate-700/60 rounded-xl text-xs text-slate-200 text-left transition"
             >
-              <span className="w-2 h-2 rounded-full bg-amber-400"></span>
+              <span className="w-2 h-2 rounded-full bg-rose-400"></span>
               <div className="truncate">
-                <span className="font-semibold block">Eugénie</span>
-                <span className="text-[10px] text-slate-400">Associé</span>
+                <span className="font-semibold block">Hortense Jamet</span>
               </div>
             </button>
 
@@ -137,32 +122,40 @@ export default function AuthModal({ isOpen, onClose, onLoginSuccess }) {
             >
               <span className="w-2 h-2 rounded-full bg-emerald-400"></span>
               <div className="truncate">
-                <span className="font-semibold block">Joséphine</span>
-                <span className="text-[10px] text-slate-400">Associé</span>
+                <span className="font-semibold block">Joséphine Jamet</span>
               </div>
             </button>
 
             <button
               type="button"
-              onClick={() => quickLogin('Élisabeth', 'pass123')}
-              className="flex items-center space-x-2 px-3 py-2 bg-slate-800/80 hover:bg-teal-950/50 hover:border-teal-500/40 border border-slate-700/60 rounded-xl text-xs text-slate-200 text-left transition"
+              onClick={() => quickLogin('Eugénie', 'pass123')}
+              className="flex items-center space-x-2 px-3 py-2 bg-slate-800/80 hover:bg-amber-950/50 hover:border-amber-500/40 border border-slate-700/60 rounded-xl text-xs text-slate-200 text-left transition"
             >
-              <span className="w-2 h-2 rounded-full bg-teal-400"></span>
+              <span className="w-2 h-2 rounded-full bg-amber-400"></span>
               <div className="truncate">
-                <span className="font-semibold block">Élisabeth</span>
-                <span className="text-[10px] text-slate-400">Associé</span>
+                <span className="font-semibold block">Eugénie Jamet</span>
               </div>
             </button>
 
             <button
               type="button"
               onClick={() => quickLogin('Frédéric', 'pass123')}
-              className="flex items-center space-x-2 px-3 py-2 bg-slate-800/80 hover:bg-blue-950/50 hover:border-blue-500/40 border border-slate-700/60 rounded-xl text-xs text-slate-200 text-left transition col-span-2 sm:col-span-1"
+              className="flex items-center space-x-2 px-3 py-2 bg-slate-800/80 hover:bg-blue-950/50 hover:border-blue-500/40 border border-slate-700/60 rounded-xl text-xs text-slate-200 text-left transition"
             >
               <span className="w-2 h-2 rounded-full bg-blue-400"></span>
               <div className="truncate">
-                <span className="font-semibold block">Frédéric</span>
-                <span className="text-[10px] text-slate-400">Associé</span>
+                <span className="font-semibold block">Frédéric Jamet</span>
+              </div>
+            </button>
+
+            <button
+              type="button"
+              onClick={() => quickLogin('Élisabeth', 'pass123')}
+              className="flex items-center space-x-2 px-3 py-2 bg-slate-800/80 hover:bg-teal-950/50 hover:border-teal-500/40 border border-slate-700/60 rounded-xl text-xs text-slate-200 text-left transition col-span-2 sm:col-span-1"
+            >
+              <span className="w-2 h-2 rounded-full bg-teal-400"></span>
+              <div className="truncate">
+                <span className="font-semibold block">Élisabeth Jamet</span>
               </div>
             </button>
           </div>
