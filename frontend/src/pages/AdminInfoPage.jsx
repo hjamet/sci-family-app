@@ -132,6 +132,9 @@ export default function AdminInfoPage({ currentUser }) {
   const [operationLabel, setOperationLabel] = useState('');
   const [operationFileName, setOperationFileName] = useState('');
 
+  // État persistant d'erreur bancaire (Consigne Henri : aucune disparition automatique pour les erreurs)
+  const [bankingError, setBankingError] = useState(null);
+
   // Toast State
   const [toast, setToast] = useState({
     visible: false,
@@ -144,9 +147,15 @@ export default function AdminInfoPage({ currentUser }) {
   const showToast = (title, desc, icon = 'check_circle') => {
     if (toastTimerRef.current) clearTimeout(toastTimerRef.current);
     setToast({ visible: true, title, desc, icon });
-    toastTimerRef.current = setTimeout(() => {
-      setToast((prev) => ({ ...prev, visible: false }));
-    }, 3500);
+
+    // RÈGLE IMPÉRATIVE HENRI : Ne JAMAIS effacer automatiquement les erreurs !
+    // L'utilisateur doit pouvoir lire l'intégralité du message d'erreur tant qu'il ne l'a pas fermé manuellement.
+    const isError = icon === 'error' || icon === 'alert' || (title && title.toLowerCase().includes('erreur'));
+    if (!isError) {
+      toastTimerRef.current = setTimeout(() => {
+        setToast((prev) => ({ ...prev, visible: false }));
+      }, 4000);
+    }
   };
 
   // Chargement réel des documents depuis /api/documents (Annotation 6)
@@ -189,11 +198,19 @@ export default function AdminInfoPage({ currentUser }) {
     const searchParams = new URLSearchParams(window.location.search);
     const bankingParam = searchParams.get('banking');
     if (bankingParam === 'success') {
+      setBankingError(null);
       showToast('Liaison bancaire validée', 'Le consentement DSP2 Swan a été renouvelé avec succès.', 'check_circle');
       window.history.replaceState({}, '', window.location.pathname);
       loadBankStatus();
     } else if (bankingParam === 'error') {
-      const msg = searchParams.get('msg') || 'Le consentement bancaire a été annulé ou a échoué.';
+      const rawMsg = searchParams.get('msg') || 'Le consentement bancaire a été annulé ou a échoué.';
+      let msg = rawMsg;
+      try {
+        msg = decodeURIComponent(rawMsg);
+      } catch (e) {
+        msg = rawMsg;
+      }
+      setBankingError(msg);
       showToast('Erreur bancaire', msg, 'error');
       window.history.replaceState({}, '', window.location.pathname);
     }
@@ -504,6 +521,47 @@ export default function AdminInfoPage({ currentUser }) {
       {/* SECTION 1 : FINANCIAL QUICK SUMMARY (3 HIGH-IMPACT KPI CARDS)             */}
       {/* ========================================================================= */}
       <div className="mt-space-lg">
+        {/* Alerte persistante de retour d'erreur bancaire avec bouton explicite de fermeture */}
+        {bankingError && (
+          <aside
+            id="banner-banking-error"
+            role="alert"
+            className="mb-space-md p-4 sm:p-5 rounded-2xl bg-rose-50/95 border-2 border-rose-400 text-rose-950 shadow-md flex items-start justify-between gap-4 animate-in fade-in duration-200"
+          >
+            <div className="flex items-start gap-3.5 min-w-0">
+              <div className="w-10 h-10 rounded-xl bg-rose-100 border border-rose-300 flex items-center justify-center shrink-0 text-rose-700">
+                <AlertTriangle className="w-5 h-5 text-rose-700 shrink-0" />
+              </div>
+              <div className="space-y-1.5 min-w-0">
+                <div className="flex items-center gap-2">
+                  <h3 className="font-bold text-sm sm:text-base text-rose-950">
+                    Échec du consentement bancaire Swan
+                  </h3>
+                  <span className="inline-flex items-center px-2 py-0.5 rounded-full text-[10px] font-bold uppercase bg-rose-200 text-rose-900 border border-rose-300">
+                    Erreur retour
+                  </span>
+                </div>
+                <p className="text-xs sm:text-sm text-rose-950 font-mono bg-rose-100/80 p-3 rounded-lg border border-rose-200 break-words select-text whitespace-pre-wrap">
+                  {bankingError}
+                </p>
+                <p className="text-[11px] text-rose-700">
+                  Ce message d'erreur reste affiché en permanence tant que vous ne l'avez pas fermé afin de vous permettre de copier le détail technique ou d'identifier le diagnostic.
+                </p>
+              </div>
+            </div>
+            <button
+              id="btn-close-banking-error"
+              type="button"
+              onClick={() => setBankingError(null)}
+              className="p-1.5 rounded-xl hover:bg-rose-200/80 active:bg-rose-300 text-rose-700 transition-colors shrink-0 cursor-pointer"
+              title="Fermer l'erreur"
+              aria-label="Fermer l'erreur bancaire"
+            >
+              <X className="w-5 h-5" />
+            </button>
+          </aside>
+        )}
+
         {/* Bannière d'alerte raccordement bancaire DSP2 réactive */}
         <BankReauthBanner bankStatus={bankStatus} onRefresh={loadBankStatus} />
 
@@ -1674,23 +1732,43 @@ export default function AdminInfoPage({ currentUser }) {
       {/* ========================================================================= */}
       <div
         id="toast-feedback"
-        className={`fixed bottom-6 right-6 z-50 bg-forest-deep text-on-primary px-5 py-3.5 rounded-DEFAULT shadow-xl border border-sage-border flex items-center gap-3 transition-all duration-300 ${
+        role="alert"
+        className={`fixed bottom-6 right-6 z-50 px-5 py-3.5 rounded-xl shadow-2xl border flex items-center gap-3 transition-all duration-300 max-w-md md:max-w-lg ${
+          toast.icon === 'error'
+            ? 'bg-rose-950 text-rose-100 border-rose-600/80 shadow-rose-950/40'
+            : 'bg-forest-deep text-on-primary border-sage-border shadow-forest-deep/30'
+        } ${
           toast.visible
-            ? 'translate-y-0 opacity-100'
+            ? 'translate-y-0 opacity-100 pointer-events-auto'
             : 'translate-y-24 opacity-0 pointer-events-none'
         }`}
       >
-        <span id="toast-icon" className="material-symbols-outlined text-secondary-fixed text-[24px]">
-          {toast.icon}
+        <span
+          id="toast-icon"
+          className={`material-symbols-outlined text-[24px] shrink-0 ${
+            toast.icon === 'error' ? 'text-rose-400' : 'text-secondary-fixed'
+          }`}
+        >
+          {toast.icon === 'error' ? 'error' : toast.icon}
         </span>
-        <div className="flex flex-col">
-          <span id="toast-title" className="font-label-md text-label-md font-bold">
+        <div className="flex flex-col flex-1 min-w-0 pr-1">
+          <span id="toast-title" className="font-label-md text-label-md font-bold leading-tight">
             {toast.title}
           </span>
-          <span id="toast-desc" className="font-body-md text-xs text-sage-soft">
+          <span id="toast-desc" className="font-body-md text-xs opacity-90 break-words mt-0.5 select-text font-mono">
             {toast.desc}
           </span>
         </div>
+        <button
+          id="btn-close-toast"
+          type="button"
+          onClick={() => setToast((prev) => ({ ...prev, visible: false }))}
+          className="shrink-0 p-1.5 rounded-full hover:bg-white/10 active:bg-white/20 transition-colors text-white/80 hover:text-white cursor-pointer ml-1"
+          title="Fermer"
+          aria-label="Fermer la notification"
+        >
+          <X className="w-4 h-4" />
+        </button>
       </div>
 
     </div>

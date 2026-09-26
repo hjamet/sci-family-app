@@ -1,5 +1,80 @@
 const API_BASE = '/api';
 
+/**
+ * Émetteur d'événements pour le centre d'alerte global fail-fast
+ */
+export function emitAppError(detail) {
+  if (typeof window !== 'undefined') {
+    window.dispatchEvent(
+      new CustomEvent('app-error', {
+        detail: {
+          url: detail.url || 'Inconnue',
+          method: detail.method || 'GET',
+          status: detail.status ?? 0,
+          message: detail.message || 'Erreur API inconnue',
+          timestamp: Date.now(),
+        },
+      })
+    );
+  }
+}
+
+// Wrapper surveillé pour intercepter toutes les erreurs réseau et réponses HTTP non-ok (4xx, 5xx)
+const _nativeFetch = (typeof window !== 'undefined' ? window.fetch.bind(window) : globalThis.fetch);
+
+async function monitoredFetch(input, init = {}) {
+  const method = (init && init.method) ? init.method.toUpperCase() : 'GET';
+  const url = typeof input === 'string' ? input : (input?.url || (input?.toString ? input.toString() : ''));
+
+  let res;
+  try {
+    res = await _nativeFetch(input, init);
+  } catch (netErr) {
+    const errorMsg = netErr?.message || 'Erreur réseau (serveur inaccessible ou connexion interrompue)';
+    emitAppError({
+      url,
+      method,
+      status: 0,
+      message: errorMsg,
+    });
+    try {
+      netErr._handledByGlobalAlert = true;
+    } catch (_) {}
+    throw netErr;
+  }
+
+  if (!res.ok) {
+    let detailMsg = `HTTP ${res.status}${res.statusText ? ` (${res.statusText})` : ''}`;
+    try {
+      const clone = res.clone();
+      const contentType = clone.headers.get('content-type') || '';
+      if (contentType.includes('application/json')) {
+        const json = await clone.json();
+        if (json) {
+          detailMsg = json.detail || json.message || JSON.stringify(json);
+        }
+      } else {
+        const text = await clone.text();
+        if (text && text.trim()) {
+          detailMsg = text.trim().slice(0, 500);
+        }
+      }
+    } catch (_) {}
+
+    emitAppError({
+      url,
+      method,
+      status: res.status,
+      message: typeof detailMsg === 'object' ? JSON.stringify(detailMsg) : String(detailMsg),
+    });
+  }
+
+  return res;
+}
+
+// Shadow global fetch for all API calls in this module
+const fetch = monitoredFetch;
+
 // Helper to inject Authorization header if token exists in localStorage
 function getAuthHeaders(extraHeaders = {}) {
   const token = localStorage.getItem('sci_token');

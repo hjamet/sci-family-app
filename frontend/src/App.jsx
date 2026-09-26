@@ -13,6 +13,7 @@ import HeatingPage from './pages/HeatingPage';
 import SettingsPage from './pages/SettingsPage';
 import BookingModal from './components/BookingModal';
 import { fetchProperties } from './api';
+import GlobalErrorAlert from './components/GlobalErrorAlert';
 
 export default function App() {
   const { isAuthenticated, currentUser, logout, login } = useAuth();
@@ -81,15 +82,19 @@ export default function App() {
   // Login Route handling
   if (!isAuthenticated) {
     return (
-      <Routes>
-        <Route path="/login" element={<LoginPage onLoginSuccess={handleLoginSuccess} />} />
-        <Route path="*" element={<Navigate to="/login" replace />} />
-      </Routes>
+      <>
+        <GlobalErrorAlert />
+        <Routes>
+          <Route path="/login" element={<LoginPage onLoginSuccess={handleLoginSuccess} />} />
+          <Route path="*" element={<Navigate to="/login" replace />} />
+        </Routes>
+      </>
     );
   }
 
   return (
     <div className="min-h-screen bg-canvas-slate text-on-surface flex flex-col font-sans selection:bg-emerald-100 selection:text-emerald-900 transition-colors duration-200">
+      <GlobalErrorAlert />
       
       {/* Persistent Stitch Header */}
       <Header

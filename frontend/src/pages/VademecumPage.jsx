@@ -43,6 +43,24 @@ function formatDateReadable(dateStr) {
   }
 }
 
+function formatPreheatingSchedule(stay) {
+  if (!stay || !stay.start_date) return '';
+  const dateFormatted = formatDateReadable(stay.start_date);
+  const arrivalTime = stay.arrival_time || '15:00';
+  const [arrHourStr, arrMinStr] = arrivalTime.split(':');
+  const arrHour = parseInt(arrHourStr, 10);
+  const preheatHour = isNaN(arrHour) ? 10 : Math.max(0, arrHour - 5);
+  const preheatTime = `${String(preheatHour).padStart(2, '0')}:${arrMinStr || '00'}`;
+  return `${dateFormatted} dès ${preheatTime} (5h avant arrivée)`;
+}
+
+function formatShutdownSchedule(stay) {
+  if (!stay || !stay.end_date) return '';
+  const dateFormatted = formatDateReadable(stay.end_date);
+  const depTime = stay.departure_time || '11:00';
+  return `${dateFormatted} à ${depTime} (au départ des lieux)`;
+}
+
 function formatPureRoomName(raw) {
   if (!raw) return '';
   const idMap = {
@@ -59,9 +77,13 @@ function formatPureRoomName(raw) {
 }
 
 export default function VademecumPage({ properties, currentUser }) {
-  // Real Stay State (Annotation 2: Zéro mock hardcodé)
-  const [upcomingStay, setUpcomingStay] = useState(null);
+  // Multi-page stay state (Annotation 2 : Navigation multi-pages avec Page 0 Domaine seul)
+  const [upcomingStays, setUpcomingStays] = useState([]);
+  const [currentPageIndex, setCurrentPageIndex] = useState(0); // 0 = Domaine seul, 1..N = Séjours futurs
   const [stayLoading, setStayLoading] = useState(true);
+
+  const totalStays = upcomingStays.length;
+  const currentStay = currentPageIndex > 0 ? upcomingStays[currentPageIndex - 1] : null;
 
   // Modals state
   const [isEditStayOpen, setIsEditStayOpen] = useState(false);
@@ -160,25 +182,32 @@ export default function VademecumPage({ properties, currentUser }) {
         setTasks([]);
       }
 
-      // Reservations (Annotation 2 : Filtrer le prochain séjour réel de l'utilisateur connecté)
+      // Reservations (Annotation 2 : Filtrer les séjours futurs réels de l'utilisateur connecté)
       if (Array.isArray(reservationsRes)) {
         const todayStr = new Date().toISOString().split('T')[0];
         const userName = resolveCurrentUserFullName(currentUser);
         const userFirst = userName.split(' ')[0].toLowerCase();
+        const currentUserId = currentUser?.id;
 
         const userUpcoming = reservationsRes
           .filter((r) => {
             if (r.status === 'Refusée' || r.status === 'Annulée') return false;
             const isUpcoming = (r.end_date && r.end_date >= todayStr) || (r.start_date && r.start_date >= todayStr);
             if (!isUpcoming) return false;
+            const rMemberId = r.member_id ?? r.user_id;
+            if (currentUserId != null && rMemberId != null && Number(currentUserId) === Number(rMemberId)) {
+              return true;
+            }
             const rUser = (r.user_name || '').toLowerCase();
             return rUser.includes(userFirst) || userName.toLowerCase().includes(rUser);
           })
           .sort((a, b) => (a.start_date || '').localeCompare(b.start_date || ''));
 
-        setUpcomingStay(userUpcoming.length > 0 ? userUpcoming[0] : null);
+        setUpcomingStays(userUpcoming);
+        setCurrentPageIndex(userUpcoming.length > 0 ? 1 : 0);
       } else {
-        setUpcomingStay(null);
+        setUpcomingStays([]);
+        setCurrentPageIndex(0);
       }
     } finally {
       setTelemetryLoading(false);
@@ -437,7 +466,7 @@ export default function VademecumPage({ properties, currentUser }) {
 
           {/* Boutons d'Action Rapide (Annotation 9: Ouvre BookingModal) */}
           <div className="flex flex-wrap sm:flex-nowrap items-center gap-3 shrink-0 pt-2 md:pt-0">
-            {upcomingStay ? (
+            {currentStay ? (
               <button
                 onClick={() => setIsEditStayOpen(true)}
                 className="group flex items-center justify-center gap-2 px-5 py-3.5 rounded-DEFAULT bg-white dark:bg-slate-900 border-2 border-outline-variant text-on-surface hover:bg-canvas-slate hover:border-outline font-label-lg text-sm sm:text-base font-semibold transition-all duration-200 shadow-sm cursor-pointer whitespace-nowrap"
@@ -470,9 +499,90 @@ export default function VademecumPage({ properties, currentUser }) {
       </section>
 
       {/* ===================================================================== */}
-      {/* 2. DÉTAIL DU PROCHAIN SÉJOUR AU DOMAINE (Annotation 2 & 3)             */}
+      {/* BARRE DE NAVIGATION MULTI-PAGES SÉJOURS & VUE DOMAINE (Annotation 2)  */}
       {/* ===================================================================== */}
-      {upcomingStay && (
+      <section className="bg-surface-container-lowest rounded-2xl p-4 sm:p-5 shadow-sm border border-border-subtle mb-8 flex items-center justify-between gap-3 sm:gap-4 w-full max-w-full">
+        {/* Bouton Précédent / Flèche Gauche */}
+        <button
+          type="button"
+          onClick={() => setCurrentPageIndex((prev) => Math.max(0, prev - 1))}
+          disabled={currentPageIndex === 0}
+          aria-label="Séjour précédent ou vue domaine"
+          className={`flex items-center gap-2 px-4 py-3 rounded-xl font-label-md text-sm font-bold transition-all shadow-xs shrink-0 select-none ${
+            currentPageIndex > 0
+              ? 'bg-white hover:bg-canvas-slate text-forest-deep border-2 border-border-subtle hover:border-primary active:scale-95 cursor-pointer'
+              : 'bg-canvas-slate text-on-surface-variant/40 border border-border-subtle cursor-not-allowed opacity-50'
+          }`}
+        >
+          <span className="material-symbols-outlined text-[24px]">chevron_left</span>
+          <span className="hidden sm:inline">
+            {currentPageIndex === 1 ? 'Vue Domaine' : 'Séjour précédent'}
+          </span>
+        </button>
+
+        {/* Titre & Indicateur de Page Central */}
+        <div className="flex flex-col items-center text-center min-w-0 px-2">
+          <div className="flex items-center gap-2 flex-wrap justify-center mb-1">
+            {currentPageIndex === 0 ? (
+              <span className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full bg-surface-container font-label-sm text-xs font-bold text-on-surface-variant">
+                <span className="material-symbols-outlined text-[16px] text-primary">domain</span>
+                PAGE 0 • VUE DOMAINE SEUL
+              </span>
+            ) : (
+              <span className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full bg-emerald-100 text-emerald-900 dark:bg-emerald-950 dark:text-emerald-200 font-label-sm text-xs font-bold">
+                <span className="material-symbols-outlined text-[16px] text-emerald-700">calendar_today</span>
+                PAGE {currentPageIndex}/{totalStays} • {currentPageIndex === 1 ? 'PROCHAIN SÉJOUR' : `SÉJOUR ${currentPageIndex}`}
+              </span>
+            )}
+          </div>
+
+          <h2 className="font-headline-md text-base sm:text-lg lg:text-xl font-bold text-forest-deep tracking-tight truncate max-w-full">
+            {currentPageIndex === 0 ? (
+              'Vue d’ensemble du Domaine'
+            ) : (
+              <>
+                <span>{currentPageIndex === 1 ? 'Prochain séjour' : `Séjour n°${currentPageIndex}`}</span>
+                {currentStay && (
+                  <span className="font-medium text-on-surface-variant text-sm sm:text-base ml-2">
+                    ({formatDateReadable(currentStay.start_date)} — {formatDateReadable(currentStay.end_date)})
+                  </span>
+                )}
+              </>
+            )}
+          </h2>
+
+          <p className="text-xs text-on-surface-variant mt-0.5 truncate max-w-full">
+            {currentPageIndex === 0
+              ? (totalStays > 0
+                  ? `${totalStays} séjour(s) planifié(s) • Naviguez avec les flèches pour consulter chaque séjour`
+                  : 'Aucun séjour planifié • Supervision thermique et intendance permanente du domaine')
+              : (currentStay?.user_name ? `Séjour de ${currentStay.user_name} • Semaine ${currentStay.week_number || ''}` : 'Séjour planifié')}
+          </p>
+        </div>
+
+        {/* Bouton Suivant / Flèche Droite */}
+        <button
+          type="button"
+          onClick={() => setCurrentPageIndex((prev) => Math.min(totalStays, prev + 1))}
+          disabled={currentPageIndex >= totalStays || totalStays === 0}
+          aria-label="Séjour suivant"
+          className={`flex items-center gap-2 px-4 py-3 rounded-xl font-label-md text-sm font-bold transition-all shadow-xs shrink-0 select-none ${
+            currentPageIndex < totalStays && totalStays > 0
+              ? 'bg-white hover:bg-canvas-slate text-forest-deep border-2 border-border-subtle hover:border-primary active:scale-95 cursor-pointer'
+              : 'bg-canvas-slate text-on-surface-variant/40 border border-border-subtle cursor-not-allowed opacity-50'
+          }`}
+        >
+          <span className="hidden sm:inline">
+            {currentPageIndex === 0 ? 'Prochain séjour' : 'Séjour suivant'}
+          </span>
+          <span className="material-symbols-outlined text-[24px]">chevron_right</span>
+        </button>
+      </section>
+
+      {/* ===================================================================== */}
+      {/* 2. DÉTAIL DU SÉJOUR AU DOMAINE (Pages 1 à N uniquement)                */}
+      {/* ===================================================================== */}
+      {currentPageIndex > 0 && currentStay && (
         <section className="relative bg-surface-container-lowest rounded-2xl p-6 sm:p-8 shadow-sm border border-border-subtle mb-10 overflow-hidden w-full max-w-full">
           <div className="relative z-10 flex flex-col xl:flex-row items-start justify-between gap-6">
             
@@ -480,17 +590,14 @@ export default function VademecumPage({ properties, currentUser }) {
             <div className="flex flex-col gap-4 max-w-2xl min-w-0">
               <div className="flex flex-wrap items-center gap-3">
                 <span className="px-3 py-1 rounded-full bg-surface-container font-label-sm text-label-sm text-on-surface-variant font-medium">
-                  Semaine {upcomingStay.week_number || ''} • {upcomingStay.year || 2026}
+                  Semaine {currentStay.week_number || ''} • {currentStay.year || 2026}
                 </span>
-                <span className="px-3 py-1 rounded-full bg-amber-soft font-label-sm text-label-sm text-amber-rich flex items-center gap-1 font-semibold">
-                  <span className="material-symbols-outlined text-[16px]">check_circle</span>
-                  {upcomingStay.status || 'Confirmée'}
-                </span>
+                {/* ANNOTATION 1 : BADGE STATUT CONFIRMÉE SUPPRIMÉ */}
               </div>
 
               <div>
                 <h2 className="font-display-md text-xl sm:text-2xl text-forest-deep tracking-tight font-bold">
-                  Mon Prochain Séjour au Domaine
+                  {currentPageIndex === 1 ? 'Mon Prochain Séjour au Domaine' : `Séjour n°${currentPageIndex} au Domaine`}
                 </h2>
               </div>
 
@@ -503,7 +610,7 @@ export default function VademecumPage({ properties, currentUser }) {
                   <div className="flex flex-col min-w-0">
                     <span className="font-label-sm text-label-sm text-on-surface-variant">Arrivée programmée</span>
                     <span className="font-headline-sm text-sm sm:text-base text-on-surface font-bold truncate">
-                      {formatDateReadable(upcomingStay.start_date)} • {upcomingStay.arrival_time || '15:00'}
+                      {formatDateReadable(currentStay.start_date)} • {currentStay.arrival_time || '15:00'}
                     </span>
                   </div>
                 </div>
@@ -515,7 +622,7 @@ export default function VademecumPage({ properties, currentUser }) {
                   <div className="flex flex-col min-w-0">
                     <span className="font-label-sm text-label-sm text-on-surface-variant">Départ & Hors-gel</span>
                     <span className="font-headline-sm text-sm sm:text-base text-on-surface font-bold truncate">
-                      {formatDateReadable(upcomingStay.end_date)} • {upcomingStay.departure_time || '11:00'}
+                      {formatDateReadable(currentStay.end_date)} • {currentStay.departure_time || '11:00'}
                     </span>
                   </div>
                 </div>
@@ -528,17 +635,17 @@ export default function VademecumPage({ properties, currentUser }) {
                     <span className="material-symbols-outlined text-[16px]">person</span>
                   </div>
                   <div className="flex items-center gap-1.5 font-label-sm text-label-sm">
-                    <span className="font-bold text-primary">{upcomingStay.user_name}</span>
+                    <span className="font-bold text-primary">{currentStay.user_name}</span>
                   </div>
                 </div>
 
-                {upcomingStay.guest_count > 1 && (
+                {currentStay.guest_count > 1 && (
                   <div className="inline-flex items-center gap-2 p-1.5 px-3 rounded-xl bg-canvas-slate border border-border-subtle text-on-surface shadow-sm">
                     <div className="w-6 h-6 rounded-full bg-secondary-container/15 text-secondary flex items-center justify-center shrink-0">
                       <span className="material-symbols-outlined text-[16px]">group</span>
                     </div>
                     <div className="flex items-center gap-1.5 font-label-sm text-label-sm">
-                      <span className="font-semibold text-on-surface">{upcomingStay.guest_count} personnes</span>
+                      <span className="font-semibold text-on-surface">{currentStay.guest_count} personnes</span>
                     </div>
                   </div>
                 )}
@@ -549,8 +656,8 @@ export default function VademecumPage({ properties, currentUser }) {
                 <div className="flex flex-wrap items-center gap-2">
                   <span className="material-symbols-outlined text-outline text-[18px]">bed</span>
                   <span className="font-semibold text-on-surface">Chambres attribuées :</span>
-                  {upcomingStay.selected_rooms && upcomingStay.selected_rooms.length > 0 ? (
-                    upcomingStay.selected_rooms.map((room, idx) => (
+                  {currentStay.selected_rooms && currentStay.selected_rooms.length > 0 ? (
+                    currentStay.selected_rooms.map((room, idx) => (
                       <span
                         key={idx}
                         className="px-2.5 py-0.5 rounded-full bg-surface-container-high text-on-surface font-medium text-xs"
@@ -591,7 +698,7 @@ export default function VademecumPage({ properties, currentUser }) {
       )}
 
       {/* ===================================================================== */}
-      {/* 2. RÉGULATION & CONFORT ÉNERGÉTIQUE (Annotation 2, 4, 5, 6)           */}
+      {/* 3. RÉGULATION & CONFORT ÉNERGÉTIQUE                                   */}
       {/* ===================================================================== */}
       <section className="bg-surface-container-lowest rounded-lg p-6 sm:p-8 lg:p-10 shadow-sm border border-border-subtle mb-10 flex flex-col gap-6 w-full max-w-full">
         <div className="flex flex-wrap items-center justify-between gap-4 border-b border-border-subtle pb-5">
@@ -605,12 +712,58 @@ export default function VademecumPage({ properties, currentUser }) {
                   Régulation &amp; Confort Énergétique
                 </h2>
               </div>
-              <p className="font-label-sm text-xs text-on-surface-variant mt-0.5">
-                Pilotage à distance des équipements thermiques et domotiques réels du domaine
-              </p>
+              {/* ANNOTATION 3 : SOUS-TITRE VERBEUX SUPPRIMÉ */}
             </div>
           </div>
         </div>
+
+        {/* Cycles Automatiques asservis au séjour (Pages 1 à N uniquement - Conforme Stitch) */}
+        {currentPageIndex > 0 && currentStay && (
+          <div className="p-4 sm:p-5 rounded-2xl bg-gradient-to-r from-emerald-50 via-teal-50/70 to-emerald-50/50 border border-emerald-200/80 flex flex-col md:flex-row md:items-center justify-between gap-4 text-xs shadow-xs">
+            <div className="flex items-start sm:items-center gap-3">
+              <div className="w-10 h-10 rounded-xl bg-primary text-white flex items-center justify-center shrink-0 shadow-xs">
+                <span className="material-symbols-outlined text-[22px]">schedule</span>
+              </div>
+              <div>
+                <div className="font-bold text-forest-deep text-sm flex items-center gap-2 flex-wrap">
+                  <span>Cycles Automatiques ViCare du Séjour</span>
+                  <span className="px-2 py-0.5 rounded-full bg-emerald-200/80 text-emerald-950 font-mono text-[10px] font-bold">
+                    Asservissement Calendrier
+                  </span>
+                </div>
+                <p className="text-on-surface-variant text-[11px] mt-0.5">
+                  Mise en marche anticipée et extinction programmées selon les horaires de votre séjour.
+                </p>
+              </div>
+            </div>
+
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 shrink-0">
+              <div className="flex items-center gap-3 bg-white/90 px-3.5 py-2.5 rounded-xl border border-emerald-200 shadow-2xs">
+                <div className="w-8 h-8 rounded-lg bg-emerald-100 text-emerald-800 flex items-center justify-center shrink-0">
+                  <span className="material-symbols-outlined text-[18px]">heat</span>
+                </div>
+                <div>
+                  <span className="text-[10px] uppercase font-bold text-on-surface-variant block">Préchauffage auto (19°C)</span>
+                  <span className="font-bold text-forest-deep text-xs">
+                    {formatPreheatingSchedule(currentStay)}
+                  </span>
+                </div>
+              </div>
+
+              <div className="flex items-center gap-3 bg-white/90 px-3.5 py-2.5 rounded-xl border border-emerald-200 shadow-2xs">
+                <div className="w-8 h-8 rounded-lg bg-slate-100 text-slate-700 flex items-center justify-center shrink-0">
+                  <span className="material-symbols-outlined text-[18px]">mode_fan_off</span>
+                </div>
+                <div>
+                  <span className="text-[10px] uppercase font-bold text-on-surface-variant block">Extinction & Hors-gel (12°C)</span>
+                  <span className="font-bold text-forest-deep text-xs">
+                    {formatShutdownSchedule(currentStay)}
+                  </span>
+                </div>
+              </div>
+            </div>
+          </div>
+        )}
 
         <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
           
@@ -791,15 +944,6 @@ export default function VademecumPage({ properties, currentUser }) {
                 </div>
               </div>
 
-              {/* Info cycle & anti-légionellose */}
-              <div className="p-3 bg-white rounded-xl border border-border-subtle text-xs text-on-surface-variant space-y-1">
-                <div className="flex items-center justify-between font-medium">
-                  <span>Cycle anti-légionellose</span>
-                  <span className="text-primary font-bold">Actif (60°C)</span>
-                </div>
-                <p className="text-[11px] leading-tight text-on-surface-variant/80">Ballon de 250 L réchauffé par le circuit de chauffe prioritaire Viessmann.</p>
-              </div>
-
             </div>
           </div>
 
@@ -824,10 +968,12 @@ export default function VademecumPage({ properties, currentUser }) {
                 </div>
               </div>
 
-              {/* Annotation 5 : Alerte Liaison Radio K-Link 868 MHz */}
-              <div className="p-3 bg-amber-50 border border-amber-300 text-amber-900 rounded-xl text-xs font-medium">
-                ⚠️ Liaison radio K-Link 868 MHz interrompue entre le coffret piscine et le boîtier Connect. Affichage des dernières valeurs synchronisées.
-              </div>
+              {/* Annotation 5 : Fail-Fast Alerte Radio Klereo (uniquement si vraie anomalie renvoyée par le backend) */}
+              {piscineStatus && (piscineStatus.radio_error === true || piscineStatus.status === 'error' || Boolean(piscineStatus.error)) && (
+                <div className="p-3 bg-amber-50 border border-amber-300 text-amber-900 rounded-xl text-xs font-medium animate-in fade-in duration-200">
+                  {piscineStatus.radio_alert || piscineStatus.error || '⚠️ Liaison radio K-Link 868 MHz interrompue entre le coffret piscine et le boîtier Connect.'}
+                </div>
+              )}
 
               {/* Target Temperature Control */}
               <div className="p-3.5 bg-white rounded-xl border border-border-subtle flex items-center justify-between gap-2 shadow-sm">
@@ -924,9 +1070,10 @@ export default function VademecumPage({ properties, currentUser }) {
       </section>
 
       {/* ===================================================================== */}
-      {/* 3. MISSIONS & TÂCHES SOUS VOTRE RESPONSABILITÉ (Annotation 7)         */}
+      {/* 4. MISSIONS & TÂCHES SOUS VOTRE RESPONSABILITÉ (Pages 1 à N)          */}
       {/* ===================================================================== */}
-      <section className="bg-surface-container-lowest rounded-lg p-6 sm:p-8 lg:p-10 shadow-sm border border-outline-variant/30 mb-10 flex flex-col gap-6 w-full max-w-full">
+      {currentPageIndex > 0 && (
+        <section className="bg-surface-container-lowest rounded-lg p-6 sm:p-8 lg:p-10 shadow-sm border border-outline-variant/30 mb-10 flex flex-col gap-6 w-full max-w-full">
         
         {/* Section Header */}
         <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 border-b border-outline-variant/20 pb-5">
@@ -1034,6 +1181,7 @@ export default function VademecumPage({ properties, currentUser }) {
         </div>
 
       </section>
+      )}
 
       {/* ===================================================================== */}
       {/* 4. VADÉMÉCUM ESSENTIEL DU DOMAINE (Accès direct en séjour)            */}
@@ -1375,7 +1523,7 @@ export default function VademecumPage({ properties, currentUser }) {
       <BookingModal
         isOpen={isEditStayOpen}
         onClose={() => setIsEditStayOpen(false)}
-        initialReservation={upcomingStay}
+        initialReservation={currentStay}
         properties={properties}
         currentUser={currentUser}
         onBooked={async () => {
