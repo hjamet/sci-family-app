@@ -7,6 +7,8 @@ import { fetchProjects, createProject, reviewProject, castProjectVote } from '..
 import NewProjectModal from './NewProjectModal';
 import CoordinatorApprovalModal from './CoordinatorApprovalModal';
 import VoteRoofModal from './VoteRoofModal';
+import CustomSelect from './CustomSelect';
+import { CardSkeleton } from './SkeletonLoaders';
 
 export default function ProjectsPage({ properties, currentUser }) {
   const [projects, setProjects] = useState([]);
@@ -348,28 +350,28 @@ export default function ProjectsPage({ properties, currentUser }) {
           <Filter className="h-4 w-4 text-cyan-600" />
           <span className="text-xs font-semibold text-slate-500 uppercase tracking-wider">Filtres :</span>
           
-          <select
+          <CustomSelect
             value={selectedProperty}
             onChange={(e) => setSelectedProperty(e.target.value)}
-            className="bg-slate-50 border border-slate-200 text-xs text-slate-800 rounded-lg px-3 py-1.5 focus:outline-none focus:border-indigo-500"
-          >
-            <option value="Tous">Toutes les propriétés</option>
-            {properties.map((p) => (
-              <option key={p.id} value={p.id}>{p.name}</option>
-            ))}
-          </select>
+            options={[
+              { value: 'Tous', label: 'Toutes les propriétés' },
+              ...properties.map((p) => ({ value: p.id, label: p.name })),
+            ]}
+            className="w-48 text-xs"
+          />
 
-          <select
+          <CustomSelect
             value={selectedStatus}
             onChange={(e) => setSelectedStatus(e.target.value)}
-            className="bg-slate-50 border border-slate-200 text-xs text-slate-800 rounded-lg px-3 py-1.5 focus:outline-none focus:border-indigo-500"
-          >
-            <option value="Tous">Tous les statuts</option>
-            <option value="SOUMIS">🚨 Soumis / À qualifier</option>
-            <option value="EN_VOTE">🗳️ En vote</option>
-            <option value="APPROUVE">⚡ Approuvé</option>
-            <option value="REFUSE">❌ Refusé</option>
-          </select>
+            options={[
+              { value: 'Tous', label: 'Tous les statuts' },
+              { value: 'SOUMIS', label: '🚨 Soumis / À qualifier' },
+              { value: 'EN_VOTE', label: '🗳️ En vote' },
+              { value: 'APPROUVE', label: '⚡ Approuvé' },
+              { value: 'REFUSE', label: '❌ Refusé' },
+            ]}
+            className="w-48 text-xs"
+          />
         </div>
 
         <div className="text-xs text-slate-500">
@@ -380,8 +382,11 @@ export default function ProjectsPage({ properties, currentUser }) {
 
       {/* Projects List Grid */}
       {loading ? (
-        <div className="flex items-center justify-center py-16 text-slate-400 space-y-2">
-          <div className="w-8 h-8 border-4 border-indigo-600 border-t-transparent rounded-full animate-spin"></div>
+        <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+          <CardSkeleton />
+          <CardSkeleton />
+          <CardSkeleton />
+          <CardSkeleton />
         </div>
       ) : projects.length === 0 ? (
         <div className="bg-white border border-slate-200 rounded-2xl p-12 text-center text-slate-500 shadow-sm">

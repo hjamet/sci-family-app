@@ -9,6 +9,7 @@ import {
   Minus, Plus, Lock, ShieldCheck, Waves, Info, Gauge, Activity, Radio
 } from 'lucide-react';
 import { fetchHeatingStatus, setHeatingMode, setHeatingTemperature, saveHeatingSettings } from '../api';
+import { ThermalMetricSkeleton } from '../components/SkeletonLoaders';
 
 export default function HeatingPage({ currentUser }) {
   const [status, setStatus] = useState(null);
@@ -230,7 +231,14 @@ export default function HeatingPage({ currentUser }) {
       {/* ===================================================================== */}
       {/* 2. SYNTHÈSE ÉQUIPEMENTS & MÉTRIQUES CLÉS (GRID 3 COLONNES STITCH)     */}
       {/* ===================================================================== */}
-      <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
+      {loading ? (
+        <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
+          <ThermalMetricSkeleton title="Supervision ViCare (Presbytère)..." />
+          <ThermalMetricSkeleton title="Eau Chaude Sanitaire (Ballon)..." />
+          <ThermalMetricSkeleton title="Domotique Bassin & Piscine (Rosing)..." />
+        </div>
+      ) : (
+        <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
 
         {/* ---------------- CARD 1 : CHAUFFAGE VICARE ---------------- */}
         <div className="p-5 rounded-2xl bg-surface-container-lowest border border-border-subtle flex flex-col justify-between gap-5 shadow-sm">
@@ -522,6 +530,7 @@ export default function HeatingPage({ currentUser }) {
         </div>
 
       </div>
+      )}
 
       {/* ===================================================================== */}
       {/* 3. CONTRÔLE DÉTAILLÉ VICARE & RÉGLAGES DE CONSIGNE (AVEC RBAC HENRI)   */}

@@ -5,11 +5,12 @@ import {
   ArrowUpRight, ArrowDownLeft, Building2, Sparkles, Check, RefreshCw
 } from 'lucide-react';
 import { fetchBankTransactions, triggerBankSync } from '../api';
+import { TableSkeleton, CardSkeleton } from './SkeletonLoaders';
 
 export default function FinancialLedgerModal({ isOpen, onClose, initialTab = 'grand_livre' }) {
   const [activeTab, setActiveTab] = useState(initialTab);
   const [transactions, setTransactions] = useState([]);
-  const [isLoading, setIsLoading] = useState(false);
+  const [isLoading, setIsLoading] = useState(true);
   const [isSyncing, setIsSyncing] = useState(false);
 
   const loadTransactions = async () => {
@@ -166,11 +167,15 @@ export default function FinancialLedgerModal({ isOpen, onClose, initialTab = 'gr
           >
             <span className="text-[10px] font-bold text-slate-500 uppercase tracking-wider">Grand Livre Général</span>
             <span className="text-base sm:text-lg font-black text-emerald-900 flex items-center justify-between mt-1">
-              {transactions.length} {transactions.length > 1 ? 'Opérations' : 'Opération'}
+              {isLoading ? (
+                <span className="w-16 h-6 bg-slate-200 dark:bg-slate-700 rounded animate-pulse inline-block"></span>
+              ) : (
+                `${transactions.length} ${transactions.length > 1 ? 'Opérations' : 'Opération'}`
+              )}
               <Receipt className="w-4 h-4 text-emerald-600" />
             </span>
             <span className="text-[11px] text-emerald-700 font-semibold mt-0.5">
-              {transactions.length > 0 ? 'Écritures réelles' : 'Zéro donnée inventée'}
+              {isLoading ? 'Synchronisation...' : transactions.length > 0 ? 'Écritures réelles' : 'Zéro donnée inventée'}
             </span>
           </button>
 
@@ -186,11 +191,17 @@ export default function FinancialLedgerModal({ isOpen, onClose, initialTab = 'gr
           >
             <span className="text-[10px] font-bold text-slate-500 uppercase tracking-wider">Entrées &amp; Cotisations</span>
             <span className="text-base sm:text-lg font-black text-emerald-900 flex items-center justify-between mt-1">
-              {totalEntrees > 0 ? `+${totalEntrees.toLocaleString('fr-FR', { minimumFractionDigits: 2, maximumFractionDigits: 2 })} €` : '0,00 €'}
+              {isLoading ? (
+                <span className="w-20 h-6 bg-slate-200 dark:bg-slate-700 rounded animate-pulse inline-block"></span>
+              ) : totalEntrees > 0 ? (
+                `+${totalEntrees.toLocaleString('fr-FR', { minimumFractionDigits: 2, maximumFractionDigits: 2 })} €`
+              ) : (
+                '0,00 €'
+              )}
               <TrendingUp className="w-4 h-4 text-emerald-600" />
             </span>
             <span className="text-[11px] text-emerald-700 font-semibold mt-0.5">
-              {entreesList.length} encaissement{entreesList.length > 1 ? 's' : ''}
+              {isLoading ? 'Calcul...' : `${entreesList.length} encaissement${entreesList.length > 1 ? 's' : ''}`}
             </span>
           </button>
 
@@ -206,11 +217,17 @@ export default function FinancialLedgerModal({ isOpen, onClose, initialTab = 'gr
           >
             <span className="text-[10px] font-bold text-slate-500 uppercase tracking-wider">Sorties &amp; Charges</span>
             <span className="text-base sm:text-lg font-black text-amber-700 flex items-center justify-between mt-1">
-              {totalSorties > 0 ? `-${totalSorties.toLocaleString('fr-FR', { minimumFractionDigits: 2, maximumFractionDigits: 2 })} €` : '0,00 €'}
+              {isLoading ? (
+                <span className="w-20 h-6 bg-slate-200 dark:bg-slate-700 rounded animate-pulse inline-block"></span>
+              ) : totalSorties > 0 ? (
+                `-${totalSorties.toLocaleString('fr-FR', { minimumFractionDigits: 2, maximumFractionDigits: 2 })} €`
+              ) : (
+                '0,00 €'
+              )}
               <Receipt className="w-4 h-4 text-amber-600" />
             </span>
             <span className="text-[11px] text-slate-500 font-medium mt-0.5">
-              {sortiesList.length} dépense{sortiesList.length > 1 ? 's' : ''}
+              {isLoading ? 'Calcul...' : `${sortiesList.length} dépense${sortiesList.length > 1 ? 's' : ''}`}
             </span>
           </button>
 
@@ -226,11 +243,17 @@ export default function FinancialLedgerModal({ isOpen, onClose, initialTab = 'gr
           >
             <span className="text-[10px] font-bold text-slate-500 uppercase tracking-wider">Solde Net de Période</span>
             <span className={`text-base sm:text-lg font-black flex items-center justify-between mt-1 ${soldeNet >= 0 ? 'text-emerald-900' : 'text-rose-900'}`}>
-              {soldeNet !== 0 ? `${soldeNet >= 0 ? '+' : ''}${soldeNet.toLocaleString('fr-FR', { minimumFractionDigits: 2, maximumFractionDigits: 2 })} €` : '0,00 €'}
+              {isLoading ? (
+                <span className="w-20 h-6 bg-slate-200 dark:bg-slate-700 rounded animate-pulse inline-block"></span>
+              ) : soldeNet !== 0 ? (
+                `${soldeNet >= 0 ? '+' : ''}${soldeNet.toLocaleString('fr-FR', { minimumFractionDigits: 2, maximumFractionDigits: 2 })} €`
+              ) : (
+                '0,00 €'
+              )}
               <Wallet className="w-4 h-4 text-emerald-600" />
             </span>
             <span className="text-[11px] text-slate-500 font-medium mt-0.5">
-              Trésorerie nette constatée
+              {isLoading ? 'Calcul...' : 'Trésorerie nette constatée'}
             </span>
           </button>
         </div>
@@ -261,7 +284,9 @@ export default function FinancialLedgerModal({ isOpen, onClose, initialTab = 'gr
               </div>
 
               {/* ÉTAT VIDE SOMBRE ET ÉLÉGANT (AUCUNE DONNÉE INVENTÉE) */}
-              {transactions.length === 0 ? (
+              {isLoading ? (
+                <TableSkeleton rows={5} cols={6} />
+              ) : transactions.length === 0 ? (
                 <div className="bg-white rounded-2xl border border-slate-200 p-10 sm:p-14 text-center flex flex-col items-center justify-center shadow-xs">
                   <div className="w-16 h-16 rounded-full bg-slate-100 flex items-center justify-center text-slate-400 mb-4">
                     <Receipt className="w-8 h-8 text-slate-400" />
@@ -377,7 +402,9 @@ export default function FinancialLedgerModal({ isOpen, onClose, initialTab = 'gr
                 </span>
               </div>
 
-              {entreesList.length === 0 ? (
+              {isLoading ? (
+                <TableSkeleton rows={4} cols={4} />
+              ) : entreesList.length === 0 ? (
                 <div className="bg-white rounded-2xl border border-slate-200 p-10 text-center flex flex-col items-center justify-center">
                   <TrendingUp className="w-8 h-8 text-slate-300 mb-3" />
                   <h4 className="text-sm font-bold text-slate-800">
@@ -447,7 +474,12 @@ export default function FinancialLedgerModal({ isOpen, onClose, initialTab = 'gr
                 </div>
               </div>
 
-              {sortiesList.length === 0 ? (
+              {isLoading ? (
+                <div className="space-y-3">
+                  <CardSkeleton />
+                  <CardSkeleton />
+                </div>
+              ) : sortiesList.length === 0 ? (
                 <div className="bg-white rounded-2xl border border-slate-200 p-10 text-center flex flex-col items-center justify-center">
                   <Receipt className="w-8 h-8 text-slate-300 mb-3" />
                   <h4 className="text-sm font-bold text-slate-800">

@@ -4,6 +4,7 @@ import {
 } from 'lucide-react';
 import { reviewProject, castProjectVote, fetchProjectComments, addProjectComment } from '../api';
 import CoordinatorApprovalModal from './CoordinatorApprovalModal';
+import CustomSelect from './CustomSelect';
 
 
 export default function ProjectDetailModal({ project, isOpen, onClose, currentUser, onRefresh }) {
@@ -308,16 +309,17 @@ export default function ProjectDetailModal({ project, isOpen, onClose, currentUs
 
                     <div>
                       <label className="block text-[10px] font-bold uppercase text-indigo-800 mb-1">Niveau d'Urgence</label>
-                      <select
+                      <CustomSelect
                         value={editPriority}
                         onChange={(e) => setEditPriority(e.target.value)}
-                        className="w-full px-3 py-2 bg-white border border-indigo-200 rounded-xl text-xs text-slate-900 font-semibold"
-                      >
-                        <option value="URGENT">🔴 URGENT</option>
-                        <option value="HAUTE">🟠 HAUTE</option>
-                        <option value="MOYENNE">🟡 MOYENNE</option>
-                        <option value="BASSE">🟢 BASSE</option>
-                      </select>
+                        options={[
+                          { value: 'URGENT', label: '🔴 URGENT' },
+                          { value: 'HAUTE', label: '🟠 HAUTE' },
+                          { value: 'MOYENNE', label: '🟡 MOYENNE' },
+                          { value: 'BASSE', label: '🟢 BASSE' },
+                        ]}
+                        className="w-full text-xs font-semibold"
+                      />
                     </div>
                   </div>
 

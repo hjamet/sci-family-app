@@ -228,6 +228,40 @@ export function StayCardSkeleton({ className = '' }) {
 }
 
 /**
+ * CompactStaySkeleton : Squelette pour la liste compacte des prochains séjours (Dashboard)
+ */
+export function CompactStaySkeleton({ count = 3, className = '' }) {
+  return (
+    <div className={`flex flex-col space-y-3 ${className}`}>
+      {Array.from({ length: count }).map((_, idx) => (
+        <div
+          key={idx}
+          className="animate-pulse rounded-xl bg-white p-3.5 border border-outline-variant/30 flex flex-col justify-between gap-2.5"
+        >
+          <div className="flex items-center justify-between gap-2">
+            <div className="flex items-center gap-2">
+              <div className="w-24 h-4 bg-slate-200 dark:bg-slate-700 rounded"></div>
+              <div className="w-32 h-3.5 bg-slate-200/70 dark:bg-slate-700/70 rounded"></div>
+            </div>
+            <div className="w-16 h-4 bg-slate-200/60 dark:bg-slate-700/60 rounded-full"></div>
+          </div>
+          <div className="flex items-center justify-between gap-2">
+            <div className="space-y-1.5 flex-1">
+              <div className="w-36 h-4 bg-slate-200 dark:bg-slate-700 rounded"></div>
+              <div className="flex items-center gap-3">
+                <div className="w-20 h-3 bg-slate-200/60 dark:bg-slate-700/60 rounded"></div>
+                <div className="w-24 h-3 bg-slate-200/60 dark:bg-slate-700/60 rounded"></div>
+              </div>
+            </div>
+            <div className="w-24 h-7 bg-slate-200 dark:bg-slate-700 rounded-lg"></div>
+          </div>
+        </div>
+      ))}
+    </div>
+  );
+}
+
+/**
  * BankMetricSkeleton : Squelette pour les tuiles de synthèse financière (Entrées, Sorties, Trésorerie)
  */
 export function BankMetricSkeleton({ className = '' }) {

@@ -8,6 +8,8 @@ import {
 } from 'lucide-react';
 import FinancialLedgerModal from '../components/FinancialLedgerModal';
 import BankReauthBanner from '../components/BankReauthBanner';
+import { BankMetricSkeleton } from '../components/SkeletonLoaders';
+import CustomSelect from '../components/CustomSelect';
 import {
   fetchDocuments,
   fetchDocumentCategories,
@@ -75,8 +77,10 @@ export default function AdminInfoPage({ currentUser }) {
 
   // Open Banking Status
   const [bankStatus, setBankStatus] = useState(null);
+  const [isLoadingBank, setIsLoadingBank] = useState(true);
 
   const loadBankStatus = async () => {
+    setIsLoadingBank(true);
     try {
       const data = await fetchBankStatus();
       setBankStatus(data);
@@ -88,6 +92,8 @@ export default function AdminInfoPage({ currentUser }) {
       }
     } catch (err) {
       console.warn('Bank status load notice:', err.message);
+    } finally {
+      setIsLoadingBank(false);
     }
   };
 
@@ -595,96 +601,104 @@ export default function AdminInfoPage({ currentUser }) {
           </div>
         </div>
 
-        <div className="grid grid-cols-1 md:grid-cols-3 gap-gutter">
-          
-          {/* Card 1: Entrées / Cotisations CCA */}
-          <div
-            onClick={() => {
-              setOperationType('in');
-              setIsOperationModalOpen(true);
-            }}
-            role="button"
-            tabIndex={0}
-            className="bg-surface-container-lowest rounded-lg p-space-md shadow-[0_2px_8px_-2px_rgba(6,95,70,0.04),0_6px_20px_-4px_rgba(15,23,42,0.05)] border border-border-subtle flex flex-col justify-between relative overflow-hidden group hover:border-primary hover:shadow-[0_8px_24px_-4px_rgba(6,95,70,0.09)] transition-all cursor-pointer"
-          >
-            <div className="flex items-start justify-between gap-space-xs">
-              <div>
-                <span className="text-on-surface-variant font-label-sm text-label-sm block uppercase tracking-wider font-semibold">
-                  Entrées (CCA &amp; Apports)
+        {isLoadingBank ? (
+          <div className="grid grid-cols-1 md:grid-cols-3 gap-gutter">
+            <BankMetricSkeleton />
+            <BankMetricSkeleton />
+            <BankMetricSkeleton />
+          </div>
+        ) : (
+          <div className="grid grid-cols-1 md:grid-cols-3 gap-gutter">
+            
+            {/* Card 1: Entrées / Cotisations CCA */}
+            <div
+              onClick={() => {
+                setOperationType('in');
+                setIsOperationModalOpen(true);
+              }}
+              role="button"
+              tabIndex={0}
+              className="bg-surface-container-lowest rounded-lg p-space-md shadow-[0_2px_8px_-2px_rgba(6,95,70,0.04),0_6px_20px_-4px_rgba(15,23,42,0.05)] border border-border-subtle flex flex-col justify-between relative overflow-hidden group hover:border-primary hover:shadow-[0_8px_24px_-4px_rgba(6,95,70,0.09)] transition-all cursor-pointer"
+            >
+              <div className="flex items-start justify-between gap-space-xs">
+                <div>
+                  <span className="text-on-surface-variant font-label-sm text-label-sm block uppercase tracking-wider font-semibold">
+                    Entrées (CCA &amp; Apports)
+                  </span>
+                  <div className="flex items-baseline gap-2 mt-2">
+                    <span className="font-headline-lg text-headline-lg font-bold text-forest-deep tabular-nums">
+                      {hasRealBankData && financialTotals.entrees !== null
+                        ? `${financialTotals.entrees.toLocaleString('fr-FR', { minimumFractionDigits: 2, maximumFractionDigits: 2 })} €`
+                        : '?'}
+                    </span>
+                  </div>
+                </div>
+                <span className="material-symbols-outlined text-primary/40 group-hover:text-primary transition-colors text-[24px]">
+                  arrow_downward
                 </span>
-                <div className="flex items-baseline gap-2 mt-2">
-                  <span className="font-headline-lg text-headline-lg font-bold text-forest-deep tabular-nums">
-                    {hasRealBankData && financialTotals.entrees !== null
-                      ? `${financialTotals.entrees.toLocaleString('fr-FR', { minimumFractionDigits: 2, maximumFractionDigits: 2 })} €`
-                      : '?'}
+              </div>
+            </div>
+
+            {/* Card 2: Sorties & Charges */}
+            <div
+              onClick={() => {
+                setOperationType('out');
+                setIsOperationModalOpen(true);
+              }}
+              role="button"
+              tabIndex={0}
+              className="bg-surface-container-lowest rounded-lg p-space-md shadow-[0_2px_8px_-2px_rgba(6,95,70,0.04),0_6px_20px_-4px_rgba(15,23,42,0.05)] border border-border-subtle flex flex-col justify-between relative overflow-hidden group hover:border-primary hover:shadow-[0_8px_24px_-4px_rgba(6,95,70,0.09)] transition-all cursor-pointer"
+            >
+              <div className="flex items-start justify-between gap-space-xs">
+                <div>
+                  <span className="text-on-surface-variant font-label-sm text-label-sm block uppercase tracking-wider font-semibold">
+                    Sorties &amp; Charges engagées
+                  </span>
+                  <div className="flex items-baseline gap-2 mt-2">
+                    <span className="font-headline-lg text-headline-lg font-bold text-on-surface tabular-nums">
+                      {hasRealBankData && financialTotals.sorties !== null
+                        ? `${financialTotals.sorties.toLocaleString('fr-FR', { minimumFractionDigits: 2, maximumFractionDigits: 2 })} €`
+                        : '?'}
+                    </span>
+                  </div>
+                </div>
+                <span className="material-symbols-outlined text-amber-rich/40 group-hover:text-amber-rich transition-colors text-[24px]">
+                  arrow_upward
+                </span>
+              </div>
+            </div>
+
+            {/* Card 3: Réserves & Trésorerie */}
+            <div className="bg-surface-container-lowest rounded-lg p-space-md shadow-[0_2px_8px_-2px_rgba(6,95,70,0.04),0_6px_20px_-4px_rgba(15,23,42,0.05)] border border-border-subtle flex flex-col justify-between relative overflow-hidden group hover:border-sage-border transition-all">
+              <div className="flex items-start justify-between gap-space-xs">
+                <div>
+                  <span className="text-on-surface-variant font-label-sm text-label-sm block uppercase tracking-wider font-semibold">
+                    Réserves &amp; Trésorerie disponible
+                  </span>
+                  <div className="flex items-baseline gap-2 mt-2">
+                    <span className="font-headline-lg text-headline-lg font-bold text-primary tabular-nums">
+                      {hasRealBankData && financialTotals.reserves !== null
+                        ? `${financialTotals.reserves.toLocaleString('fr-FR', { minimumFractionDigits: 2, maximumFractionDigits: 2 })} €`
+                        : '?'}
+                    </span>
+                  </div>
+                </div>
+                <span className="material-symbols-outlined text-primary/40 text-[24px]">
+                  savings
+                </span>
+              </div>
+              {!hasRealBankData && (
+                <div className="mt-2 pt-2 border-t border-rose-100 flex items-center justify-between text-[11px] text-rose-800">
+                  <span className="inline-flex items-center gap-1 font-medium">
+                    <span className="w-1.5 h-1.5 rounded-full bg-rose-500 animate-pulse"></span>
+                    Liaison bancaire inactive ou à renouveler
                   </span>
                 </div>
-              </div>
-              <span className="material-symbols-outlined text-primary/40 group-hover:text-primary transition-colors text-[24px]">
-                arrow_downward
-              </span>
+              )}
             </div>
-          </div>
 
-          {/* Card 2: Sorties & Charges */}
-          <div
-            onClick={() => {
-              setOperationType('out');
-              setIsOperationModalOpen(true);
-            }}
-            role="button"
-            tabIndex={0}
-            className="bg-surface-container-lowest rounded-lg p-space-md shadow-[0_2px_8px_-2px_rgba(6,95,70,0.04),0_6px_20px_-4px_rgba(15,23,42,0.05)] border border-border-subtle flex flex-col justify-between relative overflow-hidden group hover:border-primary hover:shadow-[0_8px_24px_-4px_rgba(6,95,70,0.09)] transition-all cursor-pointer"
-          >
-            <div className="flex items-start justify-between gap-space-xs">
-              <div>
-                <span className="text-on-surface-variant font-label-sm text-label-sm block uppercase tracking-wider font-semibold">
-                  Sorties &amp; Charges engagées
-                </span>
-                <div className="flex items-baseline gap-2 mt-2">
-                  <span className="font-headline-lg text-headline-lg font-bold text-on-surface tabular-nums">
-                    {hasRealBankData && financialTotals.sorties !== null
-                      ? `${financialTotals.sorties.toLocaleString('fr-FR', { minimumFractionDigits: 2, maximumFractionDigits: 2 })} €`
-                      : '?'}
-                  </span>
-                </div>
-              </div>
-              <span className="material-symbols-outlined text-amber-rich/40 group-hover:text-amber-rich transition-colors text-[24px]">
-                arrow_upward
-              </span>
-            </div>
           </div>
-
-          {/* Card 3: Réserves & Trésorerie */}
-          <div className="bg-surface-container-lowest rounded-lg p-space-md shadow-[0_2px_8px_-2px_rgba(6,95,70,0.04),0_6px_20px_-4px_rgba(15,23,42,0.05)] border border-border-subtle flex flex-col justify-between relative overflow-hidden group hover:border-sage-border transition-all">
-            <div className="flex items-start justify-between gap-space-xs">
-              <div>
-                <span className="text-on-surface-variant font-label-sm text-label-sm block uppercase tracking-wider font-semibold">
-                  Réserves &amp; Trésorerie disponible
-                </span>
-                <div className="flex items-baseline gap-2 mt-2">
-                  <span className="font-headline-lg text-headline-lg font-bold text-primary tabular-nums">
-                    {hasRealBankData && financialTotals.reserves !== null
-                      ? `${financialTotals.reserves.toLocaleString('fr-FR', { minimumFractionDigits: 2, maximumFractionDigits: 2 })} €`
-                      : '?'}
-                  </span>
-                </div>
-              </div>
-              <span className="material-symbols-outlined text-primary/40 text-[24px]">
-                savings
-              </span>
-            </div>
-            {!hasRealBankData && (
-              <div className="mt-2 pt-2 border-t border-rose-100 flex items-center justify-between text-[11px] text-rose-800">
-                <span className="inline-flex items-center gap-1 font-medium">
-                  <span className="w-1.5 h-1.5 rounded-full bg-rose-500 animate-pulse"></span>
-                  Liaison bancaire inactive ou à renouveler
-                </span>
-              </div>
-            )}
-          </div>
-
-        </div>
+        )}
       </div>
 
       {/* ========================================================================= */}
@@ -900,21 +914,17 @@ export default function AdminInfoPage({ currentUser }) {
               <label htmlFor="sort-select" className="font-label-sm text-label-sm text-on-surface-variant whitespace-nowrap hidden sm:inline">
                 Trier par :
               </label>
-              <div className="relative">
-                <select
-                  id="sort-select"
-                  value={sortCriteria}
-                  onChange={(e) => setSortCriteria(e.target.value)}
-                  className="h-[52px] pl-4 pr-10 bg-surface-container-lowest border-2 border-border-subtle rounded-DEFAULT font-label-md text-label-md text-on-surface focus:outline-none focus:border-primary transition-all appearance-none cursor-pointer"
-                >
-                  <option value="recent">Date (Plus récent en premier)</option>
-                  <option value="name">Nom alphabétique (A-Z)</option>
-                  <option value="size">Taille de fichier</option>
-                </select>
-                <span className="material-symbols-outlined pointer-events-none absolute right-3 top-1/2 -translate-y-1/2 text-on-surface-variant text-[20px]">
-                  expand_more
-                </span>
-              </div>
+              <CustomSelect
+                id="sort-select"
+                value={sortCriteria}
+                onChange={(e) => setSortCriteria(e.target.value)}
+                options={[
+                  { value: 'recent', label: 'Date (Plus récent en premier)', icon: 'schedule' },
+                  { value: 'name', label: 'Nom alphabétique (A-Z)', icon: 'sort_by_alpha' },
+                  { value: 'size', label: 'Taille de fichier', icon: 'data_usage' },
+                ]}
+                className="h-[52px] min-w-[240px]"
+              />
             </div>
 
             {/* View Switch (Grid vs List) */}
@@ -1410,18 +1420,16 @@ export default function AdminInfoPage({ currentUser }) {
                 )}
 
                 {/* Liste des catégories disponibles */}
-                <select
+                <CustomSelect
                   id="doc-category-select"
                   value={uploadCategory}
                   onChange={(e) => setUploadCategory(e.target.value)}
-                  className="w-full h-[48px] px-3 bg-surface-container-lowest border-2 border-border-subtle rounded-DEFAULT font-body-md text-sm text-on-surface focus:outline-none focus:border-primary transition-all cursor-pointer"
-                >
-                  {categoriesList.map((cat) => (
-                    <option key={cat.id || cat.name} value={cat.name}>
-                      {cat.emoji || '📁'} {cat.name}
-                    </option>
-                  ))}
-                </select>
+                  options={categoriesList.map((cat) => ({
+                    value: cat.name,
+                    label: `${cat.emoji || '📁'} ${cat.name}`,
+                  }))}
+                  className="h-[48px]"
+                />
               </div>
 
               {/* Déposant */}

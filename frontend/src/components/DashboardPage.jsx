@@ -2,6 +2,7 @@ import React, { useState, useEffect, useCallback } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { fetchProjects, fetchReservations, fetchTasks } from '../api';
 import NewTaskModal from './NewTaskModal';
+import { VoteCardSkeleton, CompactStaySkeleton, CardSkeleton } from './SkeletonLoaders';
 
 export default function DashboardPage({
   currentUser = 'Henri',
@@ -310,12 +311,14 @@ export default function DashboardPage({
               onClick={() => navigateTo('/taches')}
               className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-DEFAULT bg-white border-2 border-outline-variant text-on-surface-variant font-label-sm text-xs font-semibold hover:border-outline hover:bg-canvas-slate transition-colors shadow-sm cursor-pointer"
             >
-              Tous les votes ({projects.length})
+              Tous les votes {loading ? '' : `(${projects.length})`}
             </button>
           </div>
         </div>
 
-        {activeVote ? (
+        {loading ? (
+          <VoteCardSkeleton />
+        ) : activeVote ? (
           <article className="bg-white rounded-xl p-space-md border border-outline-variant/30 flex flex-col gap-4 shadow-sm">
             <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2">
               <div className="flex items-center gap-2">
@@ -461,7 +464,9 @@ export default function DashboardPage({
             </p>
           </div>
 
-          {displayedStays.length > 0 ? (
+          {loading ? (
+            <CompactStaySkeleton count={3} />
+          ) : displayedStays.length > 0 ? (
             <div className="flex flex-col space-y-3 max-h-[390px] overflow-y-auto pr-1">
               {displayedStays.map((stay, idx) => {
                 const weekLabel = stay.week_number ? `Semaine ${stay.week_number}` : (stay.week ? `Semaine ${stay.week}` : `Séjour #${idx + 1}`);
@@ -601,7 +606,11 @@ export default function DashboardPage({
               </div>
               <span className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full bg-sage-soft text-primary font-label-sm text-xs font-semibold">
                 <span className="w-1.5 h-1.5 rounded-full bg-primary animate-pulse"></span>
-                {tasks.length} Tâche{tasks.length > 1 ? 's' : ''} active{tasks.length > 1 ? 's' : ''}
+                {loading ? (
+                  <span className="w-16 h-3 bg-primary/20 rounded animate-pulse inline-block"></span>
+                ) : (
+                  `${tasks.length} Tâche${tasks.length > 1 ? 's' : ''} active${tasks.length > 1 ? 's' : ''}`
+                )}
               </span>
             </div>
             <h2 className="font-headline-md text-headline-md text-forest-deep font-bold tracking-tight">
@@ -612,7 +621,12 @@ export default function DashboardPage({
             </p>
           </div>
 
-          {displayedTasks.length > 0 ? (
+          {loading ? (
+            <div className="flex flex-col space-y-space-sm">
+              <CardSkeleton className="p-4" />
+              <CardSkeleton className="p-4" />
+            </div>
+          ) : displayedTasks.length > 0 ? (
             <div className="flex flex-col space-y-space-sm">
               {displayedTasks.map((t, idx) => {
                 const isHigh = t.priority === 'Critique' || t.priority === 'Haute';
