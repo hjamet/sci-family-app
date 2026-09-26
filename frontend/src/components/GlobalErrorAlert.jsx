@@ -1,9 +1,9 @@
 import React, { useState, useEffect, useCallback } from 'react';
-import { AlertTriangle, X, Copy, Check, Trash2, ShieldAlert } from 'lucide-react';
+import { X, Copy, Check, ChevronDown, ChevronUp } from 'lucide-react';
 
 /**
- * Calcul d'une clé de signature unique pour dédupliquer les erreurs
- * Signature basée sur : message + url + status (et méthode)
+ * Calcul d'une clé de signature unique pour dédupliquer les erreurs.
+ * Signature basée sur : méthode + url + statut + message.
  */
 function getErrorSignature(detail) {
   const method = (detail.method || '').toUpperCase().trim();
@@ -23,6 +23,46 @@ function formatTime(date) {
   });
 }
 
+function formatISODate(date) {
+  if (!date) return '';
+  const d = date instanceof Date ? date : new Date(date);
+  return d.toISOString();
+}
+
+/**
+ * Copie robuste dans le presse-papier avec fallback textarea
+ */
+async function copyToClipboard(text) {
+  if (typeof window === 'undefined') return false;
+
+  try {
+    if (navigator?.clipboard?.writeText) {
+      await navigator.clipboard.writeText(text);
+      return true;
+    }
+  } catch (err) {
+    console.warn('Clipboard API direct failed, using textarea fallback:', err);
+  }
+
+  try {
+    const textArea = document.createElement('textarea');
+    textArea.value = text;
+    textArea.style.position = 'fixed';
+    textArea.style.top = '-9999px';
+    textArea.style.left = '-9999px';
+    textArea.setAttribute('readonly', '');
+    document.body.appendChild(textArea);
+    textArea.focus();
+    textArea.select();
+    const successful = document.execCommand('copy');
+    document.body.removeChild(textArea);
+    return successful;
+  } catch (err) {
+    console.error('All clipboard copy methods failed:', err);
+    return false;
+  }
+}
+
 /**
  * Fonction globale exportée pour déclencher manuellement une alerte fail-fast
  */
@@ -34,7 +74,8 @@ export function triggerGlobalError(detail) {
 
 export default function GlobalErrorAlert() {
   const [errors, setErrors] = useState([]);
-  const [copiedId, setCopiedId] = useState(null);
+  const [copied, setCopied] = useState(false);
+  const [expandedIds, setExpandedIds] = useState(() => new Set());
 
   // Fonction d'ajout ou d'incrémentation d'une erreur
   const pushError = useCallback((rawDetail) => {
@@ -55,13 +96,13 @@ export default function GlobalErrorAlert() {
       const existingIndex = prevErrors.findIndex((e) => e.signature === signature);
 
       if (existingIndex !== -1) {
-        // Déduplication anti-boucle : incrémenter le compteur sans empiler
+        // Déduplication anti-boucle : incrémenter le compteur sans multiplier les lignes
         const existing = prevErrors[existingIndex];
         const updated = {
           ...existing,
           count: existing.count + 1,
           lastSeen: new Date(),
-          pulseKey: Date.now(), // force un re-render visuel de l'animation
+          pulseKey: Date.now(),
         };
 
         const next = [...prevErrors];
@@ -69,7 +110,7 @@ export default function GlobalErrorAlert() {
         return [updated, ...next];
       }
 
-      // Nouvelle erreur inédite
+      // Nouvelle erreur inédite ajoutée à la liste cumulée
       const newErr = {
         id: `err-${Date.now()}-${Math.random().toString(36).substring(2, 7)}`,
         signature,
@@ -88,9 +129,9 @@ export default function GlobalErrorAlert() {
     });
   }, []);
 
-  // Écouteurs globaux
+  // Écouteurs globaux (événements personnalisés et erreurs runtime JS/asynchrones)
   useEffect(() => {
-    // 1. Événement personnalisé émis par api.js ou tout module applicatif
+    // 1. Événement personnalisé émis par api.js ou tout composant
     const handleAppError = (event) => {
       if (event?.detail) {
         pushError(event.detail);
@@ -99,13 +140,12 @@ export default function GlobalErrorAlert() {
 
     // 2. Écouteur global sur les erreurs runtime JS
     const handleWindowError = (event) => {
-      // Ignorer les erreurs injectées par des extensions de navigateur externes
       const filename = event.filename || '';
       if (filename.includes('chrome-extension://') || filename.includes('moz-extension://')) {
         return;
       }
 
-      const msg = event.message || event.error?.message || 'Erreur d\'exécution JavaScript';
+      const msg = event.message || event.error?.message || "Erreur d'exécution JavaScript";
       pushError({
         message: String(msg),
         url: filename || (typeof window !== 'undefined' ? window.location.pathname : ''),
@@ -119,7 +159,6 @@ export default function GlobalErrorAlert() {
     const handleUnhandledRejection = (event) => {
       const reason = event.reason;
 
-      // Si l'erreur a déjà été émise et traitée par notre intercepteur api.js
       if (reason && reason._handledByGlobalAlert) {
         return;
       }
@@ -172,33 +211,71 @@ export default function GlobalErrorAlert() {
   }, [pushError]);
 
   // Actions utilisateur
-  const dismissError = (id) => {
-    setErrors((prev) => prev.filter((err) => err.id !== id));
-  };
-
   const clearAllErrors = () => {
     setErrors([]);
+    setExpandedIds(new Set());
   };
 
-  const copyErrorDetails = (err) => {
-    const text = [
-      `[INCIDENT TECHNIQUE FAIL-FAST]`,
-      `Statut: ${err.status}`,
-      err.method || err.url ? `Requête: ${err.method || ''} ${err.url || ''}` : null,
-      `Occurrences: ${err.count}`,
-      `Première vue: ${formatTime(err.firstSeen)}`,
-      `Dernière vue: ${formatTime(err.lastSeen)}`,
-      `Message:`,
-      err.message,
-      err.stack ? `Stack Trace:\n${err.stack}` : null,
-    ]
-      .filter(Boolean)
-      .join('\n');
+  const toggleExpand = (id) => {
+    setExpandedIds((prev) => {
+      const next = new Set(prev);
+      if (next.has(id)) {
+        next.delete(id);
+      } else {
+        next.add(id);
+      }
+      return next;
+    });
+  };
 
-    if (navigator?.clipboard?.writeText) {
-      navigator.clipboard.writeText(text);
-      setCopiedId(err.id);
-      setTimeout(() => setCopiedId(null), 2500);
+  // Copie globale du rapport d'incidents
+  const copyAllErrorsReport = async () => {
+    if (errors.length === 0) return;
+
+    const totalOccurrences = errors.reduce((acc, curr) => acc + (curr.count || 1), 0);
+    const now = new Date();
+    const activeUrl = typeof window !== 'undefined' ? window.location.href : 'Inconnue';
+    const userAgent = typeof navigator !== 'undefined' ? navigator.userAgent : 'Inconnu';
+
+    const header = [
+      '============================================================',
+      "RAPPORT D'INCIDENTS TECHNIQUES — SCI FAMILY APP",
+      `Généré le        : ${now.toISOString()} (${now.toLocaleString('fr-FR')})`,
+      `Page active      : ${activeUrl}`,
+      `Navigateur       : ${userAgent}`,
+      `Incidents uniques: ${errors.length}`,
+      `Total erreurs    : ${totalOccurrences}`,
+      '============================================================',
+      '',
+    ].join('\n');
+
+    const incidentBlocks = errors.map((err, idx) => {
+      const lines = [
+        `[INCIDENT #${idx + 1}]`,
+        `- Statut       : ${typeof err.status === 'number' ? `HTTP ${err.status}` : err.status}`,
+        `- Méthode / Typ: ${err.method || 'N/A'}`,
+        `- Cible / URL  : ${err.url || 'N/A'}`,
+        `- Occurrences  : ${err.count} fois`,
+        `- Détecté à    : ${formatISODate(err.firstSeen)} (${formatTime(err.firstSeen)})`,
+        `- Dernier vu   : ${formatISODate(err.lastSeen)} (${formatTime(err.lastSeen)})`,
+        `- Message      :`,
+        `  ${String(err.message).replace(/\n/g, '\n  ')}`,
+      ];
+
+      if (err.stack) {
+        lines.push(`- Stack Trace  :\n${err.stack}`);
+      }
+
+      lines.push('------------------------------------------------------------');
+      return lines.join('\n');
+    });
+
+    const fullReport = `${header}${incidentBlocks.join('\n\n')}\n=== FIN DU RAPPORT ===\n`;
+
+    const success = await copyToClipboard(fullReport);
+    if (success) {
+      setCopied(true);
+      setTimeout(() => setCopied(false), 2000);
     }
   };
 
@@ -211,125 +288,154 @@ export default function GlobalErrorAlert() {
   return (
     <aside
       aria-label="Centre d'alerte technique globale"
-      className="fixed top-4 right-4 z-[9999] max-w-lg w-[calc(100%-2rem)] sm:w-full flex flex-col gap-3 pointer-events-none"
+      className="fixed bottom-5 right-5 z-50 max-w-md w-[calc(100%-2.5rem)] sm:w-full transition-all duration-300 ease-out pointer-events-auto"
     >
-      {/* Barre d'actions globale si plusieurs alertes ou cumul */}
-      {errors.length > 1 && (
-        <div className="pointer-events-auto bg-rose-950/95 border border-rose-600/80 rounded-2xl px-4 py-2.5 shadow-2xl backdrop-blur-md flex items-center justify-between gap-3 text-white text-xs font-semibold animate-in fade-in slide-in-from-top-2 duration-200">
-          <div className="flex items-center gap-2 text-rose-200">
-            <ShieldAlert className="w-4 h-4 text-rose-400 animate-pulse flex-shrink-0" />
-            <span>
-              <strong className="text-white">{errors.length}</strong> incidents distincts •{' '}
-              <strong className="text-white">{totalOccurrences}</strong> erreurs totales
+      <div className="bg-slate-900/90 dark:bg-slate-950/95 backdrop-blur-xl border border-rose-500/30 text-slate-100 rounded-2xl shadow-2xl p-4 relative overflow-hidden flex flex-col">
+        {/* Liseré supérieur subtil avec dégradé doux rose / ambre */}
+        <div className="absolute top-0 left-0 right-0 h-0.5 bg-gradient-to-r from-rose-500/80 via-amber-500/60 to-rose-500/80" />
+
+        {/* En-tête : Badge avec pulsation douce, Titre et Compteur */}
+        <div className="flex items-center justify-between gap-2 pb-2.5 border-b border-white/10">
+          <div className="flex items-center gap-2.5 min-w-0">
+            {/* Indicateur de pulsation rouge/ambre doux */}
+            <span className="relative flex h-2.5 w-2.5 flex-shrink-0" aria-hidden="true">
+              <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-rose-400 opacity-75" />
+              <span className="relative inline-flex rounded-full h-2.5 w-2.5 bg-rose-500" />
             </span>
+
+            <div className="flex items-baseline gap-2 min-w-0">
+              <h4 className="font-semibold text-sm tracking-tight text-white truncate">
+                Anomalie technique détectée
+              </h4>
+              <span className="text-[11px] font-medium text-slate-300 bg-white/10 px-2 py-0.5 rounded-full flex-shrink-0">
+                {totalOccurrences} {totalOccurrences > 1 ? 'erreurs enregistrées' : 'erreur enregistrée'}
+              </span>
+            </div>
           </div>
+
+          {/* Bouton fermeture manuelle globale (✕ discret) */}
           <button
             type="button"
             onClick={clearAllErrors}
-            className="inline-flex items-center gap-1.5 px-3 py-1.5 bg-rose-800/80 hover:bg-rose-700 text-rose-100 hover:text-white rounded-xl text-xs font-medium transition-colors border border-rose-600/50 shadow-sm"
+            className="p-1 rounded-lg text-slate-400 hover:text-white hover:bg-white/10 transition-colors flex-shrink-0"
+            title="Fermer et masquer l'alerte"
+            aria-label="Fermer"
           >
-            <Trash2 className="w-3.5 h-3.5" />
-            Tout effacer
+            <X className="w-4 h-4" />
           </button>
         </div>
-      )}
 
-      {/* Cartes d'alertes détaillées */}
-      {errors.map((err) => {
-        const isRepeated = err.count > 1;
+        {/* Zone de liste cumulée scrollable (Stricte carte unique pour tous les incidents) */}
+        <div className="mt-2.5 max-h-48 overflow-y-auto space-y-2 pr-1 divide-y divide-white/10">
+          {errors.map((err) => {
+            const isRepeated = err.count > 1;
+            const isExpanded = expandedIds.has(err.id);
 
-        return (
-          <div
-            key={err.id}
-            role="alert"
-            className="pointer-events-auto bg-rose-950/95 border-2 border-rose-600 text-white rounded-2xl p-4 shadow-2xl backdrop-blur-md relative overflow-hidden transition-all duration-300"
-          >
-            {/* Liseré supérieur d'accentuation */}
-            <div className="absolute top-0 left-0 right-0 h-1 bg-gradient-to-r from-rose-500 via-red-500 to-rose-600" />
+            return (
+              <div key={err.id} className="pt-2 first:pt-0">
+                {/* Ligne d'en-tête de l'item */}
+                <div className="flex items-center justify-between gap-1.5 text-xs">
+                  <div className="flex items-center gap-1.5 flex-wrap min-w-0">
+                    {/* Badge statut HTTP ou code d'erreur */}
+                    <span className="font-mono text-[10px] font-bold px-1.5 py-0.5 rounded bg-rose-500/20 text-rose-300 border border-rose-500/30 flex-shrink-0">
+                      {typeof err.status === 'number' ? `HTTP ${err.status}` : err.status}
+                    </span>
 
-            {/* En-tête de la carte */}
-            <div className="flex items-start justify-between gap-3">
-              <div className="flex items-center gap-2 flex-wrap min-w-0">
-                <span className="p-1.5 bg-rose-900/80 rounded-lg border border-rose-700/60 text-rose-300 flex-shrink-0">
-                  <AlertTriangle className="w-4 h-4 animate-pulse text-rose-300" />
-                </span>
-                <h4 className="font-bold text-sm tracking-tight text-white flex items-center gap-2">
-                  Incident Technique
-                </h4>
+                    {/* Méthode HTTP ou source */}
+                    {err.method && (
+                      <span className="font-mono text-[10px] font-semibold text-slate-400 uppercase flex-shrink-0">
+                        {err.method}
+                      </span>
+                    )}
 
-                {/* Badge statut HTTP ou type */}
-                <span className="inline-flex items-center font-mono font-bold text-[11px] px-2 py-0.5 rounded-full bg-rose-900/90 text-rose-200 border border-rose-600">
-                  {typeof err.status === 'number' ? `HTTP ${err.status}` : err.status}
-                </span>
+                    {/* Badge compteur anti-boucle */}
+                    {isRepeated && (
+                      <span
+                        key={err.pulseKey}
+                        className="inline-flex items-center font-mono font-bold text-[10px] px-1.5 py-0.5 rounded-full bg-rose-500/30 text-rose-200 border border-rose-400/40 animate-pulse flex-shrink-0"
+                        title={`Erreur survenue ${err.count} fois`}
+                      >
+                        (x{err.count})
+                      </span>
+                    )}
+                  </div>
 
-                {/* Badge compteur anti-boucle avec animation de pulsation */}
-                {isRepeated && (
-                  <span
-                    key={err.pulseKey}
-                    title={`Erreur survenue ${err.count} fois consécutives`}
-                    className="inline-flex items-center gap-1 bg-rose-600 text-white font-mono font-extrabold text-xs px-2.5 py-0.5 rounded-full shadow-lg border border-rose-300 animate-pulse"
-                  >
-                    <span>(x{err.count})</span>
+                  {/* Horodatage */}
+                  <span className="font-mono text-[10px] text-slate-400 flex-shrink-0">
+                    {formatTime(err.lastSeen || err.firstSeen)}
                   </span>
-                )}
-              </div>
+                </div>
 
-              {/* Boutons d'action : Copier & Fermer (Persistance absolue : aucun dismiss auto) */}
-              <div className="flex items-center gap-1 flex-shrink-0">
-                <button
-                  type="button"
-                  onClick={() => copyErrorDetails(err)}
-                  title="Copier les détails techniques pour le diagnostic"
-                  aria-label="Copier les détails"
-                  className="p-1.5 rounded-lg text-rose-300 hover:text-white hover:bg-rose-900/80 transition-colors"
+                {/* URL cible / endpoint */}
+                {err.url && (
+                  <div className="mt-1 text-[11px] font-mono text-slate-300 truncate select-all">
+                    {err.url}
+                  </div>
+                )}
+
+                {/* Message d'erreur compact et dépliable */}
+                <div
+                  onClick={() => toggleExpand(err.id)}
+                  className="mt-1 text-[11px] font-mono text-slate-300 bg-black/40 hover:bg-black/60 rounded-lg p-2 border border-white/5 cursor-pointer transition-colors"
+                  title="Cliquer pour afficher ou masquer les détails"
                 >
-                  {copiedId === err.id ? (
-                    <Check className="w-4 h-4 text-emerald-400" />
-                  ) : (
-                    <Copy className="w-4 h-4" />
+                  <div className={isExpanded ? 'whitespace-pre-wrap break-words' : 'line-clamp-2 break-all'}>
+                    {err.message}
+                  </div>
+
+                  {err.stack && isExpanded && (
+                    <pre className="mt-2 pt-2 border-t border-white/10 text-[10px] text-slate-400 whitespace-pre-wrap overflow-x-auto max-h-32">
+                      {err.stack}
+                    </pre>
                   )}
-                </button>
-                <button
-                  type="button"
-                  onClick={() => dismissError(err.id)}
-                  title="Fermer cette notification (suppression manuelle requise)"
-                  aria-label="Fermer la notification d'erreur"
-                  className="p-1.5 rounded-lg text-rose-300 hover:text-white hover:bg-rose-800/80 transition-colors"
-                >
-                  <X className="w-4 h-4" />
-                </button>
-              </div>
-            </div>
 
-            {/* Méthode et URL de l'API ciblée si présente */}
-            {(err.url || err.method) && (
-              <div className="mt-2.5 flex items-center gap-2 bg-rose-900/40 px-2.5 py-1.5 rounded-lg border border-rose-800/60 font-mono text-xs text-rose-200 overflow-x-auto">
-                {err.method && (
-                  <span className="font-bold text-rose-300 flex-shrink-0">{err.method}</span>
-                )}
-                <span className="truncate select-all">{err.url}</span>
+                  <div className="mt-1 flex items-center justify-end text-[10px] text-slate-500">
+                    {isExpanded ? (
+                      <span className="flex items-center gap-0.5">
+                        <ChevronUp className="w-3 h-3" /> Réduire
+                      </span>
+                    ) : (
+                      <span className="flex items-center gap-0.5">
+                        <ChevronDown className="w-3 h-3" /> Détails
+                      </span>
+                    )}
+                  </div>
+                </div>
               </div>
+            );
+          })}
+        </div>
+
+        {/* Pied : Bouton unique de copie globale et bouton Fermer */}
+        <div className="mt-3 pt-3 border-t border-white/10 flex items-center gap-2">
+          <button
+            type="button"
+            onClick={copyAllErrorsReport}
+            className="flex-1 inline-flex items-center justify-center gap-2 py-2 px-3 rounded-xl text-xs font-semibold transition-all duration-200 shadow-md active:scale-[0.99] bg-gradient-to-r from-rose-600 to-rose-700 hover:from-rose-500 hover:to-rose-600 text-white border border-rose-400/30"
+          >
+            {copied ? (
+              <>
+                <Check className="w-4 h-4 text-emerald-300" />
+                <span>✓ Rapport copié !</span>
+              </>
+            ) : (
+              <>
+                <Copy className="w-4 h-4 text-rose-200" />
+                <span>📋 Copier tout le rapport</span>
+              </>
             )}
+          </button>
 
-            {/* Message d'erreur technique brut avec persistance et défilement */}
-            <div className="mt-2 text-xs font-mono text-rose-100 bg-black/60 p-3 rounded-xl border border-rose-800/80 select-all whitespace-pre-wrap break-words max-h-40 overflow-y-auto shadow-inner leading-relaxed">
-              {err.message}
-            </div>
-
-            {/* Horodatages et traçabilité anti-boucle */}
-            <div className="mt-2.5 flex items-center justify-between text-[11px] font-mono text-rose-300/80 pt-1 border-t border-rose-900/50">
-              <span>Détecté à {formatTime(err.firstSeen)}</span>
-              {isRepeated ? (
-                <span className="text-rose-200 font-semibold">
-                  Dernier signal : {formatTime(err.lastSeen)} • Boucle de {err.count} occurrences
-                </span>
-              ) : (
-                <span className="text-rose-400/90 italic">En attente de résolution manuelle</span>
-              )}
-            </div>
-          </div>
-        );
-      })}
+          <button
+            type="button"
+            onClick={clearAllErrors}
+            className="px-3 py-2 rounded-xl text-xs font-medium text-slate-400 hover:text-slate-200 hover:bg-white/5 border border-white/10 transition-colors"
+            title="Masquer le centre d'alerte et vider la liste"
+          >
+            Fermer
+          </button>
+        </div>
+      </div>
     </aside>
   );
 }
