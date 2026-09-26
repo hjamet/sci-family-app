@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useCallback } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { fetchProjects, fetchReservations, fetchTasks, fetchBankStatus } from '../api';
 import BankReauthBanner from './BankReauthBanner';
@@ -20,32 +20,29 @@ export default function DashboardPage({
     ? (currentUser?.prenom || 'Henri')
     : (currentUser ? currentUser.split(' ')[0] : 'Henri');
 
-  useEffect(() => {
-    let isMounted = true;
-    async function loadDashboardData() {
-      try {
-        setLoading(true);
-        const [projData, resData, taskData, bankData] = await Promise.all([
-          fetchProjects().catch(() => []),
-          fetchReservations().catch(() => []),
-          fetchTasks().catch(() => []),
-          fetchBankStatus().catch(() => null),
-        ]);
-        if (isMounted) {
-          setProjects(projData || []);
-          setReservations(resData || []);
-          setTasks(taskData || []);
-          setBankStatus(bankData || null);
-        }
-      } catch (err) {
-        console.error('Erreur chargement dashboard:', err);
-      } finally {
-        if (isMounted) setLoading(false);
-      }
+  const loadDashboardData = useCallback(async () => {
+    try {
+      setLoading(true);
+      const [projData, resData, taskData, bankData] = await Promise.all([
+        fetchProjects().catch(() => []),
+        fetchReservations().catch(() => []),
+        fetchTasks().catch(() => []),
+        fetchBankStatus().catch(() => null),
+      ]);
+      setProjects(projData || []);
+      setReservations(resData || []);
+      setTasks(taskData || []);
+      setBankStatus(bankData || null);
+    } catch (err) {
+      console.error('Erreur chargement dashboard:', err);
+    } finally {
+      setLoading(false);
     }
-    loadDashboardData();
-    return () => { isMounted = false; };
   }, []);
+
+  useEffect(() => {
+    loadDashboardData();
+  }, [loadDashboardData]);
 
   const navigateTo = (target) => {
     const routeMap = {
