@@ -975,7 +975,7 @@ export default function VademecumPage({ properties, currentUser }) {
                 </div>
               )}
 
-              {/* Alerte contextuelle Klereo (ex: Seuil minimum Bidon pH / consommables) */}
+              {/* Affichage contextuel des alertes Klereo (ex: Seuil minimum Bidon pH / consommables) */}
               {(() => {
                 const alertsList = Array.isArray(piscineStatus?.alerts) && piscineStatus.alerts.length > 0
                   ? piscineStatus.alerts
