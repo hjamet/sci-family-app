@@ -1,16 +1,16 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import { fetchReservations } from '../api';
 import BookingModal from '../components/BookingModal';
 
 const ASSOCIATES_LIST = [
   { id: 'all', label: 'Tous les 7 associés' },
-  { id: 'henri', label: 'Henri Jamet' },
-  { id: 'frederic', label: 'Frédéric Jamet (Usufruitier)' },
-  { id: 'elisabeth', label: 'Élisabeth Jamet (Usufruitière)' },
-  { id: 'josephine', label: 'Joséphine Jamet' },
-  { id: 'hortense', label: 'Hortense Jamet' },
-  { id: 'marguerite', label: 'Marguerite Jamet' },
-  { id: 'eugenie', label: 'Eugénie Jamet' },
+  { id: 'henri', label: 'Henri Jamet', dotColor: 'bg-teal-600' },
+  { id: 'frederic', label: 'Frédéric Jamet', dotColor: 'bg-emerald-700' },
+  { id: 'elisabeth', label: 'Élisabeth Jamet', dotColor: 'bg-emerald-600' },
+  { id: 'josephine', label: 'Joséphine Jamet', dotColor: 'bg-sky-600' },
+  { id: 'hortense', label: 'Hortense Jamet', dotColor: 'bg-amber-600' },
+  { id: 'marguerite', label: 'Marguerite Jamet', dotColor: 'bg-rose-600' },
+  { id: 'eugenie', label: 'Eugénie Jamet', dotColor: 'bg-purple-600' },
 ];
 
 const MONTH_NAMES_FR = [
@@ -47,10 +47,31 @@ export default function CalendarPage({ properties, currentUser = 'Henri Jamet' }
   const [filterRosing, setFilterRosing] = useState(true);
   const [filterPresbytere, setFilterPresbytere] = useState(true);
   const [memberFilter, setMemberFilter] = useState('all');
+  const [isMemberDropdownOpen, setIsMemberDropdownOpen] = useState(false);
+  const memberDropdownRef = useRef(null);
   const [reservations, setReservations] = useState([]);
   const [loading, setLoading] = useState(true);
   const [isBookingOpen, setIsBookingOpen] = useState(false);
   const [editingReservation, setEditingReservation] = useState(null);
+
+  useEffect(() => {
+    const handleClickOutside = (event) => {
+      if (memberDropdownRef.current && !memberDropdownRef.current.contains(event.target)) {
+        setIsMemberDropdownOpen(false);
+      }
+    };
+    const handleKeyDown = (event) => {
+      if (event.key === 'Escape') {
+        setIsMemberDropdownOpen(false);
+      }
+    };
+    document.addEventListener('mousedown', handleClickOutside);
+    document.addEventListener('keydown', handleKeyDown);
+    return () => {
+      document.removeEventListener('mousedown', handleClickOutside);
+      document.removeEventListener('keydown', handleKeyDown);
+    };
+  }, []);
 
   const loadReservations = async () => {
     try {
@@ -100,6 +121,7 @@ export default function CalendarPage({ properties, currentUser = 'Henri Jamet' }
     setFilterRosing(true);
     setFilterPresbytere(true);
     setMemberFilter('all');
+    setIsMemberDropdownOpen(false);
     setSelectedYear(2026);
     setCurrentDate(new Date(2026, 7, 1));
   };
@@ -164,7 +186,20 @@ export default function CalendarPage({ properties, currentUser = 'Henri Jamet' }
     if (!filterRosing && !filterPresbytere) return true;
     if (filterRosing && !filterPresbytere && !isRosing) return false;
     if (!filterRosing && filterPresbytere && !isPresbytere) return false;
-    if (memberFilter !== 'all' && !r.user_name?.toLowerCase().includes(memberFilter.toLowerCase())) return false;
+    if (memberFilter !== 'all') {
+      const normalize = (str) =>
+        (str || '')
+          .normalize('NFD')
+          .replace(/[\u0300-\u036f]/g, '')
+          .toLowerCase();
+      const targetId = normalize(memberFilter);
+      const memberObj = ASSOCIATES_LIST.find((m) => m.id === memberFilter);
+      const targetName = memberObj ? normalize(memberObj.label) : '';
+      const userName = normalize(r.user_name);
+      const matchesName = userName.includes(targetId) || (targetName && userName.includes(targetName));
+      const matchesParents = (memberFilter === 'frederic' || memberFilter === 'elisabeth') && userName.includes('parent');
+      if (!matchesName && !matchesParents) return false;
+    }
     return true;
   });
 
@@ -251,6 +286,8 @@ export default function CalendarPage({ properties, currentUser = 'Henri Jamet' }
 
     return days;
   })();
+
+  const selectedMember = ASSOCIATES_LIST.find((m) => m.id === memberFilter) || ASSOCIATES_LIST[0];
 
   return (
     <div className="flex flex-col w-full pb-16 space-y-6">
@@ -427,22 +464,97 @@ export default function CalendarPage({ properties, currentUser = 'Henri Jamet' }
             {/* Séparateur vertical discret */}
             <div className="hidden sm:block w-px h-6 bg-border-subtle"></div>
 
-            {/* Associés : Menu déroulant compact */}
-            <div className="relative min-w-[200px]">
+            {/* Associés : Sélecteur épuré & élégant */}
+            <div className="relative min-w-[210px]" ref={memberDropdownRef}>
               <label className="sr-only" htmlFor="member-filter">Filtrer par Associé</label>
+              {/* Native select accessible / fallback / test compatibility */}
               <select
                 id="member-filter"
                 value={memberFilter}
                 onChange={(e) => setMemberFilter(e.target.value)}
-                className="w-full appearance-none bg-canvas-slate text-on-surface font-label-md text-xs sm:text-sm py-2 pl-3 pr-8 rounded-xl border border-border-subtle focus:outline-none focus:bg-white transition-colors cursor-pointer"
+                className="sr-only"
+                tabIndex={-1}
+                aria-hidden="true"
               >
                 {ASSOCIATES_LIST.map((m) => (
                   <option key={m.id} value={m.id}>{m.label}</option>
                 ))}
               </select>
-              <span className="material-symbols-outlined absolute right-2.5 top-1/2 -translate-y-1/2 pointer-events-none text-on-surface-variant text-[18px]">
-                group
-              </span>
+
+              {/* Bouton sélecteur fermé */}
+              <button
+                type="button"
+                id="member-filter-trigger"
+                onClick={() => setIsMemberDropdownOpen((prev) => !prev)}
+                aria-haspopup="listbox"
+                aria-expanded={isMemberDropdownOpen}
+                className="w-full flex items-center justify-between gap-2.5 py-2 px-3 rounded-xl border border-stone-200 dark:border-stone-700 bg-stone-50/80 dark:bg-stone-900/60 hover:bg-stone-100/90 dark:hover:bg-stone-800/80 text-stone-800 dark:text-stone-200 text-xs sm:text-sm font-medium shadow-xs focus:outline-none focus:ring-2 focus:ring-amber-600/30 focus:border-amber-600 transition-all duration-150 cursor-pointer"
+              >
+                <div className="flex items-center gap-2 truncate">
+                  {selectedMember.id === 'all' ? (
+                    <span className="material-symbols-outlined text-[18px] text-amber-800/70 dark:text-amber-400/80 shrink-0">
+                      filter_list
+                    </span>
+                  ) : (
+                    <span className={`w-2.5 h-2.5 rounded-full shrink-0 ${selectedMember.dotColor || 'bg-amber-600'}`}></span>
+                  )}
+                  <span className="truncate font-medium">
+                    {selectedMember.label}
+                  </span>
+                </div>
+                <span
+                  className={`material-symbols-outlined text-[18px] text-stone-400 dark:text-stone-500 transition-transform duration-200 shrink-0 ${
+                    isMemberDropdownOpen ? 'rotate-180 text-amber-700 dark:text-amber-400' : ''
+                  }`}
+                >
+                  expand_more
+                </span>
+              </button>
+
+              {/* Menu flottant ouvert raffiné */}
+              {isMemberDropdownOpen && (
+                <div
+                  role="listbox"
+                  className="absolute right-0 sm:left-0 mt-1.5 w-full min-w-[220px] bg-white dark:bg-stone-900 rounded-xl shadow-lg border border-stone-200 dark:border-stone-700/80 py-1.5 z-50 animate-in fade-in zoom-in-95 duration-150 overflow-hidden"
+                >
+                  {ASSOCIATES_LIST.map((m) => {
+                    const isSelected = memberFilter === m.id;
+                    return (
+                      <button
+                        key={m.id}
+                        type="button"
+                        role="option"
+                        aria-selected={isSelected}
+                        onClick={() => {
+                          setMemberFilter(m.id);
+                          setIsMemberDropdownOpen(false);
+                        }}
+                        className={`w-full flex items-center justify-between px-3.5 py-2.5 text-xs sm:text-sm text-left transition-colors cursor-pointer ${
+                          isSelected
+                            ? 'bg-amber-50/90 dark:bg-amber-950/40 text-amber-900 dark:text-amber-200 font-semibold'
+                            : 'text-stone-700 dark:text-stone-300 hover:bg-amber-50 dark:hover:bg-amber-950/30 hover:text-stone-900 dark:text-stone-100'
+                        }`}
+                      >
+                        <div className="flex items-center gap-2.5 truncate">
+                          {m.id === 'all' ? (
+                            <span className="material-symbols-outlined text-[16px] text-stone-400 dark:text-stone-500 shrink-0">
+                              groups
+                            </span>
+                          ) : (
+                            <span className={`w-2.5 h-2.5 rounded-full shrink-0 ${m.dotColor || 'bg-amber-600'}`}></span>
+                          )}
+                          <span className="truncate">{m.label}</span>
+                        </div>
+                        {isSelected && (
+                          <span className="material-symbols-outlined text-[17px] text-amber-700 dark:text-amber-400 shrink-0 ml-2">
+                            check
+                          </span>
+                        )}
+                      </button>
+                    );
+                  })}
+                </div>
+              )}
             </div>
 
             <button
@@ -701,7 +813,7 @@ export default function CalendarPage({ properties, currentUser = 'Henri Jamet' }
                         </span>
                       </div>
 
-                      {hasStay ? (
+                      {hasStay && (
                         <div className="space-y-1 mt-1">
                           {dayStays.map((stay) => {
                             const isPlenary = stay?.isPlenary || stay?.status === 'Rassemblement Plénier';
@@ -722,10 +834,6 @@ export default function CalendarPage({ properties, currentUser = 'Henri Jamet' }
                               </div>
                             );
                           })}
-                        </div>
-                      ) : (
-                        <div className="mt-1 text-[11px] text-on-surface-variant/40 italic group-hover:text-primary transition-colors">
-                          Manoir libre
                         </div>
                       )}
                     </div>
