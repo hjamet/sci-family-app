@@ -1,5 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { createTask } from '../api';
+import CustomSelect from './CustomSelect';
 
 const DOMAIN_CATEGORIES = [
   { id: 'Entretien', label: 'Entretien', icon: 'handyman', defaultSubject: 'Rosing', desc: 'Maintenance courante, petites réparations' },
@@ -232,17 +233,16 @@ export default function NewTaskModal({
                 <span className="material-symbols-outlined text-[16px] text-primary">category</span>
                 <span>Domaine / Catégorie *</span>
               </label>
-              <select
+              <CustomSelect
                 value={category}
                 onChange={(e) => setCategory(e.target.value)}
-                className="w-full h-10 px-3 bg-canvas-slate rounded-DEFAULT border border-slate-300 font-medium text-on-surface focus:outline-none focus:ring-2 focus:ring-primary cursor-pointer"
-              >
-                {DOMAIN_CATEGORIES.map((c) => (
-                  <option key={c.id} value={c.id}>
-                    {c.label}
-                  </option>
-                ))}
-              </select>
+                options={DOMAIN_CATEGORIES.map((c) => ({
+                  value: c.id,
+                  label: `${c.label} — ${c.desc}`,
+                  icon: c.icon,
+                }))}
+                className="h-10"
+              />
             </div>
 
             {/* Sujet / Bâtiment associé */}
@@ -251,17 +251,18 @@ export default function NewTaskModal({
                 <span className="material-symbols-outlined text-[16px] text-primary">home_work</span>
                 <span>Lieu / Bâtiment</span>
               </label>
-              <select
+              <CustomSelect
                 value={subject}
                 onChange={(e) => setSubject(e.target.value)}
-                className="w-full h-10 px-3 bg-canvas-slate rounded-DEFAULT border border-slate-300 font-medium text-on-surface focus:outline-none focus:ring-2 focus:ring-primary cursor-pointer"
-              >
-                <option value="Rosing">Rosing (Maison Principale)</option>
-                <option value="Presbytère">Presbytère</option>
-                <option value="Piscine">Piscine & Pool house</option>
-                <option value="Jardin">Jardin, Parc & Verger</option>
-                <option value="SCI">SCI (Gouvernance & Général)</option>
-              </select>
+                options={[
+                  { value: 'Rosing', label: 'Rosing (Maison Principale)', icon: 'home' },
+                  { value: 'Presbytère', label: 'Presbytère', icon: 'cottage' },
+                  { value: 'Piscine', label: 'Piscine & Pool house', icon: 'pool' },
+                  { value: 'Jardin', label: 'Jardin, Parc & Verger', icon: 'yard' },
+                  { value: 'SCI', label: 'SCI (Gouvernance & Général)', icon: 'account_balance' },
+                ]}
+                className="h-10"
+              />
             </div>
 
           </div>
@@ -275,17 +276,16 @@ export default function NewTaskModal({
                 <span className="material-symbols-outlined text-[16px] text-primary">person</span>
                 <span>Responsable affecté *</span>
               </label>
-              <select
+              <CustomSelect
                 value={assignee}
                 onChange={(e) => setAssignee(e.target.value)}
-                className="w-full h-10 px-3 bg-canvas-slate rounded-DEFAULT border border-slate-300 font-medium text-on-surface focus:outline-none focus:ring-2 focus:ring-primary cursor-pointer"
-              >
-                {ASSOCIATES_LIST.map((m) => (
-                  <option key={m.id} value={m.name}>
-                    {m.name} ({m.role})
-                  </option>
-                ))}
-              </select>
+                options={ASSOCIATES_LIST.map((m) => ({
+                  value: m.name,
+                  label: `${m.name} (${m.role})`,
+                  icon: 'person',
+                }))}
+                className="h-10"
+              />
             </div>
 
             {/* Niveau de priorité / urgence */}
@@ -294,17 +294,16 @@ export default function NewTaskModal({
                 <span className="material-symbols-outlined text-[16px] text-primary">flag</span>
                 <span>Niveau de priorité *</span>
               </label>
-              <select
+              <CustomSelect
                 value={priority}
                 onChange={(e) => setPriority(e.target.value)}
-                className="w-full h-10 px-3 bg-canvas-slate rounded-DEFAULT border border-slate-300 font-medium text-on-surface focus:outline-none focus:ring-2 focus:ring-primary cursor-pointer"
-              >
-                {PRIORITY_LEVELS.map((p) => (
-                  <option key={p.id} value={p.id}>
-                    {p.label} — {p.desc}
-                  </option>
-                ))}
-              </select>
+                options={PRIORITY_LEVELS.map((p) => ({
+                  value: p.id,
+                  label: `${p.label} — ${p.desc}`,
+                  dotColor: p.dot,
+                }))}
+                className="h-10"
+              />
             </div>
 
           </div>
@@ -323,17 +322,16 @@ export default function NewTaskModal({
                   {points} pt{points > 1 ? 's' : ''}
                 </span>
               </label>
-              <select
+              <CustomSelect
                 value={points}
                 onChange={(e) => setPoints(parseInt(e.target.value, 10))}
-                className="w-full h-10 px-3 bg-canvas-slate rounded-DEFAULT border border-slate-300 font-medium text-on-surface focus:outline-none focus:ring-2 focus:ring-primary cursor-pointer"
-              >
-                {EFFORT_POINTS.map((pt) => (
-                  <option key={pt.points} value={pt.points}>
-                    {pt.label} — {pt.sub}
-                  </option>
-                ))}
-              </select>
+                options={EFFORT_POINTS.map((pt) => ({
+                  value: pt.points,
+                  label: `${pt.label} — ${pt.sub} (${pt.desc})`,
+                  icon: 'bolt',
+                }))}
+                className="h-10"
+              />
             </div>
 
             {/* Budget prévisionnel (€ TTC) */}

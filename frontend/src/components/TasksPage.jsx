@@ -5,6 +5,8 @@ import TaskDetailModal from './TaskDetailModal';
 import VoteRoofModal from './VoteRoofModal';
 import NewProjectModal from './NewProjectModal';
 import NewTaskModal from './NewTaskModal';
+import { CardSkeleton, TasksContainerSkeleton, VoteCardSkeleton } from './SkeletonLoaders';
+import CustomSelect from './CustomSelect';
 
 const AUTHENTIC_ASSOCIATES = [
   { id: 'all', name: 'Tous les associés', shortName: 'Tous' },
@@ -23,7 +25,7 @@ export default function TasksPage({ currentUser = 'Henri Jamet' }) {
   // Tasks state
   const [tasks, setTasks] = useState([]);
   const [projects, setProjects] = useState([]);
-  const [loading, setLoading] = useState(false);
+  const [loading, setLoading] = useState(true);
 
   // Search & Filter state
   const [searchTerm, setSearchTerm] = useState('');
@@ -333,9 +335,13 @@ export default function TasksPage({ currentUser = 'Henri Jamet' }) {
                 Tâches Ouvertes
               </span>
               <div className="flex items-baseline gap-2 mt-1">
-                <span className="font-display-lg text-display-lg text-forest-deep font-bold leading-none">
-                  {tasks.length}
-                </span>
+                {loading ? (
+                  <span className="w-12 h-7 bg-slate-200 dark:bg-slate-700 rounded animate-pulse inline-block"></span>
+                ) : (
+                  <span className="font-display-lg text-display-lg text-forest-deep font-bold leading-none">
+                    {tasks.length}
+                  </span>
+                )}
                 <span className="font-label-sm text-label-sm text-on-surface-variant">chantiers</span>
               </div>
             </div>
@@ -346,9 +352,9 @@ export default function TasksPage({ currentUser = 'Henri Jamet' }) {
           <div className="mt-4 pt-3 flex items-center gap-2">
             <span className={`w-2 h-2 rounded-full ${countsByPriority.Critique + countsByPriority.Haute > 0 ? 'bg-error animate-pulse' : 'bg-outline-variant'}`}></span>
             <span className={`font-label-sm text-label-sm ${countsByPriority.Critique + countsByPriority.Haute > 0 ? 'text-error font-semibold' : 'text-on-surface-variant'}`}>
-              {countsByPriority.Critique + countsByPriority.Haute} chantiers prioritaires
+              {loading ? 'Calcul des urgences...' : `${countsByPriority.Critique + countsByPriority.Haute} chantiers prioritaires`}
             </span>
-            <span className="text-on-surface-variant font-body-md text-body-md">à traiter</span>
+            {!loading && <span className="text-on-surface-variant font-body-md text-body-md">à traiter</span>}
           </div>
         </div>
 
@@ -360,9 +366,13 @@ export default function TasksPage({ currentUser = 'Henri Jamet' }) {
                 Mes Tâches Directes
               </span>
               <div className="flex items-baseline gap-2 mt-1">
-                <span className="font-display-lg text-display-lg text-primary font-bold leading-none">
-                  {myTasksCount}
-                </span>
+                {loading ? (
+                  <span className="w-12 h-7 bg-slate-200 dark:bg-slate-700 rounded animate-pulse inline-block"></span>
+                ) : (
+                  <span className="font-display-lg text-display-lg text-primary font-bold leading-none">
+                    {myTasksCount}
+                  </span>
+                )}
                 <span className="font-label-sm text-label-sm text-on-surface-variant">chantiers actifs</span>
               </div>
             </div>
@@ -384,8 +394,14 @@ export default function TasksPage({ currentUser = 'Henri Jamet' }) {
                 Avancement Global
               </span>
               <div className="flex items-baseline gap-1 mt-1">
-                <span className="font-display-lg text-display-lg text-forest-deep font-bold leading-none">{avgProgress}</span>
-                <span className="font-headline-sm text-headline-sm text-forest-deep font-semibold">%</span>
+                {loading ? (
+                  <span className="w-12 h-7 bg-slate-200 dark:bg-slate-700 rounded animate-pulse inline-block"></span>
+                ) : (
+                  <>
+                    <span className="font-display-lg text-display-lg text-forest-deep font-bold leading-none">{avgProgress}</span>
+                    <span className="font-headline-sm text-headline-sm text-forest-deep font-semibold">%</span>
+                  </>
+                )}
               </div>
             </div>
             <div className="w-12 h-12 relative flex items-center justify-center">
@@ -478,8 +494,10 @@ export default function TasksPage({ currentUser = 'Henri Jamet' }) {
           </div>
         </div>
 
-        {/* Voting Card (Dynamic or Empty State) */}
-        {currentVote ? (
+        {/* Voting Card (Dynamic, Skeleton or Empty State) */}
+        {loading ? (
+          <VoteCardSkeleton />
+        ) : currentVote ? (
           <div className="bg-surface-container-low rounded-lg p-space-md border border-subtle">
             <div className="flex flex-col lg:flex-row lg:items-start justify-between gap-space-md mb-space-sm">
               <div className="space-y-1.5 flex-1">
@@ -629,16 +647,17 @@ export default function TasksPage({ currentUser = 'Henri Jamet' }) {
               <span className="material-symbols-outlined text-[18px]">sort</span>
               Trier par :
             </span>
-            <select
+            <CustomSelect
               value={sortBy}
               onChange={(e) => setSortBy(e.target.value)}
-              className="h-[52px] px-4 pr-9 bg-canvas-slate rounded-DEFAULT font-label-sm text-label-sm text-on-surface font-semibold focus:outline-none focus:ring-2 focus:ring-primary cursor-pointer transition-colors"
-            >
-              <option value="urgency">Degré d'urgence (priorité haute)</option>
-              <option value="deadline">Date d'échéance la plus proche</option>
-              <option value="budget_desc">Budget prévisionnel (décroissant)</option>
-              <option value="updated">Dernière mise à jour</option>
-            </select>
+              options={[
+                { value: 'urgency', label: "Degré d'urgence (priorité haute)", icon: 'priority_high' },
+                { value: 'deadline', label: "Date d'échéance la plus proche", icon: 'event' },
+                { value: 'budget_desc', label: "Budget prévisionnel (décroissant)", icon: 'euro' },
+                { value: 'updated', label: "Dernière mise à jour", icon: 'update' },
+              ]}
+              className="h-[52px] min-w-[260px]"
+            />
           </div>
         </div>
 
@@ -692,16 +711,17 @@ export default function TasksPage({ currentUser = 'Henri Jamet' }) {
               <span className="material-symbols-outlined text-[18px] text-primary">groups</span>
               Responsable / Associé
             </label>
-            <select
+            <CustomSelect
               id="assigneeFilter"
               value={selectedAssignee}
               onChange={(e) => setSelectedAssignee(e.target.value)}
-              className="h-[46px] px-3.5 bg-canvas-slate rounded-DEFAULT font-label-sm text-label-sm text-on-surface font-medium focus:ring-2 focus:ring-primary focus:outline-none cursor-pointer"
-            >
-              {memberFilterOptions.map((m) => (
-                <option key={m.id} value={m.id}>{m.label}</option>
-              ))}
-            </select>
+              options={memberFilterOptions.map((m) => ({
+                value: m.id,
+                label: m.label,
+                icon: 'person'
+              }))}
+              className="h-[46px]"
+            />
           </div>
 
           {/* Domaine / Catégorie (Spécification Annotation 5) */}
@@ -710,20 +730,21 @@ export default function TasksPage({ currentUser = 'Henri Jamet' }) {
               <span className="material-symbols-outlined text-[18px] text-primary">category</span>
               Domaine / Catégorie
             </label>
-            <select
+            <CustomSelect
               id="categoryFilter"
               value={selectedCategory}
               onChange={(e) => setSelectedCategory(e.target.value)}
-              className="h-[46px] px-3.5 bg-canvas-slate rounded-DEFAULT font-label-sm text-label-sm text-on-surface font-medium focus:ring-2 focus:ring-primary focus:outline-none cursor-pointer"
-            >
-              <option value="all">Tous les domaines</option>
-              <option value="entretien">Entretien</option>
-              <option value="travaux">Travaux</option>
-              <option value="espaces verts">Espaces verts</option>
-              <option value="administratif">Administratif</option>
-              <option value="piscine">Piscine</option>
-              <option value="chauffage">Chauffage</option>
-            </select>
+              options={[
+                { value: 'all', label: 'Tous les domaines', icon: 'category' },
+                { value: 'entretien', label: 'Entretien', icon: 'handyman' },
+                { value: 'travaux', label: 'Travaux', icon: 'construction' },
+                { value: 'espaces verts', label: 'Espaces verts', icon: 'yard' },
+                { value: 'administratif', label: 'Administratif', icon: 'description' },
+                { value: 'piscine', label: 'Piscine', icon: 'pool' },
+                { value: 'chauffage', label: 'Chauffage', icon: 'thermostat' },
+              ]}
+              className="h-[46px]"
+            />
           </div>
 
           {/* Lieu / Bâtiment */}
@@ -732,19 +753,20 @@ export default function TasksPage({ currentUser = 'Henri Jamet' }) {
               <span className="material-symbols-outlined text-[18px] text-primary">label</span>
               Sujet / Lieu
             </label>
-            <select
+            <CustomSelect
               id="subjectFilter"
               value={selectedSubject}
               onChange={(e) => setSelectedSubject(e.target.value)}
-              className="h-[46px] px-3.5 bg-canvas-slate rounded-DEFAULT font-label-sm text-label-sm text-on-surface font-medium focus:ring-2 focus:ring-primary focus:outline-none cursor-pointer"
-            >
-              <option value="all">Tous les sujets</option>
-              <option value="rosing">Rosing</option>
-              <option value="presbytere">Presbytère</option>
-              <option value="piscine">Piscine</option>
-              <option value="jardin">Jardin</option>
-              <option value="sci">SCI</option>
-            </select>
+              options={[
+                { value: 'all', label: 'Tous les sujets', icon: 'domain' },
+                { value: 'rosing', label: 'Rosing (Maison Principale)', icon: 'home' },
+                { value: 'presbytere', label: 'Presbytère', icon: 'cottage' },
+                { value: 'piscine', label: 'Piscine & Pool house', icon: 'pool' },
+                { value: 'jardin', label: 'Jardin & Espaces verts', icon: 'yard' },
+                { value: 'sci', label: 'SCI (Gouvernance & Général)', icon: 'account_balance' },
+              ]}
+              className="h-[46px]"
+            />
           </div>
         </div>
 
@@ -771,7 +793,9 @@ export default function TasksPage({ currentUser = 'Henri Jamet' }) {
       {/* 6. GRID OF TASK CARDS (Stitch)                                           */}
       {/* ========================================================================= */}
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-space-md" id="tasksContainer">
-        {sortedTasks.length === 0 ? (
+        {loading ? (
+          <TasksContainerSkeleton count={4} />
+        ) : sortedTasks.length === 0 ? (
           <div className="col-span-full py-12 px-6 bg-surface-container-lowest rounded-xl border border-dashed border-border-subtle flex flex-col items-center justify-center text-center">
             <div className="w-14 h-14 rounded-full bg-sage-soft text-forest-deep flex items-center justify-center mb-3">
               <span className="material-symbols-outlined text-[32px]">checklist_rtl</span>

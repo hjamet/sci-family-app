@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { createReservation, updateReservation } from '../api';
+import { createReservation, updateReservation, deleteReservation } from '../api';
 
 function getISOWeekAndYear(dateStr) {
   if (!dateStr) return { year: 2026, week_number: 30 };
@@ -403,6 +403,27 @@ export default function BookingModal({
     } catch (err) {
       console.error('Erreur réservation:', err);
       setError(err.message || 'Erreur lors de la réservation du séjour.');
+    } finally {
+      setSubmitting(false);
+    }
+  };
+
+  const handleDeleteBooking = async () => {
+    const reservationId = initialReservation?.id;
+    if (!reservationId) return;
+
+    const confirmed = window.confirm("Êtes-vous certain de vouloir annuler ce séjour ?");
+    if (!confirmed) return;
+
+    try {
+      setSubmitting(true);
+      setError(null);
+      await deleteReservation(reservationId);
+      if (onBooked) await onBooked();
+      onClose();
+    } catch (err) {
+      console.error('Erreur annulation séjour:', err);
+      setError(err.message || "Erreur lors de l'annulation du séjour.");
     } finally {
       setSubmitting(false);
     }
@@ -987,29 +1008,44 @@ export default function BookingModal({
           </section>
 
           {/* Modal Footer / Boutons d'action */}
-          <footer className="flex items-center justify-end gap-3 pt-space-sm border-t border-border-subtle/80 flex-wrap shrink-0">
-            <button
-              type="button"
-              onClick={onClose}
-              className="h-[52px] px-6 rounded-full bg-surface-container-lowest border-2 border-border-subtle hover:border-outline text-on-surface font-label-lg text-label-lg inline-flex items-center gap-2 transition-all cursor-pointer"
-            >
-              <span className="material-symbols-outlined text-[20px]">cancel</span>
-              Annuler
-            </button>
-            <button
-              type="submit"
-              disabled={submitting}
-              className="h-[52px] px-7 rounded-full bg-surface-container-lowest border-2 border-primary-container hover:bg-sage-soft active:bg-primary-fixed text-primary-container font-label-lg text-label-lg inline-flex items-center gap-2 transition-all shadow-sm cursor-pointer disabled:opacity-50"
-            >
-              {submitting ? (
-                <span className="inline-block w-5 h-5 border-2 border-primary-container border-t-transparent rounded-full animate-spin"></span>
-              ) : (
-                <span className="material-symbols-outlined text-[20px]" style={{ fontVariationSettings: '"FILL" 1' }}>
-                  check_circle
-                </span>
+          <footer className="flex items-center justify-between gap-3 pt-space-sm border-t border-border-subtle/80 flex-wrap shrink-0">
+            <div>
+              {isEditMode && (
+                <button
+                  type="button"
+                  onClick={handleDeleteBooking}
+                  disabled={submitting}
+                  className="px-4 py-2 text-rose-700 bg-rose-50 hover:bg-rose-100 border border-rose-200 rounded-xl font-medium text-sm flex items-center gap-1.5 transition-colors cursor-pointer disabled:opacity-50"
+                >
+                  <span className="material-symbols-outlined text-sm">delete</span>
+                  Annuler ce séjour
+                </button>
               )}
-              {isEditMode ? 'Mettre à jour le séjour' : 'Confirmer la réservation du séjour'}
-            </button>
+            </div>
+            <div className="flex items-center gap-3">
+              <button
+                type="button"
+                onClick={onClose}
+                className="h-[52px] px-6 rounded-full bg-surface-container-lowest border-2 border-border-subtle hover:border-outline text-on-surface font-label-lg text-label-lg inline-flex items-center gap-2 transition-all cursor-pointer"
+              >
+                <span className="material-symbols-outlined text-[20px]">cancel</span>
+                Fermer
+              </button>
+              <button
+                type="submit"
+                disabled={submitting}
+                className="h-[52px] px-7 rounded-full bg-surface-container-lowest border-2 border-primary-container hover:bg-sage-soft active:bg-primary-fixed text-primary-container font-label-lg text-label-lg inline-flex items-center gap-2 transition-all shadow-sm cursor-pointer disabled:opacity-50"
+              >
+                {submitting ? (
+                  <span className="inline-block w-5 h-5 border-2 border-primary-container border-t-transparent rounded-full animate-spin"></span>
+                ) : (
+                  <span className="material-symbols-outlined text-[20px]" style={{ fontVariationSettings: '"FILL" 1' }}>
+                    check_circle
+                  </span>
+                )}
+                {isEditMode ? 'Mettre à jour le séjour' : 'Confirmer la réservation du séjour'}
+              </button>
+            </div>
           </footer>
 
         </form>

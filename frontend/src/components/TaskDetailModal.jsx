@@ -3,11 +3,13 @@ import {
   fetchTaskById,
   updateTask,
   closeTask,
+  deleteTask,
   fetchTaskComments,
   addTaskComment,
   reactToTaskComment,
   uploadTaskDocuments,
 } from '../api';
+import CustomSelect from './CustomSelect';
 
 const ALLOWED_EMOJIS = ['👍', '❤️', '👏', '💡', '🌸'];
 
@@ -215,6 +217,21 @@ export default function TaskDetailModal({
     }
   };
 
+  // Delete Task
+  const handleDeleteTask = async () => {
+    if (!window.confirm("Êtes-vous certain de vouloir supprimer cette tâche ?")) return;
+    try {
+      if (task?.id) {
+        await deleteTask(task.id);
+      }
+      if (onTaskUpdated) onTaskUpdated();
+      onClose();
+    } catch (err) {
+      console.error('Erreur suppression tâche:', err);
+      alert(err.message || 'Erreur lors de la suppression de la tâche.');
+    }
+  };
+
   // Close task protocol
   const handleConfirmCloseTask = async () => {
     if (!isCoordinator) {
@@ -245,44 +262,102 @@ export default function TaskDetailModal({
     }
   };
 
-  // Add Comment
-  const handleSendComment = async (e) => {
-    e.preventDefault();
-    if (!newComment.trim()) return;
-
+  // Background server sync for Optimistic Chat (Annotation 13)
+  const sendCommentToServer = async (tempId, textToSend, authorName, authorRole) => {
     try {
-      setSubmittingComment(true);
-      const authorRole = isCoordinator ? 'Gérant' : 'Membre Associé';
-      const commentPayload = {
-        content: newComment.trim(),
-        author_name: currentUser || 'Henri Jamet',
-        author_role: authorRole,
-      };
-
-      if (task.id) {
-        const added = await addTaskComment(task.id, commentPayload);
-        setComments([...comments, added]);
+      let confirmedComment;
+      if (task?.id) {
+        confirmedComment = await addTaskComment(task.id, {
+          content: textToSend,
+          author_name: authorName,
+          author_role: authorRole,
+        });
       } else {
         // Fallback local demo comment
-        setComments([
-          ...comments,
-          {
-            id: Date.now(),
-            author_name: currentUser || 'Henri Jamet',
-            author_role: authorRole,
-            content: newComment.trim(),
-            reactions: {},
-            created_at: new Date().toISOString(),
-          },
-        ]);
+        confirmedComment = {
+          id: Date.now(),
+          author_name: authorName,
+          author_role: authorRole,
+          content: textToSend,
+          reactions: {},
+          created_at: new Date().toISOString(),
+        };
       }
-      setNewComment('');
+
+      setComments((prev) =>
+        prev.map((c) =>
+          c.id === tempId
+            ? { ...confirmedComment, isOptimistic: false, isError: false }
+            : c
+        )
+      );
     } catch (err) {
-      console.error('Erreur envoi commentaire:', err);
-      alert(err.message || 'Erreur lors de l\'envoi du message.');
-    } finally {
-      setSubmittingComment(false);
+      console.error('Erreur envoi message tâche:', err);
+      // FAIL-FAST: Déclencher l'alerte rouge globale
+      window.dispatchEvent(
+        new CustomEvent('app-error', {
+          detail: {
+            message: "Échec de l'envoi du message : " + (err.message || 'Erreur réseau'),
+            status: 500,
+          },
+        })
+      );
+      // Conserver le message dans la discussion avec statut d'erreur et bouton [Réessayer]
+      setComments((prev) =>
+        prev.map((c) =>
+          c.id === tempId
+            ? {
+                ...c,
+                isOptimistic: false,
+                isError: true,
+                errorMessage: err.message || 'Erreur de transmission',
+              }
+            : c
+        )
+      );
     }
+  };
+
+  // Add Comment (Optimistic UI - Instantané)
+  const handleSendComment = (e) => {
+    if (e) e.preventDefault();
+    const text = newComment.trim();
+    if (!text) return;
+
+    const tempId = `temp-${Date.now()}`;
+    const authorName = currentUserName || 'Henri Jamet';
+    const authorRole = isCoordinator ? 'Gérant' : 'Membre Associé';
+
+    const tempMessage = {
+      id: tempId,
+      content: text,
+      author_name: authorName,
+      author_role: authorRole,
+      created_at: new Date().toISOString(),
+      reactions: {},
+      isOptimistic: true,
+      isError: false,
+    };
+
+    // 1 & 2. Ajout optimiste immédiat dans le state des messages
+    setComments((prev) => [...prev, tempMessage]);
+    // 3. Vidage immédiat du champ de saisie
+    setNewComment('');
+
+    // 5. Appel réseau en tâche de fond
+    sendCommentToServer(tempId, text, authorName, authorRole);
+  };
+
+  // Retry sending failed comment
+  const handleRetryComment = (comment) => {
+    setComments((prev) =>
+      prev.map((c) =>
+        c.id === comment.id
+          ? { ...c, isOptimistic: true, isError: false }
+          : c
+      )
+    );
+    sendCommentToServer(comment.id, comment.content, comment.author_name, comment.author_role);
   };
 
   // Emoji Reactions
@@ -346,12 +421,6 @@ export default function TaskDetailModal({
         {/* ========================================== */}
         <header className="bg-surface-container-low px-4 sm:px-6 py-3.5 flex flex-wrap items-center justify-between gap-3 shrink-0 border-b border-border-subtle">
           <div className="flex flex-wrap items-center gap-2.5">
-            {/* Status Badge */}
-            <div className="flex items-center gap-2 px-3.5 py-1.5 rounded-full bg-sage-soft text-primary font-label-md text-xs sm:text-sm font-semibold">
-              <span className="w-2.5 h-2.5 rounded-full bg-secondary animate-pulse"></span>
-              <span>{task.status || 'EN COURS'} • Priorité {task.priority || 'Haute'}</span>
-            </div>
-
             {/* Financial Context Pill */}
             <div className="flex items-center gap-1.5 px-3.5 py-1.5 rounded-full bg-amber-soft text-amber-rich font-label-md text-xs sm:text-sm font-bold">
               <span className="material-symbols-outlined text-[18px]">savings</span>
@@ -372,24 +441,29 @@ export default function TaskDetailModal({
               <span>{mode === 'view' ? 'Éditer la tâche' : 'Consulter'}</span>
             </button>
 
-            {/* Close Task Button */}
+            {/* Delete Task Button (Annotation 6) */}
             <button
               type="button"
-              disabled={!isCoordinator}
-              onClick={() => {
-                if (!isCoordinator) return;
-                setIsClosingModalOpen(true);
-              }}
-              title={!isCoordinator ? 'Réservé aux coordinateurs (Henri & Joséphine)' : 'Clôturer la tâche'}
-              className={`inline-flex items-center gap-1.5 h-11 px-4 rounded-xl border-2 font-label-md text-xs sm:text-sm font-bold shadow-sm transition-colors ${
-                !isCoordinator
-                  ? 'bg-slate-100 border-slate-300 text-slate-400 cursor-not-allowed'
-                  : 'bg-white border-primary text-primary hover:bg-sage-soft cursor-pointer'
-              }`}
+              onClick={handleDeleteTask}
+              className="px-3 py-1.5 rounded-xl border border-rose-200 bg-rose-50 hover:bg-rose-100 text-rose-700 text-xs font-semibold flex items-center gap-1 transition-colors cursor-pointer"
+              title="Supprimer la tâche"
             >
-              <span className={`material-symbols-outlined text-[18px] ${!isCoordinator ? 'text-slate-400' : 'text-primary'}`}>check_circle</span>
-              <span>Clôturer la tâche</span>
+              <span className="material-symbols-outlined text-sm">delete</span>
+              <span>Supprimer</span>
             </button>
+
+            {/* Close Task Button (Annotation 10: Visible uniquement pour Henri & Joséphine) */}
+            {isCoordinator && (
+              <button
+                type="button"
+                onClick={() => setIsClosingModalOpen(true)}
+                title="Clôturer la tâche"
+                className="inline-flex items-center gap-1.5 h-11 px-4 rounded-xl border-2 font-label-md text-xs sm:text-sm font-bold shadow-sm transition-colors bg-white border-primary text-primary hover:bg-sage-soft cursor-pointer"
+              >
+                <span className="material-symbols-outlined text-[18px] text-primary">check_circle</span>
+                <span>Clôturer la tâche</span>
+              </button>
+            )}
 
             {/* Close Modal 'X' */}
             <button
@@ -449,17 +523,10 @@ export default function TaskDetailModal({
                       <span className="material-symbols-outlined text-primary text-[20px]">description</span>
                       Description & Objectifs
                     </h2>
-                    <span className="px-3 py-0.5 rounded-full bg-sage-soft text-primary font-label-sm text-xs font-semibold">
-                      {task.complexity || 'Modérée'}
-                    </span>
                   </div>
 
-                  <div className="p-4 bg-canvas-slate rounded-2xl font-body-lg text-xs sm:text-sm text-on-surface leading-relaxed shadow-sm border border-slate-200/60 space-y-3">
+                  <div className="p-4 bg-canvas-slate rounded-2xl font-body-lg text-xs sm:text-sm text-on-surface leading-relaxed shadow-sm border border-slate-200/60">
                     <p>{task.description || 'Description détaillée des travaux à accomplir sur le domaine.'}</p>
-                    <div className="p-3 bg-sage-soft rounded-xl flex items-center gap-3 text-primary font-label-md text-xs font-semibold">
-                      <span className="material-symbols-outlined text-[18px]">trending_down</span>
-                      <span>Impact budgétaire validé : devis négocié avec réduction de charges pour la SCI.</span>
-                    </div>
                   </div>
                 </div>
 
@@ -591,67 +658,51 @@ export default function TaskDetailModal({
                   </div>
                 </div>
 
-                {/* Section 1 : Gouvernance & Gestion technique (Pour Henri & Joséphine) */}
-                <section className="bg-white border-2 border-emerald-600/30 rounded-2xl p-4 sm:p-5 shadow-xs flex flex-col gap-4">
-                  <div className="flex flex-wrap items-center justify-between gap-2 border-b border-slate-100 pb-3">
-                    <div className="flex items-center gap-2">
-                      <span className="material-symbols-outlined text-forest-deep text-[22px]">admin_panel_settings</span>
-                      <h3 className="font-headline-sm text-sm sm:text-base font-bold text-forest-deep">
-                        Gouvernance & Gestion technique
-                      </h3>
-                    </div>
-                    <span className="px-2.5 py-0.5 rounded-full bg-amber-soft text-amber-rich font-label-sm text-[11px] font-semibold flex items-center gap-1">
-                      <span className="material-symbols-outlined text-[13px]">lock</span>
-                      Réservé Coordinateur (Henri & Joséphine)
-                    </span>
-                  </div>
-
-                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-                    <div className="flex flex-col gap-1">
-                      <label className="font-label-md text-xs font-semibold text-on-surface">Sujet / Emplacement</label>
-                      <select
-                        value={editSubject}
-                        disabled={!isCoordinator}
-                        onChange={(e) => setEditSubject(e.target.value)}
-                        className={`bg-canvas-slate rounded-xl p-2.5 text-xs sm:text-sm border border-slate-300 focus:outline-none focus:ring-2 focus:ring-primary ${
-                          !isCoordinator ? 'opacity-60 cursor-not-allowed' : 'cursor-pointer'
-                        }`}
-                      >
-                        {SUBJECTS.map((s) => (
-                          <option key={s} value={s}>{s}</option>
-                        ))}
-                      </select>
+                {/* Section 1 : Gouvernance & Gestion technique (Pour Henri & Joséphine - Annotations 10 & 11) */}
+                {isCoordinator && (
+                  <section className="bg-white border-2 border-emerald-600/30 rounded-2xl p-4 sm:p-5 shadow-xs flex flex-col gap-4">
+                    <div className="flex flex-wrap items-center justify-between gap-2 border-b border-slate-100 pb-3">
+                      <div className="flex items-center gap-2">
+                        <span className="material-symbols-outlined text-forest-deep text-[22px]">admin_panel_settings</span>
+                        <h3 className="font-headline-sm text-sm sm:text-base font-bold text-forest-deep">
+                          Gouvernance & Gestion technique
+                        </h3>
+                      </div>
                     </div>
 
-                    <div className="flex flex-col gap-1">
-                      <label className="font-label-md text-xs font-semibold text-on-surface">Degré de complexité</label>
-                      <select
-                        value={editComplexity}
-                        disabled={!isCoordinator}
-                        onChange={(e) => setEditComplexity(e.target.value)}
-                        className={`bg-canvas-slate rounded-xl p-2.5 text-xs sm:text-sm border border-slate-300 focus:outline-none focus:ring-2 focus:ring-primary ${
-                          !isCoordinator ? 'opacity-60 cursor-not-allowed' : 'cursor-pointer'
-                        }`}
-                      >
-                        {COMPLEXITIES.map((c) => (
-                          <option key={c} value={c}>{c}</option>
-                        ))}
-                      </select>
-                    </div>
-                  </div>
+                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                      <div className="flex flex-col gap-1">
+                        <label className="font-label-md text-xs font-semibold text-on-surface">Sujet / Emplacement</label>
+                        <CustomSelect
+                          value={editSubject}
+                          onChange={(e) => setEditSubject(e.target.value)}
+                          options={SUBJECTS}
+                          className="h-10 text-xs sm:text-sm"
+                        />
+                      </div>
 
-                  {/* Assigned Members */}
-                  <div className="space-y-1.5">
-                    <label className="font-label-md text-xs font-semibold text-on-surface">Membres attribués</label>
-                    <div className="flex flex-wrap items-center gap-2 p-2.5 bg-canvas-slate rounded-xl border border-slate-300 min-h-[44px]">
-                      {editMembers.map((m) => (
-                        <span
-                          key={m}
-                          className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full bg-white border border-slate-300 text-xs font-semibold text-on-surface shadow-xs"
-                        >
-                          <span className="w-2 h-2 rounded-full bg-primary"></span>
-                          {m}
-                          {isCoordinator && (
+                      <div className="flex flex-col gap-1">
+                        <label className="font-label-md text-xs font-semibold text-on-surface">Degré de complexité</label>
+                        <CustomSelect
+                          value={editComplexity}
+                          onChange={(e) => setEditComplexity(e.target.value)}
+                          options={COMPLEXITIES}
+                          className="h-10 text-xs sm:text-sm"
+                        />
+                      </div>
+                    </div>
+
+                    {/* Assigned Members */}
+                    <div className="space-y-1.5">
+                      <label className="font-label-md text-xs font-semibold text-on-surface">Membres attribués</label>
+                      <div className="flex flex-wrap items-center gap-2 p-2.5 bg-canvas-slate rounded-xl border border-slate-300 min-h-[44px]">
+                        {editMembers.map((m) => (
+                          <span
+                            key={m}
+                            className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full bg-white border border-slate-300 text-xs font-semibold text-on-surface shadow-xs"
+                          >
+                            <span className="w-2 h-2 rounded-full bg-primary"></span>
+                            {m}
                             <button
                               type="button"
                               onClick={() => setEditMembers(editMembers.filter((item) => item !== m))}
@@ -659,11 +710,9 @@ export default function TaskDetailModal({
                             >
                               ×
                             </button>
-                          )}
-                        </span>
-                      ))}
+                          </span>
+                        ))}
 
-                      {isCoordinator && (
                         <select
                           onChange={(e) => {
                             if (e.target.value && !editMembers.includes(e.target.value)) {
@@ -678,53 +727,35 @@ export default function TaskDetailModal({
                             <option key={m} value={m}>{m}</option>
                           ))}
                         </select>
-                      )}
+                      </div>
                     </div>
-                  </div>
 
-                  {/* Budget & Frequency */}
-                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                    {/* Budget alloué (Annotation 11: Fréquence / Nature supprimé) */}
                     <div className="flex flex-col gap-1">
                       <label className="font-label-md text-xs font-semibold text-on-surface">Budget alloué (€ TTC)</label>
                       <input
                         type="number"
                         value={editBudget}
-                        disabled={!isCoordinator}
                         onChange={(e) => setEditBudget(e.target.value)}
-                        className={`bg-canvas-slate rounded-xl p-2.5 text-xs sm:text-sm border border-slate-300 focus:outline-none focus:ring-2 focus:ring-primary font-bold text-forest-deep ${
-                          !isCoordinator ? 'opacity-60 cursor-not-allowed' : ''
-                        }`}
+                        className="bg-canvas-slate rounded-xl p-2.5 text-xs sm:text-sm border border-slate-300 focus:outline-none focus:ring-2 focus:ring-primary font-bold text-forest-deep"
                       />
                     </div>
 
-                    <div className="flex flex-col gap-1">
-                      <label className="font-label-md text-xs font-semibold text-on-surface">Fréquence / Nature</label>
+                    {/* Presence on site required */}
+                    <label className="flex items-center gap-3 p-3 bg-canvas-slate rounded-xl border border-slate-200 select-none cursor-pointer">
                       <input
-                        type="text"
-                        defaultValue="Contrat récurrent annuel • CESU"
-                        readOnly
-                        className="bg-canvas-slate rounded-xl p-2.5 text-xs sm:text-sm border border-slate-300 text-outline cursor-not-allowed"
+                        type="checkbox"
+                        checked={editOnsitePresence}
+                        onChange={(e) => setEditOnsitePresence(e.target.checked)}
+                        className="w-4 h-4 rounded text-primary accent-primary cursor-pointer"
                       />
-                    </div>
-                  </div>
-
-                  {/* Presence on site required */}
-                  <label className={`flex items-center gap-3 p-3 bg-canvas-slate rounded-xl border border-slate-200 select-none ${
-                    !isCoordinator ? 'opacity-60 cursor-not-allowed' : 'cursor-pointer'
-                  }`}>
-                    <input
-                      type="checkbox"
-                      checked={editOnsitePresence}
-                      disabled={!isCoordinator}
-                      onChange={(e) => setEditOnsitePresence(e.target.checked)}
-                      className="w-4 h-4 rounded text-primary accent-primary cursor-pointer disabled:cursor-not-allowed"
-                    />
-                    <div className="text-xs">
-                      <strong className="text-forest-deep block">Présence requise sur place (sur le domaine)</strong>
-                      <span className="text-on-surface-variant">Sera inscrite sur la feuille de route du prochain séjour</span>
-                    </div>
-                  </label>
-                </section>
+                      <div className="text-xs">
+                        <strong className="text-forest-deep block">Présence requise sur place (sur le domaine)</strong>
+                        <span className="text-on-surface-variant">Sera inscrite sur la feuille de route du prochain séjour</span>
+                      </div>
+                    </label>
+                  </section>
+                )}
 
                 {/* Section 2 : Champs standards (accessibles aux membres) */}
                 <section className="bg-white border border-slate-200 rounded-2xl p-4 sm:p-5 shadow-xs flex flex-col gap-4">
@@ -836,7 +867,12 @@ export default function TaskDetailModal({
                 comments.map((c) => {
                   const reactions = c.reactions || {};
                   return (
-                    <article key={c.id} className="flex flex-col gap-1 items-start w-full">
+                    <article
+                      key={c.id}
+                      className={`flex flex-col gap-1 items-start w-full transition-opacity duration-150 ${
+                        c.isOptimistic ? 'opacity-70' : 'opacity-100'
+                      }`}
+                    >
                       <div className="flex items-center gap-2 px-1 text-xs">
                         <span className="font-bold text-primary">{c.author_name}</span>
                         {c.author_role && (
@@ -844,56 +880,98 @@ export default function TaskDetailModal({
                             {c.author_role}
                           </span>
                         )}
-                        <span className="text-[11px] text-outline">
-                          {c.created_at ? new Date(c.created_at).toLocaleTimeString('fr-FR', { hour: '2-digit', minute: '2-digit' }) : '14:20'}
+                        <span className="text-[11px] text-outline flex items-center gap-1">
+                          {c.isOptimistic ? (
+                            <span className="inline-flex items-center gap-1 text-amber-700 font-medium">
+                              <span className="material-symbols-outlined text-[13px] animate-spin">schedule</span>
+                              En cours de transmission...
+                            </span>
+                          ) : c.created_at ? (
+                            new Date(c.created_at).toLocaleTimeString('fr-FR', {
+                              hour: '2-digit',
+                              minute: '2-digit',
+                            })
+                          ) : (
+                            '14:20'
+                          )}
                         </span>
                       </div>
 
-                      <div className="border border-slate-200 shadow-xs bg-white rounded-2xl p-3.5 w-full text-on-surface text-xs sm:text-sm leading-relaxed relative">
-                        <p>{c.content}</p>
+                      <div
+                        className={`border shadow-xs rounded-2xl p-3.5 w-full text-on-surface text-xs sm:text-sm leading-relaxed relative ${
+                          c.isError
+                            ? 'border-rose-400 bg-rose-50/70 text-rose-950'
+                            : 'border-slate-200 bg-white'
+                        }`}
+                      >
+                        <p className="whitespace-pre-wrap">{c.content}</p>
 
-                        {/* Reactions Bar */}
-                        <div className="flex flex-wrap items-center gap-1.5 mt-3 pt-2.5 border-t border-slate-100">
-                          {Object.entries(reactions).map(([emoji, count]) => (
-                            <button
-                              key={emoji}
-                              type="button"
-                              onClick={() => handleEmojiReact(c.id, emoji)}
-                              className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full bg-slate-50 hover:bg-emerald-50 text-xs text-slate-700 hover:text-emerald-800 transition-colors border border-slate-200 cursor-pointer"
-                            >
-                              <span>{emoji}</span>
-                              <span className="font-bold">{count}</span>
-                            </button>
-                          ))}
-
-                          {/* + Add reaction button */}
-                          <div className="relative inline-block">
+                        {/* Fail-Fast Erreur & Bouton Réessayer (Annotation 13) */}
+                        {c.isError && (
+                          <div className="flex items-center justify-between gap-2 mt-2 pt-2 border-t border-rose-200 text-xs">
+                            <span className="text-rose-700 font-semibold flex items-center gap-1">
+                              <span className="material-symbols-outlined text-[15px]">error</span>
+                              Échec de transmission ({c.errorMessage || 'Erreur réseau'})
+                            </span>
                             <button
                               type="button"
-                              onClick={() => setActiveEmojiPickerForComment(activeEmojiPickerForComment === c.id ? null : c.id)}
-                              className="inline-flex items-center justify-center w-6 h-6 rounded-full bg-slate-100 hover:bg-slate-200 text-slate-600 text-xs transition-colors border border-slate-200 cursor-pointer"
-                              title="Ajouter une réaction"
+                              onClick={() => handleRetryComment(c)}
+                              className="px-2.5 py-1 rounded-lg bg-rose-600 hover:bg-rose-700 text-white text-xs font-semibold flex items-center gap-1 transition-colors cursor-pointer shadow-xs"
                             >
-                              +
+                              <span className="material-symbols-outlined text-[14px]">refresh</span>
+                              Réessayer
                             </button>
-
-                            {/* Emoji Palette Dropdown */}
-                            {activeEmojiPickerForComment === c.id && (
-                              <div className="absolute left-0 bottom-8 z-30 bg-white shadow-lg border border-slate-200 rounded-xl p-1.5 flex gap-1 animate-in zoom-in-95 duration-100">
-                                {ALLOWED_EMOJIS.map((emoji) => (
-                                  <button
-                                    key={emoji}
-                                    type="button"
-                                    onClick={() => handleEmojiReact(c.id, emoji)}
-                                    className="p-1 hover:bg-emerald-50 rounded text-base cursor-pointer transition-transform hover:scale-125"
-                                  >
-                                    {emoji}
-                                  </button>
-                                ))}
-                              </div>
-                            )}
                           </div>
-                        </div>
+                        )}
+
+                        {/* Reactions Bar (masquée si message temporaire ou en erreur) */}
+                        {!c.isOptimistic && !c.isError && (
+                          <div className="flex flex-wrap items-center gap-1.5 mt-3 pt-2.5 border-t border-slate-100">
+                            {Object.entries(reactions).map(([emoji, count]) => (
+                              <button
+                                key={emoji}
+                                type="button"
+                                onClick={() => handleEmojiReact(c.id, emoji)}
+                                className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full bg-slate-50 hover:bg-emerald-50 text-xs text-slate-700 hover:text-emerald-800 transition-colors border border-slate-200 cursor-pointer"
+                              >
+                                <span>{emoji}</span>
+                                <span className="font-bold">{count}</span>
+                              </button>
+                            ))}
+
+                            {/* + Add reaction button */}
+                            <div className="relative inline-block">
+                              <button
+                                type="button"
+                                onClick={() =>
+                                  setActiveEmojiPickerForComment(
+                                    activeEmojiPickerForComment === c.id ? null : c.id
+                                  )
+                                }
+                                className="inline-flex items-center justify-center w-6 h-6 rounded-full bg-slate-100 hover:bg-slate-200 text-slate-600 text-xs transition-colors border border-slate-200 cursor-pointer"
+                                title="Ajouter une réaction"
+                              >
+                                +
+                              </button>
+
+                              {/* Emoji Palette Dropdown */}
+                              {activeEmojiPickerForComment === c.id && (
+                                <div className="absolute left-0 bottom-8 z-30 bg-white shadow-lg border border-slate-200 rounded-xl p-1.5 flex gap-1 animate-in zoom-in-95 duration-100">
+                                  {ALLOWED_EMOJIS.map((emoji) => (
+                                    <button
+                                      key={emoji}
+                                      type="button"
+                                      onClick={() => handleEmojiReact(c.id, emoji)}
+                                      className="p-1 hover:bg-emerald-50 rounded text-base cursor-pointer transition-transform hover:scale-125"
+                                    >
+                                      {emoji}
+                                    </button>
+                                  ))}
+                                </div>
+                              )}
+                            </div>
+                          </div>
+                        )}
                       </div>
                     </article>
                   );
@@ -943,7 +1021,7 @@ export default function TaskDetailModal({
 
                 <button
                   type="submit"
-                  disabled={submittingComment || !newComment.trim()}
+                  disabled={!newComment.trim()}
                   className="inline-flex items-center gap-1.5 bg-white border-2 border-emerald-600 text-emerald-800 font-bold px-4 py-1.5 rounded-xl shadow-xs hover:bg-emerald-50 transition-colors cursor-pointer text-xs disabled:opacity-40"
                 >
                   <span className="material-symbols-outlined text-[16px] text-emerald-800">send</span>

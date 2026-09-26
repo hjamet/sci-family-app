@@ -1,6 +1,7 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { fetchReservations } from '../api';
 import BookingModal from '../components/BookingModal';
+import { StayCardSkeleton } from '../components/SkeletonLoaders';
 
 const ASSOCIATES_LIST = [
   { id: 'all', label: 'Tous les 7 associés' },
@@ -34,6 +35,94 @@ function getDatesFromISOWeek(weekNumber, year = 2026) {
     startDate: formatYMD(monday),
     endDate: formatYMD(sunday),
   };
+}
+
+export function formatStayDates(startDateStr, endDateStr) {
+  if (!startDateStr) return '';
+  const parseDate = (dStr) => {
+    if (!dStr) return null;
+    const parts = dStr.split('-');
+    if (parts.length === 3) {
+      return new Date(parseInt(parts[0], 10), parseInt(parts[1], 10) - 1, parseInt(parts[2], 10));
+    }
+    return new Date(dStr);
+  };
+
+  const start = parseDate(startDateStr);
+  const end = endDateStr ? parseDate(endDateStr) : start;
+  const optsDay = { weekday: 'long', day: 'numeric', month: 'long' };
+  const optsYear = { weekday: 'long', day: 'numeric', month: 'long', year: 'numeric' };
+
+  if (!end || startDateStr === endDateStr) {
+    const formatted = start.toLocaleDateString('fr-FR', optsYear);
+    return `Le ${formatted}`;
+  }
+
+  const sameYear = start.getFullYear() === end.getFullYear();
+  const startFormatted = start.toLocaleDateString('fr-FR', sameYear ? optsDay : optsYear);
+  const endFormatted = end.toLocaleDateString('fr-FR', optsYear);
+  return `Du ${startFormatted} au ${endFormatted}`;
+}
+
+export function extractParticipants(reservation) {
+  let rawNotes = reservation?.notes || '';
+  let members = [];
+  let guests = [];
+
+  // Extraction [Membres: ...]
+  const membresMatch = rawNotes.match(/\[Membres:\s*([^\]]+)\]/i);
+  if (membresMatch) {
+    members = membresMatch[1].split(',').map((s) => s.trim()).filter(Boolean);
+    rawNotes = rawNotes.replace(membresMatch[0], '');
+  }
+
+  // Extraction [Invités: ...]
+  const invitesMatch = rawNotes.match(/\[Invités:\s*([^\]]+)\]/i);
+  if (invitesMatch) {
+    guests = invitesMatch[1].split(',').map((s) => s.trim()).filter(Boolean);
+    rawNotes = rawNotes.replace(invitesMatch[0], '');
+  }
+
+  // Extraction champs explicites s'ils existent
+  if (Array.isArray(reservation?.external_guests)) {
+    guests = [...guests, ...reservation.external_guests];
+  } else if (typeof reservation?.external_guests === 'string' && reservation.external_guests.trim()) {
+    guests = [...guests, ...reservation.external_guests.split(',').map((s) => s.trim()).filter(Boolean)];
+  }
+
+  if (Array.isArray(reservation?.guests)) {
+    guests = [...guests, ...reservation.guests];
+  } else if (typeof reservation?.guests === 'string' && !reservation.guests.includes('personne') && reservation.guests.trim()) {
+    guests = [...guests, ...reservation.guests.split(',').map((s) => s.trim()).filter(Boolean)];
+  }
+
+  // Nettoyage des balises domotiques
+  const domotiqueMatch = rawNotes.match(/\[Domotique:\s*([^\]]+)\]/i);
+  if (domotiqueMatch) {
+    rawNotes = rawNotes.replace(domotiqueMatch[0], '');
+  }
+
+  // Inclusion de l'associé déclarant s'il n'est pas déjà dans les membres
+  const applicant = reservation?.user_name || 'Membre SCI';
+  const hasApplicant = members.some((m) =>
+    m.toLowerCase().includes(applicant.toLowerCase()) || applicant.toLowerCase().includes(m.toLowerCase())
+  );
+  if (!hasApplicant && applicant) {
+    members.unshift(applicant);
+  }
+
+  members = Array.from(new Set(members));
+  guests = Array.from(new Set(guests));
+
+  const cleanDescription = rawNotes
+    .split(' • ')
+    .map((s) => s.trim())
+    .filter(Boolean)
+    .join(' • ')
+    .replace(/^«\s*|\s*»$/g, '')
+    .trim();
+
+  return { members, guests, cleanDescription };
 }
 
 export default function CalendarPage({ properties, currentUser = 'Henri Jamet' }) {
@@ -204,22 +293,34 @@ export default function CalendarPage({ properties, currentUser = 'Henri Jamet' }
   });
 
   const displayStays = filteredReservations.length > 0
-    ? filteredReservations.map((r, idx) => ({
-        id: r.id || `res_${idx}`,
-        week_number: r.week_number || 30,
-        start_date: r.start_date,
-        end_date: r.end_date,
-        arrival_time: r.arrival_time || '15h00',
-        departure_time: r.departure_time || '11h00',
-        user_name: r.user_name || 'Membre SCI',
-        property_name: r.property_name || 'Villa Rosing',
-        status: r.status || 'Confirmé',
-        title: r.notes ? `« ${r.notes} »` : '« Séjour au domaine »',
-        rooms: r.selected_rooms ? `${r.selected_rooms.length} chambres : ${r.selected_rooms.join(', ')}` : `${r.chambers_used || 1} chambre(s)`,
-        guests: `${r.guest_count || 2} personne(s)`,
-        dotColor: 'bg-sky-600',
-        weekBg: 'bg-sky-50 text-sky-800',
-      }))
+    ? filteredReservations.map((r, idx) => {
+        const { members, guests, cleanDescription } = extractParticipants(r);
+        const roomsArr = Array.isArray(r.selected_rooms) ? r.selected_rooms : [];
+        const roomsDisplay = roomsArr.length > 0
+          ? `${roomsArr.length} chambre${roomsArr.length > 1 ? 's' : ''} : ${roomsArr.join(', ')}`
+          : `${r.chambers_used || 1} chambre(s)`;
+        const totalGuestsCount = r.guest_count || (members.length + guests.length) || 1;
+
+        return {
+          ...r,
+          id: r.id || `res_${idx}`,
+          rawReservation: r,
+          week_number: r.week_number || 30,
+          start_date: r.start_date,
+          end_date: r.end_date,
+          arrival_time: r.arrival_time || '15h00',
+          departure_time: r.departure_time || '11h00',
+          user_name: r.user_name || 'Membre SCI',
+          property_name: r.property_name || "Domaine d'Hellenvilliers",
+          cleanDescription,
+          members,
+          guests,
+          rooms: roomsDisplay,
+          guestsCount: `${totalGuestsCount} personne${totalGuestsCount > 1 ? 's' : ''}`,
+          dotColor: 'bg-sky-600',
+          weekBg: 'bg-sky-50 text-sky-800',
+        };
+      })
     : [];
 
   // Calcul du dictionnaire de semaines réservées pour la vue 52 Semaines
@@ -589,13 +690,19 @@ export default function CalendarPage({ properties, currentUser = 'Henri Jamet' }
                   Planning des Séjours à Venir
                 </h2>
                 <span className="px-2.5 py-0.5 rounded-full bg-sage-soft text-primary-container font-label-sm text-xs font-semibold">
-                  {displayStays.length} séjours programmés
+                  {loading ? 'Chargement des séjours...' : `${displayStays.length} séjours programmés`}
                 </span>
               </div>
             </div>
 
             <div className="space-y-4">
-              {displayStays.length === 0 ? (
+              {loading ? (
+                <>
+                  <StayCardSkeleton />
+                  <StayCardSkeleton />
+                  <StayCardSkeleton />
+                </>
+              ) : displayStays.length === 0 ? (
                 <div className="py-12 px-6 bg-surface-container-lowest rounded-2xl border border-dashed border-border-subtle flex flex-col items-center justify-center text-center">
                   <div className="w-14 h-14 rounded-full bg-sage-soft text-forest-deep flex items-center justify-center mb-3">
                     <span className="material-symbols-outlined text-[32px]">event_busy</span>
@@ -627,14 +734,14 @@ export default function CalendarPage({ properties, currentUser = 'Henri Jamet' }
                   <div className="flex flex-col lg:flex-row lg:items-center justify-between gap-5">
                     
                     {/* Week & Date badge */}
-                    <div className="flex items-start sm:items-center gap-4 min-w-[240px]">
+                    <div className="flex items-start sm:items-center gap-4 min-w-[280px] lg:max-w-[340px]">
                       <div className={`w-14 h-14 rounded-2xl ${stay.weekBg || 'bg-sky-50 text-sky-800'} flex flex-col items-center justify-center shrink-0 shadow-xs border border-black/5`}>
                         <span className="text-[10px] font-label-sm uppercase font-bold tracking-wider">Sem.</span>
                         <span className="font-headline-md text-xl leading-none font-bold">{stay.week_number}</span>
                       </div>
                       <div>
                         <p className="font-headline-sm text-sm sm:text-base font-bold text-on-surface">
-                          {stay.start_date} — {stay.end_date}
+                          {formatStayDates(stay.start_date, stay.end_date)}
                         </p>
                         <div className="flex items-center gap-1.5 text-on-surface-variant text-xs mt-0.5">
                           <span className="material-symbols-outlined text-[15px]">schedule</span>
@@ -645,27 +752,37 @@ export default function CalendarPage({ properties, currentUser = 'Henri Jamet' }
 
                     {/* Stay details */}
                     <div className="flex-1 min-w-0">
-                      <div className="flex flex-wrap items-center gap-2 mb-2">
-                        <span className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full text-xs font-semibold bg-sage-soft text-primary-container">
-                          <span className={`w-2 h-2 rounded-full ${stay.dotColor || 'bg-primary'}`}></span>
-                          {stay.user_name}
-                        </span>
-                        <span className="px-2.5 py-1 rounded-full text-xs bg-canvas-slate text-on-surface font-medium border border-slate-200">
-                          {stay.property_name}
-                        </span>
-                        <span className={`px-2.5 py-1 rounded-full text-xs font-semibold inline-flex items-center gap-1 ${
-                          stay.isPending ? 'bg-amber-soft text-amber-rich border border-amber-200' : 'bg-emerald-50 text-emerald-800 border border-emerald-200'
-                        }`}>
-                          <span className="material-symbols-outlined text-[14px]">
-                            {stay.isPending ? 'hourglass_empty' : 'check_circle'}
+                      <h3 className="font-headline-sm text-base sm:text-lg text-on-surface font-bold mb-2">
+                        {stay.property_name || "Domaine d'Hellenvilliers"}
+                      </h3>
+
+                      {/* Badges séparés : Membres de la famille & Invités extérieurs */}
+                      <div className="flex flex-wrap items-center gap-1.5 mb-2.5">
+                        {stay.members.map((member, mIdx) => (
+                          <span
+                            key={`mem-${mIdx}`}
+                            className="inline-flex items-center gap-1 px-2.5 py-1 rounded-full text-xs font-semibold bg-emerald-50 text-emerald-800 border border-emerald-200 shadow-2xs"
+                          >
+                            <span className="material-symbols-outlined text-[14px]">person</span>
+                            <span>{member}</span>
                           </span>
-                          {stay.status}
-                        </span>
+                        ))}
+                        {stay.guests.map((guest, gIdx) => (
+                          <span
+                            key={`gst-${gIdx}`}
+                            className="inline-flex items-center gap-1 px-2.5 py-1 rounded-full text-xs font-semibold bg-amber-50 text-amber-900 border border-amber-200 shadow-2xs"
+                          >
+                            <span className="material-symbols-outlined text-[14px]">group</span>
+                            <span>{guest}</span>
+                          </span>
+                        ))}
                       </div>
 
-                      <h3 className="font-headline-sm text-sm sm:text-base text-on-surface font-semibold mb-2">
-                        {stay.title}
-                      </h3>
+                      {stay.cleanDescription ? (
+                        <p className="font-body-md text-xs sm:text-sm text-on-surface-variant italic mb-2.5">
+                          « {stay.cleanDescription} »
+                        </p>
+                      ) : null}
 
                       <div className="flex flex-wrap items-center gap-y-1.5 gap-x-4 text-on-surface-variant text-xs">
                         <span className="flex items-center gap-1.5">
@@ -675,7 +792,7 @@ export default function CalendarPage({ properties, currentUser = 'Henri Jamet' }
                         <span className="text-outline-variant">•</span>
                         <span className="flex items-center gap-1.5">
                           <span className="material-symbols-outlined text-[16px] text-primary-container">groups</span>
-                          {stay.guests}
+                          {stay.guestsCount}
                         </span>
                       </div>
                     </div>
@@ -685,7 +802,7 @@ export default function CalendarPage({ properties, currentUser = 'Henri Jamet' }
                       <button
                         type="button"
                         onClick={() => {
-                          setEditingReservation(stay);
+                          setEditingReservation(stay.rawReservation || stay);
                           setIsBookingOpen(true);
                         }}
                         className="px-3 py-1.5 bg-white text-on-surface-variant hover:text-forest-deep text-xs font-semibold rounded-xl border border-slate-300 hover:bg-canvas-slate transition-colors flex items-center gap-1 cursor-pointer"
@@ -696,7 +813,7 @@ export default function CalendarPage({ properties, currentUser = 'Henri Jamet' }
                       <button
                         type="button"
                         onClick={() => {
-                          setEditingReservation(stay);
+                          setEditingReservation(stay.rawReservation || stay);
                           setIsBookingOpen(true);
                         }}
                         className="px-3 py-1.5 bg-white text-forest-deep hover:bg-sage-soft text-xs font-bold rounded-xl border-2 border-emerald-600 transition-colors flex items-center gap-1 cursor-pointer shadow-xs"

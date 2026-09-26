@@ -809,6 +809,9 @@ export async function reactToTaskComment(taskId, commentId, emoji, userName) {
   return res.json();
 }
 
+export const fetchTaskMessages = fetchTaskComments;
+export const addTaskMessage = addTaskComment;
+
 // Piscine Telemetry
 export async function fetchPiscineStatus() {
   try {

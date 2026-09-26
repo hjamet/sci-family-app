@@ -50,6 +50,7 @@ from .services.workload_balancer import calculate_workload_distribution
 from .services.vicare_service import ViCareService
 from .services.klereo_service import KlereoService
 from .services.banking import enable_banking_service
+from .services.drive_service import drive_jail_service, SecurityException
 from .security import (
     rate_limiter, verify_password, hash_password, create_access_token, decode_access_token, normalize_prenom, pwd_context
 )
@@ -2292,6 +2293,8 @@ def update_task(task_id: str, payload: dict, db: Session = Depends(get_db)):
 @app.delete("/api/tasks/{task_id}", status_code=status.HTTP_204_NO_CONTENT)
 def delete_task(task_id: str, db: Session = Depends(get_db)):
     task = resolve_task_by_id_or_ref(task_id, db)
+    # Suppression en cascade explicite des commentaires pour éviter tout conflit FK
+    db.query(TaskComment).filter(TaskComment.task_id == task.id).delete()
     db.delete(task)
     db.commit()
     return None
@@ -2317,6 +2320,11 @@ def get_task_comments(task_id: str, db: Session = Depends(get_db)):
     return [format_comment_response(c) for c in comments]
 
 
+@app.get("/api/tasks/{task_id}/messages")
+def get_task_messages_alias(task_id: str, db: Session = Depends(get_db)):
+    return get_task_comments(task_id, db)
+
+
 @app.post("/api/tasks/{task_id}/comments", status_code=status.HTTP_201_CREATED)
 def create_task_comment(task_id: str, req: TaskCommentCreate, db: Session = Depends(get_db)):
     task = resolve_task_by_id_or_ref(task_id, db)
@@ -2338,6 +2346,11 @@ def create_task_comment(task_id: str, req: TaskCommentCreate, db: Session = Depe
     db.commit()
     db.refresh(db_comment)
     return format_comment_response(db_comment)
+
+
+@app.post("/api/tasks/{task_id}/messages", status_code=status.HTTP_201_CREATED)
+def create_task_message_alias(task_id: str, req: TaskCommentCreate, db: Session = Depends(get_db)):
+    return create_task_comment(task_id, req, db)
 
 
 @app.post("/api/tasks/{task_id}/comments/{comment_id}/react")
@@ -2841,6 +2854,54 @@ def delete_admin_document(doc_id: str, db: Session = Depends(get_db)):
         return {"message": f"Fichier {doc_id} supprimé avec succès."}
 
     raise HTTPException(status_code=404, detail="Document non trouvé.")
+
+
+# --- Google Drive Confined Storage (Strict Drive Jail) ---
+@app.get("/api/drive/files", tags=["Google Drive"])
+def list_drive_files(query: Optional[str] = None, page_size: int = 100):
+    """Liste exclusivement les fichiers situés dans le dossier confiné Hellenvilliers SCI."""
+    files = drive_jail_service.list_files(query_filter=query, page_size=page_size)
+    return {"files": files, "count": len(files), "folder_id": drive_jail_service.folder_id}
+
+
+@app.post("/api/drive/upload", status_code=status.HTTP_201_CREATED, tags=["Google Drive"])
+async def upload_drive_file(file: UploadFile = File(...), description: Optional[str] = Form(None)):
+    """Téléverse un fichier strictement confiné dans le dossier Hellenvilliers SCI."""
+    content = await file.read()
+    mimetype = file.content_type or "application/octet-stream"
+    result = drive_jail_service.upload_file(
+        filename=file.filename or "document.bin",
+        content=content,
+        mimetype=mimetype,
+        description=description
+    )
+    return {"file": result, "message": "Fichier téléversé avec succès dans le dossier sécurisé."}
+
+
+@app.get("/api/drive/files/{file_id}/metadata", tags=["Google Drive"])
+def get_drive_file_metadata(file_id: str):
+    """Récupère les métadonnées d'un fichier avec vérification de confinement strict."""
+    return drive_jail_service.get_file_metadata(file_id)
+
+
+@app.get("/api/drive/files/{file_id}/download", tags=["Google Drive"])
+def download_drive_file(file_id: str):
+    """Télécharge un fichier avec contrôle de sécurité infranchissable (Strict Drive Jail)."""
+    content, metadata = drive_jail_service.download_file(file_id)
+    filename = metadata.get("name", f"file_{file_id}")
+    mimetype = metadata.get("mimeType", "application/octet-stream")
+    return Response(
+        content=content,
+        media_type=mimetype,
+        headers={"Content-Disposition": f'attachment; filename="{filename}"'}
+    )
+
+
+@app.delete("/api/drive/files/{file_id}", tags=["Google Drive"])
+def delete_drive_file(file_id: str):
+    """Supprime un fichier après validation de son appartenance au dossier autorisé."""
+    drive_jail_service.delete_file(file_id)
+    return {"message": f"Fichier {file_id} supprimé avec succès de Google Drive."}
 
 @app.get("/api/members/{user_name}/current-stay-tasks")
 def get_member_current_stay_tasks(user_name: str, db: Session = Depends(get_db)):
