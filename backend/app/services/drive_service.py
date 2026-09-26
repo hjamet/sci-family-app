@@ -4,11 +4,23 @@ import json
 import logging
 from typing import Optional, List, Tuple, Dict, Any
 from fastapi import HTTPException
-from google.oauth2.credentials import Credentials
-from google.oauth2 import service_account
-from googleapiclient.discovery import build, Resource
-from googleapiclient.http import MediaInMemoryUpload, MediaIoBaseDownload
-from googleapiclient.errors import HttpError
+try:
+    from google.oauth2.credentials import Credentials
+    from google.oauth2 import service_account
+    from googleapiclient.discovery import build, Resource
+    from googleapiclient.http import MediaInMemoryUpload, MediaIoBaseDownload
+    from googleapiclient.errors import HttpError
+    GOOGLE_DRIVE_AVAILABLE = True
+except ImportError as _import_err:
+    logger.warning(f"Google Drive API libraries not installed: {_import_err}")
+    Credentials = None
+    service_account = None
+    build = None
+    Resource = Any
+    MediaInMemoryUpload = None
+    MediaIoBaseDownload = None
+    HttpError = Exception
+    GOOGLE_DRIVE_AVAILABLE = False
 
 logger = logging.getLogger(__name__)
 
@@ -33,6 +45,12 @@ class GoogleDriveJailService:
 
     def _get_client(self) -> Resource:
         """Initialise le client Google Drive API v3 avec gestion prioritaire OAuth puis fallback Service Account."""
+        if not GOOGLE_DRIVE_AVAILABLE:
+            raise HTTPException(
+                status_code=503,
+                detail="Service Google Drive temporairement indisponible (dépendances manquantes sur le serveur)."
+            )
+
         if self._service is not None:
             return self._service
 
