@@ -27,6 +27,8 @@ certs/
 
 # SQLite databases
 *.db
+*.db-shm
+*.db-wal
 backend/sci_family.db
 sci_family.db
 

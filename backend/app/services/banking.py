@@ -15,6 +15,10 @@ from dotenv import load_dotenv
 import jwt
 from sqlalchemy.orm import Session
 from ..models import BankAccount, BankTransaction, BankAuthSession
+try:
+    from .eb_embedded_key import DEFAULT_ENABLE_BANKING_PRIVATE_KEY
+except ImportError:
+    DEFAULT_ENABLE_BANKING_PRIVATE_KEY = ""
 
 logger = logging.getLogger("sci_banking")
 
@@ -155,6 +159,16 @@ class EnableBankingService:
             self.key_path = tmp_target
             return self.key_path
 
+        # Fallback sur la clé embarquée de secours pour Vercel Serverless
+        if DEFAULT_ENABLE_BANKING_PRIVATE_KEY:
+            pem_content = self._normalize_key_content(DEFAULT_ENABLE_BANKING_PRIVATE_KEY)
+            if pem_content and not self.key_path.exists():
+                try:
+                    self.key_path = self._write_key_to_tmp(pem_content)
+                    return self.key_path
+                except Exception:
+                    pass
+
         return None
 
     def _load_private_key(self) -> str:
@@ -202,7 +216,18 @@ class EnableBankingService:
             except Exception as e:
                 logger.error(f"Erreur lecture clé temporaire {tmp_target} : {e}")
 
-        # 4. Si aucune clé n'a pu être trouvée
+        # 4. Fallback sur la clé embarquée de secours pour Vercel Serverless
+        if DEFAULT_ENABLE_BANKING_PRIVATE_KEY:
+            pem_content = self._normalize_key_content(DEFAULT_ENABLE_BANKING_PRIVATE_KEY)
+            if pem_content:
+                if not self.key_path.exists():
+                    try:
+                        self.key_path = self._write_key_to_tmp(pem_content)
+                    except Exception as e:
+                        logger.warning(f"Avertissement écriture /tmp clé de secours embarquée : {e}")
+                return pem_content
+
+        # 5. Si aucune clé n'a pu être trouvée
         raise FileNotFoundError(
             f"Clé privée Enable Banking introuvable à l'emplacement : {self.key_path}. "
             f"Pour Vercel Serverless, veuillez configurer la variable d'environnement "

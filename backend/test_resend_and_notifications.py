@@ -8,10 +8,13 @@ from fastapi.testclient import TestClient
 BACKEND_DIR = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, BACKEND_DIR)
 
+from dotenv import load_dotenv
+load_dotenv(os.path.join(BACKEND_DIR, ".env"))
+
 from app.main import app
 from app.database import SessionLocal, engine
 from app.models import Member, Task, Project, ProjectVote, Reservation
-from app.security import hash_password, verify_password
+from app.security import hash_password, verify_password, rate_limiter
 from app.services.email_service import (
     send_email,
     send_task_assigned_email,
@@ -52,6 +55,8 @@ def mock_resend_api():
 @pytest.fixture
 def auth_headers():
     """Logs in as Henri and returns Bearer token headers."""
+    rate_limiter.failed_logins.clear()
+    rate_limiter.locked_until.clear()
     resp = client.post("/api/auth/login", json={"prenom": "Henri", "password": os.getenv("USER_HENRI_PASS", "N8xK9mP2vQ5rT7wY")})
     assert resp.status_code == 200, f"Login failed: {resp.text}"
     token = resp.json()["access_token"]
@@ -69,19 +74,19 @@ def test_01_resend_configuration_and_degraded_mode(monkeypatch):
     # Simulate missing RESEND_API_KEY
     monkeypatch.setenv("RESEND_API_KEY", "")
     result = send_email(
-        to_email="henri.jamet.ch@gmail.com",
+        to_email="hellenvillierssci@gmail.com",
         subject="Test Mode Dégradé",
         html_content="<p>Contenu test</p>"
     )
     assert result.get("simulated") is True
-    assert "henri.jamet.ch@gmail.com" in result["to"]
+    assert "hellenvillierssci@gmail.com" in result["to"]
     assert result["subject"] == "Test Mode Dégradé"
 
 
 def test_02_email_template_1_task_assigned(mock_resend_api):
     """Verify Template 1: Tâche assignée HTML content, fields, and CTA button (no deadline, real fields only)."""
     result = send_task_assigned_email(
-        to_email="henri.jamet.ch@gmail.com",
+        to_email="hellenvillierssci@gmail.com",
         task_title="Maintenance Pompe à Chaleur Presbytère",
         domain="Chauffage & Énergie",
         location="Le Presbytère",
@@ -122,7 +127,7 @@ def test_02_email_template_1_task_assigned(mock_resend_api):
 def test_03_email_template_2_vote_required(mock_resend_api):
     """Verify Template 2: Vote requis HTML content, statutory rule, and removal of deadline."""
     result = send_vote_required_email(
-        to_email="henri.jamet.ch@gmail.com",
+        to_email="hellenvillierssci@gmail.com",
         vote_title="Rénovation Toiture Petite Dépendance",
         estimated_cost=3200.0,
         deadline="2026-10-31",
@@ -146,7 +151,7 @@ def test_03_email_template_2_vote_required(mock_resend_api):
 def test_04_email_template_3_vote_closed(mock_resend_api):
     """Verify Template 3: Décision finale de vote avec répartition et résultat formel."""
     result = send_vote_closed_email(
-        to_email="henri.jamet.ch@gmail.com",
+        to_email="hellenvillierssci@gmail.com",
         vote_title="Rénovation Toiture Petite Dépendance",
         decision="ADOPTÉ",
         votes_summary={"pour": 5, "contre": 1, "abstention": 1, "report_prochaine_ag": 0},
@@ -165,7 +170,7 @@ def test_04_email_template_3_vote_closed(mock_resend_api):
 def test_05_email_template_4_stay_booked(mock_resend_api):
     """Verify Template 4: Nouveau séjour réservé avec dates, demeure et chambres (including JSON decoding)."""
     result = send_stay_booked_email(
-        to_email="henri.jamet.ch@gmail.com",
+        to_email="hellenvillierssci@gmail.com",
         member_name="Marguerite Jamet",
         start_date="2026-08-01",
         end_date="2026-08-10",
@@ -402,32 +407,32 @@ def test_13_change_password_endpoint(auth_headers):
 
 
 def test_14_email_test_mode_hermetic_zero_duplicates_and_no_banner(mock_resend_api, monkeypatch):
-    """Verify that in test mode, email is redirected to Henri without duplicate sends or test banner injection."""
-    monkeypatch.setenv("EMAIL_TEST_MODE", "true")
-    monkeypatch.setenv("EMAIL_TEST_REDIRECT_TO", "henri.jamet.ch@gmail.com")
+    """Verify that in test mode, unauthorized emails are blocked by whitelist firewall, and Henri's email is delivered to Resend mock."""
     mock_resend_api.reset_mock()
 
-    test_recipients = ["hortense@sci-familiale.fr", "frederic@sci-familiale.fr", "maman@sci-familiale.fr"]
+    test_recipients = ["hortense_jamet@yahoo.fr", "frdjamet@gmail.com"]
     subject_orig = "[SCI Hellenvilliers] Test Propre Sans Banniere"
     html_orig = "<p>Contenu test officiel</p>"
 
-    result = send_email(
+    # 1. Non-whitelisted recipients are immediately blocked with 0 Resend API calls
+    result_blocked = send_email(
         to_email=test_recipients,
         subject=subject_orig,
         html_content=html_orig
     )
+    assert result_blocked == {"status": "blocked_by_whitelist", "id": "local_mock_blocked"}
+    assert mock_resend_api.call_count == 0
 
-    # Exactly 1 HTTP post call made (zero duplicates)
+    # 2. Whitelisted recipient (hellenvillierssci@gmail.com) passes cleanly
+    result_henri = send_email(
+        to_email="hellenvillierssci@gmail.com",
+        subject=subject_orig,
+        html_content=html_orig
+    )
     assert mock_resend_api.call_count == 1
     sent_payload = mock_resend_api.call_args[1]["json"]
-
-    # Redirected strictly to Henri
-    assert sent_payload["to"] == ["henri.jamet.ch@gmail.com"]
-
-    # Subject remains clean without [TEST - Destinataire intercepté]
+    assert sent_payload["to"] == ["hellenvillierssci@gmail.com"]
     assert sent_payload["subject"] == subject_orig
-
-    # Body remains clean without test warning banner
     assert "⚠️ [MODE TEST - COUPE-CIRCUIT EMAIL ACTIVÉ]" not in sent_payload["html"]
     assert "Contenu test officiel" in sent_payload["html"]
 

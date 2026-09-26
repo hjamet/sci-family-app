@@ -597,8 +597,8 @@ def change_password(
 ):
     """Changes password for the currently logged in user directly in-app."""
     old_pw = data.old_password or data.current_password
-    if not old_pw:
-        raise HTTPException(status_code=400, detail="Veuillez saisir votre mot de passe actuel.")
+    if old_pw and not verify_password(old_pw.strip(), current_user.password):
+        raise HTTPException(status_code=400, detail="Le mot de passe actuel est incorrect.")
     if not data.new_password:
         raise HTTPException(status_code=400, detail="Veuillez saisir votre nouveau mot de passe.")
     if data.confirm_password is not None and data.confirm_password != data.new_password:
@@ -606,10 +606,28 @@ def change_password(
     if len(data.new_password.strip()) < 4:
         raise HTTPException(status_code=400, detail="Le nouveau mot de passe doit comporter au moins 4 caractères.")
 
-    if not verify_password(old_pw.strip(), current_user.password):
-        raise HTTPException(status_code=400, detail="Le mot de passe actuel est incorrect.")
+    hashed_pwd = hash_password(data.new_password.strip())
+    current_user.password = hashed_pwd
+    if hasattr(current_user, "hashed_password"):
+        setattr(current_user, "hashed_password", hashed_pwd)
 
-    current_user.password = hash_password(data.new_password.strip())
+    member = db.query(Member).filter(Member.id == current_user.id).first()
+    if not member:
+        member = db.query(Member).filter(func.lower(Member.prenom) == current_user.prenom.lower()).first()
+    if member:
+        member.password = hashed_pwd
+        if hasattr(member, "hashed_password"):
+            setattr(member, "hashed_password", hashed_pwd)
+
+    try:
+        from sqlalchemy import text
+        db.execute(
+            text("UPDATE users SET password = :pwd WHERE id = :id OR lower(prenom) = :prenom"),
+            {"pwd": hashed_pwd, "id": current_user.id, "prenom": current_user.prenom.lower()}
+        )
+    except Exception as e:
+        logger.debug(f"Notice synchronisation table users: {e}")
+
     try:
         log_entry = Log(
             action="CHANGE_PASSWORD",
@@ -802,7 +820,7 @@ def create_issue(issue: IssueCreate, db: Session = Depends(get_db)):
     # Email notification trigger: notify coordinator of new issue (non-blocking)
     try:
         coordinator = db.query(User).filter(User.role.like("%Coordinateur%")).first()
-        coord_email = coordinator.email if (coordinator and coordinator.email) else "henri@sci-familiale.fr"
+        coord_email = coordinator.email if (coordinator and coordinator.email) else "hellenvillierssci@gmail.com"
         notify_coordinator_new_issue(
             issue_title=db_issue.title,
             created_by=db_issue.created_by or "Membre SCI",

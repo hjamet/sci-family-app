@@ -65,7 +65,7 @@ def seed_database(db: Session = None, force: bool = False):
         Member(
             prenom="Henri",
             name="Henri Jamet",
-            email="henri@sci-familiale.fr",
+            email="hellenvillierssci@gmail.com",
             password=hash_password(os.getenv("USER_HENRI_PASS") or os.getenv("MEMBER_PASSWORD_HENRI", "N8xK9mP2vQ5rT7wY")),
             role="Coordinateur Général (Fioul, Chauffage ViCare, CCA)",
             avatar_color="cyan"
@@ -73,7 +73,7 @@ def seed_database(db: Session = None, force: bool = False):
         Member(
             prenom="Hortense",
             name="Hortense Jamet",
-            email="hortense@sci-familiale.fr",
+            email="hortense_jamet@yahoo.fr",
             password=hash_password(os.getenv("USER_HORTENSE_PASS") or os.getenv("MEMBER_PASSWORD_HORTENSE", "Q2mK9vL5nR1wT7pY")),
             role="Responsable Espaces Verts (Jardinier Perrot, Starlink)",
             avatar_color="rose"
@@ -81,7 +81,7 @@ def seed_database(db: Session = None, force: bool = False):
         Member(
             prenom="Marguerite",
             name="Marguerite Jamet",
-            email="marguerite@sci-familiale.fr",
+            email="marguerite_jamet@yahoo.fr",
             password=hash_password(os.getenv("USER_MARGUERITE_PASS") or os.getenv("MEMBER_PASSWORD_MARGUERITE", "B4vL7nP1wR9tY2mK")),
             role="Responsable Équipements (Frigo Schtroudel, Buanderie)",
             avatar_color="purple"
@@ -89,7 +89,7 @@ def seed_database(db: Session = None, force: bool = False):
         Member(
             prenom="Eugénie",
             name="Eugénie Jamet",
-            email="eugenie@sci-familiale.fr",
+            email="eugenie_jamet@yahoo.fr",
             password=hash_password(os.getenv("USER_EUGENIE_PASS") or os.getenv("MEMBER_PASSWORD_EUGENIE", "R9tY2mK9vL5nR1wP")),
             role="Responsable Peintures SdB & Tri Sélectif",
             avatar_color="amber"
@@ -97,7 +97,7 @@ def seed_database(db: Session = None, force: bool = False):
         Member(
             prenom="Joséphine",
             name="Joséphine Jamet",
-            email="josephine@sci-familiale.fr",
+            email="josephine_jamet@yahoo.fr",
             password=hash_password(os.getenv("USER_JOSEPHINE_PASS") or os.getenv("MEMBER_PASSWORD_JOSEPHINE", "T7pY2mK9vL5nR1wQ")),
             role="Coordinatrice Adjointe (Clés, Boîtier Sud, Vêtements)",
             avatar_color="emerald"
@@ -105,7 +105,7 @@ def seed_database(db: Session = None, force: bool = False):
         Member(
             prenom="Maman",
             name="Maman (Élisabeth) Jamet",
-            email="maman@sci-familiale.fr",
+            email="elizabeth_jamet@yahoo.fr",
             password=hash_password(os.getenv("USER_MAMAN_PASS") or os.getenv("MEMBER_PASSWORD_MAMAN", "W1tY2mK9vL5nR1pT")),
             role="Membre Associé",
             avatar_color="teal"
@@ -113,7 +113,7 @@ def seed_database(db: Session = None, force: bool = False):
         Member(
             prenom="Frédéric",
             name="Frédéric Jamet",
-            email="frederic@sci-familiale.fr",
+            email="frdjamet@gmail.com",
             password=hash_password(os.getenv("USER_FREDERIC_PASS") or os.getenv("MEMBER_PASSWORD_FREDERIC", "L5nR1wT7pY2mK9vQ")),
             role="Responsable Électricité & Linky Tempo (Contacteur 0/HC)",
             avatar_color="blue"

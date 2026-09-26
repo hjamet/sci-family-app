@@ -243,6 +243,21 @@ export default function AdminInfoPage({ currentUser }) {
     }, 3500);
   };
 
+  useEffect(() => {
+    // Traitement du retour de consentement Open Banking Tilisy / Swan
+    const searchParams = new URLSearchParams(window.location.search);
+    const bankingParam = searchParams.get('banking');
+    if (bankingParam === 'success') {
+      showToast('Liaison bancaire validée', 'Le consentement DSP2 Swan a été renouvelé avec succès.', 'check_circle');
+      window.history.replaceState({}, '', window.location.pathname);
+      loadBankStatus();
+    } else if (bankingParam === 'error') {
+      const msg = searchParams.get('msg') || 'Le consentement bancaire a été annulé ou a échoué.';
+      showToast('Erreur bancaire', msg, 'error');
+      window.history.replaceState({}, '', window.location.pathname);
+    }
+  }, []);
+
   // Additional SCI Features (Grand Livre Financier)
   const [isFinancialModalOpen, setIsFinancialModalOpen] = useState(false);
   const [financialModalTab, setFinancialModalTab] = useState('grand_livre');

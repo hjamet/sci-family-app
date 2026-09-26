@@ -709,8 +709,14 @@ export async function fetchBankStatus() {
     headers: getAuthHeaders()
   });
   if (!res.ok) {
-    const err = await res.json().catch(() => ({}));
-    throw new Error(err.detail || 'Erreur lors de la récupération du statut bancaire');
+    let detail = '';
+    try {
+      const err = await res.json();
+      detail = err.detail || err.message;
+    } catch {
+      try { detail = (await res.text()).slice(0, 150); } catch {}
+    }
+    throw new Error(detail || `Erreur lors de la récupération du statut bancaire (HTTP ${res.status})`);
   }
   return res.json();
 }
@@ -720,8 +726,14 @@ export async function fetchBankAccounts() {
     headers: getAuthHeaders()
   });
   if (!res.ok) {
-    const err = await res.json().catch(() => ({}));
-    throw new Error(err.detail || 'Erreur lors de la récupération des comptes bancaires');
+    let detail = '';
+    try {
+      const err = await res.json();
+      detail = err.detail || err.message;
+    } catch {
+      try { detail = (await res.text()).slice(0, 150); } catch {}
+    }
+    throw new Error(detail || `Erreur lors de la récupération des comptes bancaires (HTTP ${res.status})`);
   }
   return res.json();
 }
@@ -734,8 +746,14 @@ export async function fetchBankTransactions(params = {}) {
     headers: getAuthHeaders()
   });
   if (!res.ok) {
-    const err = await res.json().catch(() => ({}));
-    throw new Error(err.detail || 'Erreur lors de la récupération des transactions bancaires');
+    let detail = '';
+    try {
+      const err = await res.json();
+      detail = err.detail || err.message;
+    } catch {
+      try { detail = (await res.text()).slice(0, 150); } catch {}
+    }
+    throw new Error(detail || `Erreur lors de la récupération des transactions bancaires (HTTP ${res.status})`);
   }
   return res.json();
 }
@@ -746,8 +764,14 @@ export async function triggerBankSync() {
     headers: getAuthJsonHeaders()
   });
   if (!res.ok) {
-    const err = await res.json().catch(() => ({}));
-    throw new Error(err.detail || 'Erreur lors de la synchronisation bancaire');
+    let detail = '';
+    try {
+      const err = await res.json();
+      detail = err.detail || err.message;
+    } catch {
+      try { detail = (await res.text()).slice(0, 150); } catch {}
+    }
+    throw new Error(detail || `Erreur lors de la synchronisation bancaire (HTTP ${res.status})`);
   }
   return res.json();
 }
@@ -759,8 +783,14 @@ export async function startBankAuth(redirectUrl) {
     body: JSON.stringify({ redirect_url: redirectUrl })
   });
   if (!res.ok) {
-    const err = await res.json().catch(() => ({}));
-    throw new Error(err.detail || 'Erreur lors de l\'initialisation de l\'authentification bancaire');
+    let detail = '';
+    try {
+      const err = await res.json();
+      detail = err.detail || err.message;
+    } catch {
+      try { detail = (await res.text()).slice(0, 150); } catch {}
+    }
+    throw new Error(detail || `Erreur lors de l'initialisation de l'authentification bancaire (HTTP ${res.status})`);
   }
   return res.json();
 }
@@ -842,9 +872,6 @@ export async function updateUserProfile(data) {
 
 export async function changeUserPassword({ currentPassword, newPassword, confirmPassword }) {
   // Validation côté client
-  if (!currentPassword || !currentPassword.trim()) {
-    throw new Error('Veuillez saisir votre mot de passe actuel.');
-  }
   if (!newPassword || !newPassword.trim()) {
     throw new Error('Veuillez saisir votre nouveau mot de passe.');
   }
@@ -855,15 +882,19 @@ export async function changeUserPassword({ currentPassword, newPassword, confirm
     throw new Error('Le nouveau mot de passe doit comporter au moins 4 caractères.');
   }
 
+  const payload = {
+    new_password: newPassword,
+    confirm_password: confirmPassword
+  };
+  if (currentPassword) {
+    payload.current_password = currentPassword;
+  }
+
   try {
     const res = await fetch(`${API_BASE}/auth/change-password`, {
       method: 'POST',
       headers: getAuthJsonHeaders(),
-      body: JSON.stringify({
-        current_password: currentPassword,
-        new_password: newPassword,
-        confirm_password: confirmPassword
-      })
+      body: JSON.stringify(payload)
     });
     if (res.ok) {
       return await res.json();

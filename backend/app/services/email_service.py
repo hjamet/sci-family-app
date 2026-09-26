@@ -2,7 +2,13 @@ import os
 import json
 import logging
 from typing import List, Optional, Union, Set, Dict, Any
-import httpx
+import urllib.request
+import urllib.error
+
+try:
+    import httpx
+except ImportError:
+    httpx = None
 
 logger = logging.getLogger("email_service")
 
@@ -23,30 +29,51 @@ DEFAULT_FROM_EMAIL = os.environ.get("RESEND_FROM_EMAIL", "SCI Familiale Hellenvi
 FALLBACK_FROM_EMAIL = "SCI Familiale Hellenvilliers <notifications@henri-jamet.com>"
 SANDBOX_FROM_EMAIL = "SCI Familiale Hellenvilliers <onboarding@resend.dev>"
 
+# PARE-FEU STRICT DE PROTECTION FAMILIALE
+# Tant que l'envoi global n'a pas été formellement débloqué par Henri en production :
+# SEULE l'adresse hellenvillierssci@gmail.com est autorisée à recevoir des e-mails.
+# Tout envoi vers une autre adresse (famille) est STRICTEMENT INTERCEPTÉ, SANS AUCUN APPEL RÉSEAU RESEND.
+ALLOWED_RECIPIENTS: Set[str] = {"hellenvillierssci@gmail.com"}
+
 # Circuit Breaker / Hermetic Test Mode
 EMAIL_TEST_MODE: bool = os.getenv("EMAIL_TEST_MODE", "true").lower() in ("true", "1", "yes")
-EMAIL_TEST_REDIRECT_TO: str = os.getenv("EMAIL_TEST_REDIRECT_TO", "henri.jamet.ch@gmail.com").strip()
+EMAIL_TEST_REDIRECT_TO: str = os.getenv("EMAIL_TEST_REDIRECT_TO", "hellenvillierssci@gmail.com").strip()
 
-ALLOWED_TEST_RECIPIENTS: Set[str] = {
-    "henri.jamet.ch@gmail.com",
-    "hellenvillierssci@gmail.com"
-}
-_env_allowed = os.getenv("EMAIL_ALLOWED_RECIPIENTS", "")
-if _env_allowed:
-    for item in _env_allowed.split(","):
-        cleaned = item.strip().lower()
-        if cleaned:
-            ALLOWED_TEST_RECIPIENTS.add(cleaned)
+ALLOWED_TEST_RECIPIENTS: Set[str] = {"hellenvillierssci@gmail.com"}
 
 DEFAULT_MEMBER_EMAILS: List[str] = [
-    "henri@sci-familiale.fr",
-    "hortense@sci-familiale.fr",
-    "marguerite@sci-familiale.fr",
-    "eugenie@sci-familiale.fr",
-    "josephine@sci-familiale.fr",
-    "maman@sci-familiale.fr",
-    "frederic@sci-familiale.fr"
+    "hellenvillierssci@gmail.com",
+    "hortense_jamet@yahoo.fr",
+    "marguerite_jamet@yahoo.fr",
+    "eugenie_jamet@yahoo.fr",
+    "josephine_jamet@yahoo.fr",
+    "frdjamet@gmail.com",
+    "elizabeth_jamet@yahoo.fr"
 ]
+
+def check_firewall(to_email: Union[str, List[str]]) -> Optional[dict]:
+    """
+    Vérification pare-feu hermétique avant tout envoi ou rendu HTML :
+    Intercepte immédiatement tout destinataire non autorisé sans appel réseau Resend.
+    """
+    allowed_whitelist = {r.strip().lower() for r in ALLOWED_RECIPIENTS}
+    if isinstance(to_email, str):
+        clean = to_email.strip().lower()
+        if clean not in allowed_whitelist:
+            log_msg = f"[FIREWALL] Envoi vers {to_email} bloqué (seul hellenvillierssci@gmail.com est autorisé pour le moment)"
+            logger.warning(log_msg)
+            print(log_msg)
+            return {"status": "blocked_by_whitelist", "id": "local_mock_blocked"}
+    elif isinstance(to_email, (list, tuple, set)):
+        has_allowed = any(str(r).strip().lower() in allowed_whitelist for r in to_email)
+        if not has_allowed:
+            for r in to_email:
+                log_msg = f"[FIREWALL] Envoi vers {r} bloqué (seul hellenvillierssci@gmail.com est autorisé pour le moment)"
+                logger.warning(log_msg)
+                print(log_msg)
+            return {"status": "blocked_by_whitelist", "id": "local_mock_blocked"}
+    return None
+
 
 
 # ==============================================================================
@@ -144,53 +171,66 @@ def send_email(
 ) -> dict:
     """
     Sends an email using Resend HTTP API client.
-    Enforces a strict hermetic circuit breaker when EMAIL_TEST_MODE is True:
-    - Intercepts any recipient not present in ALLOWED_TEST_RECIPIENTS.
-    - Redirects them to EMAIL_TEST_REDIRECT_TO (henri.jamet.ch@gmail.com).
-    - Prefixes the subject with [TEST - Destinataire intercepté: {original}].
-    - Injects a red warning banner into the HTML body.
-    - Deduplicates recipients to avoid multiple sends.
-    - Gracefully degrades with clear logging if RESEND_API_KEY is not configured.
+    Enforces a strict hermetic family firewall:
+    - Only ALLOWED_RECIPIENTS ("hellenvillierssci@gmail.com") is permitted.
+    - All other addresses (family members, third parties) are strictly blocked with 0 Resend network calls.
+    - Returns {"status": "blocked_by_whitelist", "id": "local_mock_blocked"}.
     """
-    # Normalize input recipients
+    # 1. VERROU HERMÉTIQUE & PARE-FEU STRICT DE PROTECTION FAMILIALE
+    allowed_whitelist = {r.strip().lower() for r in ALLOWED_RECIPIENTS}
+
     if isinstance(to_email, str):
-        raw_recipients = [to_email]
+        clean_email = to_email.strip().lower()
+        if clean_email not in allowed_whitelist:
+            log_msg = f"[FIREWALL] Envoi vers {to_email} bloqué (seul hellenvillierssci@gmail.com est autorisé pour le moment)"
+            logger.warning(log_msg)
+            print(log_msg)
+            return {"status": "blocked_by_whitelist", "id": "local_mock_blocked"}
+        raw_recipients = [to_email.strip()]
     elif isinstance(to_email, (list, tuple, set)):
-        raw_recipients = list(to_email)
+        allowed = []
+        for r in to_email:
+            r_str = str(r).strip()
+            if r_str.lower() in allowed_whitelist:
+                allowed.append(r_str)
+            else:
+                log_msg = f"[FIREWALL] Envoi vers {r} bloqué (seul hellenvillierssci@gmail.com est autorisé pour le moment)"
+                logger.warning(log_msg)
+                print(log_msg)
+        if not allowed:
+            return {"status": "blocked_by_whitelist", "id": "local_mock_blocked"}
+        raw_recipients = allowed
     else:
-        raw_recipients = [str(to_email)]
+        clean_email = str(to_email).strip().lower()
+        if clean_email not in allowed_whitelist:
+            log_msg = f"[FIREWALL] Envoi vers {to_email} bloqué (seul hellenvillierssci@gmail.com est autorisé pour le moment)"
+            logger.warning(log_msg)
+            print(log_msg)
+            return {"status": "blocked_by_whitelist", "id": "local_mock_blocked"}
+        raw_recipients = [str(to_email).strip()]
 
-    # Check effective test mode dynamically
-    test_mode = os.getenv("EMAIL_TEST_MODE", str(EMAIL_TEST_MODE)).lower() in ("true", "1", "yes")
-    redirect_target = os.getenv("EMAIL_TEST_REDIRECT_TO", EMAIL_TEST_REDIRECT_TO).strip()
-
-    # Refresh allowed recipients from environment if dynamically modified
-    allowed_recipients = set(ALLOWED_TEST_RECIPIENTS)
-    dyn_allowed = os.getenv("EMAIL_ALLOWED_RECIPIENTS", "")
-    if dyn_allowed:
-        for item in dyn_allowed.split(","):
-            cleaned = item.strip().lower()
-            if cleaned:
-                allowed_recipients.add(cleaned)
-
-    final_recipients: List[str] = []
+    # Normalize final recipients
+    final_recipients: List[str] = raw_recipients
     seen: Set[str] = set()
     intercepted_recipients: List[str] = []
 
+    # Check effective test mode dynamically
+    test_mode = os.getenv("EMAIL_TEST_MODE", str(EMAIL_TEST_MODE)).lower() in ("true", "1", "yes")
+    redirect_target = os.getenv("EMAIL_TEST_REDIRECT_TO", EMAIL_TEST_REDIRECT_TO).strip() or "hellenvillierssci@gmail.com"
+
     if test_mode:
-        redirect_target = os.getenv("EMAIL_TEST_REDIRECT_TO", EMAIL_TEST_REDIRECT_TO).strip() or "henri.jamet.ch@gmail.com"
         final_recipients = [redirect_target]
-        intercepted_recipients = [str(r).strip() for r in raw_recipients if str(r).strip()]
         logger.info(
             f"[EMAIL TEST MODE] Coupe-circuit hermétique actif : destinataires originaux {raw_recipients} "
             f"redirigés vers '{redirect_target}' (zéro doublon, zéro bannière injectée)."
         )
     else:
-        for r in raw_recipients:
-            clean_r = str(r).strip()
-            if clean_r and clean_r.lower() not in seen:
-                seen.add(clean_r.lower())
-                final_recipients.append(clean_r)
+        cleaned_final = []
+        for r in final_recipients:
+            if r.lower() not in seen:
+                seen.add(r.lower())
+                cleaned_final.append(r)
+        final_recipients = cleaned_final
 
     if not final_recipients:
         msg = "[EMAIL SERVICE] No valid recipients to send to."
@@ -223,22 +263,37 @@ def send_email(
     }
 
     try:
-        with httpx.Client(timeout=10.0) as client:
-            resp = client.post(url, headers=headers, json=payload)
-            
-            # If domain verification error occurred (e.g. 403 on unverified domain), fallback to onboarding@resend.dev
-            if resp.status_code == 403 and "domain" in resp.text.lower() and effective_from != FALLBACK_FROM_EMAIL:
-                logger.warning(f"[EMAIL SERVICE] Sender '{effective_from}' returned 403 domain error. Retrying with fallback '{FALLBACK_FROM_EMAIL}'.")
-                payload["from"] = FALLBACK_FROM_EMAIL
+        if httpx is not None:
+            with httpx.Client(timeout=10.0) as client:
                 resp = client.post(url, headers=headers, json=payload)
+                
+                # If domain verification error occurred (e.g. 403 on unverified domain), fallback to onboarding@resend.dev
+                if resp.status_code == 403 and "domain" in resp.text.lower() and effective_from != FALLBACK_FROM_EMAIL:
+                    logger.warning(f"[EMAIL SERVICE] Sender '{effective_from}' returned 403 domain error. Retrying with fallback '{FALLBACK_FROM_EMAIL}'.")
+                    payload["from"] = FALLBACK_FROM_EMAIL
+                    resp = client.post(url, headers=headers, json=payload)
 
-            if resp.status_code in (200, 201):
-                result = resp.json()
-                logger.info(f"[EMAIL SERVICE] Email sent successfully via Resend to {final_recipients}: {result}")
-                return result
-            else:
-                logger.error(f"[EMAIL SERVICE] Resend HTTP Error {resp.status_code}: {resp.text}")
-                return {"error": resp.text, "status_code": resp.status_code}
+                if resp.status_code in (200, 201):
+                    result = resp.json()
+                    logger.info(f"[EMAIL SERVICE] Email sent successfully via Resend to {final_recipients}: {result}")
+                    return result
+                else:
+                    logger.error(f"[EMAIL SERVICE] Resend HTTP Error {resp.status_code}: {resp.text}")
+                    return {"error": resp.text, "status_code": resp.status_code}
+        else:
+            # Fallback direct urllib si httpx non installé
+            data_bytes = json.dumps(payload).encode("utf-8")
+            req = urllib.request.Request(url, data=data_bytes, headers=headers, method="POST")
+            try:
+                with urllib.request.urlopen(req, timeout=10.0) as resp:
+                    resp_text = resp.read().decode("utf-8")
+                    result = json.loads(resp_text) if resp_text else {}
+                    logger.info(f"[EMAIL SERVICE (urllib)] Email sent successfully via Resend to {final_recipients}: {result}")
+                    return result
+            except urllib.error.HTTPError as he:
+                err_text = he.read().decode("utf-8")
+                logger.error(f"[EMAIL SERVICE (urllib)] Resend HTTP Error {he.code}: {err_text}")
+                return {"error": err_text, "status_code": he.code}
     except Exception as e:
         logger.error(f"[EMAIL SERVICE] Network error calling Resend API: {e}")
         return {"error": str(e)}
@@ -266,6 +321,9 @@ def send_task_assigned_email(
     Champs réels conservés : Titre, Catégorie/Domaine, Localisation, Priorité, Charge (points), Assigné à, Description.
     Zéro champ fictif (aucune date limite).
     """
+    blocked = check_firewall(to_email)
+    if blocked:
+        return blocked
     priority_colors = {
         "critique": ("#fee2e2", "#991b1b", "#dc2626"),
         "haute": ("#ffedd5", "#9a3412", "#ea580c"),
@@ -347,6 +405,9 @@ def send_vote_required_email(
     Template 2: VOTE REQUIS
     Notifies a member that a formal decision/vote requires their ballot.
     """
+    blocked = check_firewall(to_email)
+    if blocked:
+        return blocked
     cost_display = f"{estimated_cost:,.2f} €".replace(",", " ") if (estimated_cost is not None and estimated_cost > 0) else "Sans impact financier immédiat"
     action_url = f"{APP_BASE_URL}/#votes"
 
@@ -414,6 +475,9 @@ def send_vote_closed_email(
     Template 3: DÉCISION FINALE DE VOTE
     Notifies all members of the final result once all 7 associates have voted.
     """
+    blocked = check_firewall(to_email)
+    if blocked:
+        return blocked
     is_adopted = "adopt" in decision.lower() or "approuv" in decision.lower()
     is_report = "report" in decision.lower()
 
@@ -514,6 +578,9 @@ def send_stay_booked_email(
     Template 4: NOUVEAU SÉJOUR RÉSERVÉ
     Notifies family members when an associate books a stay at the estate.
     """
+    blocked = check_firewall(to_email)
+    if blocked:
+        return blocked
     rooms_display = ""
     if rooms:
         if isinstance(rooms, str):
@@ -583,6 +650,9 @@ def send_password_reset_email(
     Template: RÉINITIALISATION DE MOT DE PASSE
     Envoie un mot de passe temporaire hautement sécurisé à un associé du Domaine d'Hellenvilliers.
     """
+    blocked = check_firewall(to_email)
+    if blocked:
+        return blocked
     greeting = f"Bonjour {member_name}," if member_name else "Bonjour,"
     action_url = f"{APP_BASE_URL}/"
 
@@ -633,7 +703,7 @@ def notify_coordinator_new_issue(
     description: str,
     category: str = "SIGNALEMENT",
     priority: str = "Moyenne",
-    coordinator_email: str = "henri@sci-familiale.fr"
+    coordinator_email: str = "hellenvillierssci@gmail.com"
 ) -> dict:
     """Legacy helper for issue notification to coordinator."""
     return send_task_assigned_email(

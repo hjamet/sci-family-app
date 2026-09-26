@@ -2,7 +2,6 @@ import React, { useState, useEffect } from 'react';
 import {
   User,
   Mail,
-  Lock,
   Eye,
   EyeOff,
   Bell,
@@ -12,14 +11,12 @@ import {
   Save,
   KeyRound,
   Check,
-  Sparkles,
   ClipboardList,
   Vote,
   Scale,
   CalendarDays,
   Info,
   RefreshCw,
-  Sliders,
   CheckCheck
 } from 'lucide-react';
 import {
@@ -89,10 +86,8 @@ export default function SettingsPage({ currentUser }) {
   const [emailLoading, setEmailLoading] = useState(false);
 
   // --- États Sécurité & Mot de Passe ---
-  const [currentPassword, setCurrentPassword] = useState('');
   const [newPassword, setNewPassword] = useState('');
   const [confirmPassword, setConfirmPassword] = useState('');
-  const [showCurrentPw, setShowCurrentPw] = useState(false);
   const [showNewPw, setShowNewPw] = useState(false);
   const [showConfirmPw, setShowConfirmPw] = useState(false);
   const [passwordLoading, setPasswordLoading] = useState(false);
@@ -206,10 +201,6 @@ export default function SettingsPage({ currentUser }) {
     e.preventDefault();
     setPasswordError(null);
 
-    if (!currentPassword) {
-      setPasswordError("Veuillez saisir votre mot de passe actuel.");
-      return;
-    }
     if (!newPassword) {
       setPasswordError("Veuillez saisir un nouveau mot de passe.");
       return;
@@ -226,13 +217,11 @@ export default function SettingsPage({ currentUser }) {
     try {
       setPasswordLoading(true);
       await changeUserPassword({
-        currentPassword,
         newPassword,
         confirmPassword
       });
 
       // Réinitialisation des champs après succès
-      setCurrentPassword('');
       setNewPassword('');
       setConfirmPassword('');
       showToast("Mot de passe modifié avec succès !", "success");
@@ -304,26 +293,10 @@ export default function SettingsPage({ currentUser }) {
       )}
 
       {/* En-tête de la Page */}
-      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 border-b border-border-subtle pb-6">
-        <div>
-          <div className="inline-flex items-center gap-2 px-3 py-1 rounded-full bg-sage-soft text-primary font-bold text-xs mb-2">
-            <Sliders className="w-3.5 h-3.5 text-primary" />
-            <span>Espace Associé</span>
-          </div>
-          <h1 className="text-2xl sm:text-3xl font-extrabold text-on-surface tracking-tight">
-            Paramètres &amp; Préférences
-          </h1>
-          <p className="text-sm text-on-surface-variant mt-1">
-            Gérez vos informations de contact, vos accès confidentiels et vos alertes e-mail pour le Domaine d'Hellenvilliers.
-          </p>
-        </div>
-
-        <div className="flex items-center gap-2 self-start sm:self-auto">
-          <div className="flex items-center gap-2 px-3.5 py-1.5 rounded-xl bg-surface-container border border-border-subtle text-xs text-on-surface-variant font-medium">
-            <span className="w-2 h-2 rounded-full bg-emerald-500 animate-pulse"></span>
-            <span>Session sécurisée active</span>
-          </div>
-        </div>
+      <div className="border-b border-border-subtle pb-6">
+        <h1 className="text-2xl sm:text-3xl font-extrabold text-on-surface tracking-tight">
+          Paramètres &amp; Préférences
+        </h1>
       </div>
 
       {/* ======================================================== */}
@@ -345,29 +318,14 @@ export default function SettingsPage({ currentUser }) {
         </div>
 
         {/* Carte Récapitulative du Rôle Associé */}
-        <div className="p-4 sm:p-5 rounded-2xl bg-canvas-slate border border-slate-200/70 mb-6 flex flex-col sm:flex-row sm:items-center justify-between gap-4">
-          <div className="flex items-center gap-4">
-            <div className="w-12 h-12 rounded-2xl bg-primary text-white flex items-center justify-center font-bold text-lg shadow-sm border border-emerald-700/50 shrink-0">
-              {profile.initials || 'HJ'}
-            </div>
-            <div>
-              <div className="flex items-center gap-2 flex-wrap">
-                <span className="font-extrabold text-base text-slate-900">
-                  {profile.name}
-                </span>
-                <span className="px-2.5 py-0.5 rounded-full text-[11px] font-bold bg-emerald-100 text-emerald-900 border border-emerald-300/80">
-                  {profile.badge || 'Associé'}
-                </span>
-              </div>
-              <p className="text-xs text-slate-600 mt-0.5">
-                {profile.role}
-              </p>
-            </div>
+        <div className="p-4 sm:p-5 rounded-2xl bg-canvas-slate border border-slate-200/70 mb-6 flex items-center gap-4">
+          <div className="w-12 h-12 rounded-2xl bg-primary text-white flex items-center justify-center font-bold text-lg shadow-sm border border-emerald-700/50 shrink-0">
+            {profile.initials || 'HJ'}
           </div>
-
-          <div className="text-left sm:text-right text-xs text-slate-500 border-t sm:border-t-0 pt-2 sm:pt-0">
-            <span className="block font-semibold text-slate-700">Régime SCI Hellenvilliers</span>
-            <span>Associé Indivis &amp; Bénéficiaire</span>
+          <div>
+            <span className="font-extrabold text-base text-slate-900">
+              {profile.name}
+            </span>
           </div>
         </div>
 
@@ -442,13 +400,6 @@ export default function SettingsPage({ currentUser }) {
           </div>
         </div>
 
-        <p className="text-xs text-slate-600 mb-6 bg-amber-50/60 border border-amber-200/60 rounded-xl p-3 flex items-start gap-2">
-          <KeyRound className="w-4 h-4 text-amber-700 shrink-0 mt-0.5" />
-          <span>
-            <strong>Validation directe in-app :</strong> Aucun lien d'activation par e-mail n'est requis. La mise à jour prend effet immédiatement pour toutes vos prochaines connexions.
-          </span>
-        </p>
-
         {/* Message d'Erreur Global */}
         {passwordError && (
           <div className="mb-5 p-3.5 rounded-xl bg-red-50 border border-red-200 text-red-800 text-xs font-semibold flex items-center gap-2">
@@ -458,38 +409,6 @@ export default function SettingsPage({ currentUser }) {
         )}
 
         <form onSubmit={handleChangePassword} className="space-y-4">
-          {/* Mot de passe actuel */}
-          <div>
-            <label
-              htmlFor="current-pw"
-              className="block text-xs font-bold text-slate-800 uppercase tracking-wide mb-1.5"
-            >
-              Mot de passe actuel
-            </label>
-            <div className="relative">
-              <div className="absolute inset-y-0 left-0 pl-3.5 flex items-center pointer-events-none text-slate-400">
-                <Lock className="w-4 h-4" />
-              </div>
-              <input
-                id="current-pw"
-                type={showCurrentPw ? 'text' : 'password'}
-                required
-                value={currentPassword}
-                onChange={(e) => setCurrentPassword(e.target.value)}
-                placeholder="Votre mot de passe actuel"
-                className="w-full pl-10 pr-10 py-2.5 rounded-xl border border-slate-300 bg-white text-sm text-slate-900 placeholder:text-slate-400 focus:outline-none focus:ring-2 focus:ring-primary/20 focus:border-primary transition-all"
-              />
-              <button
-                type="button"
-                onClick={() => setShowCurrentPw(!showCurrentPw)}
-                className="absolute inset-y-0 right-0 pr-3.5 flex items-center text-slate-400 hover:text-slate-600 cursor-pointer"
-                title={showCurrentPw ? 'Masquer' : 'Afficher'}
-              >
-                {showCurrentPw ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
-              </button>
-            </div>
-          </div>
-
           {/* Grille Nouveau Mot de Passe + Confirmation */}
           <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
             {/* Nouveau Mot de Passe */}
@@ -571,7 +490,7 @@ export default function SettingsPage({ currentUser }) {
               ) : (
                 <>
                   <ShieldCheck className="w-4 h-4 text-emerald-400" />
-                  <span>Modifier mon mot de passe</span>
+                  <span>Mettre à jour le mot de passe</span>
                 </>
               )}
             </button>
@@ -634,14 +553,9 @@ export default function SettingsPage({ currentUser }) {
                 <ClipboardList className="w-5 h-5 text-emerald-800" />
               </div>
               <div>
-                <div className="flex items-center gap-2 flex-wrap">
-                  <span className="text-sm font-bold text-slate-900">
-                    📝 Nouvelle tâche assignée
-                  </span>
-                  <span className="text-[10px] font-bold px-2 py-0.5 rounded-full bg-slate-200 text-slate-700">
-                    Chantiers &amp; Travaux
-                  </span>
-                </div>
+                <span className="text-sm font-bold text-slate-900">
+                  📝 Nouvelle tâche assignée
+                </span>
                 <p className="text-xs text-slate-600 mt-1">
                   M'alerter dès qu'un chantier m'est confié ou qu'une mission de maintenance m'est assignée.
                 </p>
@@ -674,14 +588,9 @@ export default function SettingsPage({ currentUser }) {
                 <Vote className="w-5 h-5 text-teal-800" />
               </div>
               <div>
-                <div className="flex items-center gap-2 flex-wrap">
-                  <span className="text-sm font-bold text-slate-900">
-                    🗳️ Vote en attente de mon avis
-                  </span>
-                  <span className="text-[10px] font-bold px-2 py-0.5 rounded-full bg-slate-200 text-slate-700">
-                    Démocratie Familiale
-                  </span>
-                </div>
+                <span className="text-sm font-bold text-slate-900">
+                  🗳️ Vote en attente de mon avis
+                </span>
                 <p className="text-xs text-slate-600 mt-1">
                   M'alerter dès qu'un scrutin ou une décision formelle nécessite mon vote ou ma validation.
                 </p>
@@ -714,14 +623,9 @@ export default function SettingsPage({ currentUser }) {
                 <Scale className="w-5 h-5 text-amber-800" />
               </div>
               <div>
-                <div className="flex items-center gap-2 flex-wrap">
-                  <span className="text-sm font-bold text-slate-900">
-                    ⚖️ Décision de vote finale
-                  </span>
-                  <span className="text-[10px] font-bold px-2 py-0.5 rounded-full bg-slate-200 text-slate-700">
-                    Résolutions SCI
-                  </span>
-                </div>
+                <span className="text-sm font-bold text-slate-900">
+                  ⚖️ Décision de vote finale
+                </span>
                 <p className="text-xs text-slate-600 mt-1">
                   M'informer du résultat et de la résolution officielle dès que tous les associés ont voté.
                 </p>
@@ -754,14 +658,9 @@ export default function SettingsPage({ currentUser }) {
                 <CalendarDays className="w-5 h-5 text-blue-800" />
               </div>
               <div>
-                <div className="flex items-center gap-2 flex-wrap">
-                  <span className="text-sm font-bold text-slate-900">
-                    📅 Nouveau séjour réservé
-                  </span>
-                  <span className="text-[10px] font-bold px-2 py-0.5 rounded-full bg-slate-200 text-slate-700">
-                    Calendrier &amp; Séjours
-                  </span>
-                </div>
+                <span className="text-sm font-bold text-slate-900">
+                  📅 Nouveau séjour réservé
+                </span>
                 <p className="text-xs text-slate-600 mt-1">
                   M'alerter dès qu'une réservation est ajoutée au calendrier au Presbytère ou à Rosings.
                 </p>
