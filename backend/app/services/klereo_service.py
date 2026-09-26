@@ -350,6 +350,13 @@ class KlereoService:
             )
 
     @classmethod
-    def get_status(cls) -> Dict[str, Any]:
+    def clear_cache(cls):
+        """Réinitialise le cache en mémoire (utile pour les tests et le rafraîchissement forcé)."""
+        global _CACHE, _CACHE_TIMESTAMP
+        _CACHE = {}
+        _CACHE_TIMESTAMP = 0.0
+
+    @classmethod
+    def get_status(cls, force_refresh: bool = False) -> Dict[str, Any]:
         """Point d'entrée principal pour la consultation de la télémétrie piscine."""
-        return cls.fetch_live_telemetry()
+        return cls.fetch_live_telemetry(force_refresh=force_refresh)

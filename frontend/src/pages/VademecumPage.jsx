@@ -979,46 +979,28 @@ export default function VademecumPage({ properties, currentUser }) {
                 </div>
               </div>
 
-              {/* Annotation 5 : Fail-Fast Alerte Radio Klereo (uniquement si vraie anomalie renvoyée par le backend) */}
-              {piscineStatus && (piscineStatus.radio_error === true || piscineStatus.status === 'error' || Boolean(piscineStatus.error)) && (
-                <div className="p-3 bg-amber-50 border border-amber-300 text-amber-900 rounded-xl text-xs font-medium animate-in fade-in duration-200">
-                  {piscineStatus.radio_alert || piscineStatus.error || '⚠️ Liaison radio K-Link 868 MHz interrompue entre le coffret piscine et le boîtier Connect.'}
+              {/* Alerte Radio Klereo si anomalie radio avérée renvoyée par l'API */}
+              {piscineStatus?.radio_error && piscineStatus?.radio_alert && (
+                <div className="p-3 bg-amber-50 dark:bg-amber-950/40 border border-amber-300 text-amber-900 dark:text-amber-200 rounded-xl text-xs font-medium flex items-center gap-2 animate-in fade-in duration-200">
+                  <span className="material-symbols-outlined text-amber-600 text-sm">wifi_off</span>
+                  <span>{piscineStatus.radio_alert}</span>
                 </div>
               )}
 
-              {/* Affichage contextuel des alertes Klereo (ex: Seuil minimum Bidon pH / consommables) */}
-              {(() => {
-                const alertsList = Array.isArray(piscineStatus?.alerts) && piscineStatus.alerts.length > 0
-                  ? piscineStatus.alerts
-                  : (piscineStatus?.radio_alert && !piscineStatus?.radio_error ? [piscineStatus.radio_alert] : []);
-
-                if (alertsList.length === 0) return null;
-
-                return (
-                  <div className="flex flex-col gap-2">
-                    {alertsList.map((alt, idx) => {
-                      const lower = alt.toLowerCase();
-                      let label = alt;
-                      let detailNote = '';
-                      if (lower.includes('bidon ph') || (lower.includes('ph') && lower.includes('bidon'))) {
-                        label = 'Niveau minimum Bidon pH';
-                        detailNote = ' (bidon de produit régulateur à renouveler)';
-                      } else if (lower.includes('bidon trait') || (lower.includes('trait') && lower.includes('bidon'))) {
-                        label = 'Niveau minimum Bidon Traitement';
-                        detailNote = ' (bidon de produit désinfectant à renouveler)';
-                      }
-                      return (
-                        <div
-                          key={idx}
-                          className="p-3 bg-amber-50 border border-amber-300 text-amber-900 rounded-xl text-xs font-medium flex items-center gap-2"
-                        >
-                          <span>ℹ️ Alerte Klereo : {label}{detailNote}.</span>
-                        </div>
-                      );
-                    })}
-                  </div>
-                );
-              })()}
+              {/* Alertes Klereo dynamiques issues de l'API (Zero-Trust) */}
+              {piscineStatus?.alerts && piscineStatus.alerts.length > 0 && (
+                <div className="flex flex-col gap-2">
+                  {piscineStatus.alerts.map((alert, idx) => (
+                    <div
+                      key={idx}
+                      className="p-3 bg-amber-50 dark:bg-amber-950/40 border border-amber-300 text-amber-900 dark:text-amber-200 rounded-xl text-xs font-medium flex items-center gap-2"
+                    >
+                      <span className="material-symbols-outlined text-amber-600 text-sm">warning</span>
+                      <span>{alert.message || alert}</span>
+                    </div>
+                  ))}
+                </div>
+              )}
 
               {/* Target Temperature Control */}
               <div className="p-3.5 bg-white rounded-xl border border-border-subtle flex items-center justify-between gap-2 shadow-sm">
@@ -1074,15 +1056,15 @@ export default function VademecumPage({ properties, currentUser }) {
               <div className="pt-2.5 border-t border-border-subtle flex flex-wrap items-center gap-1.5">
                 <div className="inline-flex items-center gap-1 px-2 py-0.5 rounded-md bg-white border border-border-subtle text-[11px] font-medium text-on-surface-variant">
                   <span className="w-1.5 h-1.5 rounded-full bg-secondary"></span>
-                  <span>pH : <strong>{piscineStatus?.ph != null ? piscineStatus.ph.toFixed(1) : (piscineStatus?.ph_value != null ? piscineStatus.ph_value.toFixed(1) : '7.3')}</strong></span>
+                  <span>pH : <strong>{piscineStatus?.ph != null ? piscineStatus.ph.toFixed(1) : (piscineStatus?.ph_value != null ? piscineStatus.ph_value.toFixed(1) : '--')}</strong></span>
                 </div>
                 <div className="inline-flex items-center gap-1 px-2 py-0.5 rounded-md bg-white border border-border-subtle text-[11px] font-medium text-on-surface-variant">
                   <span className="w-1.5 h-1.5 rounded-full bg-secondary"></span>
-                  <span>Redox : <strong>{piscineStatus?.redox_mv != null ? `${piscineStatus.redox_mv} mV` : (piscineStatus?.redox_value != null ? `${piscineStatus.redox_value} mV` : '680 mV')}</strong></span>
+                  <span>Redox : <strong>{piscineStatus?.redox_mv != null ? `${piscineStatus.redox_mv} mV` : (piscineStatus?.redox_value != null ? `${piscineStatus.redox_value} mV` : '-- mV')}</strong></span>
                 </div>
                 <div className="inline-flex items-center gap-1 px-2 py-0.5 rounded-md bg-white border border-border-subtle text-[11px] font-medium text-on-surface-variant">
                   <span className="w-1.5 h-1.5 rounded-full bg-secondary"></span>
-                  <span>Filtre : <strong>{piscineStatus?.filter_pressure_mbar != null ? `${piscineStatus.filter_pressure_mbar} mbar` : (piscineStatus?.filter_pressure != null ? `${piscineStatus.filter_pressure} mbar` : '850 mbar')}</strong></span>
+                  <span>Filtre : <strong>{piscineStatus?.filter_pressure_mbar != null ? `${piscineStatus.filter_pressure_mbar} mbar` : (piscineStatus?.filter_pressure != null ? `${piscineStatus.filter_pressure} mbar` : '-- mbar')}</strong></span>
                 </div>
                 <div className="inline-flex items-center gap-1 px-2 py-0.5 rounded-md bg-sage-soft text-primary text-[11px] font-semibold">
                   <span className="material-symbols-outlined text-[12px]">sync</span>

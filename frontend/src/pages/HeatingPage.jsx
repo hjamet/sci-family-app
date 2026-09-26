@@ -8,11 +8,12 @@ import {
   CheckCircle2, AlertTriangle, RefreshCw, Droplets, X,
   Minus, Plus, Lock, ShieldCheck, Waves, Info, Gauge, Activity, Radio
 } from 'lucide-react';
-import { fetchHeatingStatus, setHeatingMode, setHeatingTemperature, saveHeatingSettings } from '../api';
+import { fetchHeatingStatus, setHeatingMode, setHeatingTemperature, saveHeatingSettings, fetchPiscineStatus } from '../api';
 import { ThermalMetricSkeleton } from '../components/SkeletonLoaders';
 
 export default function HeatingPage({ currentUser }) {
   const [status, setStatus] = useState(null);
+  const [poolStatus, setPoolStatus] = useState(null);
   const [loading, setLoading] = useState(true);
   const [errorMsg, setErrorMsg] = useState(null);
   const [updating, setUpdating] = useState(false);
@@ -31,11 +32,20 @@ export default function HeatingPage({ currentUser }) {
     try {
       setLoading(true);
       setErrorMsg(null);
-      const data = await fetchHeatingStatus();
+      const [data, pData] = await Promise.all([
+        fetchHeatingStatus().catch(err => { throw err; }),
+        fetchPiscineStatus().catch(err => {
+          console.warn('Piscine telemetry load error:', err);
+          return null;
+        })
+      ]);
       if (data && data.error) {
         throw new Error(data.error);
       }
       setStatus(data);
+      if (pData) {
+        setPoolStatus(pData);
+      }
       if (data?.target_temperature != null) {
         const clamped = Math.min(24.0, Math.max(12.0, data.target_temperature));
         setSliderTemp(clamped);
@@ -180,10 +190,17 @@ export default function HeatingPage({ currentUser }) {
                 <span className="w-2 h-2 rounded-full bg-primary animate-pulse"></span>
                 <span>ViCare : Connecté (Lecture seule)</span>
               </div>
-              <div className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-full bg-amber-50 border border-amber-300 text-amber-900 font-label-sm text-xs font-bold shadow-xs">
-                <span className="w-2 h-2 rounded-full bg-amber-500 animate-ping"></span>
-                <span>Piscine : ⚠️ Rupture radio K-Link</span>
-              </div>
+              {poolStatus?.radio_error ? (
+                <div className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-full bg-amber-50 border border-amber-300 text-amber-900 font-label-sm text-xs font-bold shadow-xs">
+                  <span className="w-2 h-2 rounded-full bg-amber-500 animate-ping"></span>
+                  <span>Piscine : {poolStatus.radio_alert || '⚠️ Rupture radio K-Link'}</span>
+                </div>
+              ) : (
+                <div className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-full bg-sage-soft border border-sage-border text-primary font-label-sm text-xs font-semibold shadow-xs">
+                  <span className="w-2 h-2 rounded-full bg-primary"></span>
+                  <span>Piscine (Klereo) : Connecté</span>
+                </div>
+              )}
             </div>
 
             <button
@@ -395,32 +412,57 @@ export default function HeatingPage({ currentUser }) {
               <div className="flex items-center gap-2 min-w-0">
                 <span className="material-symbols-outlined text-amber-700 text-[22px]">pool</span>
                 <h3 className="font-headline-sm text-headline-sm text-on-surface font-semibold truncate">Piscine Klereo</h3>
-                <span className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full bg-rose-100 text-rose-800 border border-rose-300 font-label-sm text-[11px] font-bold shrink-0">
-                  <AlertTriangle className="h-3 w-3 text-rose-600" />
-                  Rupture Radio K-Link
-                </span>
+                {poolStatus?.radio_error ? (
+                  <span className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full bg-rose-100 text-rose-800 border border-rose-300 font-label-sm text-[11px] font-bold shrink-0">
+                    <AlertTriangle className="h-3 w-3 text-rose-600" />
+                    Rupture Radio K-Link
+                  </span>
+                ) : (
+                  <span className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full bg-emerald-50 text-emerald-800 border border-emerald-300 font-label-sm text-[11px] font-semibold shrink-0">
+                    <span className="w-1.5 h-1.5 rounded-full bg-emerald-600"></span>
+                    Liaison radio K-Link active
+                  </span>
+                )}
               </div>
               <div className="flex items-center gap-1 px-2.5 py-1 rounded-full bg-amber-50 border border-amber-200 shrink-0">
                 <span className="font-label-sm text-xs text-amber-800">Eau :</span>
-                <span className="font-headline-sm text-xs text-amber-950 font-bold tabular-nums">13.5°C*</span>
+                <span className="font-headline-sm text-xs text-amber-950 font-bold tabular-nums">
+                  {poolStatus?.water_temperature != null ? `${poolStatus.water_temperature.toFixed(1)}°C` : '--°C'}
+                </span>
                 <span className="text-xs text-amber-400 mx-0.5">•</span>
                 <span className="font-label-sm text-xs text-amber-800">Air :</span>
-                <span className="font-headline-sm text-xs text-amber-950 font-bold tabular-nums">14.2°C*</span>
+                <span className="font-headline-sm text-xs text-amber-950 font-bold tabular-nums">
+                  {poolStatus?.air_temperature != null ? `${poolStatus.air_temperature.toFixed(1)}°C` : '--°C'}
+                </span>
               </div>
             </div>
 
-            {/* BANDEAU D'ALERTE EXPLICITE RUPTURE RADIO K-LINK 868 MHz */}
-            <div className="p-3.5 rounded-xl bg-amber-50 border-2 border-amber-500 text-amber-950 shadow-xs space-y-1.5 animate-in fade-in duration-200">
-              <div className="flex items-start gap-2">
-                <AlertTriangle className="h-4 w-4 text-amber-600 shrink-0 mt-0.5" />
-                <div className="font-bold text-xs leading-snug">
-                  ⚠️ Liaison radio K-Link interrompue (coffret piscine hors portée) - Données non actualisées - Réappairage matériel requis sur place
+            {/* BANDEAU D'ALERTE RUPTURE RADIO K-LINK 868 MHz (uniquement si confirmée par l'API) */}
+            {poolStatus?.radio_error && poolStatus?.radio_alert && (
+              <div className="p-3.5 rounded-xl bg-amber-50 border-2 border-amber-500 text-amber-950 shadow-xs space-y-1.5 animate-in fade-in duration-200">
+                <div className="flex items-start gap-2">
+                  <AlertTriangle className="h-4 w-4 text-amber-600 shrink-0 mt-0.5" />
+                  <div className="font-bold text-xs leading-snug">
+                    {poolStatus.radio_alert}
+                  </div>
                 </div>
               </div>
-              <p className="text-[11px] text-amber-800 pl-6 leading-relaxed">
-                Le boîtier Klereo CONNECT souffre d'une rupture de liaison radio 868 MHz avec le coffret piscine (distance / murs en pierre du Presbytère). L'application Klereo affiche <em>« Vérifier la connexion »</em>. Les valeurs thermiques et physico-chimiques ci-dessous sont les dernières enregistrées avant la perte de liaison.
-              </p>
-            </div>
+            )}
+
+            {/* Alertes Klereo dynamiques issues de l'API */}
+            {poolStatus?.alerts && poolStatus.alerts.length > 0 && (
+              <div className="flex flex-col gap-2">
+                {poolStatus.alerts.map((alert, idx) => (
+                  <div
+                    key={idx}
+                    className="p-3 bg-amber-50 dark:bg-amber-950/40 border border-amber-300 text-amber-900 rounded-xl text-xs font-medium flex items-center gap-2"
+                  >
+                    <span className="material-symbols-outlined text-amber-600 text-sm">warning</span>
+                    <span>{alert.message || alert}</span>
+                  </div>
+                ))}
+              </div>
+            )}
 
             {/* Target Temperature with STRICT READ-ONLY LOCK */}
             <div className="p-3.5 bg-canvas-slate rounded-xl border border-border-subtle flex items-center justify-between gap-2 shadow-xs relative opacity-90">
@@ -433,7 +475,7 @@ export default function HeatingPage({ currentUser }) {
                   </span>
                 </div>
                 <span className="font-label-sm text-xs text-on-surface-variant mt-0.5 whitespace-nowrap">
-                  Hivernage : consigne minimale 14.0°C (non transmissible)
+                  Hivernage : consigne minimale {poolStatus?.frost_protection_target != null ? `${poolStatus.frost_protection_target.toFixed(1)}°C` : '10.0°C'} (non transmissible)
                 </span>
               </div>
 
@@ -448,7 +490,7 @@ export default function HeatingPage({ currentUser }) {
                   <Lock className="h-3.5 w-3.5" />
                 </button>
                 <span className="font-headline-md text-[18px] text-slate-700 font-bold tabular-nums w-12 text-center">
-                  14.0<span className="text-xs text-outline font-normal">°C</span>
+                  {poolStatus?.frost_protection_target != null ? poolStatus.frost_protection_target.toFixed(1) : '--'}<span className="text-xs text-outline font-normal">°C</span>
                 </span>
                 <button
                   type="button"
@@ -470,7 +512,7 @@ export default function HeatingPage({ currentUser }) {
                     Mise en marche PAC piscine
                   </span>
                   <span className="font-label-md text-xs font-semibold text-amber-rich pl-4 mt-0.5 truncate">
-                    Déconseillée (Saison Hiver)
+                    {poolStatus?.pac_state || 'Déconseillée (Saison Hiver)'}
                   </span>
                 </div>
                 <span className="inline-flex items-center gap-1 text-[11px] font-bold text-slate-600 bg-slate-100 px-2 py-0.5 rounded-md border border-slate-200">
@@ -483,36 +525,33 @@ export default function HeatingPage({ currentUser }) {
                 <div className="flex flex-col min-w-0">
                   <span className="font-label-sm text-[11px] text-on-surface-variant flex items-center gap-1 font-medium">
                     <span className="material-symbols-outlined text-[14px] text-outline">autorenew</span>
-                    Filtration programmée Klereo
+                    Filtration Klereo
                   </span>
                   <span className="font-label-md text-xs font-semibold text-on-surface pl-4 mt-0.5 truncate">
-                    2h/jour (Hors-gel automatique local)
+                    {poolStatus?.filtration_cycle || poolStatus?.filtration_state || 'Cycle régulé'}
                   </span>
                 </div>
-                <span className="text-[11px] font-medium text-slate-600 bg-slate-100 px-2 py-0.5 rounded-md border border-slate-200">Cycle Local</span>
+                <span className="text-[11px] font-medium text-slate-600 bg-slate-100 px-2 py-0.5 rounded-md border border-slate-200">Cycle Réel</span>
               </div>
             </div>
 
             {/* Klereo Physico-Chemical Sensors Grid */}
             <div className="pt-2.5 border-t border-border-subtle">
-              <div className="text-[10px] text-amber-800 font-semibold mb-1.5 flex items-center gap-1">
-                <span>* Dernières données reçues avant coupure radio :</span>
-              </div>
               <div className="flex flex-wrap items-center gap-1.5">
                 <div className="inline-flex items-center gap-1 px-2 py-0.5 rounded-md bg-canvas-slate border border-border-subtle text-[11px] font-medium text-on-surface-variant">
                   <span className="w-1.5 h-1.5 rounded-full bg-slate-400"></span>
-                  <span>pH : <strong>7.3</strong></span>
+                  <span>pH : <strong>{poolStatus?.ph != null ? poolStatus.ph.toFixed(1) : (poolStatus?.ph_value != null ? poolStatus.ph_value.toFixed(1) : '--')}</strong></span>
                 </div>
                 <div className="inline-flex items-center gap-1 px-2 py-0.5 rounded-md bg-canvas-slate border border-border-subtle text-[11px] font-medium text-on-surface-variant">
                   <span className="w-1.5 h-1.5 rounded-full bg-slate-400"></span>
-                  <span>Redox : <strong>680 mV</strong></span>
+                  <span>Redox : <strong>{poolStatus?.redox_mv != null ? `${poolStatus.redox_mv} mV` : (poolStatus?.redox_value != null ? `${poolStatus.redox_value} mV` : '-- mV')}</strong></span>
                 </div>
                 <div className="inline-flex items-center gap-1 px-2 py-0.5 rounded-md bg-canvas-slate border border-border-subtle text-[11px] font-medium text-on-surface-variant">
                   <span className="w-1.5 h-1.5 rounded-full bg-slate-400"></span>
-                  <span>Filtre : <strong>850 mbar</strong></span>
+                  <span>Filtre : <strong>{poolStatus?.filter_pressure_mbar != null ? `${poolStatus.filter_pressure_mbar} mbar` : (poolStatus?.filter_pressure != null ? `${poolStatus.filter_pressure} mbar` : '-- mbar')}</strong></span>
                 </div>
                 <div className="inline-flex items-center gap-1 px-2 py-0.5 rounded-md bg-slate-100 text-slate-600 text-[11px] font-medium">
-                  État local : Pompe ON / PAC OFF
+                  {poolStatus?.filtration_state || 'État : En veille'}
                 </div>
               </div>
             </div>

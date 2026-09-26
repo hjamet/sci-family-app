@@ -49,6 +49,7 @@ test_*.py
 !backend/tests/test_banking_callback.py
 !backend/tests/test_drive_jail.py
 !backend/tests/test_tasks_annotations_and_chat.py
+!backend/tests/test_klereo_telemetry.py
 !backend/test_drive_quota.py
 !backend/test_drive_oauth.py
 !backend/test_drive_documents_crud.py

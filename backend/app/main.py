@@ -3307,12 +3307,10 @@ def get_klereo_pool_status():
     return PiscineStatusResponse(**telemetry)
 
 @app.get("/api/piscine/status", response_model=PiscineStatusResponse, tags=["Pool"])
-def get_piscine_status(live: bool = False):
-    """Returns PAC Rosing passive telemetry (legacy fallback or live telemetry if live=True)."""
-    if live:
-        telemetry = KlereoService.get_status()
-        return PiscineStatusResponse(**telemetry)
-    return PiscineStatusResponse()
+def get_piscine_status(live: bool = True):
+    """Returns PAC Rosing passive telemetry directly from live Klereo Connect API."""
+    telemetry = KlereoService.get_status()
+    return PiscineStatusResponse(**telemetry)
 
 @app.post("/api/piscine/mode", tags=["Pool"])
 @app.post("/api/piscine/temperature", tags=["Pool"])
