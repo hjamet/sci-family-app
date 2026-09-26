@@ -574,6 +574,55 @@ def send_stay_booked_email(
     return send_email(to_email=to_email, subject=subject, html_content=html_body)
 
 
+def send_password_reset_email(
+    to_email: Union[str, List[str]],
+    member_name: str,
+    new_temporary_password: str
+) -> dict:
+    """
+    Template: RÉINITIALISATION DE MOT DE PASSE
+    Envoie un mot de passe temporaire hautement sécurisé à un associé du Domaine d'Hellenvilliers.
+    """
+    greeting = f"Bonjour {member_name}," if member_name else "Bonjour,"
+    action_url = f"{APP_BASE_URL}/"
+
+    content_html = f"""
+    <p>{greeting}</p>
+    <p>Une réinitialisation de votre mot de passe d'accès au portail de la <strong>SCI Familiale Hellenvilliers</strong> vient d'être effectuée.</p>
+    
+    <p>Voici votre nouveau mot de passe temporaire pour vous connecter :</p>
+    
+    <div style="background-color: #faf9f6; border: 1px solid #e5e3dc; border-left: 4px solid #1e3a2f; border-radius: 8px; padding: 20px; margin: 24px 0;">
+        <div style="font-size: 12px; text-transform: uppercase; letter-spacing: 1.5px; color: #6b7280; font-weight: 600; margin-bottom: 10px;">
+            Nouveau mot de passe temporaire
+        </div>
+        <div style="font-family: monospace; letter-spacing: 2px; font-size: 18px; font-weight: bold; background: #fff; padding: 12px; border: 1px dashed #b89047; text-align: center; color: #1e3a2f;">
+            {new_temporary_password}
+        </div>
+    </div>
+    
+    <p style="color: #4b5563; font-size: 14px; line-height: 1.6; margin-top: 16px;">
+        🔒 <strong>Conseil de sécurité :</strong> Pour des raisons de confidentialité, nous vous recommandons vivement de modifier ce mot de passe dès votre première connexion en vous rendant dans l'onglet <strong>Paramètres</strong> du portail.
+    </p>
+    
+    <p style="color: #6b7280; font-size: 13px; line-height: 1.5; margin-top: 12px;">
+        Si vous n'êtes pas à l'origine de cette demande, vous pouvez ignorer cet e-mail ou contacter le gérant de la SCI.
+    </p>
+    """
+
+    subject = "[SCI Hellenvilliers] Réinitialisation de votre mot de passe"
+    preheader = "Votre nouveau mot de passe temporaire pour accéder au Domaine d'Hellenvilliers"
+    html_body = render_email_layout(
+        title="Réinitialisation de mot de passe",
+        preheader=preheader,
+        content_html=content_html,
+        action_url=action_url,
+        action_label="Se connecter au portail"
+    )
+
+    return send_email(to_email=to_email, subject=subject, html_content=html_body)
+
+
 # ==============================================================================
 # BACKWARD COMPATIBILITY HELPERS
 # ==============================================================================

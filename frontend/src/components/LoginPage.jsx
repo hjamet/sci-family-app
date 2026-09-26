@@ -1,5 +1,5 @@
 import React, { useState } from 'react';
-import { loginUser } from '../api';
+import { loginUser, requestPasswordReset } from '../api';
 import { useAuth } from '../context/AuthContext';
 
 const LOGO_SRC = "https://lh3.googleusercontent.com/aida/AEtjO1XPkJA9U7CARtYXRqiCPhIByczBnBdNtGuBGIaMyna0c8Ams8nQu_bL_xLUxSm0ss6S3OHFS_n6B7nd2shejRa7UOjp65THsDhEKTpK_c7vICASOxbWet3Npaq5uEjMp0n1qWBqzcIJLOA643R5lKnnpnipatsdqzLoRZFTH3yd8h6IRXGs4HV3UIq2aiKXLu8bVu7FO6vMLYXv5-ilXUTx3C0CaKLCNIbtx6bjoStN";
@@ -78,8 +78,27 @@ export default function LoginPage({ onLoginSuccess }) {
   const [rememberMe, setRememberMe] = useState(true);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState(null);
-  const [forgotFeedback, setForgotFeedback] = useState(false);
+  const [forgotLoading, setForgotLoading] = useState(false);
+  const [forgotSuccess, setForgotSuccess] = useState(null);
+  const [forgotError, setForgotError] = useState(null);
   const [successFeedback, setSuccessFeedback] = useState(false);
+
+  const handleForgotPassword = async () => {
+    const memberPrenom = selectedMember?.prenom || (selectedMember?.fullName ? selectedMember.fullName.split(' ')[0] : 'Henri');
+    try {
+      setForgotLoading(true);
+      setForgotSuccess(null);
+      setForgotError(null);
+      setError(null);
+      await requestPasswordReset(memberPrenom);
+      setForgotSuccess('Un nouveau mot de passe temporaire a été envoyé à votre adresse e-mail.');
+    } catch (err) {
+      console.error('Erreur réinitialisation mot de passe:', err);
+      setForgotError(err.message || 'Impossible d\'envoyer le mot de passe temporaire.');
+    } finally {
+      setForgotLoading(false);
+    }
+  };
 
   const handleSubmit = async (e) => {
     e.preventDefault();
@@ -179,6 +198,8 @@ export default function LoginPage({ onLoginSuccess }) {
                       onClick={() => {
                         setSelectedMember(member);
                         setError(null);
+                        setForgotSuccess(null);
+                        setForgotError(null);
                       }}
                       role="radio"
                       aria-checked={isSelected}
@@ -187,6 +208,8 @@ export default function LoginPage({ onLoginSuccess }) {
                         if (e.key === 'Enter' || e.key === ' ') {
                           setSelectedMember(member);
                           setError(null);
+                          setForgotSuccess(null);
+                          setForgotError(null);
                         }
                       }}
                       className={`member-card cursor-pointer w-full min-h-[74px] p-4 sm:p-5 rounded-2xl bg-white shadow-xs hover:shadow-md transition-all flex items-center justify-between border-l-[6px] ${member.borderClass} border border-border-subtle ${
@@ -281,7 +304,56 @@ export default function LoginPage({ onLoginSuccess }) {
                         </span>
                       </button>
                     </div>
+
+                    {/* Under input: Mot de passe oublié ? */}
+                    <div className="flex justify-end pt-1">
+                      <button
+                        type="button"
+                        onClick={handleForgotPassword}
+                        disabled={forgotLoading}
+                        className="text-sm text-forest-deep hover:underline cursor-pointer transition-colors disabled:opacity-60 flex items-center gap-1.5"
+                      >
+                        {forgotLoading ? (
+                          <>
+                            <span className="inline-block w-3.5 h-3.5 border-2 border-forest-deep border-t-transparent rounded-full animate-spin"></span>
+                            <span>Envoi en cours...</span>
+                          </>
+                        ) : (
+                          <span>Mot de passe oublié ?</span>
+                        )}
+                      </button>
+                    </div>
                   </div>
+
+                  {/* Forgot Password Success Banner */}
+                  {forgotSuccess && (
+                    <div
+                      role="alert"
+                      className="p-3.5 rounded-xl bg-emerald-50 border border-emerald-300 text-emerald-900 text-xs sm:text-sm flex items-start gap-2.5 animate-in fade-in duration-200"
+                    >
+                      <span className="material-symbols-outlined text-[20px] text-emerald-700 shrink-0 mt-0.5">
+                        mark_email_read
+                      </span>
+                      <div className="flex-1 font-medium leading-relaxed">
+                        {forgotSuccess}
+                      </div>
+                    </div>
+                  )}
+
+                  {/* Forgot Password Error Banner */}
+                  {forgotError && (
+                    <div
+                      role="alert"
+                      className="p-3.5 rounded-xl bg-red-50 border border-red-200 text-red-800 text-xs sm:text-sm flex items-start gap-2.5 animate-in fade-in duration-200"
+                    >
+                      <span className="material-symbols-outlined text-[20px] text-red-600 shrink-0 mt-0.5">
+                        error
+                      </span>
+                      <div className="flex-1 font-medium leading-relaxed">
+                        {forgotError}
+                      </div>
+                    </div>
+                  )}
 
                   {/* Remember Me */}
                   <label className="flex items-center gap-3 cursor-pointer select-none py-1 group">
@@ -332,34 +404,6 @@ export default function LoginPage({ onLoginSuccess }) {
                       </>
                     )}
                   </button>
-
-                  {/* Forgot Password */}
-                  <div className="flex flex-col space-y-3 pt-1">
-                    <button
-                      type="button"
-                      onClick={() => setForgotFeedback(!forgotFeedback)}
-                      className="w-full min-h-[48px] px-4 rounded-2xl bg-white border-2 border-emerald-200 hover:border-emerald-600 text-emerald-800 hover:text-emerald-950 hover:bg-emerald-50/50 font-label-md text-xs sm:text-sm font-semibold flex items-center justify-center gap-2 shadow-xs hover:shadow-sm transition-all cursor-pointer"
-                    >
-                      <span className="material-symbols-outlined text-[18px] text-emerald-700">
-                        lock_reset
-                      </span>
-                      <span>J'ai oublié mon mot de passe</span>
-                    </button>
-
-                    {forgotFeedback && (
-                      <div
-                        role="alert"
-                        className="p-3.5 rounded-xl bg-emerald-50 border border-emerald-200 text-emerald-900 font-label-sm text-xs items-center flex gap-2.5 animate-in fade-in duration-200"
-                      >
-                        <span className="material-symbols-outlined text-[20px] text-emerald-700 shrink-0">
-                          mark_email_read
-                        </span>
-                        <span>
-                          Un message d'assistance a été adressé à Henri Jamet pour réinitialiser vos accès.
-                        </span>
-                      </div>
-                    )}
-                  </div>
                 </form>
 
                 {successFeedback && (

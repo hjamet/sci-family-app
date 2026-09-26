@@ -29,6 +29,20 @@ export async function loginUser(prenom, password) {
   return res.json();
 }
 
+export async function requestPasswordReset(prenom) {
+  const cleanPrenom = (typeof prenom === 'string' && prenom.trim()) ? prenom.trim() : '';
+  const res = await fetch(`${API_BASE}/auth/forgot-password`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ prenom: cleanPrenom }),
+  });
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({}));
+    throw new Error(err.detail || 'Erreur lors de la réinitialisation du mot de passe');
+  }
+  return res.json();
+}
+
 export async function fetchUsers() {
   const res = await fetch(`${API_BASE}/users`, {
     headers: getAuthHeaders()

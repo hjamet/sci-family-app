@@ -24,8 +24,16 @@ class TaskWeightEnum(str, Enum):
 
 # Auth Schemas
 class LoginRequest(BaseModel):
-    prenom: str
+    prenom: Optional[str] = None
+    email: Optional[str] = None
+    name: Optional[str] = None
+    username: Optional[str] = None
+    identifier: Optional[str] = None
     password: str
+
+class ForgotPasswordRequest(BaseModel):
+    prenom: Optional[str] = None
+    member_id: Optional[int] = None
 
 class MemberBase(BaseModel):
     prenom: str

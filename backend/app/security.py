@@ -19,8 +19,8 @@ SECRET_KEY = os.getenv("JWT_SECRET") or os.getenv("SECRET_KEY", "sci_family_supe
 ALGORITHM = os.getenv("ALGORITHM", "HS256")
 ACCESS_TOKEN_EXPIRE_MINUTES = int(os.getenv("ACCESS_TOKEN_EXPIRE_MINUTES", "525600"))
 
-# Passlib Bcrypt Hashing Context
-pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
+# Passlib Bcrypt Hashing Context (wrapped safely for bcrypt >= 4.0 compatibility)
+_raw_pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
 
 
 def hash_password(password: str) -> str:
@@ -30,7 +30,7 @@ def hash_password(password: str) -> str:
         salt = bcrypt.gensalt()
         return bcrypt.hashpw(password.encode("utf-8")[:72], salt).decode("utf-8")
     except Exception:
-        return pwd_context.hash(password)
+        return _raw_pwd_context.hash(password)
 
 
 def verify_password(plain_password: str, hashed_password: str) -> bool:
@@ -44,10 +44,28 @@ def verify_password(plain_password: str, hashed_password: str) -> bool:
     except Exception:
         pass
     try:
-        return pwd_context.verify(plain_password, hashed_password)
+        return _raw_pwd_context.verify(plain_password, hashed_password)
     except Exception:
         # Fallback exact string match if plain stored (for smooth migration)
         return plain_password == hashed_password
+
+
+class SafeCryptContext:
+    """Safe wrapper over CryptContext avoiding bcrypt >= 4.0 72-byte init bug in passlib."""
+    def __init__(self, ctx):
+        self._ctx = ctx
+
+    def hash(self, secret: str, **kwargs) -> str:
+        return hash_password(secret)
+
+    def verify(self, secret: str, hash_val: str) -> bool:
+        return verify_password(secret, hash_val)
+
+    def __getattr__(self, name):
+        return getattr(self._ctx, name)
+
+
+pwd_context = SafeCryptContext(_raw_pwd_context)
 
 
 def normalize_prenom(name: str) -> str:

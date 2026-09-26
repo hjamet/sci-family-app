@@ -3,6 +3,8 @@ import json
 import shutil
 import uuid
 import logging
+import secrets
+import string
 from datetime import datetime, timedelta
 from typing import List, Optional, Any, Dict
 from fastapi import FastAPI, Depends, HTTPException, Query, UploadFile, File, Form, status, Request
@@ -10,7 +12,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 from fastapi.responses import FileResponse, Response, RedirectResponse
 from sqlalchemy.orm import Session
-from sqlalchemy import func
+from sqlalchemy import func, or_
 
 from .database import engine, Base, get_db
 from .models import (
@@ -39,14 +41,14 @@ from .schemas import (
     BankAuthStartRequest, BankAuthStartResponse, BankAuthCallbackRequest,
     BankAccountResponse, BankTransactionResponse, BankSyncResponse, BankStatusResponse,
     ProfileUpdateRequest, ChangePasswordRequest, MemberSettingsResponse, MemberSettingsUpdate,
-    VoteSubmissionRequest
+    VoteSubmissionRequest, ForgotPasswordRequest
 )
 from .seed import seed_database
 from .services.workload_balancer import calculate_workload_distribution
 from .services.vicare_service import ViCareService
 from .services.banking import enable_banking_service
 from .security import (
-    rate_limiter, verify_password, hash_password, create_access_token, decode_access_token, normalize_prenom
+    rate_limiter, verify_password, hash_password, create_access_token, decode_access_token, normalize_prenom, pwd_context
 )
 from .services.email_service import (
     send_email,
@@ -54,6 +56,7 @@ from .services.email_service import (
     send_vote_required_email,
     send_vote_closed_email,
     send_stay_booked_email,
+    send_password_reset_email,
     notify_coordinator_new_issue,
     notify_all_members_project_vote
 )
@@ -298,36 +301,67 @@ def login(req: LoginRequest, request: Request, db: Session = Depends(get_db)):
     # 1. Anti-Brute Force Rate Limiter check (5 failed attempts -> 15 min lock)
     rate_limiter.check_login_rate_limit(ip)
 
-    prenom_clean = req.prenom.strip() if req.prenom else ""
+    prenom_input = req.prenom if req.prenom else None
+    email_input = req.email if req.email else None
+    name_input = req.name if req.name else None
+    user_input = req.username if req.username else None
+    ident_input = req.identifier if req.identifier else None
+
+    raw_ident = prenom_input or email_input or name_input or user_input or ident_input or ""
+    identifier_clean = raw_ident.strip()
     password_clean = req.password.strip() if req.password else ""
 
-    if not prenom_clean:
+    if not identifier_clean:
         rate_limiter.record_login_failure(ip)
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
-            detail="[Auth Error] Le prénom d'utilisateur ne peut pas être vide."
+            detail="[Auth Error] L'identifiant (prénom, nom complet ou email) ne peut pas être vide."
         )
 
-    # 2. Case-insensitive & accent-insensitive prenom lookup
-    input_norm = normalize_prenom(prenom_clean)
-    
-    # Direct DB query with func.lower(User.prenom) == prenom.strip().lower()
-    user = db.query(User).filter(func.lower(User.prenom) == prenom_clean.lower()).first()
+    # 2. Case-insensitive & accent-insensitive lookup across prenom, email, nom/name, full name
+    input_norm = normalize_prenom(identifier_clean)
+    val_clean = identifier_clean
+    val_lower = identifier_clean.lower()
+
+    # Robust multi-criteria query in DB:
+    # Member.prenom.ilike(val) OR Member.email.ilike(val) OR Member.nom.ilike(val) OR (prenom || ' ' || nom).ilike(val)
+    user = db.query(Member).filter(
+        or_(
+            Member.prenom.ilike(val_clean),
+            Member.email.ilike(val_clean),
+            Member.name.ilike(val_clean),
+            Member.nom.ilike(val_clean),
+            (Member.prenom + ' ' + Member.nom).ilike(val_clean),
+            func.lower(Member.prenom) == val_lower,
+            func.lower(Member.name) == val_lower,
+            func.lower(Member.email) == val_lower
+        )
+    ).first()
 
     if not user:
-        # Fallback loop using accent-insensitivity (normalize_prenom)
-        all_users = db.query(User).all()
+        # Fallback loop using accent-insensitivity (normalize_prenom), email, tokens
+        all_users = db.query(Member).all()
         first_token_norm = input_norm.split()[0] if input_norm else ""
         for u in all_users:
-            u_norm = normalize_prenom(u.prenom)
-            u_name_norm = normalize_prenom(u.name) if getattr(u, 'name', None) else ""
-            if u_norm == input_norm or u_name_norm == input_norm:
+            u_norm = normalize_prenom(u.prenom or "")
+            u_name_norm = normalize_prenom(u.name or "")
+            u_email_clean = (u.email or "").strip().lower()
+            u_full_norm = f"{u_norm} {u_name_norm}".strip()
+
+            # Exact match (normalized or lowercase)
+            if input_norm in [u_norm, u_name_norm, u_full_norm] or val_lower in [u_norm, u_name_norm, u_email_clean]:
                 user = u
                 break
+            # Token matches (e.g. "Henri Jamet" matches "Henri")
             if first_token_norm and (u_norm == first_token_norm or (first_token_norm in ["elisabeth", "maman"] and u_norm in ["elisabeth", "maman"])):
                 user = u
                 break
+            # Maman / Élisabeth equivalence
             if input_norm in ["elisabeth", "maman"] and u_norm in ["elisabeth", "maman"]:
+                user = u
+                break
+            # Partial match startswith (e.g. "Henri Jamet" starts with "Henri")
+            if u_name_norm and (input_norm.startswith(u_norm) or u_name_norm.startswith(input_norm)):
                 user = u
                 break
 
@@ -335,7 +369,7 @@ def login(req: LoginRequest, request: Request, db: Session = Depends(get_db)):
         rate_limiter.record_login_failure(ip)
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
-            detail=f"[Auth Error] Prénom '{prenom_clean}' inconnu. Prénoms valides des 7 membres SCI : Henri, Marguerite, Hortense, Joséphine, Eugénie, Frédéric, Maman."
+            detail=f"[Auth Error] Identifiant '{identifier_clean}' inconnu. Prénoms valides des 7 membres SCI : Henri, Marguerite, Hortense, Joséphine, Eugénie, Frédéric, Maman."
         )
 
     # 3. Bcrypt Password Verification
@@ -363,6 +397,112 @@ def login(req: LoginRequest, request: Request, db: Session = Depends(get_db)):
         "email": user.email,
         "role": user.role,
         "avatar_color": user.avatar_color
+    }
+
+@app.post("/api/auth/forgot-password")
+def forgot_password(
+    req: ForgotPasswordRequest,
+    request: Request,
+    db: Session = Depends(get_db)
+):
+    """
+    Réinitialise le mot de passe d'un associé et lui expédie un nouveau mot de passe temporaire par email.
+    Accepte soit {"prenom": str}, soit {"member_id": int}.
+    """
+    ip = rate_limiter.get_client_ip(request)
+    rate_limiter.check_general_rate_limit(ip)
+
+    # 1. Recherche du membre en base (SQLite et Supabase)
+    member = None
+    if req.member_id:
+        member = db.query(Member).filter(Member.id == req.member_id).first()
+
+    if not member and req.prenom and req.prenom.strip():
+        prenom_clean = req.prenom.strip()
+        # Direct lookup (case-insensitive)
+        member = db.query(Member).filter(func.lower(Member.prenom) == prenom_clean.lower()).first()
+        if not member:
+            input_norm = normalize_prenom(prenom_clean)
+            all_members = db.query(Member).all()
+            first_token_norm = input_norm.split()[0] if input_norm else ""
+            for m in all_members:
+                m_norm = normalize_prenom(m.prenom)
+                m_name_norm = normalize_prenom(m.name) if getattr(m, 'name', None) else ""
+                if m_norm == input_norm or m_name_norm == input_norm:
+                    member = m
+                    break
+                if first_token_norm and (m_norm == first_token_norm or (first_token_norm in ["elisabeth", "maman"] and m_norm in ["elisabeth", "maman"])):
+                    member = m
+                    break
+                if input_norm in ["elisabeth", "maman"] and m_norm in ["elisabeth", "maman"]:
+                    member = m
+                    break
+
+    if not member:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Membre introuvable. Veuillez vérifier le prénom ou l'identifiant."
+        )
+
+    # Vérification de l'adresse email
+    if not member.email or not member.email.strip():
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=f"Aucune adresse e-mail n'est renseignée pour {member.prenom}. Veuillez contacter le gérant."
+        )
+
+    # 2. Génération d'un mot de passe aléatoire hautement sécurisé de 16 caractères (majuscules, minuscules, chiffres)
+    chars = string.ascii_letters + string.digits
+    while True:
+        new_password = "".join(secrets.choice(chars) for _ in range(16))
+        if (any(c.islower() for c in new_password) and
+            any(c.isupper() for c in new_password) and
+            any(c.isdigit() for c in new_password)):
+            break
+
+    # 3. Hachage avec pwd_context.hash(...)
+    hashed_password = pwd_context.hash(new_password)
+
+    # 4. Mise à jour hashed_password dans members (et users si répliquée)
+    member.password = hashed_password
+    if hasattr(member, "hashed_password"):
+        setattr(member, "hashed_password", hashed_password)
+
+    # Synchronisation de la table users répliquée si présente
+    try:
+        from sqlalchemy import text
+        db.execute(
+            text("UPDATE users SET password = :pwd WHERE id = :id OR lower(prenom) = :prenom"),
+            {"pwd": hashed_password, "id": member.id, "prenom": member.prenom.lower()}
+        )
+    except Exception as e:
+        logger.debug(f"Notice synchronisation table users: {e}")
+
+    try:
+        log_entry = Log(
+            action="FORGOT_PASSWORD_RESET",
+            user_name=member.prenom,
+            details=f"Nouveau mot de passe temporaire généré et envoyé par e-mail pour {member.prenom}"
+        )
+        db.add(log_entry)
+    except Exception:
+        pass
+
+    db.commit()
+    db.refresh(member)
+
+    # 5. Envoi de l'email via Resend
+    email_res = send_password_reset_email(
+        to_email=member.email,
+        member_name=member.prenom,
+        new_temporary_password=new_password
+    )
+    logger.info(f"[FORGOT PASSWORD] Reset email envoyé pour {member.prenom} ({member.email}): {email_res}")
+
+    # 6. Réponse standardisée
+    return {
+        "status": "ok",
+        "message": "Un nouveau mot de passe a été envoyé par e-mail."
     }
 
 @app.get("/api/auth/me", response_model=UserResponse)

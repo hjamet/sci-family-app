@@ -1,6 +1,6 @@
 from datetime import datetime
 from sqlalchemy import Column, Integer, String, Text, DateTime, ForeignKey, Float, UniqueConstraint, Boolean
-from sqlalchemy.orm import relationship
+from sqlalchemy.orm import relationship, synonym
 from .database import Base
 
 class Member(Base):
@@ -9,6 +9,7 @@ class Member(Base):
     id = Column(Integer, primary_key=True, index=True)
     prenom = Column(String(100), unique=True, index=True, nullable=False)
     name = Column(String(255), nullable=False)
+    nom = synonym("name")
     email = Column(String(255), unique=True, index=True, nullable=True)
     password = Column(String(255), nullable=False, default="pass123")
     role = Column(String(150), default="Membre Associé")  # e.g., "Coordinateur", "Membre Associé", "Artisan"
