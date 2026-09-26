@@ -39,6 +39,7 @@ frontend/verify_*.cjs
 test_*.py
 !backend/test_resend_and_notifications.py
 !backend/test_auth_validation.py
+!backend/tests/test_forgot_password.py
 
 # OS / IDE
 .DS_Store
