@@ -23,6 +23,15 @@ function formatTime(date) {
   });
 }
 
+/**
+ * Fonction globale exportée pour déclencher manuellement une alerte fail-fast
+ */
+export function triggerGlobalError(detail) {
+  if (typeof window !== 'undefined') {
+    window.dispatchEvent(new CustomEvent('app-error', { detail }));
+  }
+}
+
 export default function GlobalErrorAlert() {
   const [errors, setErrors] = useState([]);
   const [copiedId, setCopiedId] = useState(null);
