@@ -1077,6 +1077,7 @@ export async function fetchMemberSettings(memberIdOrName = 'current') {
     notify_pending_vote: true,
     notify_final_decision: true,
     notify_new_stay: true,
+    notify_mentions: true,
     notif_thermal_changes: false,
     notify_thermal_changes: false
   };
@@ -1121,13 +1122,22 @@ export async function updateMemberSettings(memberIdOrName = 'current', settings)
       ? `${API_BASE}/auth/settings`
       : `${API_BASE}/members/${encodeURIComponent(memberIdOrName)}/settings`;
 
-    const res = await fetch(endpoint, {
+    let res = await fetch(endpoint, {
       method: 'PUT',
       headers: getAuthJsonHeaders(),
       body: JSON.stringify(settings)
     });
     if (res.ok) {
       return await res.json();
+    }
+    // Fallback alternatif si /settings/notifications est ciblé
+    const altRes = await fetch(`${API_BASE}/settings/notifications`, {
+      method: 'PUT',
+      headers: getAuthJsonHeaders(),
+      body: JSON.stringify(settings)
+    });
+    if (altRes.ok) {
+      return await altRes.json();
     }
   } catch (err) {
     console.warn('API settings PUT indisponible, persistance locale assurée:', err);

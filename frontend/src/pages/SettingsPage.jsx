@@ -18,7 +18,8 @@ import {
   Info,
   RefreshCw,
   CheckCheck,
-  Thermometer
+  Thermometer,
+  AtSign
 } from 'lucide-react';
 import {
   fetchUserProfile,
@@ -94,12 +95,13 @@ export default function SettingsPage({ currentUser }) {
   const [passwordLoading, setPasswordLoading] = useState(false);
   const [passwordError, setPasswordError] = useState(null);
 
-  // --- États Préférences de Notifications (5 Toggles) ---
+  // --- États Préférences de Notifications (6 Toggles) ---
   const [notifications, setNotifications] = useState({
     notify_new_task: true,
     notify_pending_vote: true,
     notify_final_decision: true,
     notify_new_stay: true,
+    notify_mentions: true,
     notif_thermal_changes: false
   });
   const [notificationsLoading, setNotificationsLoading] = useState(false);
@@ -165,6 +167,7 @@ export default function SettingsPage({ currentUser }) {
             notify_pending_vote: settings.notify_pending_vote !== false,
             notify_final_decision: settings.notify_final_decision !== false,
             notify_new_stay: settings.notify_new_stay !== false,
+            notify_mentions: settings.notify_mentions !== false,
             notif_thermal_changes: thermalPref
           });
         }
@@ -262,6 +265,7 @@ export default function SettingsPage({ currentUser }) {
       notify_pending_vote: status,
       notify_final_decision: status,
       notify_new_stay: status,
+      notify_mentions: status,
       notif_thermal_changes: status,
       notify_thermal_changes: status
     });
@@ -695,6 +699,41 @@ export default function SettingsPage({ currentUser }) {
                 <div
                   className={`bg-white w-4 h-4 rounded-full shadow-md transform duration-300 ease-in-out ${
                     notifications.notify_new_stay ? 'translate-x-6' : 'translate-x-0'
+                  }`}
+                />
+              </div>
+            </div>
+          </div>
+
+          {/* Toggle : Mentions dans les discussions */}
+          <div
+            onClick={() => handleToggleNotification('notify_mentions')}
+            className="flex items-start justify-between gap-4 p-4 rounded-2xl border border-slate-200 hover:border-emerald-300 bg-slate-50/50 hover:bg-emerald-50/20 transition-all cursor-pointer select-none"
+          >
+            <div className="flex items-start gap-3.5">
+              <div className="w-9 h-9 rounded-xl bg-sky-100 text-sky-800 flex items-center justify-center shrink-0 mt-0.5 border border-sky-200">
+                <AtSign className="w-5 h-5 text-sky-800" />
+              </div>
+              <div>
+                <span className="text-sm font-bold text-slate-900">
+                  💬 Mentions dans les discussions
+                </span>
+                <p className="text-xs text-slate-600 mt-1">
+                  M'alerter par e-mail lorsqu'un membre me mentionne avec @ dans une discussion.
+                </p>
+              </div>
+            </div>
+
+            {/* Custom Toggle Switch */}
+            <div className="shrink-0 pt-1">
+              <div
+                className={`w-12 h-6 flex items-center rounded-full p-1 duration-300 ease-in-out ${
+                  notifications.notify_mentions ? 'bg-primary' : 'bg-slate-300'
+                }`}
+              >
+                <div
+                  className={`bg-white w-4 h-4 rounded-full shadow-md transform duration-300 ease-in-out ${
+                    notifications.notify_mentions ? 'translate-x-6' : 'translate-x-0'
                   }`}
                 />
               </div>
