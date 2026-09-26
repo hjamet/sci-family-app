@@ -317,9 +317,14 @@ def login(req: LoginRequest, request: Request, db: Session = Depends(get_db)):
     if not user:
         # Fallback loop using accent-insensitivity (normalize_prenom)
         all_users = db.query(User).all()
+        first_token_norm = input_norm.split()[0] if input_norm else ""
         for u in all_users:
             u_norm = normalize_prenom(u.prenom)
-            if u_norm == input_norm:
+            u_name_norm = normalize_prenom(u.name) if getattr(u, 'name', None) else ""
+            if u_norm == input_norm or u_name_norm == input_norm:
+                user = u
+                break
+            if first_token_norm and (u_norm == first_token_norm or (first_token_norm in ["elisabeth", "maman"] and u_norm in ["elisabeth", "maman"])):
                 user = u
                 break
             if input_norm in ["elisabeth", "maman"] and u_norm in ["elisabeth", "maman"]:
