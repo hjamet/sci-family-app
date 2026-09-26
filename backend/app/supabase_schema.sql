@@ -38,6 +38,7 @@ CREATE TABLE IF NOT EXISTS members (
     notif_vote_closed BOOLEAN DEFAULT TRUE,
     notif_stay_booked BOOLEAN DEFAULT TRUE,
     notif_thermal_changes BOOLEAN DEFAULT FALSE,
+    notify_mentions BOOLEAN DEFAULT TRUE,
     created_at TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP
 );
 

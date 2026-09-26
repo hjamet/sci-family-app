@@ -5,9 +5,11 @@ import uuid
 import logging
 import secrets
 import string
+import re
+import unicodedata
 from datetime import datetime, timedelta
 from typing import List, Optional, Any, Dict
-from fastapi import FastAPI, Depends, HTTPException, Query, UploadFile, File, Form, status, Request
+from fastapi import FastAPI, Depends, HTTPException, Query, UploadFile, File, Form, status, Request, BackgroundTasks
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 from fastapi.responses import FileResponse, Response, RedirectResponse
@@ -62,8 +64,10 @@ from .services.email_service import (
     send_stay_booked_email,
     send_thermal_change_email,
     send_password_reset_email,
+    send_mention_notification,
     notify_coordinator_new_issue,
-    notify_all_members_project_vote
+    notify_all_members_project_vote,
+    APP_BASE_URL
 )
 from .migrate_notifications import migrate_engine
 from dotenv import load_dotenv
@@ -190,7 +194,28 @@ def run_document_migrations():
     except Exception as e:
         logger.warning(f"Notice: run_document_migrations: {e}")
 
+def run_member_migrations():
+    from sqlalchemy import text
+    try:
+        with engine.connect() as conn:
+            if engine.dialect.name == "sqlite":
+                inspector_query = text("PRAGMA table_info(members)")
+                result = conn.execute(inspector_query).fetchall()
+                column_names = [row[1] for row in result]
+                if column_names:
+                    if "notify_mentions" not in column_names:
+                        conn.execute(text("ALTER TABLE members ADD COLUMN notify_mentions BOOLEAN DEFAULT 1"))
+                    conn.execute(text("UPDATE members SET notify_mentions = 1 WHERE notify_mentions IS NULL"))
+                    conn.commit()
+            else:
+                conn.execute(text("ALTER TABLE members ADD COLUMN IF NOT EXISTS notify_mentions BOOLEAN DEFAULT TRUE;"))
+                conn.execute(text("UPDATE members SET notify_mentions = TRUE WHERE notify_mentions IS NULL;"))
+                conn.commit()
+    except Exception as e:
+        logger.warning(f"Notice: run_member_migrations: {e}")
+
 try:
+    run_member_migrations()
     run_project_migrations()
     run_task_migrations()
     run_document_migrations()
@@ -201,6 +226,52 @@ except Exception as e:
 
 
 # --- Helper functions ---
+
+def normalize_text_for_matching(text: str) -> str:
+    """Removes accents and converts to lowercase for case/accent-insensitive comparisons."""
+    if not text:
+        return ""
+    nfkd = unicodedata.normalize('NFKD', text)
+    ascii_text = nfkd.encode('ASCII', 'ignore').decode('utf-8')
+    return ascii_text.strip().lower()
+
+def find_mentioned_members(content: str, db: Session) -> List[Member]:
+    r"""
+    Extracts @mentions with regex r'@([A-Za-zÀ-ÿ0-9_\-]+)' and matches with Member records.
+    Returns distinct matched members (case- and accent-insensitive).
+    """
+    if not content:
+        return []
+    raw_mentions = re.findall(r'@([A-Za-zÀ-ÿ0-9_\-]+)', content)
+    if not raw_mentions:
+        return []
+
+    all_members = db.query(Member).all()
+    matched_members = []
+    seen_ids = set()
+
+    for raw_mention in raw_mentions:
+        m_norm = normalize_text_for_matching(raw_mention)
+        if not m_norm:
+            continue
+        for member in all_members:
+            if member.id in seen_ids:
+                continue
+            prenom_norm = normalize_text_for_matching(member.prenom or "")
+            name_norm = normalize_text_for_matching(member.name or "")
+            name_tokens = [t for t in re.split(r'[\s\(\)\-_]+', name_norm) if t]
+
+            if (
+                m_norm == prenom_norm
+                or m_norm == name_norm
+                or m_norm in name_tokens
+                or (m_norm in ["maman", "elisabeth"] and prenom_norm in ["maman", "elisabeth"])
+            ):
+                matched_members.append(member)
+                seen_ids.add(member.id)
+                break
+
+    return matched_members
 
 def get_week_dates(year: int, week_number: int):
     """Returns start_date (Monday) and end_date (Sunday) strings for ISO week number."""
@@ -449,7 +520,13 @@ def login(req: LoginRequest, request: Request, db: Session = Depends(get_db)):
         "name": user.name,
         "email": user.email,
         "role": user.role,
-        "avatar_color": user.avatar_color
+        "avatar_color": user.avatar_color,
+        "notif_task_assigned": getattr(user, "notif_task_assigned", True),
+        "notif_vote_needed": getattr(user, "notif_vote_needed", True),
+        "notif_vote_closed": getattr(user, "notif_vote_closed", True),
+        "notif_stay_booked": getattr(user, "notif_stay_booked", True),
+        "notif_thermal_changes": getattr(user, "notif_thermal_changes", False),
+        "notify_mentions": getattr(user, "notify_mentions", True),
     }
 
 @app.post("/api/auth/forgot-password")
@@ -577,6 +654,7 @@ def get_auth_profile(current_user: User = Depends(get_current_user)):
         "notif_vote_closed": getattr(current_user, "notif_vote_closed", True),
         "notif_stay_booked": getattr(current_user, "notif_stay_booked", True),
         "notif_thermal_changes": getattr(current_user, "notif_thermal_changes", False),
+        "notify_mentions": getattr(current_user, "notify_mentions", True),
         "notify_new_task": getattr(current_user, "notif_task_assigned", True),
         "notify_pending_vote": getattr(current_user, "notif_vote_needed", True),
         "notify_final_decision": getattr(current_user, "notif_vote_closed", True),
@@ -630,6 +708,9 @@ def update_auth_profile(
     elif data.notify_thermal_changes is not None:
         current_user.notif_thermal_changes = data.notify_thermal_changes
 
+    if data.notify_mentions is not None:
+        current_user.notify_mentions = data.notify_mentions
+
     db.commit()
     db.refresh(current_user)
 
@@ -644,6 +725,7 @@ def update_auth_profile(
         "notif_vote_closed": getattr(current_user, "notif_vote_closed", True),
         "notif_stay_booked": getattr(current_user, "notif_stay_booked", True),
         "notif_thermal_changes": getattr(current_user, "notif_thermal_changes", False),
+        "notify_mentions": getattr(current_user, "notify_mentions", True),
         "notify_new_task": getattr(current_user, "notif_task_assigned", True),
         "notify_pending_vote": getattr(current_user, "notif_vote_needed", True),
         "notify_final_decision": getattr(current_user, "notif_vote_closed", True),
@@ -723,12 +805,31 @@ def get_member_settings(
         "notif_vote_closed": getattr(member, "notif_vote_closed", True),
         "notif_stay_booked": getattr(member, "notif_stay_booked", True),
         "notif_thermal_changes": getattr(member, "notif_thermal_changes", False),
+        "notify_mentions": getattr(member, "notify_mentions", True),
         "notify_new_task": getattr(member, "notif_task_assigned", True),
         "notify_pending_vote": getattr(member, "notif_vote_needed", True),
         "notify_final_decision": getattr(member, "notif_vote_closed", True),
         "notify_new_stay": getattr(member, "notif_stay_booked", True),
         "notify_thermal_changes": getattr(member, "notif_thermal_changes", False),
     }
+
+@app.get("/api/members/me/settings", response_model=MemberSettingsResponse)
+def get_members_me_settings(
+    current_user: Optional[User] = Depends(get_optional_current_user),
+    db: Session = Depends(get_db)
+):
+    member_id = current_user.id if current_user else 1
+    return get_member_settings(member_id, db)
+
+@app.put("/api/members/me/settings", response_model=MemberSettingsResponse)
+@app.patch("/api/members/me/settings", response_model=MemberSettingsResponse)
+def update_members_me_settings(
+    data: MemberSettingsUpdate,
+    current_user: Optional[User] = Depends(get_optional_current_user),
+    db: Session = Depends(get_db)
+):
+    member_id = current_user.id if current_user else 1
+    return update_member_settings(member_id, data, db)
 
 @app.put("/api/members/{member_id}/settings", response_model=MemberSettingsResponse)
 @app.patch("/api/members/{member_id}/settings", response_model=MemberSettingsResponse)
@@ -777,6 +878,9 @@ def update_member_settings(
     elif data.notify_thermal_changes is not None:
         member.notif_thermal_changes = data.notify_thermal_changes
 
+    if data.notify_mentions is not None:
+        member.notify_mentions = data.notify_mentions
+
     db.commit()
     db.refresh(member)
     return {
@@ -790,6 +894,7 @@ def update_member_settings(
         "notif_vote_closed": getattr(member, "notif_vote_closed", True),
         "notif_stay_booked": getattr(member, "notif_stay_booked", True),
         "notif_thermal_changes": getattr(member, "notif_thermal_changes", False),
+        "notify_mentions": getattr(member, "notify_mentions", True),
         "notify_new_task": getattr(member, "notif_task_assigned", True),
         "notify_pending_vote": getattr(member, "notif_vote_needed", True),
         "notify_final_decision": getattr(member, "notif_vote_closed", True),
@@ -811,6 +916,24 @@ def update_current_user_settings(
     db: Session = Depends(get_db)
 ):
     return update_member_settings(current_user.id, data, db)
+
+@app.get("/api/settings/notifications", response_model=MemberSettingsResponse)
+def get_settings_notifications(
+    current_user: Optional[User] = Depends(get_optional_current_user),
+    db: Session = Depends(get_db)
+):
+    member_id = current_user.id if current_user else 1
+    return get_member_settings(member_id, db)
+
+@app.put("/api/settings/notifications", response_model=MemberSettingsResponse)
+@app.patch("/api/settings/notifications", response_model=MemberSettingsResponse)
+def update_settings_notifications(
+    data: MemberSettingsUpdate,
+    current_user: Optional[User] = Depends(get_optional_current_user),
+    db: Session = Depends(get_db)
+):
+    member_id = current_user.id if current_user else 1
+    return update_member_settings(member_id, data, db)
 
 @app.get("/api/users", response_model=List[UserResponse])
 def get_users(db: Session = Depends(get_db)):
@@ -968,37 +1091,105 @@ def update_issue(issue_id: int, issue_update: IssueUpdate, db: Session = Depends
     return db_issue
 
 @app.post("/api/issues/{issue_id}/comments", response_model=CommentResponse, status_code=status.HTTP_201_CREATED)
-def add_comment(issue_id: int, comment: CommentCreate, db: Session = Depends(get_db)):
+def add_comment(
+    issue_id: int,
+    comment: CommentCreate,
+    background_tasks: BackgroundTasks = None,
+    db: Session = Depends(get_db)
+):
     db_issue = db.query(Issue).filter(Issue.id == issue_id).first()
     if not db_issue:
         raise HTTPException(status_code=404, detail="Problème non trouvé")
 
+    author_name = comment.author_name or "Henri Jamet"
+    content_text = (comment.content or "").strip()
+
     db_comment = Comment(
         issue_id=issue_id,
-        author_name=comment.author_name,
-        content=comment.content
+        author_name=author_name,
+        content=content_text
     )
     db.add(db_comment)
     db.commit()
     db.refresh(db_comment)
+
+    # Extraction et notification des membres mentionnés (@membre)
+    try:
+        mentioned_members = find_mentioned_members(db_comment.content, db)
+        target_url = f"{APP_BASE_URL}/admin?issue_id={db_issue.id}"
+        for member in mentioned_members:
+            if background_tasks:
+                background_tasks.add_task(
+                    send_mention_notification,
+                    mentioned_member=member,
+                    author_name=author_name,
+                    context_title=db_issue.title,
+                    message_text=db_comment.content,
+                    target_url=target_url
+                )
+            else:
+                send_mention_notification(
+                    mentioned_member=member,
+                    author_name=author_name,
+                    context_title=db_issue.title,
+                    message_text=db_comment.content,
+                    target_url=target_url
+                )
+    except Exception as e:
+        logger.error(f"[MENTIONS ERROR] Issue comment mention notification failed: {e}")
+
     return db_comment
 
 @app.post("/api/issues/{issue_id}/issue-comments", response_model=IssueCommentResponse, status_code=status.HTTP_201_CREATED)
-def add_issue_comment(issue_id: int, comment: IssueCommentCreate, db: Session = Depends(get_db)):
+def add_issue_comment(
+    issue_id: int,
+    comment: IssueCommentCreate,
+    background_tasks: BackgroundTasks = None,
+    db: Session = Depends(get_db)
+):
     db_issue = db.query(Issue).filter(Issue.id == issue_id).first()
     if not db_issue:
         raise HTTPException(status_code=404, detail="Problème non trouvé")
 
+    author_name = comment.author_name or "Henri Jamet"
+    comment_text = (comment.comment_text or "").strip()
+
     db_comment = IssueComment(
         issue_id=issue_id,
         author_id=comment.author_id,
-        author_name=comment.author_name,
-        comment_text=comment.comment_text,
+        author_name=author_name,
+        comment_text=comment_text,
         is_vote_comment=comment.is_vote_comment or False
     )
     db.add(db_comment)
     db.commit()
     db.refresh(db_comment)
+
+    # Extraction et notification des membres mentionnés (@membre)
+    try:
+        mentioned_members = find_mentioned_members(db_comment.comment_text, db)
+        target_url = f"{APP_BASE_URL}/admin?issue_id={db_issue.id}"
+        for member in mentioned_members:
+            if background_tasks:
+                background_tasks.add_task(
+                    send_mention_notification,
+                    mentioned_member=member,
+                    author_name=author_name,
+                    context_title=db_issue.title,
+                    message_text=db_comment.comment_text,
+                    target_url=target_url
+                )
+            else:
+                send_mention_notification(
+                    mentioned_member=member,
+                    author_name=author_name,
+                    context_title=db_issue.title,
+                    message_text=db_comment.comment_text,
+                    target_url=target_url
+                )
+    except Exception as e:
+        logger.error(f"[MENTIONS ERROR] Issue comment mention notification failed: {e}")
+
     return db_comment
 
 
@@ -1752,21 +1943,68 @@ def get_project_comments(project_id: int, db: Session = Depends(get_db)):
         raise HTTPException(status_code=404, detail="Projet non trouvé")
     return db.query(ProjectComment).filter(ProjectComment.project_id == project_id).order_by(ProjectComment.created_at.asc()).all()
 
+@app.get("/api/projects/{project_id}/messages", response_model=List[ProjectCommentResponse])
+def get_project_messages_alias(project_id: int, db: Session = Depends(get_db)):
+    return get_project_comments(project_id, db)
+
 @app.post("/api/projects/{project_id}/comments", response_model=ProjectCommentResponse, status_code=status.HTTP_201_CREATED)
-def add_project_comment(project_id: int, comment: ProjectCommentCreate, db: Session = Depends(get_db)):
+def add_project_comment(
+    project_id: int,
+    comment: ProjectCommentCreate,
+    background_tasks: BackgroundTasks = None,
+    db: Session = Depends(get_db)
+):
     db_proj = db.query(Project).filter(Project.id == project_id).first()
     if not db_proj:
         raise HTTPException(status_code=404, detail="Projet non trouvé")
 
+    author_name = comment.author_name or "Henri Jamet"
+    content_text = (comment.content or "").strip()
+
     db_comment = ProjectComment(
         project_id=project_id,
-        author_name=comment.author_name,
-        content=comment.content
+        author_name=author_name,
+        content=content_text
     )
     db.add(db_comment)
     db.commit()
     db.refresh(db_comment)
+
+    # Extraction et notification des membres mentionnés (@membre)
+    try:
+        mentioned_members = find_mentioned_members(db_comment.content, db)
+        target_url = f"{APP_BASE_URL}/taches?project_id={db_proj.id}"
+        for member in mentioned_members:
+            if background_tasks:
+                background_tasks.add_task(
+                    send_mention_notification,
+                    mentioned_member=member,
+                    author_name=author_name,
+                    context_title=db_proj.title,
+                    message_text=db_comment.content,
+                    target_url=target_url
+                )
+            else:
+                send_mention_notification(
+                    mentioned_member=member,
+                    author_name=author_name,
+                    context_title=db_proj.title,
+                    message_text=db_comment.content,
+                    target_url=target_url
+                )
+    except Exception as e:
+        logger.error(f"[MENTIONS ERROR] Project comment mention notification failed: {e}")
+
     return db_comment
+
+@app.post("/api/projects/{project_id}/messages", response_model=ProjectCommentResponse, status_code=status.HTTP_201_CREATED)
+def add_project_message_alias(
+    project_id: int,
+    comment: ProjectCommentCreate,
+    background_tasks: BackgroundTasks = None,
+    db: Session = Depends(get_db)
+):
+    return add_project_comment(project_id, comment, background_tasks, db)
 
 @app.delete("/api/projects/{project_id}", status_code=status.HTTP_204_NO_CONTENT)
 def delete_project(project_id: int, db: Session = Depends(get_db)):
@@ -2365,7 +2603,12 @@ def get_task_messages_alias(task_id: str, db: Session = Depends(get_db)):
 
 
 @app.post("/api/tasks/{task_id}/comments", status_code=status.HTTP_201_CREATED)
-def create_task_comment(task_id: str, req: TaskCommentCreate, db: Session = Depends(get_db)):
+def create_task_comment(
+    task_id: str,
+    req: TaskCommentCreate,
+    background_tasks: BackgroundTasks = None,
+    db: Session = Depends(get_db)
+):
     task = resolve_task_by_id_or_ref(task_id, db)
     if not req.content or not req.content.strip():
         raise HTTPException(status_code=400, detail="Le contenu du message ne peut pas être vide.")
@@ -2384,12 +2627,43 @@ def create_task_comment(task_id: str, req: TaskCommentCreate, db: Session = Depe
     db.add(db_comment)
     db.commit()
     db.refresh(db_comment)
+
+    # Extraction et notification des membres mentionnés (@membre)
+    try:
+        mentioned_members = find_mentioned_members(db_comment.content, db)
+        target_url = f"{APP_BASE_URL}/taches?id={task.id}"
+        for member in mentioned_members:
+            if background_tasks:
+                background_tasks.add_task(
+                    send_mention_notification,
+                    mentioned_member=member,
+                    author_name=author_name,
+                    context_title=task.title,
+                    message_text=db_comment.content,
+                    target_url=target_url
+                )
+            else:
+                send_mention_notification(
+                    mentioned_member=member,
+                    author_name=author_name,
+                    context_title=task.title,
+                    message_text=db_comment.content,
+                    target_url=target_url
+                )
+    except Exception as e:
+        logger.error(f"[MENTIONS ERROR] Task comment mention notification failed: {e}")
+
     return format_comment_response(db_comment)
 
 
 @app.post("/api/tasks/{task_id}/messages", status_code=status.HTTP_201_CREATED)
-def create_task_message_alias(task_id: str, req: TaskCommentCreate, db: Session = Depends(get_db)):
-    return create_task_comment(task_id, req, db)
+def create_task_message_alias(
+    task_id: str,
+    req: TaskCommentCreate,
+    background_tasks: BackgroundTasks = None,
+    db: Session = Depends(get_db)
+):
+    return create_task_comment(task_id, req, background_tasks, db)
 
 
 @app.post("/api/tasks/{task_id}/comments/{comment_id}/react")

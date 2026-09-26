@@ -870,3 +870,101 @@ def send_reservation_confirmation(
     )
 
 
+def send_mention_notification(
+    mentioned_member: Any,
+    author_name: str,
+    context_title: str,
+    message_text: str,
+    target_url: str
+) -> bool:
+    """
+    Template 6: MENTION DANS UNE DISCUSSION (@membre)
+    Notifies a mentioned member by email when they are @tagged in a chat (tasks, projects/votes, issues).
+    Garde-fous Resend & Anti-Spam :
+    - Ne pas envoyer d'email si l'auteur du message se mentionne lui-même.
+    - Ne pas envoyer d'email si mentioned_member.notify_mentions == False.
+    - Respecter le commutateur global DISABLE_ALL_EMAILS et le pare-feu.
+    Returns True if sent/simulated/dispatched successfully, False otherwise.
+    """
+    if not mentioned_member:
+        return False
+
+    member_name = getattr(mentioned_member, "name", "") or ""
+    member_prenom = getattr(mentioned_member, "prenom", "") or member_name
+    to_email = getattr(mentioned_member, "email", None)
+
+    # 1. Garde-fou Anti-auto-mention
+    author_clean = (author_name or "").strip().lower()
+    name_clean = member_name.strip().lower()
+    prenom_clean = member_prenom.strip().lower()
+
+    if author_clean and (
+        author_clean == name_clean
+        or author_clean == prenom_clean
+        or (len(author_clean) >= 3 and (author_clean in name_clean or name_clean in author_clean))
+        or (len(prenom_clean) >= 3 and (prenom_clean in author_clean or author_clean in prenom_clean))
+    ):
+        logger.info(f"[MENTION] Anti-auto-mention ignorée : '{author_name}' s'est mentionné(e) lui-même ({member_name}). Aucun email.")
+        return False
+
+    # 2. Préférence de notification du membre
+    if not getattr(mentioned_member, "notify_mentions", True):
+        logger.info(f"[MENTION] Notification désactivée pour {member_name} (notify_mentions=False). Aucun email.")
+        return False
+
+    # 3. Vérification de l'adresse e-mail
+    if not to_email or "@" not in str(to_email):
+        logger.warning(f"[MENTION] Aucun email valide pour le membre {member_name} ({to_email}).")
+        return False
+
+    # 4. Coupe-circuit d'urgence global
+    if is_email_disabled():
+        logger.info(f"[MENTION] Coupe-circuit global actif (DISABLE_ALL_EMAILS=True). Aucun email envoyé vers {to_email}.")
+        return False
+
+    # 5. Construction de l'e-mail HTML selon la charte de la SCI Hellenvilliers
+    import html as html_lib
+    safe_message = html_lib.escape(message_text or "").replace("\n", "<br>")
+    safe_author = html_lib.escape(author_name or "Un associé")
+    safe_title = html_lib.escape(context_title or "Discussion")
+
+    greeting_name = member_prenom or member_name or "associé(e)"
+
+    subject = f'[Hellenvilliers SCI] {author_name} vous a mentionné(e) dans "{context_title}"'
+    preheader = f"{author_name} vous a mentionné(e) dans la discussion de {context_title}"
+
+    content_html = f"""
+    <p>Bonjour {greeting_name},</p>
+    <p><strong>{safe_author}</strong> vous a mentionné(e) dans la discussion de <strong>{safe_title}</strong> :</p>
+
+    <div style="background-color: #f9f8f6; border: 1px solid #e5e3dc; border-left: 4px solid #1e3a2f; border-radius: 6px; padding: 16px 20px; margin: 20px 0; font-style: italic; color: #1f2937; font-size: 15px; line-height: 1.6;">
+        « {safe_message} »
+    </div>
+
+    <p style="color: #4b5563; font-size: 14px;">
+        Vous pouvez accéder directement à la discussion pour prendre connaissance de l'échange et y répondre :
+    </p>
+    <p style="font-size: 12px; color: #6b7280; margin-top: 24px; padding-top: 12px; border-top: 1px solid #eee;">
+        💡 <em>Vous pouvez désactiver cette notification à tout moment dans vos <a href="{APP_BASE_URL}/#settings" style="color: #2d5a47; text-decoration: underline;">Paramètres &amp; Préférences</a>.</em>
+    </p>
+    """
+
+    effective_target_url = target_url or f"{APP_BASE_URL}/taches"
+    html_body = render_email_layout(
+        title="Mention dans une discussion",
+        preheader=preheader,
+        content_html=content_html,
+        action_url=effective_target_url,
+        action_label="Accéder à la discussion"
+    )
+
+    # 6. Envoi de l'e-mail via Resend
+    res = send_email(to_email=to_email, subject=subject, html_content=html_body)
+
+    if isinstance(res, dict) and (res.get("error") or res.get("status") == "error"):
+        logger.error(f"[MENTION] Échec de l'envoi de l'e-mail Resend à {to_email} : {res}")
+        return False
+
+    return True
+
+

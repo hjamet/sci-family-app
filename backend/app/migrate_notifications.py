@@ -11,6 +11,7 @@ GENERAL_NOTIFICATION_COLUMNS = [
     ("notif_vote_needed", "BOOLEAN DEFAULT TRUE"),
     ("notif_vote_closed", "BOOLEAN DEFAULT TRUE"),
     ("notif_stay_booked", "BOOLEAN DEFAULT TRUE"),
+    ("notify_mentions", "BOOLEAN DEFAULT TRUE"),
 ]
 
 # Column for thermal changes (default FALSE, activated for coordinators)
@@ -103,6 +104,9 @@ def migrate_sqlite_db(db_path: str = None):
                 if "notify_thermal_changes" not in ms_cols:
                     cursor.execute("ALTER TABLE member_settings ADD COLUMN notify_thermal_changes BOOLEAN DEFAULT FALSE")
                 cursor.execute("UPDATE member_settings SET notify_thermal_changes = 0 WHERE notify_thermal_changes IS NULL")
+                if "notify_mentions" not in ms_cols:
+                    cursor.execute("ALTER TABLE member_settings ADD COLUMN notify_mentions BOOLEAN DEFAULT TRUE")
+                cursor.execute("UPDATE member_settings SET notify_mentions = 1 WHERE notify_mentions IS NULL")
                 # Activate for coordinator and assistant
                 cursor.execute("""
                     UPDATE member_settings SET notify_thermal_changes = 1
@@ -209,6 +213,13 @@ def migrate_engine(engine):
                         updated_at TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP
                     );
                 """))
+
+                # member_settings notify_mentions
+                try:
+                    conn.execute(text("ALTER TABLE member_settings ADD COLUMN IF NOT EXISTS notify_mentions BOOLEAN DEFAULT TRUE;"))
+                    conn.execute(text("UPDATE member_settings SET notify_mentions = TRUE WHERE notify_mentions IS NULL;"))
+                except Exception as ms_mig_err:
+                    logger.debug(f"[MIGRATION NOTICE] member_settings notice: {ms_mig_err}")
 
                 # admin_documents drive_file_id
                 try:

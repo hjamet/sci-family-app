@@ -46,6 +46,7 @@ class MemberBase(BaseModel):
     notif_vote_closed: bool = True
     notif_stay_booked: bool = True
     notif_thermal_changes: bool = False
+    notify_mentions: bool = True
 
 class MemberCreate(MemberBase):
     password: str = "pass123"
@@ -62,6 +63,7 @@ class MemberUpdate(BaseModel):
     notif_vote_closed: Optional[bool] = None
     notif_stay_booked: Optional[bool] = None
     notif_thermal_changes: Optional[bool] = None
+    notify_mentions: Optional[bool] = None
 
 class MemberResponse(MemberBase):
     id: int
@@ -83,6 +85,7 @@ class MemberSettingsResponse(BaseModel):
     notif_vote_closed: bool = True
     notif_stay_booked: bool = True
     notif_thermal_changes: bool = False
+    notify_mentions: bool = True
 
     class Config:
         from_attributes = True
@@ -94,6 +97,7 @@ class MemberSettingsUpdate(BaseModel):
     notif_vote_closed: Optional[bool] = None
     notif_stay_booked: Optional[bool] = None
     notif_thermal_changes: Optional[bool] = None
+    notify_mentions: Optional[bool] = None
 
 class ChangePasswordRequest(BaseModel):
     old_password: str
@@ -114,6 +118,7 @@ class TokenResponse(BaseModel):
     notif_vote_closed: Optional[bool] = None
     notif_stay_booked: Optional[bool] = None
     notif_thermal_changes: Optional[bool] = None
+    notify_mentions: Optional[bool] = None
 
 # Property Schemas
 class PropertyBase(BaseModel):
@@ -956,6 +961,7 @@ class ProfileUpdateRequest(BaseModel):
     notify_final_decision: Optional[bool] = None
     notify_new_stay: Optional[bool] = None
     notify_thermal_changes: Optional[bool] = None
+    notify_mentions: Optional[bool] = None
 
 
 class ChangePasswordRequest(BaseModel):
@@ -976,6 +982,7 @@ class MemberSettingsResponse(BaseModel):
     notif_vote_closed: bool = True
     notif_stay_booked: bool = True
     notif_thermal_changes: bool = False
+    notify_mentions: bool = True
     # Aliases for legacy compatibility
     notify_new_task: bool = True
     notify_pending_vote: bool = True
@@ -994,6 +1001,7 @@ class MemberSettingsUpdate(BaseModel):
     notif_vote_closed: Optional[bool] = None
     notif_stay_booked: Optional[bool] = None
     notif_thermal_changes: Optional[bool] = None
+    notify_mentions: Optional[bool] = None
     notify_new_task: Optional[bool] = None
     notify_pending_vote: Optional[bool] = None
     notify_final_decision: Optional[bool] = None
