@@ -1,6 +1,15 @@
 import os
+import sys
 import unittest
 from unittest.mock import patch, MagicMock
+
+BACKEND_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+if BACKEND_DIR not in sys.path:
+    sys.path.insert(0, BACKEND_DIR)
+
+from dotenv import load_dotenv
+load_dotenv(os.path.join(BACKEND_DIR, ".env"))
+
 from fastapi.testclient import TestClient
 from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker
@@ -27,7 +36,7 @@ class TestForgotPassword(unittest.TestCase):
         # Verify email call
         self.assertTrue(mock_send_email.called)
         call_args = mock_send_email.call_args[1]
-        self.assertEqual(call_args["to_email"], "henri@sci-familiale.fr")
+        self.assertEqual(call_args["to_email"], "hellenvillierssci@gmail.com")
         self.assertEqual(call_args["member_name"], "Henri")
         temp_pw = call_args["new_temporary_password"]
         
@@ -52,7 +61,7 @@ class TestForgotPassword(unittest.TestCase):
         self.assertEqual(resp.status_code, 200)
         self.assertTrue(mock_send_email.called)
         call_args = mock_send_email.call_args[1]
-        self.assertEqual(call_args["to_email"], "eugenie@sci-familiale.fr")
+        self.assertEqual(call_args["to_email"], "eugenie_jamet@yahoo.fr")
 
     @patch("app.main.send_password_reset_email")
     def test_forgot_password_by_member_id(self, mock_send_email):
@@ -72,14 +81,14 @@ class TestForgotPassword(unittest.TestCase):
         mock_send_email.return_value = {"id": "mock_template_123"}
 
         res = send_password_reset_email(
-            to_email="test@sci-familiale.fr",
+            to_email="hellenvillierssci@gmail.com",
             member_name="Henri",
             new_temporary_password="Abc123Xyz456Def7"
         )
 
         self.assertTrue(mock_send_email.called)
         call_args = mock_send_email.call_args[1]
-        self.assertEqual(call_args["to_email"], "test@sci-familiale.fr")
+        self.assertEqual(call_args["to_email"], "hellenvillierssci@gmail.com")
         self.assertEqual(call_args["subject"], "[SCI Hellenvilliers] Réinitialisation de votre mot de passe")
         
         html = call_args["html_content"]
