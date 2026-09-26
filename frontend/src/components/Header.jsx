@@ -1,6 +1,42 @@
 import React, { useState, useRef, useEffect } from 'react';
 
-const LOGO_SRC = "https://lh3.googleusercontent.com/aida/AEtjO1XJm77TR1PDDNkcRQ9wWXxqn7aRo_l5hBaVlxguOsGLSAEvUQBa_nqdAg31UW1TezCKGNFt3GFJwyKeQv07MfT07ONtxL2DjvfDlafbm8teXhd6aAGg-ajmno0damHQ6wtW2VZebF2ID6B0aVF-oS4x2zJ1SSQ4WPcrozSEnp3AL0fRy0KHJ85J1QLs7mZLubByQeBQ3BoGjtCN2g_5WB9RxvuZBi7OfOQP58Z2Jo9q";
+// Logo SVG épuré et architectural : Monogramme 'H' surmonté du toit de la bâtisse familiale
+function HouseHLogo({ className = "w-10 h-10" }) {
+  return (
+    <div
+      className={`${className} rounded-xl bg-sage-soft text-primary flex items-center justify-center p-1.5 shadow-sm border border-sage-border/60 transition-all duration-200 group-hover:scale-105 group-hover:bg-primary group-hover:text-white`}
+    >
+      <svg
+        viewBox="0 0 36 36"
+        className="w-full h-full"
+        fill="none"
+        xmlns="http://www.w3.org/2000/svg"
+        aria-label="Logo Domaine d'Hellenvilliers"
+      >
+        {/* Toit de la bâtisse avec débord architectural */}
+        <path
+          d="M 5 15 L 18 5 L 31 15"
+          stroke="currentColor"
+          strokeWidth="2.5"
+          strokeLinecap="round"
+          strokeLinejoin="round"
+        />
+        {/* Cheminée épurée sur le versant droit */}
+        <path
+          d="M 23 8.8 V 5.5 H 26 V 11.2"
+          stroke="currentColor"
+          strokeWidth="2"
+          strokeLinecap="round"
+          strokeLinejoin="round"
+        />
+        {/* Monogramme 'H' formant les piliers et la structure du domaine */}
+        <line x1="11" y1="16" x2="11" y2="30.5" stroke="currentColor" strokeWidth="2.75" strokeLinecap="round" />
+        <line x1="25" y1="16" x2="25" y2="30.5" stroke="currentColor" strokeWidth="2.75" strokeLinecap="round" />
+        <line x1="11" y1="23" x2="25" y2="23" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" />
+      </svg>
+    </div>
+  );
+}
 
 const NAV_ITEMS = [
   { id: 'home', label: 'Tableau de bord', path: '/', icon: 'dashboard' },
@@ -19,7 +55,6 @@ export default function Header({
 }) {
   const [isUserMenuOpen, setIsUserMenuOpen] = useState(false);
   const [isMobileMenuOpen, setIsMobileMenuOpen] = useState(false);
-  const [logoError, setLogoError] = useState(false);
   const dropdownRef = useRef(null);
   const mobileMenuRef = useRef(null);
 
@@ -72,18 +107,7 @@ export default function Header({
           onClick={() => handleTabClick(NAV_ITEMS[0])}
           className="flex items-center gap-3 shrink-0 cursor-pointer select-none group"
         >
-          {!logoError ? (
-            <img
-              alt="Blason Domaine d'Hellenvilliers"
-              className="h-9 w-auto object-contain transition-transform group-hover:scale-105"
-              src={LOGO_SRC}
-              onError={() => setLogoError(true)}
-            />
-          ) : (
-            <div className="w-10 h-10 rounded-xl bg-sage-soft text-primary flex items-center justify-center font-bold shadow-sm transition-transform group-hover:scale-105">
-              <span className="material-symbols-outlined text-[24px]">castle</span>
-            </div>
-          )}
+          <HouseHLogo className="w-10 h-10" />
           <div className="flex flex-col">
             <span className="font-headline-sm text-headline-sm text-primary leading-tight tracking-tight">
               Domaine d'Hellenvilliers

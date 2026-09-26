@@ -6,7 +6,6 @@ import {
   Trash2, Paperclip, FileCode, Image as ImageIcon, File, Eye, AlertTriangle, RefreshCw,
   Pencil, Lock, User, Receipt, Wallet, FileSpreadsheet, ExternalLink
 } from 'lucide-react';
-import WorkloadDashboard from '../components/WorkloadDashboard';
 import FinancialLedgerModal from '../components/FinancialLedgerModal';
 import BankReauthBanner from '../components/BankReauthBanner';
 import { fetchAdminDocuments, deleteAdminDocument, fetchBankStatus } from '../api';
@@ -39,7 +38,7 @@ function renderMarkdownLine(line, idx) {
   return <p key={idx} className="text-xs text-slate-700 leading-relaxed font-normal">{line}</p>;
 }
 
-// 8 Stitch Model Documents
+// Documents Authentiques de la SCI Hellenvilliers
 const INITIAL_STITCH_DOCUMENTS = [
   {
     id: 'doc-statuts-1',
@@ -62,27 +61,6 @@ const INITIAL_STITCH_DOCUMENTS = [
     topIconColor: 'text-tertiary-container',
     centerCircleStyle: 'border-2 border-dashed border-tertiary-container/40 text-tertiary-container',
     bottomRightColor: 'text-primary'
-  },
-  {
-    id: 'doc-devis-perrot-2',
-    title: 'Devis Élagage & Entretien Espaces Verts 2026 — EI Perrot.pdf',
-    category: 'devis',
-    categoryLabel: 'Devis & Travaux',
-    date: '2026-05-12',
-    formattedDate: '12 mai 2026',
-    size: '840 Ko',
-    sizeBytes: 840000,
-    author: 'Hortense Jamet',
-    thumbType: 'pdf',
-    thumbIcon: 'park',
-    thumbCenterTitle: 'EI PERROT PAYSAGE',
-    thumbCenterSub: 'Élagage Allée des Chênes',
-    thumbBottomLeft: 'Acompte 30% versé',
-    thumbBottomRight: 'Validé',
-    topBadge: { text: 'PDF', bg: 'bg-error text-on-error' },
-    topRightBadge: { text: '3 900 € TTC', bg: 'bg-amber-soft text-amber-rich font-bold' },
-    centerCircleStyle: 'bg-sage-soft text-primary',
-    bottomRightColor: 'text-secondary'
   },
   {
     id: 'doc-kbis-3',
@@ -151,27 +129,6 @@ const INITIAL_STITCH_DOCUMENTS = [
     bottomRightColor: 'text-secondary'
   },
   {
-    id: 'doc-facture-declercq-6',
-    title: 'Facture Acquittée FA0069094 — DECLERCQ PISCINES.pdf',
-    category: 'devis',
-    categoryLabel: 'Devis & Factures',
-    date: '2026-06-03',
-    formattedDate: '3 juin 2026',
-    size: '650 Ko',
-    sizeBytes: 650000,
-    author: 'Frédéric Jamet',
-    thumbType: 'pdf',
-    thumbIcon: 'pool',
-    thumbCenterTitle: 'DECLERCQ PISCINES',
-    thumbCenterSub: 'Remise en route & Hivernage',
-    thumbBottomLeft: 'Règlement : CCA Frédéric J.',
-    thumbBottomRight: '650 €',
-    topBadge: { text: 'PDF', bg: 'bg-error text-on-error' },
-    topRightBadge: { text: 'Acquittée', bg: 'bg-sage-soft text-forest-deep font-bold' },
-    centerCircleStyle: 'bg-surface-container-lowest border border-border-subtle text-secondary',
-    bottomRightColor: 'text-primary'
-  },
-  {
     id: 'doc-rib-ca-7',
     title: 'RIB Officiel — Compte Dédié Crédit Agricole SCI.pdf',
     category: 'banque',
@@ -192,103 +149,31 @@ const INITIAL_STITCH_DOCUMENTS = [
     topIconColor: 'text-primary',
     centerCircleStyle: 'bg-surface-container-lowest border border-border-subtle text-primary',
     bottomRightColor: 'text-secondary'
-  },
-  {
-    id: 'doc-diag-charpente-8',
-    title: 'Diagnostic Expert Charpente Poutres Presbytère.pdf',
-    category: 'travaux',
-    categoryLabel: 'Travaux & Diagnostics',
-    date: '2026-03-22',
-    formattedDate: '22 mars 2026',
-    size: '1.5 Mo',
-    sizeBytes: 1500000,
-    author: 'Henri Jamet',
-    thumbType: 'pdf',
-    thumbIcon: 'architecture',
-    thumbCenterTitle: 'CABINET EXPERTIS BOIS',
-    thumbCenterSub: 'Contrôle structurel charpente',
-    thumbBottomLeft: 'Presbytère nord',
-    thumbBottomRight: 'Sain (Suivi 3 ans)',
-    topBadge: { text: 'PDF', bg: 'bg-error text-on-error' },
-    topIcon: 'construction',
-    topIconColor: 'text-amber-rich',
-    centerCircleStyle: 'bg-surface-container-lowest border border-border-subtle text-on-surface',
-    bottomRightColor: 'text-amber-rich'
   }
 ];
 
-// Initial Invoices Models
-const INITIAL_INVOICES = [
-  {
-    id: 'inv-1',
-    date: '03 juin 2026',
-    dueDate: 'Échéance : 20 juin 2026',
-    supplier: 'DECLERCQ PISCINES',
-    reference: 'FA0069094 • Remise en route bassin & hivernage',
-    amount: '650,00 €',
-    taxInfo: 'TVA 20% incluse',
-    status: 'Payée (CCA Frédéric)',
-    statusType: 'paid',
-    filename: 'FA0069094.pdf'
-  },
-  {
-    id: 'inv-2',
-    date: '18 mai 2026',
-    dueDate: 'Échéance : 18 juin 2026',
-    dueWarning: true,
-    supplier: 'ÉTS JOSSE COMBUSTIBLES',
-    reference: 'F-2026-042 • Ravitaillement Fioul 1 500 L Presbytère',
-    amount: '1 820,00 €',
-    taxInfo: 'Part Henri J. : 910,00 €',
-    status: 'En attente de règlement',
-    statusType: 'pending',
-    filename: 'Josse-F2026-042.pdf'
-  },
-  {
-    id: 'inv-3',
-    date: '12 mai 2026',
-    dueDate: 'Acompte acquitté',
-    supplier: 'EI PERROT PAYSAGE',
-    reference: 'F-2026-118 • Élagage Allée des Chênes & Parc Nord',
-    amount: '1 170,00 €',
-    taxInfo: 'Acompte 30% validé',
-    status: 'Validée / Virement SCI',
-    statusType: 'verified',
-    filename: 'Facture-Perrot-118.pdf'
-  },
-  {
-    id: 'inv-4',
-    date: '10 avril 2026',
-    dueDate: 'Avance de frais perso',
-    supplier: 'BRICOMARCHÉ CONCHES',
-    reference: 'T-99218 • Quincaillerie, serrures & scellements parc',
-    amount: '184,50 €',
-    taxInfo: 'Avancé par Henri J.',
-    status: 'À rembourser par la SCI',
-    statusType: 'refund',
-    filename: 'Ticket-Brico-99218.pdf'
-  }
-];
+// Initial Invoices Models — Vide par défaut pour n'afficher aucun faux document / facture inventée
+const INITIAL_INVOICES = [];
 
 export default function AdminInfoPage({ currentUser }) {
   const activeUser = currentUser || localStorage.getItem('sci_user') || 'Henri Jamet';
   const isCoordinator = activeUser === 'Henri' || activeUser === 'Henri Jamet' || (typeof activeUser === 'object' && activeUser?.prenom === 'Henri');
 
-  // KPI Financial Totals
+  // KPI Financial Totals (Zéro valeur inventée - initialisé à null)
   const [financialTotals, setFinancialTotals] = useState({
-    entrees: 4200.0,
-    sorties: 2450.0,
-    reserves: 6850.0
+    entrees: null,
+    sorties: null,
+    reserves: null
   });
 
-  // Open Banking DSP2 Status
+  // Open Banking Status
   const [bankStatus, setBankStatus] = useState(null);
 
   const loadBankStatus = async () => {
     try {
       const data = await fetchBankStatus();
       setBankStatus(data);
-      if (data && data.total_balance !== undefined && data.total_balance !== null && data.total_balance > 0) {
+      if (data && data.total_balance !== undefined && data.total_balance !== null && data.status === 'ok' && !data.needs_reauth) {
         setFinancialTotals((prev) => ({
           ...prev,
           reserves: data.total_balance
@@ -302,6 +187,15 @@ export default function AdminInfoPage({ currentUser }) {
   useEffect(() => {
     loadBankStatus();
   }, []);
+
+  // Détermine si des données bancaires réelles et actives sont disponibles
+  const hasRealBankData = Boolean(
+    bankStatus &&
+    bankStatus.status === 'ok' &&
+    !bankStatus.needs_reauth &&
+    bankStatus.total_balance !== undefined &&
+    bankStatus.total_balance !== null
+  );
 
   // Documents State
   const [documents, setDocuments] = useState(INITIAL_STITCH_DOCUMENTS);
@@ -349,59 +243,9 @@ export default function AdminInfoPage({ currentUser }) {
     }, 3500);
   };
 
-  // Additional SCI Features (Accordion/Ledger)
+  // Additional SCI Features (Grand Livre Financier)
   const [isFinancialModalOpen, setIsFinancialModalOpen] = useState(false);
   const [financialModalTab, setFinancialModalTab] = useState('grand_livre');
-  const [monthlyContribution, setMonthlyContribution] = useState(50);
-  const [copiedRib, setCopiedRib] = useState(false);
-  const [showExtendedSections, setShowExtendedSections] = useState(false);
-
-  // Meetings State & Modals
-  const [meetings, setMeetings] = useState([
-    {
-      id: 'm-1',
-      date: '2026-08-08',
-      formattedDate: '8 Août 2026 (Matin)',
-      title: "Réunion Familiale SCI — Maintien du Patrimoine, Budget 50 €/mois & Rôle Coordinateur",
-      subtitle: "Assemblée Familiale Cadreuse • PV Officiel & Consensus",
-      summaryText: "La réunion familiale s'est déroulée selon un ordre du jour structuré et des votes formalisés. La SCI est maintenue, avec une contribution de 50 €/mois par associé en Compte Courant d'Associé (CCA) pendant une année test. Henri assume le rôle de coordinateur général avec Joséphine en adjointe."
-    },
-    {
-      id: 'm-2',
-      date: '2026-08-08',
-      formattedDate: '8 Août 2026 (Après-midi)',
-      title: "Réunion d'Organisation Rosing — Économies Chauffage, Jardinier Perrot & Priorités Travaux",
-      subtitle: "Assemblée Après-Midi Rosing • PV Technique, Économies & Arbitrages",
-      summaryText: "Réunion technique tenue l'après-midi du 8 août à Rosing. Décisions d'économies immédiates : consigne de chauffage limitée à 20°C max en séjour, débranchement du frigo Rosing inutilisé. Révision devis jardinier Perrot et arbitrage prioritaire diagnostic expert poutres."
-    },
-    {
-      id: 'm-3',
-      date: '2026-08-07',
-      formattedDate: '7 Août 2026',
-      title: "Audit Financier, Fiscal & Ouverture du Compte Bancaire SCI",
-      subtitle: "Session Préparatoire • Analyse Démembrement, Taxe Foncière & Taux CCA",
-      summaryText: "Audit juridique et financier consolidé pour l'ouverture du compte bancaire de la SCI au Crédit Agricole Normandie. Confirmation du périmètre Rosing et Le Presbytère (Paris exclu)."
-    }
-  ]);
-
-  const [selectedMeeting, setSelectedMeeting] = useState(null);
-  const [isMeetingModalOpen, setIsMeetingModalOpen] = useState(false);
-
-  // RIB Data
-  const ribData = {
-    titulaire: "SCI HELLENVILLIERS",
-    banque: "Crédit Agricole Normandie",
-    iban: "FR76 1751 5000 0112 3456 7890 123",
-    bic: "AGRIFR2X"
-  };
-
-  const handleCopyRib = () => {
-    const textToCopy = `Titulaire: ${ribData.titulaire}\nIBAN: ${ribData.iban}\nBIC: ${ribData.bic}\nBanque: ${ribData.banque}`;
-    navigator.clipboard.writeText(textToCopy);
-    setCopiedRib(true);
-    showToast('RIB Copié', 'Les coordonnées bancaires du Crédit Agricole ont été copiées.', 'content_copy');
-    setTimeout(() => setCopiedRib(false), 2500);
-  };
 
   // Download simulation with real text/markdown Blob
   const handleDownload = (docTitle, fileName) => {
@@ -490,14 +334,14 @@ export default function AdminInfoPage({ currentUser }) {
     if (operationType === 'in') {
       setFinancialTotals((prev) => ({
         ...prev,
-        entrees: prev.entrees + amountNum,
-        reserves: prev.reserves + amountNum
+        entrees: (prev.entrees !== null ? prev.entrees : 0) + amountNum,
+        reserves: prev.reserves !== null ? prev.reserves + amountNum : amountNum
       }));
     } else {
       setFinancialTotals((prev) => ({
         ...prev,
-        sorties: prev.sorties + amountNum,
-        reserves: prev.reserves - amountNum
+        sorties: (prev.sorties !== null ? prev.sorties : 0) + amountNum,
+        reserves: prev.reserves !== null ? prev.reserves - amountNum : -amountNum
       }));
     }
 
@@ -514,9 +358,9 @@ export default function AdminInfoPage({ currentUser }) {
 
   // Pre-fill operation for quick invoice payment
   const openPayInvoiceOperation = (inv) => {
-    const rawVal = inv.amount.replace('€', '').replace(/\s/g, '').replace(',', '.');
+    const rawVal = inv?.amount ? String(inv.amount).replace('€', '').replace(/\s/g, '').replace(',', '.') : '';
     setOperationType('out');
-    setOperationAmount(parseFloat(rawVal) || '1820.00');
+    setOperationAmount(parseFloat(rawVal) || '');
     setOperationLabel(`Règlement Facture ${inv.supplier} (${inv.reference})`);
     setIsOperationModalOpen(true);
   };
@@ -658,7 +502,9 @@ export default function AdminInfoPage({ currentUser }) {
                 </span>
                 <div className="flex items-baseline gap-2 mt-2">
                   <span className="font-headline-lg text-headline-lg font-bold text-forest-deep tabular-nums">
-                    {financialTotals.entrees.toLocaleString('fr-FR', { minimumFractionDigits: 2, maximumFractionDigits: 2 })} €
+                    {hasRealBankData && financialTotals.entrees !== null
+                      ? `${financialTotals.entrees.toLocaleString('fr-FR', { minimumFractionDigits: 2, maximumFractionDigits: 2 })} €`
+                      : '?'}
                   </span>
                 </div>
               </div>
@@ -685,7 +531,9 @@ export default function AdminInfoPage({ currentUser }) {
                 </span>
                 <div className="flex items-baseline gap-2 mt-2">
                   <span className="font-headline-lg text-headline-lg font-bold text-on-surface tabular-nums">
-                    {financialTotals.sorties.toLocaleString('fr-FR', { minimumFractionDigits: 2, maximumFractionDigits: 2 })} €
+                    {hasRealBankData && financialTotals.sorties !== null
+                      ? `${financialTotals.sorties.toLocaleString('fr-FR', { minimumFractionDigits: 2, maximumFractionDigits: 2 })} €`
+                      : '?'}
                   </span>
                 </div>
               </div>
@@ -704,7 +552,9 @@ export default function AdminInfoPage({ currentUser }) {
                 </span>
                 <div className="flex items-baseline gap-2 mt-2">
                   <span className="font-headline-lg text-headline-lg font-bold text-primary tabular-nums">
-                    {financialTotals.reserves.toLocaleString('fr-FR', { minimumFractionDigits: 2, maximumFractionDigits: 2 })} €
+                    {hasRealBankData && financialTotals.reserves !== null
+                      ? `${financialTotals.reserves.toLocaleString('fr-FR', { minimumFractionDigits: 2, maximumFractionDigits: 2 })} €`
+                      : '?'}
                   </span>
                 </div>
               </div>
@@ -712,17 +562,12 @@ export default function AdminInfoPage({ currentUser }) {
                 savings
               </span>
             </div>
-            {bankStatus && bankStatus.needs_reauth && (
+            {!hasRealBankData && (
               <div className="mt-2 pt-2 border-t border-rose-100 flex items-center justify-between text-[11px] text-rose-800">
                 <span className="inline-flex items-center gap-1 font-medium">
                   <span className="w-1.5 h-1.5 rounded-full bg-rose-500 animate-pulse"></span>
-                  Relevé en cache (hors ligne)
+                  Liaison bancaire inactive ou à renouveler
                 </span>
-                {bankStatus.last_successful_sync && (
-                  <span className="opacity-75">
-                    {new Date(bankStatus.last_successful_sync).toLocaleDateString('fr-FR')}
-                  </span>
-                )}
               </div>
             )}
           </div>
@@ -778,7 +623,20 @@ export default function AdminInfoPage({ currentUser }) {
               </tr>
             </thead>
             <tbody className="divide-y divide-border-subtle font-body-md text-sm text-on-surface">
-              {invoices.map((inv) => (
+              {invoices.length === 0 ? (
+                <tr>
+                  <td colSpan="6" className="py-12 px-4 text-center text-on-surface-variant font-body-md text-xs">
+                    <div className="flex flex-col items-center justify-center gap-2">
+                      <span className="material-symbols-outlined text-[32px] text-outline">receipt_long</span>
+                      <span className="font-semibold text-forest-deep text-sm">Aucun justificatif ou facture en attente</span>
+                      <span className="text-on-surface-variant text-xs max-w-sm">
+                        Les factures, devis et justificatifs de dépenses téléversés apparaîtront ici.
+                      </span>
+                    </div>
+                  </td>
+                </tr>
+              ) : (
+                invoices.map((inv) => (
                 <tr key={inv.id} className="hover:bg-canvas-slate/80 transition-colors">
                   
                   {/* Date & Échéance */}
@@ -887,7 +745,7 @@ export default function AdminInfoPage({ currentUser }) {
                   </td>
 
                 </tr>
-              ))}
+              )))}
             </tbody>
           </table>
         </div>
@@ -1184,219 +1042,7 @@ export default function AdminInfoPage({ currentUser }) {
         </div>
       )}
 
-      {/* ========================================================================= */}
-      {/* SECTION 5 : ACCORDÉON SECTIONS COMPLÉMENTAIRES (RÉUNIONS, SIMULATEUR, ...) */}
-      {/* ========================================================================= */}
-      <div className="mt-space-xl border-t border-border-subtle pt-space-lg">
-        <button
-          type="button"
-          onClick={() => setShowExtendedSections(!showExtendedSections)}
-          className="w-full flex items-center justify-between p-4 rounded-lg bg-surface-container-lowest border border-border-subtle shadow-xs hover:bg-sage-soft transition cursor-pointer"
-        >
-          <div className="flex items-center gap-3">
-            <span className="material-symbols-outlined text-primary text-[24px]">account_tree</span>
-            <div className="text-left">
-              <span className="font-headline-sm text-sm font-bold text-forest-deep block">
-                Comptes Rendus d'Assemblées, RIB &amp; Simulateur de Cotisations CCA
-              </span>
-              <span className="text-xs text-on-surface-variant">
-                Consulter les procès-verbaux de réunions familiales, le simulateur budgétaire et la charge des 7 associés
-              </span>
-            </div>
-          </div>
-          <span className="material-symbols-outlined text-primary text-[24px]">
-            {showExtendedSections ? 'expand_less' : 'expand_more'}
-          </span>
-        </button>
 
-        {showExtendedSections && (
-          <div className="mt-space-md space-y-space-lg animate-in fade-in duration-200">
-            
-            {/* 1. RIB & Financial Breakdown */}
-            <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
-              
-              {/* RIB Card */}
-              <div className="bg-surface-container-lowest rounded-lg p-space-md border border-border-subtle shadow-sm flex flex-col justify-between">
-                <div>
-                  <div className="flex items-center justify-between border-b border-border-subtle pb-3 mb-4">
-                    <div className="flex items-center gap-2">
-                      <span className="material-symbols-outlined text-primary text-[20px]">account_balance</span>
-                      <h3 className="font-headline-sm text-sm font-bold text-forest-deep">RIB Officiel de la SCI</h3>
-                    </div>
-                    <span className="text-[10px] font-bold px-2 py-0.5 rounded-full bg-sage-soft text-forest-deep border border-sage-border">
-                      Crédit Agricole
-                    </span>
-                  </div>
-
-                  <div className="space-y-3 font-mono text-xs">
-                    <div className="p-3 bg-surface-container-low rounded-DEFAULT border border-border-subtle">
-                      <span className="text-[10px] font-sans text-on-surface-variant uppercase font-bold block mb-0.5">Titulaire</span>
-                      <span className="font-bold text-forest-deep">{ribData.titulaire}</span>
-                    </div>
-
-                    <div className="p-3 bg-surface-container-low rounded-DEFAULT border border-border-subtle">
-                      <span className="text-[10px] font-sans text-on-surface-variant uppercase font-bold block mb-0.5">IBAN</span>
-                      <span className="font-bold text-primary text-sm tracking-wider break-all">{ribData.iban}</span>
-                    </div>
-
-                    <div className="p-3 bg-surface-container-low rounded-DEFAULT border border-border-subtle">
-                      <span className="text-[10px] font-sans text-on-surface-variant uppercase font-bold block mb-0.5">BIC</span>
-                      <span className="font-bold text-on-surface">{ribData.bic}</span>
-                    </div>
-                  </div>
-                </div>
-
-                <button
-                  type="button"
-                  onClick={handleCopyRib}
-                  className="mt-4 w-full h-[46px] rounded-DEFAULT bg-surface-container-lowest border-2 border-primary text-primary font-label-md text-xs font-bold hover:bg-sage-soft transition flex items-center justify-center gap-1.5 cursor-pointer"
-                >
-                  <span className="material-symbols-outlined text-[18px]">
-                    {copiedRib ? 'check' : 'content_copy'}
-                  </span>
-                  <span>{copiedRib ? 'Copié !' : 'Copier les coordonnées bancaires'}</span>
-                </button>
-              </div>
-
-              {/* Budget Consolidé 17 157 € / an */}
-              <div className="lg:col-span-2 bg-surface-container-lowest rounded-lg p-space-md border border-border-subtle shadow-sm">
-                <div className="flex items-center justify-between border-b border-border-subtle pb-3 mb-4">
-                  <div className="flex items-center gap-2">
-                    <span className="material-symbols-outlined text-amber-rich text-[20px]">pie_chart</span>
-                    <div>
-                      <h3 className="font-headline-sm text-sm font-bold text-forest-deep">Bilan Financier Annuel Consolidé</h3>
-                      <p className="text-xs text-on-surface-variant">Coûts de fonctionnement réels du domaine d'Hellenvilliers</p>
-                    </div>
-                  </div>
-                  <div className="text-right">
-                    <span className="text-[10px] uppercase font-bold text-on-surface-variant block">Total Réel</span>
-                    <span className="text-lg font-black text-forest-deep">17 157 € / an</span>
-                  </div>
-                </div>
-
-                <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-                  <div className="p-3 rounded-DEFAULT bg-amber-soft/40 border border-amber-rich/20">
-                    <div className="flex justify-between items-start mb-1">
-                      <span className="text-xs font-bold text-forest-deep">Jardinier (EI PERROT)</span>
-                      <span className="text-xs font-black text-amber-rich">3 900 € / an</span>
-                    </div>
-                    <p className="text-[11px] text-on-surface-variant">Devis annuel espaces verts &amp; parcs.</p>
-                  </div>
-
-                  <div className="p-3 rounded-DEFAULT bg-sage-soft/40 border border-sage-border">
-                    <div className="flex justify-between items-start mb-1">
-                      <span className="text-xs font-bold text-forest-deep">Fluides (Eau &amp; Électricité)</span>
-                      <span className="text-xs font-black text-primary">4 835 € / an</span>
-                    </div>
-                    <p className="text-[11px] text-on-surface-variant">Compteurs Linky &amp; réseau eau.</p>
-                  </div>
-
-                  <div className="p-3 rounded-DEFAULT bg-surface-container-low border border-border-subtle">
-                    <div className="flex justify-between items-start mb-1">
-                      <span className="text-xs font-bold text-forest-deep">Assurance PNO AXA &amp; Taxes</span>
-                      <span className="text-xs font-black text-forest-deep">5 422 € / an</span>
-                    </div>
-                    <p className="text-[11px] text-on-surface-variant">Assurance multirisque &amp; taxe foncière.</p>
-                  </div>
-
-                  <div className="p-3 rounded-DEFAULT bg-surface-container-low border border-border-subtle">
-                    <div className="flex justify-between items-start mb-1">
-                      <span className="text-xs font-bold text-forest-deep">Entretien &amp; Maintenance</span>
-                      <span className="text-xs font-black text-forest-deep">3 000 € / an</span>
-                    </div>
-                    <p className="text-[11px] text-on-surface-variant">Ramonages, chaudière fioul et piscine.</p>
-                  </div>
-                </div>
-              </div>
-
-            </div>
-
-            {/* 2. Procès-Verbaux des Réunions Familiales */}
-            <div className="bg-surface-container-lowest rounded-lg p-space-md border border-border-subtle shadow-sm space-y-4">
-              <div className="flex items-center justify-between border-b border-border-subtle pb-3">
-                <div className="flex items-center gap-2">
-                  <span className="material-symbols-outlined text-primary text-[20px]">history_edu</span>
-                  <h3 className="font-headline-sm text-sm font-bold text-forest-deep">
-                    Comptes Rendus &amp; Procès-Verbaux des Assemblées ({meetings.length})
-                  </h3>
-                </div>
-              </div>
-
-              <div className="space-y-3">
-                {meetings.map((m) => (
-                  <div key={m.id} className="p-4 rounded-DEFAULT bg-surface-container-low/60 border border-border-subtle flex flex-col md:flex-row md:items-center justify-between gap-3">
-                    <div>
-                      <div className="flex items-center gap-2 text-xs font-semibold text-primary mb-1">
-                        <span className="material-symbols-outlined text-[15px]">calendar_today</span>
-                        <span>{m.formattedDate} • {m.subtitle}</span>
-                      </div>
-                      <h4 className="font-headline-sm text-xs font-bold text-forest-deep">{m.title}</h4>
-                      <p className="text-xs text-on-surface-variant mt-1 line-clamp-2">{m.summaryText}</p>
-                    </div>
-
-                    <button
-                      type="button"
-                      onClick={() => {
-                        setSelectedMeeting(m);
-                        setIsMeetingModalOpen(true);
-                      }}
-                      className="h-9 px-3 rounded-DEFAULT bg-surface-container-lowest border border-primary text-primary hover:bg-sage-soft text-xs font-semibold shrink-0 inline-flex items-center gap-1 cursor-pointer"
-                    >
-                      <span className="material-symbols-outlined text-[16px]">visibility</span>
-                      <span>Voir le PV</span>
-                    </button>
-                  </div>
-                ))}
-              </div>
-            </div>
-
-            {/* 3. Simulateur de Cotisation CCA */}
-            <div className="bg-surface-container-lowest rounded-lg p-space-md border border-border-subtle shadow-sm space-y-4">
-              <div className="flex items-center justify-between border-b border-border-subtle pb-3">
-                <div className="flex items-center gap-2">
-                  <span className="material-symbols-outlined text-primary text-[20px]">calculate</span>
-                  <h3 className="font-headline-sm text-sm font-bold text-forest-deep">
-                    Simulateur de Cotisation Mensuelle CCA (Compte Courant d'Associé)
-                  </h3>
-                </div>
-                <span className="text-xs font-bold text-primary bg-sage-soft px-3 py-1 rounded-full">
-                  7 Associés
-                </span>
-              </div>
-
-              <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 p-4 rounded-DEFAULT bg-surface-container-low">
-                <div>
-                  <label className="text-xs font-bold text-forest-deep block mb-1">
-                    Ajuster la mensualité individuelle :
-                  </label>
-                  <input
-                    type="range"
-                    min="0"
-                    max="250"
-                    step="5"
-                    value={monthlyContribution}
-                    onChange={(e) => setMonthlyContribution(Number(e.target.value))}
-                    className="w-64 h-2 bg-border-subtle rounded-lg appearance-none cursor-pointer accent-primary"
-                  />
-                </div>
-                <div className="text-right">
-                  <span className="text-2xl font-black text-forest-deep tabular-nums">{monthlyContribution} €</span>
-                  <span className="text-xs text-on-surface-variant block">/ mois par associé</span>
-                </div>
-              </div>
-
-              <div className="flex justify-between items-center text-xs font-semibold text-on-surface-variant pt-1">
-                <span>Collecte annuelle estimée : <strong>{(monthlyContribution * 7 * 12).toLocaleString('fr-FR')} € / an</strong></span>
-                <span>Couverture du budget (17 157 €) : <strong>{Math.round(((monthlyContribution * 7 * 12) / 17157) * 100)}%</strong></span>
-              </div>
-            </div>
-
-            {/* 4. Workload Dashboard Component */}
-            <WorkloadDashboard />
-
-          </div>
-        )}
-      </div>
 
       {/* ========================================================================= */}
       {/* MODAL 1 : TÉLÉVERSER UN DOCUMENT (#modal-upload)                           */}
@@ -1799,48 +1445,6 @@ export default function AdminInfoPage({ currentUser }) {
         </div>
       )}
 
-      {/* ========================================================================= */}
-      {/* MODAL 4 : SYNTHÈSE DE RÉUNION                                            */}
-      {/* ========================================================================= */}
-      {isMeetingModalOpen && selectedMeeting && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-inverse-surface/45 backdrop-blur-xs">
-          <div className="bg-surface-container-lowest w-full max-w-2xl rounded-lg p-space-lg shadow-2xl border border-border-subtle relative max-h-[85vh] overflow-y-auto space-y-4">
-            <div className="flex items-center justify-between pb-3 border-b border-border-subtle">
-              <div className="flex items-center gap-2">
-                <div className="w-10 h-10 rounded-full bg-sage-soft flex items-center justify-center text-primary">
-                  <span className="material-symbols-outlined text-[22px]">history_edu</span>
-                </div>
-                <div>
-                  <h3 className="font-headline-sm text-sm font-bold text-forest-deep">{selectedMeeting.title}</h3>
-                  <p className="text-xs text-on-surface-variant">{selectedMeeting.formattedDate} • {selectedMeeting.subtitle}</p>
-                </div>
-              </div>
-              <button
-                type="button"
-                onClick={() => setIsMeetingModalOpen(false)}
-                className="w-8 h-8 rounded-full hover:bg-surface-container flex items-center justify-center text-on-surface-variant cursor-pointer"
-              >
-                <span className="material-symbols-outlined text-[20px]">close</span>
-              </button>
-            </div>
-
-            <div className="p-4 rounded-DEFAULT bg-sage-soft/50 border border-sage-border text-xs leading-relaxed text-forest-deep font-medium">
-              <strong className="block mb-1 text-primary">Synthèse des décisions adoptées :</strong>
-              {selectedMeeting.summaryText}
-            </div>
-
-            <div className="flex justify-end pt-2">
-              <button
-                type="button"
-                onClick={() => setIsMeetingModalOpen(false)}
-                className="h-10 px-5 rounded-DEFAULT bg-primary text-on-primary font-label-md text-xs font-semibold hover:bg-forest-deep transition cursor-pointer"
-              >
-                Fermer
-              </button>
-            </div>
-          </div>
-        </div>
-      )}
 
       {/* ========================================================================= */}
       {/* MODAL 5 : GRAND LIVRE FINANCIER & CCA                                     */}

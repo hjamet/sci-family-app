@@ -415,10 +415,6 @@ export default function LoginPage({ onLoginSuccess }) {
 
           </div>
 
-          {/* Footer note */}
-          <footer className="mt-12 pt-6 border-t border-emerald-100/80 text-center text-on-surface-variant font-body-md text-xs">
-            <p>© 2026 SCI Familiale Hellenvilliers — Espace privé réservé aux 7 membres associés.</p>
-          </footer>
 
         </div>
       </main>

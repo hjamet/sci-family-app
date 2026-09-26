@@ -1,7 +1,6 @@
 import React, { useState, useEffect, useCallback } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { fetchProjects, fetchReservations, fetchTasks, fetchBankStatus } from '../api';
-import BankReauthBanner from './BankReauthBanner';
+import { fetchProjects, fetchReservations, fetchTasks } from '../api';
 
 export default function DashboardPage({
   currentUser = 'Henri',
@@ -13,7 +12,6 @@ export default function DashboardPage({
   const [projects, setProjects] = useState([]);
   const [reservations, setReservations] = useState([]);
   const [tasks, setTasks] = useState([]);
-  const [bankStatus, setBankStatus] = useState(null);
   const [loading, setLoading] = useState(true);
 
   const userPrenom = typeof currentUser === 'object'
@@ -23,16 +21,14 @@ export default function DashboardPage({
   const loadDashboardData = useCallback(async () => {
     try {
       setLoading(true);
-      const [projData, resData, taskData, bankData] = await Promise.all([
+      const [projData, resData, taskData] = await Promise.all([
         fetchProjects().catch(() => []),
         fetchReservations().catch(() => []),
         fetchTasks().catch(() => []),
-        fetchBankStatus().catch(() => null),
       ]);
       setProjects(projData || []);
       setReservations(resData || []);
       setTasks(taskData || []);
-      setBankStatus(bankData || null);
     } catch (err) {
       console.error('Erreur chargement dashboard:', err);
     } finally {
@@ -155,8 +151,6 @@ export default function DashboardPage({
         </div>
       </section>
 
-      {/* Bannière d'alerte raccordement bancaire DSP2 réactive */}
-      <BankReauthBanner bankStatus={bankStatus} onRefresh={loadDashboardData} />
 
       {/* ==================== 4 GRANDS ENCADRÉS THÉMATIQUES INTERACTIFS ==================== */}
       <section className="grid grid-cols-1 md:grid-cols-2 gap-space-md">

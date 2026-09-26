@@ -128,7 +128,7 @@ export default function BankReauthBanner({
             <div className="flex flex-wrap items-center gap-2">
               <h3 className="font-bold text-sm sm:text-base leading-tight">
                 {isExpiringSoon
-                  ? 'Liaison bancaire Swan à renouveler'
+                  ? 'Liaison bancaire à renouveler'
                   : '⚠️ Liaison bancaire interrompue'}
               </h3>
               <span
@@ -138,13 +138,14 @@ export default function BankReauthBanner({
                     : 'bg-rose-200/80 text-rose-900 border border-rose-300'
                 }`}
               >
-                DSP2 180 Jours
+                {isExpiringSoon ? 'À renouveler' : 'Interrompue'}
               </span>
             </div>
 
             <p className="text-xs sm:text-sm leading-relaxed opacity-90 max-w-3xl">
-              {bankStatus.message ||
-                'La ré-authentification DSP2 de sécurité (tous les 180 jours) est requise pour actualiser les soldes et écritures en direct.'}
+              {bankStatus.message && !bankStatus.message.includes('180')
+                ? bankStatus.message
+                : 'La liaison bancaire est interrompue ou nécessite un renouvellement pour actualiser les soldes et écritures en direct.'}
             </p>
 
             {/* Mode Dégradé Sécurisé : Indication claire de la date du dernier relevé en cache */}
@@ -152,8 +153,8 @@ export default function BankReauthBanner({
               <Clock className="w-3.5 h-3.5" />
               <span>
                 {formattedLastSync
-                  ? `Mode dégradé actif : affichage des dernières données du relevé réussi le ${formattedLastSync}.`
-                  : 'Mode dégradé actif : affichage des données en cache local.'}
+                  ? `Dernière synchronisation réussie le ${formattedLastSync}.`
+                  : 'Affichage des données en cache local.'}
               </span>
             </div>
 
@@ -195,11 +196,11 @@ export default function BankReauthBanner({
             {reauthLoading ? (
               <>
                 <RefreshCw className="w-4 h-4 animate-spin" />
-                <span>Connexion Swan...</span>
+                <span>Connexion Tilisy...</span>
               </>
             ) : (
               <>
-                <span>Mettre à jour le raccordement</span>
+                <span>Renouveler via Tilisy</span>
                 <ExternalLink className="w-4 h-4" />
               </>
             )}
