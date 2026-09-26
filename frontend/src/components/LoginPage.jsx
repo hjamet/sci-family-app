@@ -1,6 +1,33 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { loginUser, requestPasswordReset } from '../api';
 import { useAuth } from '../context/AuthContext';
+
+const COOLDOWN_DURATION = 300; // 5 minutes en secondes
+
+const getCooldownKey = (prenom) => {
+  const clean = (prenom || 'henri').toLowerCase().trim();
+  return `forgot_pw_cooldown_${clean}`;
+};
+
+const getRemainingCooldown = (prenom) => {
+  try {
+    const key = getCooldownKey(prenom);
+    const stored = localStorage.getItem(key);
+    if (!stored) return 0;
+    const expiresAt = parseInt(stored, 10);
+    if (isNaN(expiresAt)) return 0;
+    const diff = Math.ceil((expiresAt - Date.now()) / 1000);
+    return diff > 0 ? diff : 0;
+  } catch (e) {
+    return 0;
+  }
+};
+
+const formatCooldown = (seconds) => {
+  const m = Math.floor(seconds / 60);
+  const s = seconds % 60;
+  return `${m}:${s < 10 ? '0' : ''}${s}`;
+};
 
 const LOGO_SRC = "https://lh3.googleusercontent.com/aida/AEtjO1XPkJA9U7CARtYXRqiCPhIByczBnBdNtGuBGIaMyna0c8Ams8nQu_bL_xLUxSm0ss6S3OHFS_n6B7nd2shejRa7UOjp65THsDhEKTpK_c7vICASOxbWet3Npaq5uEjMp0n1qWBqzcIJLOA643R5lKnnpnipatsdqzLoRZFTH3yd8h6IRXGs4HV3UIq2aiKXLu8bVu7FO6vMLYXv5-ilXUTx3C0CaKLCNIbtx6bjoStN";
 
@@ -82,16 +109,64 @@ export default function LoginPage({ onLoginSuccess }) {
   const [forgotSuccess, setForgotSuccess] = useState(null);
   const [forgotError, setForgotError] = useState(null);
   const [successFeedback, setSuccessFeedback] = useState(false);
+  const [cooldownRemaining, setCooldownRemaining] = useState(() => {
+    const prenom = ASSOCIATES[0]?.prenom || 'Henri';
+    return getRemainingCooldown(prenom);
+  });
+
+  // Synchronisation du cooldown lors du changement de membre
+  useEffect(() => {
+    const memberPrenom = selectedMember?.prenom || (selectedMember?.fullName ? selectedMember.fullName.split(' ')[0] : 'Henri');
+    const remaining = getRemainingCooldown(memberPrenom);
+    setCooldownRemaining(remaining);
+  }, [selectedMember]);
+
+  // Décompte du cooldown chaque seconde
+  useEffect(() => {
+    if (cooldownRemaining <= 0) return;
+
+    const intervalId = setInterval(() => {
+      const memberPrenom = selectedMember?.prenom || (selectedMember?.fullName ? selectedMember.fullName.split(' ')[0] : 'Henri');
+      const remaining = getRemainingCooldown(memberPrenom);
+      setCooldownRemaining(remaining);
+
+      if (remaining <= 0) {
+        clearInterval(intervalId);
+        try {
+          localStorage.removeItem(getCooldownKey(memberPrenom));
+        } catch (e) {
+          // ignore
+        }
+      }
+    }, 1000);
+
+    return () => clearInterval(intervalId);
+  }, [cooldownRemaining, selectedMember]);
 
   const handleForgotPassword = async () => {
     const memberPrenom = selectedMember?.prenom || (selectedMember?.fullName ? selectedMember.fullName.split(' ')[0] : 'Henri');
+    
+    // Garde-fou si cooldown encore actif
+    if (getRemainingCooldown(memberPrenom) > 0) return;
+
     try {
       setForgotLoading(true);
       setForgotSuccess(null);
       setForgotError(null);
       setError(null);
       await requestPasswordReset(memberPrenom);
-      setForgotSuccess('Un nouveau mot de passe temporaire a été envoyé à votre adresse e-mail.');
+
+      // Notification discrète verte
+      setForgotSuccess('Un e-mail vous a été envoyé avec votre nouveau mot de passe.');
+
+      // Enregistrement du cooldown de 5 minutes (300 secondes)
+      const expiresAt = Date.now() + COOLDOWN_DURATION * 1000;
+      try {
+        localStorage.setItem(getCooldownKey(memberPrenom), expiresAt.toString());
+      } catch (e) {
+        console.warn('Erreur stockage cooldown localStorage:', e);
+      }
+      setCooldownRemaining(COOLDOWN_DURATION);
     } catch (err) {
       console.error('Erreur réinitialisation mot de passe:', err);
       setForgotError(err.message || 'Impossible d\'envoyer le mot de passe temporaire.');
@@ -305,13 +380,25 @@ export default function LoginPage({ onLoginSuccess }) {
                       </button>
                     </div>
 
-                    {/* Under input: Mot de passe oublié ? */}
-                    <div className="flex justify-end pt-1">
+                    {/* Under input: Mot de passe oublié ? et Décompte Cooldown */}
+                    <div className="flex flex-wrap items-center justify-between gap-2 pt-1">
+                      {cooldownRemaining > 0 ? (
+                        <span className="text-xs text-slate-500 font-medium flex items-center gap-1.5 animate-in fade-in duration-150">
+                          <span className="material-symbols-outlined text-[15px] text-slate-400">schedule</span>
+                          <span>Nouveau renvoi possible dans {formatCooldown(cooldownRemaining)}</span>
+                        </span>
+                      ) : (
+                        <div />
+                      )}
                       <button
                         type="button"
                         onClick={handleForgotPassword}
-                        disabled={forgotLoading}
-                        className="text-sm text-forest-deep hover:underline cursor-pointer transition-colors disabled:opacity-60 flex items-center gap-1.5"
+                        disabled={forgotLoading || cooldownRemaining > 0}
+                        className={`text-sm flex items-center gap-1.5 transition-colors ${
+                          cooldownRemaining > 0
+                            ? 'disabled cursor-not-allowed text-slate-400 opacity-60 pointer-events-none'
+                            : 'text-forest-deep hover:underline cursor-pointer disabled:opacity-60'
+                        }`}
                       >
                         {forgotLoading ? (
                           <>
