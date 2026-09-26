@@ -48,13 +48,7 @@ export default function SejourDepartureChecklistModal({ isOpen, onClose }) {
                 <h2 className="font-headline-md text-headline-md text-primary font-bold">
                   Protocole de Départ & Hors-Gel
                 </h2>
-                <span className="px-2.5 py-0.5 rounded-full text-xs font-bold bg-amber-soft text-amber-rich">
-                  Fin de séjour
-                </span>
               </div>
-              <p className="text-xs text-on-surface-variant mt-0.5">
-                Check-list obligatoire de sécurisation du Domaine d'Hellenvilliers
-              </p>
             </div>
           </div>
           <button
