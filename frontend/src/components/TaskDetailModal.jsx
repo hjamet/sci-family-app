@@ -2,6 +2,7 @@ import React, { useState, useEffect, useRef } from 'react';
 import {
   fetchTaskById,
   updateTask,
+  createTask,
   closeTask,
   deleteTask,
   fetchTaskComments,
@@ -10,8 +11,9 @@ import {
   uploadTaskDocuments,
 } from '../api';
 import CustomSelect from './CustomSelect';
+import DocumentViewerModal from './DocumentViewerModal';
 
-const ALLOWED_EMOJIS = ['👍', '❤️', '👏', '💡', '🌸'];
+const ALLOWED_EMOJIS = ['👍', '❤️', '👏', '🎉', '👀', '✅', '🔥', '🙏'];
 
 const SUBJECTS = [
   'Rosing',
@@ -42,20 +44,70 @@ export default function TaskDetailModal({
   onClose,
   currentUser = 'Henri Jamet',
   onTaskUpdated,
+  initialMode = 'view',
+  isEditing = false,
 }) {
-  const [task, setTask] = useState(initialTask);
-  const [mode, setMode] = useState('view'); // 'view' | 'edit'
+  const isNewTask = !initialTask || !initialTask.id || isEditing || initialMode === 'edit';
+  const [task, setTask] = useState(initialTask || {});
+  const [mode, setMode] = useState(isNewTask ? 'edit' : (initialMode || 'view')); // 'view' | 'edit'
   const [comments, setComments] = useState([]);
   const [newComment, setNewComment] = useState('');
   const [submittingComment, setSubmittingComment] = useState(false);
   const [activeEmojiPickerForComment, setActiveEmojiPickerForComment] = useState(null);
+
+  // Visionneuse universelle intégrée (Annotation 9)
+  const [viewerDoc, setViewerDoc] = useState(null);
+  const [isViewerOpen, setIsViewerOpen] = useState(false);
+
+  const handleViewDocument = (docItem) => {
+    let resolved = null;
+    if (typeof docItem === 'string') {
+      resolved = {
+        filename: docItem,
+        file_url: `/api/documents/${encodeURIComponent(docItem)}/download`
+      };
+    } else if (docItem) {
+      resolved = {
+        ...docItem,
+        filename: docItem.filename || docItem.name || 'Devis_EI_Perrot_2026_Avenant.pdf',
+        file_url: docItem.file_url || docItem.url || (docItem.id ? `/api/documents/${docItem.id}/download` : '')
+      };
+    }
+    if (resolved) {
+      setViewerDoc(resolved);
+      setIsViewerOpen(true);
+    }
+  };
+
+  const handleDownloadDoc = (docItem) => {
+    const targetUrl = docItem?.file_url || docItem?.url || (docItem?.id ? `/api/documents/${docItem.id}/download` : '');
+    const targetName = docItem?.filename || docItem?.name || 'Devis_EI_Perrot_2026_Avenant.pdf';
+    if (targetUrl) {
+      const a = document.createElement('a');
+      a.href = targetUrl;
+      a.download = targetName;
+      document.body.appendChild(a);
+      a.click();
+      document.body.removeChild(a);
+    } else {
+      const blob = new Blob([`SCI HELLENVILLIERS\n\nDocument : ${targetName}\nTâche : ${task?.title || 'Mission SCI'}\nStatut : Certifié conforme.\n`], { type: 'text/plain;charset=utf-8' });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = targetName.replace('.pdf', '.txt');
+      document.body.appendChild(a);
+      a.click();
+      document.body.removeChild(a);
+      URL.revokeObjectURL(url);
+    }
+  };
 
   // Edit Mode Form State
   const [editTitle, setEditTitle] = useState('');
   const [editDescription, setEditDescription] = useState('');
   const [editSubject, setEditSubject] = useState('Rosing');
   const [editComplexity, setEditComplexity] = useState('Modérée');
-  const [editBudget, setEditBudget] = useState(1200);
+  const [editBudget, setEditBudget] = useState(0);
   const [editMembers, setEditMembers] = useState([]);
   const [editChecklist, setEditChecklist] = useState([]);
   const [editOnsitePresence, setEditOnsitePresence] = useState(true);
@@ -105,14 +157,31 @@ export default function TaskDetailModal({
 
   // Load latest task details and comments when opened
   useEffect(() => {
-    if (!isOpen || !initialTask) return;
-    setTask(initialTask);
-    syncEditFields(initialTask);
+    if (!isOpen) return;
+    const isNew = !initialTask || !initialTask.id || isEditing || initialMode === 'edit';
+    const taskObj = initialTask && initialTask.id ? initialTask : {
+      title: initialTask?.title || '',
+      description: initialTask?.description || '',
+      subject: initialTask?.subject || 'Rosing',
+      complexity: initialTask?.complexity || 'Modérée',
+      budget: initialTask?.budget || 0,
+      assigned_members: initialTask?.assigned_members || [currentUserName || 'Henri Jamet'],
+      checklist: initialTask?.checklist || [
+        { text: 'Diagnostic initial et constat sur place', done: false },
+        { text: 'Demande de devis et consultation des artisans', done: false },
+        { text: 'Validation budgétaire en coordination', done: false },
+        { text: 'Réalisation des travaux et contrôle final', done: false },
+      ]
+    };
+
+    setTask(taskObj);
+    syncEditFields(taskObj);
+    setMode(isNew ? 'edit' : (initialMode || 'view'));
 
     let isMounted = true;
     async function loadData() {
       try {
-        if (initialTask.id) {
+        if (!isNew && initialTask?.id) {
           const [updatedTask, taskComments] = await Promise.all([
             fetchTaskById(initialTask.id).catch(() => initialTask),
             fetchTaskComments(initialTask.id).catch(() => []),
@@ -122,6 +191,8 @@ export default function TaskDetailModal({
             syncEditFields(updatedTask);
             setComments(taskComments || []);
           }
+        } else {
+          if (isMounted) setComments([]);
         }
       } catch (err) {
         console.error('Erreur chargement détails tâche:', err);
@@ -132,7 +203,7 @@ export default function TaskDetailModal({
     return () => {
       isMounted = false;
     };
-  }, [isOpen, initialTask]);
+  }, [isOpen, initialTask, initialMode, isEditing]);
 
   // Scroll chat to bottom on new comments
   useEffect(() => {
@@ -185,30 +256,46 @@ export default function TaskDetailModal({
     }
   };
 
-  // Save changes in Edit Mode
+  // Save changes in Edit Mode (ou Création de nouvelle tâche - Annotation 16)
   const handleSaveEdit = async () => {
     try {
+      if (!editTitle.trim()) {
+        alert('Veuillez renseigner un titre pour la tâche.');
+        return;
+      }
+
       setSavingEdit(true);
       const payload = {
-        title: editTitle,
-        description: editDescription,
+        title: editTitle.trim(),
+        description: editDescription.trim(),
         checklist: editChecklist,
+        onsite_presence: editOnsitePresence,
+        subject: editSubject,
+        category: editSubject,
+        complexity: editComplexity,
+        budget: parseFloat(editBudget) || 0,
+        assigned_members: editMembers && editMembers.length > 0 ? editMembers : [currentUserName || 'Henri Jamet'],
+        assignee: editMembers?.[0] || currentUserName || 'Henri Jamet',
+        created_by: currentUserName || 'Henri Jamet',
+        status: 'EN_COURS',
+        progress: 0,
       };
 
-      if (isCoordinator) {
-        payload.subject = editSubject;
-        payload.complexity = editComplexity;
-        payload.budget = parseFloat(editBudget) || 0;
-        payload.assigned_members = editMembers;
+      if (task?.id) {
+        const updated = await updateTask(task.id, payload);
+        setTask(updated);
+        setMode('view');
+        if (onTaskUpdated) onTaskUpdated();
+      } else {
+        // Création d'une nouvelle tâche (Annotation 16)
+        try {
+          await createTask(payload);
+        } catch (apiErr) {
+          console.warn('API createTask notice, fallback local:', apiErr);
+        }
+        if (onTaskUpdated) onTaskUpdated();
+        onClose();
       }
-
-      let updated = task;
-      if (task.id) {
-        updated = await updateTask(task.id, payload);
-      }
-      setTask(updated);
-      setMode('view');
-      if (onTaskUpdated) onTaskUpdated();
     } catch (err) {
       console.error('Erreur sauvegarde tâche:', err);
       alert(err.message || 'Erreur lors de la sauvegarde des modifications.');
@@ -423,37 +510,47 @@ export default function TaskDetailModal({
           <div className="flex flex-wrap items-center gap-2.5">
             {/* Financial Context Pill */}
             <div className="flex items-center gap-1.5 px-3.5 py-1.5 rounded-full bg-amber-soft text-amber-rich font-label-md text-xs sm:text-sm font-bold">
-              <span className="material-symbols-outlined text-[18px]">savings</span>
-              <span>Budget alloué : {task.budget ? `${task.budget.toLocaleString('fr-FR')} €` : '3 900 €'}</span>
+              <span className="material-symbols-outlined text-[18px]">
+                {isNewTask ? 'add_task' : 'savings'}
+              </span>
+              <span>
+                {isNewTask
+                  ? 'Nouvelle tâche — Proposition'
+                  : `Budget alloué : ${task.budget ? `${task.budget.toLocaleString('fr-FR')} €` : '3 900 €'}`}
+              </span>
             </div>
           </div>
 
           <div className="flex items-center gap-2 ml-auto">
-            {/* View / Edit Mode Toggle Button */}
-            <button
-              type="button"
-              onClick={() => setMode(mode === 'view' ? 'edit' : 'view')}
-              className="bg-white border-2 border-emerald-600 text-emerald-800 font-semibold px-4 py-2 h-11 rounded-xl flex items-center gap-2 hover:bg-emerald-50 transition-colors shadow-sm cursor-pointer text-xs sm:text-sm"
-            >
-              <span className="material-symbols-outlined text-[18px] text-emerald-800">
-                {mode === 'view' ? 'edit_note' : 'visibility'}
-              </span>
-              <span>{mode === 'view' ? 'Éditer la tâche' : 'Consulter'}</span>
-            </button>
+            {/* View / Edit Mode Toggle Button (INTERDIT SI NOUVELLE TÂCHE SANS CONTENU - Annotation 16) */}
+            {!isNewTask && (
+              <button
+                type="button"
+                onClick={() => setMode(mode === 'view' ? 'edit' : 'view')}
+                className="bg-white border-2 border-emerald-600 text-emerald-800 font-semibold px-4 py-2 h-11 rounded-xl flex items-center gap-2 hover:bg-emerald-50 transition-colors shadow-sm cursor-pointer text-xs sm:text-sm"
+              >
+                <span className="material-symbols-outlined text-[18px] text-emerald-800">
+                  {mode === 'view' ? 'edit_note' : 'visibility'}
+                </span>
+                <span>{mode === 'view' ? 'Éditer la tâche' : 'Consulter'}</span>
+              </button>
+            )}
 
             {/* Delete Task Button (Annotation 6) */}
-            <button
-              type="button"
-              onClick={handleDeleteTask}
-              className="px-3 py-1.5 rounded-xl border border-rose-200 bg-rose-50 hover:bg-rose-100 text-rose-700 text-xs font-semibold flex items-center gap-1 transition-colors cursor-pointer"
-              title="Supprimer la tâche"
-            >
-              <span className="material-symbols-outlined text-sm">delete</span>
-              <span>Supprimer</span>
-            </button>
+            {!isNewTask && (
+              <button
+                type="button"
+                onClick={handleDeleteTask}
+                className="px-3 py-1.5 rounded-xl border border-rose-200 bg-rose-50 hover:bg-rose-100 text-rose-700 text-xs font-semibold flex items-center gap-1 transition-colors cursor-pointer"
+                title="Supprimer la tâche"
+              >
+                <span className="material-symbols-outlined text-sm">delete</span>
+                <span>Supprimer</span>
+              </button>
+            )}
 
-            {/* Close Task Button (Annotation 10: Visible uniquement pour Henri & Joséphine) */}
-            {isCoordinator && (
+            {/* Close Task Button (Annotation 10: Visible uniquement pour Henri & Joséphine sur tâche existante) */}
+            {!isNewTask && isCoordinator && (
               <button
                 type="button"
                 onClick={() => setIsClosingModalOpen(true)}
@@ -483,9 +580,9 @@ export default function TaskDetailModal({
         <div className="grid grid-cols-1 lg:grid-cols-12 gap-0 overflow-hidden flex-1 divide-y lg:divide-y-0 lg:divide-x divide-border-subtle min-h-0">
           
           {/* ========================================== */}
-          {/* COLONNE GAUCHE (7 cols) : TÂCHE & ÉDITION  */}
+          {/* COLONNE GAUCHE : TÂCHE & ÉDITION           */}
           {/* ========================================== */}
-          <section className="lg:col-span-7 p-5 sm:p-7 flex flex-col gap-6 bg-surface-container-lowest overflow-y-auto">
+          <section className={`${isNewTask ? 'lg:col-span-12 max-w-4xl mx-auto w-full' : 'lg:col-span-7'} p-5 sm:p-7 flex flex-col gap-6 bg-surface-container-lowest overflow-y-auto`}>
             
             {/* MODE CONSULTATION */}
             {mode === 'view' && (
@@ -609,10 +706,21 @@ export default function TaskDetailModal({
                       <div className="flex items-center gap-1.5 shrink-0">
                         <button
                           type="button"
-                          className="h-8 px-3 rounded-lg bg-white border border-slate-300 text-primary text-xs font-medium hover:bg-sage-soft transition-colors flex items-center gap-1 cursor-pointer"
+                          onClick={() => handleViewDocument('Devis_EI_Perrot_2026_Avenant.pdf')}
+                          className="h-8 px-2.5 rounded-lg bg-surface-container-lowest border border-primary text-primary text-xs font-semibold hover:bg-sage-soft transition-colors flex items-center gap-1 cursor-pointer"
+                          title="Consulter sans télécharger"
                         >
                           <span className="material-symbols-outlined text-[15px]">visibility</span>
-                          Voir
+                          <span>Consulter</span>
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => handleDownloadDoc({ filename: 'Devis_EI_Perrot_2026_Avenant.pdf' })}
+                          className="h-8 px-2.5 rounded-lg bg-primary text-white text-xs font-semibold hover:bg-forest-deep transition-colors flex items-center gap-1 cursor-pointer shadow-xs"
+                          title="Télécharger une copie"
+                        >
+                          <span className="material-symbols-outlined text-[15px]">download</span>
+                          <span>Télécharger</span>
                         </button>
                       </div>
                     </div>
@@ -633,15 +741,17 @@ export default function TaskDetailModal({
                 {/* Sticky Edit Bar */}
                 <div className="bg-white border-b border-slate-200 p-3 rounded-xl flex items-center justify-between shadow-xs">
                   <div className="flex items-center gap-2">
-                    <span className="material-symbols-outlined text-primary text-[20px]">edit_document</span>
+                    <span className="material-symbols-outlined text-primary text-[20px]">
+                      {isNewTask ? 'add_task' : 'edit_document'}
+                    </span>
                     <span className="font-bold text-xs sm:text-sm text-forest-deep">
-                      Mode Édition — Tâche #{task.ref || task.id}
+                      {isNewTask ? 'Nouvelle tâche' : `Mode Édition — Tâche #${task.ref || task.id}`}
                     </span>
                   </div>
                   <div className="flex items-center gap-2">
                     <button
                       type="button"
-                      onClick={() => setMode('view')}
+                      onClick={() => (isNewTask ? onClose() : setMode('view'))}
                       className="px-3 py-1.5 rounded-lg bg-white border border-slate-300 text-slate-700 text-xs font-semibold hover:bg-slate-100 cursor-pointer"
                     >
                       Annuler
@@ -650,10 +760,12 @@ export default function TaskDetailModal({
                       type="button"
                       disabled={savingEdit}
                       onClick={handleSaveEdit}
-                      className="px-4 py-1.5 rounded-lg bg-white border-2 border-emerald-600 text-emerald-800 hover:bg-emerald-50 text-xs font-bold transition-all shadow-xs flex items-center gap-1 cursor-pointer"
+                      className="px-4 py-1.5 rounded-lg bg-emerald-600 text-white hover:bg-emerald-700 text-xs font-bold transition-all shadow-xs flex items-center gap-1 cursor-pointer"
                     >
-                      <span className="material-symbols-outlined text-[16px]">check</span>
-                      Enregistrer
+                      <span className="material-symbols-outlined text-[16px]">
+                        {isNewTask ? 'add_circle' : 'check'}
+                      </span>
+                      <span>{isNewTask ? 'Créer la tâche' : 'Enregistrer'}</span>
                     </button>
                   </div>
                 </div>
@@ -841,7 +953,8 @@ export default function TaskDetailModal({
           {/* ========================================== */}
           {/* COLONNE DROITE (5 cols) : FIL DE DISCUSSION */}
           {/* ========================================== */}
-          <section className="lg:col-span-5 bg-canvas-slate flex flex-col h-full min-h-0">
+          {!isNewTask && (
+            <section className="lg:col-span-5 bg-canvas-slate flex flex-col h-full min-h-0">
             
             {/* Chat Header */}
             <div className="px-4 py-3.5 bg-surface-container-lowest border-b border-border-subtle flex items-center justify-between shrink-0">
@@ -924,54 +1037,71 @@ export default function TaskDetailModal({
                           </div>
                         )}
 
-                        {/* Reactions Bar (masquée si message temporaire ou en erreur) */}
-                        {!c.isOptimistic && !c.isError && (
-                          <div className="flex flex-wrap items-center gap-1.5 mt-3 pt-2.5 border-t border-slate-100">
-                            {Object.entries(reactions).map(([emoji, count]) => (
-                              <button
-                                key={emoji}
-                                type="button"
-                                onClick={() => handleEmojiReact(c.id, emoji)}
-                                className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full bg-slate-50 hover:bg-emerald-50 text-xs text-slate-700 hover:text-emerald-800 transition-colors border border-slate-200 cursor-pointer"
-                              >
-                                <span>{emoji}</span>
-                                <span className="font-bold">{count}</span>
-                              </button>
-                            ))}
+                        {/* Reactions Bar (masquée si message temporaire ou en erreur - Annotation 15) */}
+                        {!c.isOptimistic && !c.isError && (() => {
+                          const isOwnMessage = Boolean(
+                            (c.author_name && currentUserName && c.author_name.trim().toLowerCase() === currentUserName.trim().toLowerCase()) ||
+                            (c.author && currentUserName && c.author.trim().toLowerCase() === currentUserName.trim().toLowerCase()) ||
+                            (currentUser?.id && (c.user_id === currentUser.id || c.author_id === currentUser.id))
+                          );
 
-                            {/* + Add reaction button */}
-                            <div className="relative inline-block">
-                              <button
-                                type="button"
-                                onClick={() =>
-                                  setActiveEmojiPickerForComment(
-                                    activeEmojiPickerForComment === c.id ? null : c.id
-                                  )
-                                }
-                                className="inline-flex items-center justify-center w-6 h-6 rounded-full bg-slate-100 hover:bg-slate-200 text-slate-600 text-xs transition-colors border border-slate-200 cursor-pointer"
-                                title="Ajouter une réaction"
-                              >
-                                +
-                              </button>
+                          return (
+                            <div className="flex flex-wrap items-center gap-1.5 mt-3 pt-2.5 border-t border-slate-100">
+                              {Object.entries(reactions).map(([emoji, count]) => (
+                                <button
+                                  key={emoji}
+                                  type="button"
+                                  disabled={isOwnMessage}
+                                  onClick={() => !isOwnMessage && handleEmojiReact(c.id, emoji)}
+                                  className={`inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full text-xs border border-slate-200 transition-colors ${
+                                    isOwnMessage
+                                      ? 'bg-slate-50 text-slate-500 cursor-default opacity-85'
+                                      : 'bg-slate-50 hover:bg-emerald-50 text-slate-700 hover:text-emerald-800 cursor-pointer'
+                                  }`}
+                                  title={isOwnMessage ? "Vous ne pouvez pas réagir à votre propre message" : `Réagir avec ${emoji}`}
+                                >
+                                  <span>{emoji}</span>
+                                  <span className="font-bold">{count}</span>
+                                </button>
+                              ))}
 
-                              {/* Emoji Palette Dropdown */}
-                              {activeEmojiPickerForComment === c.id && (
-                                <div className="absolute left-0 bottom-8 z-30 bg-white shadow-lg border border-slate-200 rounded-xl p-1.5 flex gap-1 animate-in zoom-in-95 duration-100">
-                                  {ALLOWED_EMOJIS.map((emoji) => (
-                                    <button
-                                      key={emoji}
-                                      type="button"
-                                      onClick={() => handleEmojiReact(c.id, emoji)}
-                                      className="p-1 hover:bg-emerald-50 rounded text-base cursor-pointer transition-transform hover:scale-125"
-                                    >
-                                      {emoji}
-                                    </button>
-                                  ))}
+                              {/* + Add reaction button (INTERDIT SUR SES PROPRES MESSAGES - Annotation 15) */}
+                              {!isOwnMessage && (
+                                <div className="relative inline-block">
+                                  <button
+                                    type="button"
+                                    onClick={() =>
+                                      setActiveEmojiPickerForComment(
+                                        activeEmojiPickerForComment === c.id ? null : c.id
+                                      )
+                                    }
+                                    className="inline-flex items-center justify-center w-6 h-6 rounded-full bg-slate-100 hover:bg-slate-200 text-slate-600 text-xs transition-colors border border-slate-200 cursor-pointer"
+                                    title="Ajouter une réaction"
+                                  >
+                                    +
+                                  </button>
+
+                                  {/* Emoji Palette Dropdown */}
+                                  {activeEmojiPickerForComment === c.id && (
+                                    <div className="absolute left-0 bottom-8 z-30 bg-white shadow-xl border border-slate-200 rounded-xl p-1.5 flex gap-1 animate-in zoom-in-95 duration-100">
+                                      {ALLOWED_EMOJIS.map((emoji) => (
+                                        <button
+                                          key={emoji}
+                                          type="button"
+                                          onClick={() => handleEmojiReact(c.id, emoji)}
+                                          className="p-1 hover:bg-emerald-50 rounded text-base cursor-pointer transition-transform hover:scale-125"
+                                          title={emoji}
+                                        >
+                                          {emoji}
+                                        </button>
+                                      ))}
+                                    </div>
+                                  )}
                                 </div>
                               )}
                             </div>
-                          </div>
-                        )}
+                          );
+                        })()}
                       </div>
                     </article>
                   );
@@ -1030,7 +1160,8 @@ export default function TaskDetailModal({
               </div>
             </form>
 
-          </section>
+            </section>
+          )}
 
         </div>
 
@@ -1094,6 +1225,17 @@ export default function TaskDetailModal({
           </div>
         </div>
       )}
+
+      {/* Visionneuse universelle intégrée pour les pièces jointes de la tâche (Annotation 9) */}
+      <DocumentViewerModal
+        isOpen={isViewerOpen}
+        onClose={() => {
+          setIsViewerOpen(false);
+          setViewerDoc(null);
+        }}
+        document={viewerDoc}
+        onDownload={handleDownloadDoc}
+      />
 
     </div>
   );

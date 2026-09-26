@@ -4,7 +4,6 @@ import { fetchTasks, createTask, fetchProjects, createProject } from '../api';
 import TaskDetailModal from './TaskDetailModal';
 import VoteRoofModal from './VoteRoofModal';
 import NewProjectModal from './NewProjectModal';
-import NewTaskModal from './NewTaskModal';
 import { CardSkeleton, TasksContainerSkeleton, VoteCardSkeleton } from './SkeletonLoaders';
 import CustomSelect from './CustomSelect';
 
@@ -38,11 +37,37 @@ export default function TasksPage({ currentUser = 'Henri Jamet' }) {
   // Voting Spotlight Carrousel State
   const [activeVoteIndex, setActiveVoteIndex] = useState(0);
 
-  // Modal states
+  // Modal states unifiées (Annotation 16)
   const [inspectingTask, setInspectingTask] = useState(null);
-  const [isCreateModalOpen, setIsCreateModalOpen] = useState(false);
+  const [isTaskModalOpen, setIsTaskModalOpen] = useState(false);
+  const [isTaskEditingDirect, setIsTaskEditingDirect] = useState(false);
   const [isRoofVoteModalOpen, setIsRoofVoteModalOpen] = useState(false);
   const [isNewProjectModalOpen, setIsNewProjectModalOpen] = useState(false);
+
+  const handleOpenCreateTask = () => {
+    setInspectingTask({
+      title: '',
+      description: '',
+      subject: 'Rosing',
+      complexity: 'Modérée',
+      budget: 0,
+      assigned_members: [typeof currentUser === 'string' ? currentUser : (currentUser?.name || 'Henri Jamet')],
+      checklist: [
+        { text: 'Diagnostic initial et constat sur place', done: false },
+        { text: 'Demande de devis et consultation des artisans', done: false },
+        { text: 'Validation budgétaire en coordination', done: false },
+        { text: 'Réalisation des travaux et contrôle final', done: false },
+      ]
+    });
+    setIsTaskEditingDirect(true);
+    setIsTaskModalOpen(true);
+  };
+
+  const handleOpenInspectTask = (t) => {
+    setInspectingTask(t);
+    setIsTaskEditingDirect(false);
+    setIsTaskModalOpen(true);
+  };
 
   // Dynamic filter options based on authentic members and active tasks count
   const memberFilterOptions = useMemo(() => {
@@ -311,7 +336,7 @@ export default function TasksPage({ currentUser = 'Henri Jamet' }) {
             </button>
 
             <button
-              onClick={() => setIsCreateModalOpen(true)}
+              onClick={handleOpenCreateTask}
               className="group flex items-center justify-center gap-2 px-5 py-3.5 rounded-DEFAULT bg-white dark:bg-slate-900 border-2 border-primary text-primary hover:bg-sage-soft font-label-lg text-sm sm:text-base font-bold shadow-sm hover:shadow-md transition-all duration-200 cursor-pointer whitespace-nowrap"
               type="button"
             >
@@ -822,7 +847,7 @@ export default function TasksPage({ currentUser = 'Henri Jamet' }) {
               </button>
               <button
                 type="button"
-                onClick={() => setIsCreateModalOpen(true)}
+                onClick={handleOpenCreateTask}
                 className="px-4 py-2 bg-sage-soft text-primary-container text-xs font-bold rounded-DEFAULT hover:bg-emerald-100 transition-colors cursor-pointer flex items-center gap-1.5"
               >
                 <span className="material-symbols-outlined text-[16px]">add_task</span>
@@ -999,7 +1024,7 @@ export default function TasksPage({ currentUser = 'Henri Jamet' }) {
 
                   <button
                     type="button"
-                    onClick={() => setInspectingTask(t)}
+                    onClick={() => handleOpenInspectTask(t)}
                     className="h-[46px] px-5 bg-surface-container-lowest border-2 border-primary-container text-primary-container font-label-md text-label-md rounded-DEFAULT hover:bg-sage-soft hover:border-primary transition-all flex items-center justify-center gap-2 shrink-0 font-semibold cursor-pointer"
                   >
                     <span className="material-symbols-outlined text-[18px] text-primary-container">visibility</span>
@@ -1034,24 +1059,22 @@ export default function TasksPage({ currentUser = 'Henri Jamet' }) {
         onSubmit={handleCreateProjectSubmit}
       />
 
-      {/* Modale de Consultation et Édition Détaillée de Tâche */}
-      {inspectingTask && (
+      {/* Modale de Consultation et Édition Détaillée de Tâche Unifiée (Annotation 16) */}
+      {isTaskModalOpen && (
         <TaskDetailModal
-          isOpen={Boolean(inspectingTask)}
+          isOpen={isTaskModalOpen}
           task={inspectingTask}
-          onClose={() => setInspectingTask(null)}
+          isEditing={isTaskEditingDirect}
+          initialMode={isTaskEditingDirect ? 'edit' : 'view'}
+          onClose={() => {
+            setIsTaskModalOpen(false);
+            setInspectingTask(null);
+            setIsTaskEditingDirect(false);
+          }}
           currentUser={currentUser}
           onTaskUpdated={loadTasks}
         />
       )}
-
-      {/* Modale de Création Propre et Complète de Tâche (Annotations 4 & 5) */}
-      <NewTaskModal
-        isOpen={isCreateModalOpen}
-        onClose={() => setIsCreateModalOpen(false)}
-        currentUser={currentUser}
-        onTaskCreated={handleTaskCreated}
-      />
 
     </div>
   );

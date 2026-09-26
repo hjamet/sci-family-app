@@ -92,10 +92,10 @@ export default function NewProjectModal({ isOpen, onClose, properties, currentUs
           </div>
           <div>
             <h2 className="text-lg sm:text-xl font-black text-slate-900 tracking-tight leading-snug">
-              Signaler un problème, une idée ou un projet
+              Proposer une initiative au vote
             </h2>
             <p className="text-xs text-slate-500 mt-1 leading-relaxed">
-              Signalez directement un problème ou proposez une idée. Votre signalement sera transmis au coordinateur (Henri) pour qualification, chiffrage et devis.
+              Déposez une proposition ou un projet pour consultation et délibération statutaire des 7 associés de la SCI.
             </p>
           </div>
         </div>
@@ -112,11 +112,11 @@ export default function NewProjectModal({ isOpen, onClose, properties, currentUs
           {/* Title */}
           <div>
             <label className="block text-xs font-bold text-slate-700 mb-1 uppercase tracking-wider">
-              Titre du signalement / idée *
+              Titre de l'initiative *
             </label>
             <input
               type="text"
-              placeholder="ex: Fuite robinet sdb haut ou Idée nouveau frigo"
+              placeholder="ex: Réfection toiture presbytère, Achat tondeuse autoportée..."
               value={title}
               onChange={(e) => setTitle(e.target.value)}
               className="w-full px-3.5 py-2.5 bg-slate-50 border border-slate-200 rounded-xl text-xs text-slate-900 placeholder-slate-400 focus:outline-none focus:ring-2 focus:ring-amber-500 transition"
@@ -178,7 +178,7 @@ export default function NewProjectModal({ isOpen, onClose, properties, currentUs
 
           {/* Modal Footer */}
           <div className="flex items-center justify-between pt-3 border-t border-slate-100">
-            <span className="text-[11px] text-slate-500 font-medium">Transmis à Henri (Coordinateur)</span>
+            <span className="text-[11px] text-slate-500 font-medium">Soumis à la délibération des 7 associés</span>
             <div className="flex items-center space-x-3">
               <button
                 type="button"
@@ -197,7 +197,7 @@ export default function NewProjectModal({ isOpen, onClose, properties, currentUs
                 ) : (
                   <>
                     <PlusCircle className="h-4 w-4" />
-                    <span>Envoyer le signalement</span>
+                    <span>Soumettre l'initiative au vote</span>
                   </>
                 )}
               </button>

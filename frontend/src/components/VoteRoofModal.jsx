@@ -1,5 +1,8 @@
 import React, { useState, useEffect } from 'react';
 import { MarkdownContent } from './common/RichTextEditor';
+import DocumentViewerModal from './DocumentViewerModal';
+
+const CHAT_ALLOWED_EMOJIS = ['👍', '❤️', '👏', '🎉', '👀', '✅', '🔥', '🙏'];
 
 export default function VoteRoofModal({ isOpen, onClose, currentUser = 'Henri Jamet', onVoteSubmit }) {
   // Liste nominative des 7 associés statutaires de la SCI Hellenvilliers
@@ -257,9 +260,27 @@ export default function VoteRoofModal({ isOpen, onClose, currentUser = 'Henri Ja
       }
       return { ...msg, reactions: updatedReactions };
     }));
+    setActiveEmojiPickerMsgId(null);
   };
 
-  // Téléchargement / Consultation de document simulé
+  // État de la visionneuse intégrée (Annotation 9)
+  const [viewerDoc, setViewerDoc] = useState(null);
+  const [isViewerOpen, setIsViewerOpen] = useState(false);
+  const [activeEmojiPickerMsgId, setActiveEmojiPickerMsgId] = useState(null);
+
+  // Consultation dans la visionneuse sans téléchargement
+  const handleViewDoc = (docName, desc) => {
+    const content = `SCI FAMILIALE HELLENVILLIERS — DIRECTION DU DOMAINE\n\nDocument certifié : ${docName}\nObjet : ${desc}\nProjet : Réfection couverture Presbytère (4 850,00 € TTC, Devis Éts Josse)\nDate d'émission : Mai 2026\nStatut : Pièce certifiée conforme déposée au registre des délibérations.`;
+    setViewerDoc({
+      filename: docName,
+      title: docName,
+      content: content,
+      file_type: 'text/plain'
+    });
+    setIsViewerOpen(true);
+  };
+
+  // Téléchargement réel / simulé du document
   const handleDownloadDoc = (docName, desc) => {
     const content = `SCI FAMILIALE HELLENVILLIERS\n\nDocument certifié : ${docName}\nObjet : ${desc}\nProjet : Réfection couverture Presbytère (4 850 € TTC, Devis Éts Josse)\nDate d'émission : Mai 2026\nStatut : Validé pour consultation des 7 associés.`;
     const blob = new Blob([content], { type: 'text/plain;charset=utf-8' });
@@ -375,14 +396,26 @@ export default function VoteRoofModal({ isOpen, onClose, currentUser = 'Henri Ja
                       </span>
                     </div>
                   </div>
-                  <button 
-                    onClick={() => handleDownloadDoc('Devis-2026-Ets-Josse-Couverture-Presbytere.pdf', 'Devis réfection toiture Presbytère par les Éts Josse')}
-                    className="shrink-0 ml-2 px-3 py-1.5 rounded-lg bg-surface-container-lowest text-primary hover:bg-sage-soft text-xs font-semibold flex items-center gap-1 shadow-sm border border-border-subtle transition-all" 
-                    type="button"
-                  >
-                    <span className="material-symbols-outlined text-[16px]">download</span>
-                    <span>Consulter</span>
-                  </button>
+                  <div className="flex items-center gap-1.5 shrink-0 ml-2">
+                    <button 
+                      onClick={() => handleViewDoc('Devis-2026-Ets-Josse-Couverture-Presbytere.pdf', 'Devis réfection toiture Presbytère par les Éts Josse')}
+                      className="px-2.5 py-1.5 rounded-lg bg-surface-container-lowest text-primary hover:bg-sage-soft text-xs font-semibold flex items-center gap-1 shadow-xs border border-primary transition-all cursor-pointer" 
+                      type="button"
+                      title="Consulter sans télécharger"
+                    >
+                      <span className="material-symbols-outlined text-[15px]">visibility</span>
+                      <span>Consulter</span>
+                    </button>
+                    <button 
+                      onClick={() => handleDownloadDoc('Devis-2026-Ets-Josse-Couverture-Presbytere.pdf', 'Devis réfection toiture Presbytère par les Éts Josse')}
+                      className="px-2.5 py-1.5 rounded-lg bg-primary text-white hover:bg-forest-deep text-xs font-semibold flex items-center gap-1 shadow-xs transition-all cursor-pointer" 
+                      type="button"
+                      title="Télécharger une copie"
+                    >
+                      <span className="material-symbols-outlined text-[15px]">download</span>
+                      <span>Télécharger</span>
+                    </button>
+                  </div>
                 </div>
 
                 {/* Doc 2 : Rapport Diagnostic */}
@@ -400,14 +433,26 @@ export default function VoteRoofModal({ isOpen, onClose, currentUser = 'Henri Ja
                       </span>
                     </div>
                   </div>
-                  <button 
-                    onClick={() => handleDownloadDoc('Rapport-Diagnostic-Infiltrations-Avril2026.pdf', 'Rapport technique constat infiltrations pluies avril 2026')}
-                    className="shrink-0 ml-2 px-3 py-1.5 rounded-lg bg-surface-container-lowest text-primary hover:bg-sage-soft text-xs font-semibold flex items-center gap-1 shadow-sm border border-border-subtle transition-all" 
-                    type="button"
-                  >
-                    <span className="material-symbols-outlined text-[16px]">download</span>
-                    <span>Consulter</span>
-                  </button>
+                  <div className="flex items-center gap-1.5 shrink-0 ml-2">
+                    <button 
+                      onClick={() => handleViewDoc('Rapport-Diagnostic-Infiltrations-Avril2026.pdf', 'Rapport technique constat infiltrations pluies avril 2026')}
+                      className="px-2.5 py-1.5 rounded-lg bg-surface-container-lowest text-primary hover:bg-sage-soft text-xs font-semibold flex items-center gap-1 shadow-xs border border-primary transition-all cursor-pointer" 
+                      type="button"
+                      title="Consulter sans télécharger"
+                    >
+                      <span className="material-symbols-outlined text-[15px]">visibility</span>
+                      <span>Consulter</span>
+                    </button>
+                    <button 
+                      onClick={() => handleDownloadDoc('Rapport-Diagnostic-Infiltrations-Avril2026.pdf', 'Rapport technique constat infiltrations pluies avril 2026')}
+                      className="px-2.5 py-1.5 rounded-lg bg-primary text-white hover:bg-forest-deep text-xs font-semibold flex items-center gap-1 shadow-xs transition-all cursor-pointer" 
+                      type="button"
+                      title="Télécharger une copie"
+                    >
+                      <span className="material-symbols-outlined text-[15px]">download</span>
+                      <span>Télécharger</span>
+                    </button>
+                  </div>
                 </div>
 
                 {/* Doc 3 : Extrait PV AG */}
@@ -425,14 +470,26 @@ export default function VoteRoofModal({ isOpen, onClose, currentUser = 'Henri Ja
                       </span>
                     </div>
                   </div>
-                  <button 
-                    onClick={() => handleDownloadDoc('Extrait-PV-AG-Aout2025-Poutres.pdf', 'Extrait du Procès-Verbal de l\'AG d\'août 2025')}
-                    className="shrink-0 ml-2 px-3 py-1.5 rounded-lg bg-surface-container-lowest text-primary hover:bg-sage-soft text-xs font-semibold flex items-center gap-1 shadow-sm border border-border-subtle transition-all" 
-                    type="button"
-                  >
-                    <span className="material-symbols-outlined text-[16px]">download</span>
-                    <span>Consulter</span>
-                  </button>
+                  <div className="flex items-center gap-1.5 shrink-0 ml-2">
+                    <button 
+                      onClick={() => handleViewDoc('Extrait-PV-AG-Aout2025-Poutres.pdf', 'Extrait du Procès-Verbal de l\'AG d\'août 2025')}
+                      className="px-2.5 py-1.5 rounded-lg bg-surface-container-lowest text-primary hover:bg-sage-soft text-xs font-semibold flex items-center gap-1 shadow-xs border border-primary transition-all cursor-pointer" 
+                      type="button"
+                      title="Consulter sans télécharger"
+                    >
+                      <span className="material-symbols-outlined text-[15px]">visibility</span>
+                      <span>Consulter</span>
+                    </button>
+                    <button 
+                      onClick={() => handleDownloadDoc('Extrait-PV-AG-Aout2025-Poutres.pdf', 'Extrait du Procès-Verbal de l\'AG d\'août 2025')}
+                      className="px-2.5 py-1.5 rounded-lg bg-primary text-white hover:bg-forest-deep text-xs font-semibold flex items-center gap-1 shadow-xs transition-all cursor-pointer" 
+                      type="button"
+                      title="Télécharger une copie"
+                    >
+                      <span className="material-symbols-outlined text-[15px]">download</span>
+                      <span>Télécharger</span>
+                    </button>
+                  </div>
                 </div>
               </div>
             </div>
@@ -732,28 +789,61 @@ export default function VoteRoofModal({ isOpen, onClose, currentUser = 'Henri Ja
                       {msg.content}
                     </div>
                     {/* Réactions */}
-                    <div className="flex items-center gap-1 mt-1.5">
-                      {msg.reactions.map((r, idx) => (
-                        <button
-                          key={idx}
-                          type="button"
-                          onClick={() => handleToggleReaction(msg.id, r.emoji)}
-                          className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full bg-surface-container-lowest text-xs text-on-surface-variant shadow-sm border border-border-subtle hover:bg-slate-50 transition-colors"
-                        >
-                          <span>{r.emoji}</span>
-                          <span className="text-[10px] font-bold">{r.count}</span>
-                        </button>
-                      ))}
-                      {/* Bouton d'ajout rapide de réaction */}
-                      <button
-                        type="button"
-                        onClick={() => handleToggleReaction(msg.id, '👍')}
-                        className="text-slate-400 hover:text-forest-deep text-xs px-1"
-                        title="Ajouter un pouce"
-                      >
-                        +👍
-                      </button>
-                    </div>
+                    {(() => {
+                      const currentUserName = typeof currentUser === 'string' ? currentUser : (currentUser?.name || 'Henri Jamet');
+                      const isOwnMessage = msg.author?.trim().toLowerCase() === currentUserName.trim().toLowerCase();
+
+                      return (
+                        <div className="flex items-center gap-1.5 mt-1.5 flex-wrap">
+                          {msg.reactions.map((r, idx) => (
+                            <button
+                              key={idx}
+                              type="button"
+                              disabled={isOwnMessage}
+                              onClick={() => !isOwnMessage && handleToggleReaction(msg.id, r.emoji)}
+                              className={`inline-flex items-center gap-1 px-2 py-0.5 rounded-full bg-surface-container-lowest text-xs text-on-surface-variant shadow-xs border border-border-subtle transition-colors ${
+                                isOwnMessage ? 'cursor-default opacity-85' : 'hover:bg-emerald-50 hover:text-emerald-900 cursor-pointer'
+                              }`}
+                              title={isOwnMessage ? "Vous ne pouvez pas réagir à votre propre message" : `Réagir avec ${r.emoji}`}
+                            >
+                              <span>{r.emoji}</span>
+                              <span className="text-[10px] font-bold">{r.count}</span>
+                            </button>
+                          ))}
+
+                          {/* Bouton d'ajout multi-emojis (INTERDIT SUR SES PROPRES MESSAGES) */}
+                          {!isOwnMessage && (
+                            <div className="relative inline-block">
+                              <button
+                                type="button"
+                                onClick={() => setActiveEmojiPickerMsgId(activeEmojiPickerMsgId === msg.id ? null : msg.id)}
+                                className="inline-flex items-center justify-center w-6 h-6 rounded-full bg-slate-100 hover:bg-slate-200 text-slate-600 text-xs transition-colors border border-slate-200 cursor-pointer"
+                                title="Ajouter une réaction"
+                              >
+                                +
+                              </button>
+
+                              {/* Popover flottant multi-emojis */}
+                              {activeEmojiPickerMsgId === msg.id && (
+                                <div className="absolute left-0 bottom-8 z-30 bg-white shadow-xl border border-slate-200 rounded-xl p-1.5 flex gap-1 animate-in zoom-in-95 duration-100">
+                                  {CHAT_ALLOWED_EMOJIS.map((emoji) => (
+                                    <button
+                                      key={emoji}
+                                      type="button"
+                                      onClick={() => handleToggleReaction(msg.id, emoji)}
+                                      className="p-1 hover:bg-emerald-50 rounded text-base cursor-pointer transition-transform hover:scale-125"
+                                      title={emoji}
+                                    >
+                                      {emoji}
+                                    </button>
+                                  ))}
+                                </div>
+                              )}
+                            </div>
+                          )}
+                        </div>
+                      );
+                    })()}
                   </div>
                 </div>
               ))}
@@ -800,6 +890,17 @@ export default function VoteRoofModal({ isOpen, onClose, currentUser = 'Henri Ja
           </aside>
         </div>
       </div>
+
+      {/* Visionneuse universelle intégrée pour les justificatifs du vote (Annotation 9) */}
+      <DocumentViewerModal
+        isOpen={isViewerOpen}
+        onClose={() => {
+          setIsViewerOpen(false);
+          setViewerDoc(null);
+        }}
+        document={viewerDoc}
+        onDownload={(doc) => handleDownloadDoc(doc.filename, 'Justificatif de vote SCI')}
+      />
     </div>
   );
 }

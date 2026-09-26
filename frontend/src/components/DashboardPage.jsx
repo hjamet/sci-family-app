@@ -1,7 +1,7 @@
 import React, { useState, useEffect, useCallback } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { fetchProjects, fetchReservations, fetchTasks } from '../api';
-import NewTaskModal from './NewTaskModal';
+import TaskDetailModal from './TaskDetailModal';
 import { VoteCardSkeleton, CompactStaySkeleton, CardSkeleton } from './SkeletonLoaders';
 
 export default function DashboardPage({
@@ -15,7 +15,28 @@ export default function DashboardPage({
   const [reservations, setReservations] = useState([]);
   const [tasks, setTasks] = useState([]);
   const [loading, setLoading] = useState(true);
-  const [isNewTaskModalOpen, setIsNewTaskModalOpen] = useState(false);
+  const [inspectingTask, setInspectingTask] = useState(null);
+  const [isTaskModalOpen, setIsTaskModalOpen] = useState(false);
+  const [isTaskEditingDirect, setIsTaskEditingDirect] = useState(false);
+
+  const handleOpenCreateTask = () => {
+    setInspectingTask({
+      title: '',
+      description: '',
+      subject: 'Rosing',
+      complexity: 'Modérée',
+      budget: 0,
+      assigned_members: [typeof currentUser === 'string' ? currentUser : (currentUser?.prenom ? `${currentUser.prenom} ${currentUser.nom || 'Jamet'}` : 'Henri Jamet')],
+      checklist: [
+        { text: 'Diagnostic initial et constat sur place', done: false },
+        { text: 'Demande de devis et consultation des artisans', done: false },
+        { text: 'Validation budgétaire en coordination', done: false },
+        { text: 'Réalisation des travaux et contrôle final', done: false },
+      ]
+    });
+    setIsTaskEditingDirect(true);
+    setIsTaskModalOpen(true);
+  };
 
   const userPrenom = typeof currentUser === 'object'
     ? (currentUser?.prenom || 'Henri')
@@ -135,7 +156,7 @@ export default function DashboardPage({
 
             <button
               type="button"
-              onClick={() => setIsNewTaskModalOpen(true)}
+              onClick={handleOpenCreateTask}
               className="group rounded-2xl p-3 flex items-center gap-2.5 text-left transition-all hover:scale-[1.02] shadow-sm cursor-pointer bg-sky-500/10 hover:bg-sky-500/20 text-sky-900 dark:text-sky-200 border border-sky-500/20"
             >
               <span className="material-symbols-outlined text-[22px] shrink-0 group-hover:scale-110 transition-transform">
@@ -758,15 +779,24 @@ export default function DashboardPage({
 
       </section>
 
-      {/* Modale de Création de Tâche */}
-      <NewTaskModal
-        isOpen={isNewTaskModalOpen}
-        onClose={() => setIsNewTaskModalOpen(false)}
-        currentUser={currentUser}
-        onTaskCreated={() => {
-          loadDashboardData();
-        }}
-      />
+      {/* Modale de Consultation et Création Détaillée de Tâche Unifiée (Annotation 16) */}
+      {isTaskModalOpen && (
+        <TaskDetailModal
+          isOpen={isTaskModalOpen}
+          task={inspectingTask}
+          isEditing={isTaskEditingDirect}
+          initialMode={isTaskEditingDirect ? 'edit' : 'view'}
+          onClose={() => {
+            setIsTaskModalOpen(false);
+            setInspectingTask(null);
+            setIsTaskEditingDirect(false);
+          }}
+          currentUser={currentUser}
+          onTaskUpdated={() => {
+            loadDashboardData();
+          }}
+        />
+      )}
 
     </div>
   );

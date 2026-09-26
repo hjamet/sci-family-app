@@ -1,9 +1,10 @@
 import React, { useState, useEffect } from 'react';
 import {
-  X, ThumbsUp, ThumbsDown, HelpCircle, ShieldCheck, User, Euro, Tag, AlertCircle, Edit3, Check, Sparkles, Image as ImageIcon, FileText, ExternalLink, Star, Gavel, Calendar, Send, MessageSquare, Paperclip
+  X, ThumbsUp, ThumbsDown, HelpCircle, ShieldCheck, User, Euro, Tag, AlertCircle, Edit3, Check, Sparkles, Image as ImageIcon, FileText, ExternalLink, Star, Gavel, Calendar, Send, MessageSquare, Paperclip, Eye, Download
 } from 'lucide-react';
 import { reviewProject, castProjectVote, fetchProjectComments, addProjectComment } from '../api';
 import CoordinatorApprovalModal from './CoordinatorApprovalModal';
+import DocumentViewerModal from './DocumentViewerModal';
 import CustomSelect from './CustomSelect';
 
 
@@ -26,6 +27,7 @@ export default function ProjectDetailModal({ project, isOpen, onClose, currentUs
   const [savingEdit, setSavingEdit] = useState(false);
   const [votingLoading, setVotingLoading] = useState(false);
   const [activePhoto, setActivePhoto] = useState(null);
+  const [activeDocument, setActiveDocument] = useState(null);
   const [errorMsg, setErrorMsg] = useState(null);
   const [showReportAgModal, setShowReportAgModal] = useState(false);
   const [showApprovalModal, setShowApprovalModal] = useState(false);
@@ -433,18 +435,34 @@ export default function ProjectDetailModal({ project, isOpen, onClose, currentUs
                         {project.document_urls.map((docUrl, idx) => {
                           const fileName = docUrl.split('/').pop();
                           const cleanName = fileName.length > 33 && fileName[32] === '_' ? fileName.substring(33) : fileName;
+                          const isPdf = docUrl.toLowerCase().endsWith('.pdf');
+                          const isImg = docUrl.match(/\.(png|jpe?g|webp|gif|svg)$/i);
+                          const docType = isPdf ? 'pdf' : (isImg ? 'image' : 'text');
                           return (
                             <div key={idx} className="flex items-center justify-between p-2 bg-slate-50 rounded-lg border border-slate-200 text-xs">
                               <span className="font-medium text-slate-800 truncate pr-2">{cleanName}</span>
-                              <a
-                                href={docUrl}
-                                target="_blank"
-                                rel="noreferrer"
-                                className="px-2.5 py-1 bg-indigo-600 hover:bg-indigo-700 text-white font-bold text-[10px] rounded flex items-center space-x-1 shrink-0 transition"
-                              >
-                                <span>Consulter</span>
-                                <ExternalLink className="h-3 w-3" />
-                              </a>
+                              <div className="flex items-center gap-1.5 shrink-0">
+                                <button
+                                  type="button"
+                                  onClick={() => setActiveDocument({ url: docUrl, title: cleanName, type: docType })}
+                                  className="px-2.5 py-1 bg-indigo-600 hover:bg-indigo-700 text-white font-bold text-[10px] rounded flex items-center space-x-1 transition shadow-sm cursor-pointer"
+                                  title="Consulter sans télécharger"
+                                >
+                                  <Eye className="h-3 w-3" />
+                                  <span>Consulter</span>
+                                </button>
+                                <a
+                                  href={docUrl}
+                                  download={cleanName}
+                                  target="_blank"
+                                  rel="noreferrer"
+                                  className="px-2.5 py-1 bg-white hover:bg-slate-100 text-slate-700 border border-slate-300 font-bold text-[10px] rounded flex items-center space-x-1 transition shadow-sm"
+                                  title="Télécharger"
+                                >
+                                  <Download className="h-3 w-3" />
+                                  <span>Télécharger</span>
+                                </a>
+                              </div>
                             </div>
                           );
                         })}
@@ -459,15 +477,30 @@ export default function ProjectDetailModal({ project, isOpen, onClose, currentUs
                         <FileText className="h-4 w-4 text-indigo-600 shrink-0" />
                         <span className="font-bold">Devis Prestataire (PDF)</span>
                       </div>
-                      <a
-                        href={project.devis_url || '#'}
-                        target="_blank"
-                        rel="noreferrer"
-                        className="px-3 py-1 bg-indigo-600 text-white rounded-lg text-[11px] font-bold flex items-center space-x-1 hover:bg-indigo-700 transition"
-                      >
-                        <span>Consulter le PDF</span>
-                        <ExternalLink className="h-3 w-3" />
-                      </a>
+                      <div className="flex items-center gap-1.5 shrink-0">
+                        <button
+                          type="button"
+                          onClick={() => setActiveDocument({
+                            url: project.devis_url,
+                            title: `Devis Prestataire - ${project.title}`,
+                            type: 'pdf'
+                          })}
+                          className="px-3 py-1 bg-indigo-600 text-white rounded-lg text-[11px] font-bold flex items-center space-x-1 hover:bg-indigo-700 transition shadow-sm cursor-pointer"
+                        >
+                          <Eye className="h-3 w-3" />
+                          <span>Consulter</span>
+                        </button>
+                        <a
+                          href={project.devis_url || '#'}
+                          download={`Devis_${project.title}.pdf`}
+                          target="_blank"
+                          rel="noreferrer"
+                          className="px-3 py-1 bg-white text-slate-700 border border-slate-300 rounded-lg text-[11px] font-bold flex items-center space-x-1 hover:bg-slate-100 transition shadow-sm"
+                        >
+                          <Download className="h-3 w-3" />
+                          <span>Télécharger</span>
+                        </a>
+                      </div>
                     </div>
                   )}
 
@@ -726,6 +759,13 @@ export default function ProjectDetailModal({ project, isOpen, onClose, currentUs
           onRefresh={onRefresh}
         />
       )}
+
+      {/* Visionneuse universelle intégrée (Annotation 9) */}
+      <DocumentViewerModal
+        isOpen={!!activeDocument}
+        onClose={() => setActiveDocument(null)}
+        document={activeDocument}
+      />
 
     </div>
   );
