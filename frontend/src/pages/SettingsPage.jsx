@@ -17,7 +17,8 @@ import {
   CalendarDays,
   Info,
   RefreshCw,
-  CheckCheck
+  CheckCheck,
+  Thermometer
 } from 'lucide-react';
 import {
   fetchUserProfile,
@@ -93,12 +94,13 @@ export default function SettingsPage({ currentUser }) {
   const [passwordLoading, setPasswordLoading] = useState(false);
   const [passwordError, setPasswordError] = useState(null);
 
-  // --- États Préférences de Notifications (4 Toggles, True par défaut) ---
+  // --- États Préférences de Notifications (5 Toggles) ---
   const [notifications, setNotifications] = useState({
     notify_new_task: true,
     notify_pending_vote: true,
     notify_final_decision: true,
-    notify_new_stay: true
+    notify_new_stay: true,
+    notif_thermal_changes: false
   });
   const [notificationsLoading, setNotificationsLoading] = useState(false);
 
@@ -151,11 +153,19 @@ export default function SettingsPage({ currentUser }) {
         // Chargement des préférences de notifications
         const settings = await fetchMemberSettings(userProfile?.id || prenomKey);
         if (isMounted && settings) {
+          const thermalPref = Boolean(
+            settings.notif_thermal_changes != null
+              ? settings.notif_thermal_changes
+              : (settings.notify_thermal_changes != null
+                  ? settings.notify_thermal_changes
+                  : (userProfile?.notif_thermal_changes ?? false))
+          );
           setNotifications({
             notify_new_task: settings.notify_new_task !== false,
             notify_pending_vote: settings.notify_pending_vote !== false,
             notify_final_decision: settings.notify_final_decision !== false,
-            notify_new_stay: settings.notify_new_stay !== false
+            notify_new_stay: settings.notify_new_stay !== false,
+            notif_thermal_changes: thermalPref
           });
         }
       } catch (err) {
@@ -234,10 +244,16 @@ export default function SettingsPage({ currentUser }) {
 
   // --- Actions Section 3 : Préférences de notification ---
   const handleToggleNotification = (key) => {
-    setNotifications((prev) => ({
-      ...prev,
-      [key]: !prev[key]
-    }));
+    setNotifications((prev) => {
+      const nextVal = !prev[key];
+      const updated = { ...prev, [key]: nextVal };
+      if (key === 'notif_thermal_changes') {
+        updated.notify_thermal_changes = nextVal;
+      } else if (key === 'notify_thermal_changes') {
+        updated.notif_thermal_changes = nextVal;
+      }
+      return updated;
+    });
   };
 
   const handleSetAllNotifications = (status) => {
@@ -245,7 +261,9 @@ export default function SettingsPage({ currentUser }) {
       notify_new_task: status,
       notify_pending_vote: status,
       notify_final_decision: status,
-      notify_new_stay: status
+      notify_new_stay: status,
+      notif_thermal_changes: status,
+      notify_thermal_changes: status
     });
   };
 
@@ -677,6 +695,47 @@ export default function SettingsPage({ currentUser }) {
                 <div
                   className={`bg-white w-4 h-4 rounded-full shadow-md transform duration-300 ease-in-out ${
                     notifications.notify_new_stay ? 'translate-x-6' : 'translate-x-0'
+                  }`}
+                />
+              </div>
+            </div>
+          </div>
+
+          {/* Toggle 5 : Alertes thermiques & piscine */}
+          <div
+            onClick={() => handleToggleNotification('notif_thermal_changes')}
+            className="flex items-start justify-between gap-4 p-4 rounded-2xl border border-slate-200 hover:border-emerald-300 bg-slate-50/50 hover:bg-emerald-50/20 transition-all cursor-pointer select-none"
+          >
+            <div className="flex items-start gap-3.5">
+              <div className="w-9 h-9 rounded-xl bg-amber-100 text-amber-800 flex items-center justify-center shrink-0 mt-0.5 border border-amber-200">
+                <Thermometer className="w-5 h-5 text-amber-800" />
+              </div>
+              <div>
+                <span className="text-sm font-bold text-slate-900">
+                  🌡️ Alertes thermiques &amp; piscine
+                </span>
+                <p className="text-xs text-slate-600 mt-1">
+                  m'alerter en cas de modification des consignes de chauffage ou de filtration piscine.
+                </p>
+                <div className="mt-1.5 flex items-center gap-1.5 text-[11px] text-slate-500">
+                  <span className="inline-flex items-center px-1.5 py-0.5 rounded bg-slate-200/80 text-slate-700 font-medium">
+                    Désactivé par défaut
+                  </span>
+                  <span>• Activé pour la gérance et la coordination</span>
+                </div>
+              </div>
+            </div>
+
+            {/* Custom Toggle Switch */}
+            <div className="shrink-0 pt-1">
+              <div
+                className={`w-12 h-6 flex items-center rounded-full p-1 duration-300 ease-in-out ${
+                  notifications.notif_thermal_changes ? 'bg-primary' : 'bg-slate-300'
+                }`}
+              >
+                <div
+                  className={`bg-white w-4 h-4 rounded-full shadow-md transform duration-300 ease-in-out ${
+                    notifications.notif_thermal_changes ? 'translate-x-6' : 'translate-x-0'
                   }`}
                 />
               </div>

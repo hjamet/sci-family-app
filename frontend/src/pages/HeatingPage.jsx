@@ -8,7 +8,7 @@ import {
   CheckCircle2, AlertTriangle, RefreshCw, Droplets, X,
   Minus, Plus, Lock, ShieldCheck, Waves, Info, Gauge, Activity, Radio
 } from 'lucide-react';
-import { fetchHeatingStatus, setHeatingMode, setHeatingTemperature } from '../api';
+import { fetchHeatingStatus, setHeatingMode, setHeatingTemperature, saveHeatingSettings } from '../api';
 
 export default function HeatingPage({ currentUser }) {
   const [status, setStatus] = useState(null);
@@ -56,7 +56,7 @@ export default function HeatingPage({ currentUser }) {
     try {
       setUpdating(true);
       setErrorMsg(null);
-      await setHeatingMode(modeKey);
+      await saveHeatingSettings({ mode: modeKey, target_temperature: sliderTemp });
       await loadStatus();
     } catch (err) {
       console.error('Error setting heating mode:', err);
@@ -70,7 +70,7 @@ export default function HeatingPage({ currentUser }) {
     try {
       setUpdating(true);
       setErrorMsg(null);
-      await setHeatingTemperature(targetVal);
+      await saveHeatingSettings({ target_temperature: targetVal });
       await loadStatus();
     } catch (err) {
       console.error('Error setting heating temperature:', err);

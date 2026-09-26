@@ -45,6 +45,7 @@ class MemberBase(BaseModel):
     notif_vote_needed: bool = True
     notif_vote_closed: bool = True
     notif_stay_booked: bool = True
+    notif_thermal_changes: bool = False
 
 class MemberCreate(MemberBase):
     password: str = "pass123"
@@ -60,6 +61,7 @@ class MemberUpdate(BaseModel):
     notif_vote_needed: Optional[bool] = None
     notif_vote_closed: Optional[bool] = None
     notif_stay_booked: Optional[bool] = None
+    notif_thermal_changes: Optional[bool] = None
 
 class MemberResponse(MemberBase):
     id: int
@@ -80,6 +82,7 @@ class MemberSettingsResponse(BaseModel):
     notif_vote_needed: bool = True
     notif_vote_closed: bool = True
     notif_stay_booked: bool = True
+    notif_thermal_changes: bool = False
 
     class Config:
         from_attributes = True
@@ -90,6 +93,7 @@ class MemberSettingsUpdate(BaseModel):
     notif_vote_needed: Optional[bool] = None
     notif_vote_closed: Optional[bool] = None
     notif_stay_booked: Optional[bool] = None
+    notif_thermal_changes: Optional[bool] = None
 
 class ChangePasswordRequest(BaseModel):
     old_password: str
@@ -109,6 +113,7 @@ class TokenResponse(BaseModel):
     notif_vote_needed: Optional[bool] = None
     notif_vote_closed: Optional[bool] = None
     notif_stay_booked: Optional[bool] = None
+    notif_thermal_changes: Optional[bool] = None
 
 # Property Schemas
 class PropertyBase(BaseModel):
@@ -909,10 +914,12 @@ class ProfileUpdateRequest(BaseModel):
     notif_vote_needed: Optional[bool] = None
     notif_vote_closed: Optional[bool] = None
     notif_stay_booked: Optional[bool] = None
+    notif_thermal_changes: Optional[bool] = None
     notify_new_task: Optional[bool] = None
     notify_pending_vote: Optional[bool] = None
     notify_final_decision: Optional[bool] = None
     notify_new_stay: Optional[bool] = None
+    notify_thermal_changes: Optional[bool] = None
 
 
 class ChangePasswordRequest(BaseModel):
@@ -932,11 +939,13 @@ class MemberSettingsResponse(BaseModel):
     notif_vote_needed: bool = True
     notif_vote_closed: bool = True
     notif_stay_booked: bool = True
+    notif_thermal_changes: bool = False
     # Aliases for legacy compatibility
     notify_new_task: bool = True
     notify_pending_vote: bool = True
     notify_final_decision: bool = True
     notify_new_stay: bool = True
+    notify_thermal_changes: bool = False
 
     class Config:
         from_attributes = True
@@ -948,10 +957,47 @@ class MemberSettingsUpdate(BaseModel):
     notif_vote_needed: Optional[bool] = None
     notif_vote_closed: Optional[bool] = None
     notif_stay_booked: Optional[bool] = None
+    notif_thermal_changes: Optional[bool] = None
     notify_new_task: Optional[bool] = None
     notify_pending_vote: Optional[bool] = None
     notify_final_decision: Optional[bool] = None
     notify_new_stay: Optional[bool] = None
+    notify_thermal_changes: Optional[bool] = None
+
+
+class HeatingSettingsRequest(BaseModel):
+    target_temperature: Optional[float] = None
+    mode: Optional[str] = None
+    author_name: Optional[str] = None
+    details: Optional[str] = None
+
+
+class HeatingSettingsResponse(BaseModel):
+    target_temperature: Optional[float] = 19.0
+    mode: Optional[str] = "dhwAndHeating"
+    updated_by: Optional[str] = None
+    updated_at: Optional[datetime] = None
+    message: Optional[str] = "Réglages de chauffage enregistrés avec succès."
+    status: str = "ok"
+
+
+class PoolSettingsRequest(BaseModel):
+    target_temperature: Optional[float] = None
+    filtration_mode: Optional[str] = None
+    mode: Optional[str] = None
+    author_name: Optional[str] = None
+    details: Optional[str] = None
+
+
+class PoolSettingsResponse(BaseModel):
+    target_temperature: Optional[float] = 14.0
+    filtration_mode: Optional[str] = "auto"
+    mode: Optional[str] = "standby"
+    updated_by: Optional[str] = None
+    updated_at: Optional[datetime] = None
+    message: Optional[str] = "Réglages piscine enregistrés avec succès."
+    status: str = "ok"
+
 
 
 class VoteSubmissionRequest(BaseModel):

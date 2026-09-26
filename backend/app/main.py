@@ -19,7 +19,7 @@ from .models import (
     Property, User, Member, Issue, Comment, IssueComment, Reservation, Project,
     ProjectVote, ProjectComment, AdminDocument, MemberAvailability,
     VademecumItem, MaintenanceTask, StayTaskAssignment, Task, TaskComment, Log,
-    BankAccount, BankTransaction, BankAuthSession, MemberSettings
+    BankAccount, BankTransaction, BankAuthSession, MemberSettings, ThermalSettings
 )
 from .schemas import (
     LoginRequest, PropertyResponse, UserResponse, TokenResponse,
@@ -35,6 +35,7 @@ from .schemas import (
     MaintenanceTaskCreate, MaintenanceTaskResponse, StayTaskAssignmentResponse, TaskCompletionSubmit,
     StatsResponse, UserWorkloadStats, WorkloadSummaryResponse,
     HeatingStatusResponse, HeatingModeRequest, HeatingTemperatureRequest,
+    HeatingSettingsRequest, HeatingSettingsResponse, PoolSettingsRequest, PoolSettingsResponse,
     PiscineStatusResponse, StayBalanceResponse, StayBalanceMember,
     TaskCreate, TaskUpdate, TaskResponse, TaskCommentCreate, TaskCommentResponse, TaskCommentReactRequest, TaskCloseRequest,
     ALLOWED_REACTION_EMOJIS,
@@ -56,6 +57,7 @@ from .services.email_service import (
     send_vote_required_email,
     send_vote_closed_email,
     send_stay_booked_email,
+    send_thermal_change_email,
     send_password_reset_email,
     notify_coordinator_new_issue,
     notify_all_members_project_vote
@@ -294,6 +296,15 @@ def get_current_user(request: Request, db: Session = Depends(get_db)) -> User:
     return user
 
 
+def get_optional_current_user(request: Request, db: Session = Depends(get_db)) -> Optional[User]:
+    """Optional user dependency that returns None if authentication header is absent or invalid."""
+    try:
+        return get_current_user(request, db)
+    except HTTPException:
+        return None
+
+
+
 @app.post("/api/auth/login", response_model=TokenResponse)
 def login(req: LoginRequest, request: Request, db: Session = Depends(get_db)):
     ip = rate_limiter.get_client_ip(request)
@@ -512,7 +523,7 @@ def get_me(current_user: User = Depends(get_current_user)):
 
 @app.get("/api/auth/profile", response_model=MemberSettingsResponse)
 def get_auth_profile(current_user: User = Depends(get_current_user)):
-    """Returns email, identity, and the 4 notification toggles for currently logged in user."""
+    """Returns email, identity, and the notification toggles for currently logged in user."""
     return {
         "id": current_user.id,
         "member_id": current_user.id,
@@ -523,10 +534,12 @@ def get_auth_profile(current_user: User = Depends(get_current_user)):
         "notif_vote_needed": getattr(current_user, "notif_vote_needed", True),
         "notif_vote_closed": getattr(current_user, "notif_vote_closed", True),
         "notif_stay_booked": getattr(current_user, "notif_stay_booked", True),
+        "notif_thermal_changes": getattr(current_user, "notif_thermal_changes", False),
         "notify_new_task": getattr(current_user, "notif_task_assigned", True),
         "notify_pending_vote": getattr(current_user, "notif_vote_needed", True),
         "notify_final_decision": getattr(current_user, "notif_vote_closed", True),
         "notify_new_stay": getattr(current_user, "notif_stay_booked", True),
+        "notify_thermal_changes": getattr(current_user, "notif_thermal_changes", False),
     }
 
 @app.patch("/api/auth/profile", response_model=MemberSettingsResponse)
@@ -536,7 +549,7 @@ def update_auth_profile(
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db)
 ):
-    """Updates email and the 4 notification preferences for currently logged in user."""
+    """Updates email and notification preferences for currently logged in user."""
     if data.email is not None:
         email_clean = data.email.strip().lower()
         if email_clean and "@" not in email_clean:
@@ -570,6 +583,11 @@ def update_auth_profile(
     elif data.notify_new_stay is not None:
         current_user.notif_stay_booked = data.notify_new_stay
 
+    if data.notif_thermal_changes is not None:
+        current_user.notif_thermal_changes = data.notif_thermal_changes
+    elif data.notify_thermal_changes is not None:
+        current_user.notif_thermal_changes = data.notify_thermal_changes
+
     db.commit()
     db.refresh(current_user)
 
@@ -583,10 +601,12 @@ def update_auth_profile(
         "notif_vote_needed": getattr(current_user, "notif_vote_needed", True),
         "notif_vote_closed": getattr(current_user, "notif_vote_closed", True),
         "notif_stay_booked": getattr(current_user, "notif_stay_booked", True),
+        "notif_thermal_changes": getattr(current_user, "notif_thermal_changes", False),
         "notify_new_task": getattr(current_user, "notif_task_assigned", True),
         "notify_pending_vote": getattr(current_user, "notif_vote_needed", True),
         "notify_final_decision": getattr(current_user, "notif_vote_closed", True),
         "notify_new_stay": getattr(current_user, "notif_stay_booked", True),
+        "notify_thermal_changes": getattr(current_user, "notif_thermal_changes", False),
     }
 
 @app.post("/api/auth/change-password")
@@ -646,7 +666,7 @@ def get_member_settings(
     member_id: int,
     db: Session = Depends(get_db)
 ):
-    """Returns email and the 4 notification toggles for specified member."""
+    """Returns email and the notification toggles for specified member."""
     member = db.query(Member).filter(Member.id == member_id).first()
     if not member:
         raise HTTPException(status_code=404, detail="Membre introuvable.")
@@ -660,10 +680,12 @@ def get_member_settings(
         "notif_vote_needed": getattr(member, "notif_vote_needed", True),
         "notif_vote_closed": getattr(member, "notif_vote_closed", True),
         "notif_stay_booked": getattr(member, "notif_stay_booked", True),
+        "notif_thermal_changes": getattr(member, "notif_thermal_changes", False),
         "notify_new_task": getattr(member, "notif_task_assigned", True),
         "notify_pending_vote": getattr(member, "notif_vote_needed", True),
         "notify_final_decision": getattr(member, "notif_vote_closed", True),
         "notify_new_stay": getattr(member, "notif_stay_booked", True),
+        "notify_thermal_changes": getattr(member, "notif_thermal_changes", False),
     }
 
 @app.put("/api/members/{member_id}/settings", response_model=MemberSettingsResponse)
@@ -673,7 +695,7 @@ def update_member_settings(
     data: MemberSettingsUpdate,
     db: Session = Depends(get_db)
 ):
-    """Updates email and the 4 notification preferences for specified member."""
+    """Updates email and notification preferences for specified member."""
     member = db.query(Member).filter(Member.id == member_id).first()
     if not member:
         raise HTTPException(status_code=404, detail="Membre introuvable.")
@@ -708,6 +730,11 @@ def update_member_settings(
     elif data.notify_new_stay is not None:
         member.notif_stay_booked = data.notify_new_stay
 
+    if data.notif_thermal_changes is not None:
+        member.notif_thermal_changes = data.notif_thermal_changes
+    elif data.notify_thermal_changes is not None:
+        member.notif_thermal_changes = data.notify_thermal_changes
+
     db.commit()
     db.refresh(member)
     return {
@@ -720,10 +747,12 @@ def update_member_settings(
         "notif_vote_needed": getattr(member, "notif_vote_needed", True),
         "notif_vote_closed": getattr(member, "notif_vote_closed", True),
         "notif_stay_booked": getattr(member, "notif_stay_booked", True),
+        "notif_thermal_changes": getattr(member, "notif_thermal_changes", False),
         "notify_new_task": getattr(member, "notif_task_assigned", True),
         "notify_pending_vote": getattr(member, "notif_vote_needed", True),
         "notify_final_decision": getattr(member, "notif_vote_closed", True),
         "notify_new_stay": getattr(member, "notif_stay_booked", True),
+        "notify_thermal_changes": getattr(member, "notif_thermal_changes", False),
     }
 
 @app.get("/api/auth/settings", response_model=MemberSettingsResponse)
@@ -2918,6 +2947,204 @@ def set_piscine_control_interlock():
             "error": "Garde-fou de sécurité inviolable actif (Garde-fou Henri #1) : Mode lecture seule obligatoire pour la piscine. Toute modification de consigne ou commande actionneur est formellement interdite.",
             "type": "SecurityInterlockError"
         }
+    )
+
+
+# --- Heating & Pool Settings Endpoints (Thermal Changes & Email Triggers) ---
+
+@app.get("/api/heating/settings", response_model=HeatingSettingsResponse, tags=["Heating"])
+def get_heating_settings(db: Session = Depends(get_db)):
+    """Returns currently saved heating consigne and mode."""
+    setting = db.query(ThermalSettings).filter(ThermalSettings.equipment_type == "heating").first()
+    if not setting:
+        return HeatingSettingsResponse(
+            target_temperature=19.0,
+            mode="dhwAndHeating",
+            updated_by="Système",
+            updated_at=datetime.utcnow()
+        )
+    return HeatingSettingsResponse(
+        target_temperature=setting.target_temperature if setting.target_temperature is not None else 19.0,
+        mode=setting.mode or "dhwAndHeating",
+        updated_by=setting.updated_by or "Coordinateur",
+        updated_at=setting.updated_at
+    )
+
+
+@app.post("/api/heating/settings", response_model=HeatingSettingsResponse, tags=["Heating"])
+def update_heating_settings(
+    req: HeatingSettingsRequest,
+    current_user: Optional[User] = Depends(get_optional_current_user),
+    db: Session = Depends(get_db)
+):
+    """
+    Enregistre les consignes de température et mode de chauffage ViCare (Presbytère),
+    et déclenche l'envoi d'un e-mail d'alerte à tous les membres ayant notif_thermal_changes == True.
+    """
+    author = req.author_name or (current_user.name if current_user else "Henri Jamet (Coordinateur)")
+
+    # 1. Update or create row in thermal_settings
+    setting = db.query(ThermalSettings).filter(ThermalSettings.equipment_type == "heating").first()
+    if not setting:
+        setting = ThermalSettings(equipment_type="heating")
+        db.add(setting)
+
+    if req.target_temperature is not None:
+        setting.target_temperature = req.target_temperature
+    elif setting.target_temperature is None:
+        setting.target_temperature = 19.0
+
+    if req.mode is not None:
+        setting.mode = req.mode
+    elif setting.mode is None:
+        setting.mode = "dhwAndHeating"
+
+    setting.updated_by = author
+    setting.updated_at = datetime.utcnow()
+    db.commit()
+    db.refresh(setting)
+
+    # 2. Build human-readable details
+    temp_str = f"{setting.target_temperature:.1f}°C" if setting.target_temperature is not None else "19.0°C"
+    mode_str = setting.mode or "dhwAndHeating"
+    details = req.details or f"Température de consigne passée à {temp_str} (Mode: {mode_str})"
+
+    # 3. Log action
+    db.add(Log(
+        action="HEATING_SETTINGS_UPDATE",
+        user_name=author,
+        details=details
+    ))
+    db.commit()
+
+    # 4. Trigger email to members with notif_thermal_changes == True
+    subscribed_members = db.query(Member).filter(
+        Member.notif_thermal_changes == True,
+        Member.email.isnot(None)
+    ).all()
+    target_emails = [m.email for m in subscribed_members if m.email]
+
+    if target_emails:
+        try:
+            send_thermal_change_email(
+                target_emails=target_emails,
+                author_name=author,
+                equipment_type="Chauffage ViCare (Presbytère)",
+                details=details
+            )
+        except Exception as email_err:
+            logger.error(f"[HEATING SETTINGS] Erreur lors de l'envoi d'e-mail: {email_err}")
+
+    return HeatingSettingsResponse(
+        target_temperature=setting.target_temperature,
+        mode=setting.mode,
+        updated_by=setting.updated_by,
+        updated_at=setting.updated_at,
+        message=f"Consigne de chauffage enregistrée ({temp_str}) et notification transmise aux associés abonnés.",
+        status="ok"
+    )
+
+
+@app.get("/api/pool/settings", response_model=PoolSettingsResponse, tags=["Pool"])
+@app.get("/api/piscine/settings", response_model=PoolSettingsResponse, tags=["Pool"])
+def get_pool_settings(db: Session = Depends(get_db)):
+    """Returns currently saved pool consigne and filtration mode."""
+    setting = db.query(ThermalSettings).filter(ThermalSettings.equipment_type == "pool").first()
+    if not setting:
+        return PoolSettingsResponse(
+            target_temperature=14.0,
+            filtration_mode="auto",
+            mode="standby",
+            updated_by="Système",
+            updated_at=datetime.utcnow()
+        )
+    return PoolSettingsResponse(
+        target_temperature=setting.target_temperature if setting.target_temperature is not None else 14.0,
+        filtration_mode=setting.filtration_mode or "auto",
+        mode=setting.mode or "standby",
+        updated_by=setting.updated_by or "Coordinateur",
+        updated_at=setting.updated_at
+    )
+
+
+@app.post("/api/pool/settings", response_model=PoolSettingsResponse, tags=["Pool"])
+@app.post("/api/piscine/settings", response_model=PoolSettingsResponse, tags=["Pool"])
+def update_pool_settings(
+    req: PoolSettingsRequest,
+    current_user: Optional[User] = Depends(get_optional_current_user),
+    db: Session = Depends(get_db)
+):
+    """
+    Enregistre les consignes de température et filtration piscine Klereo (Villa Rosing),
+    et déclenche l'envoi d'un e-mail d'alerte à tous les membres ayant notif_thermal_changes == True.
+    """
+    author = req.author_name or (current_user.name if current_user else "Henri Jamet (Coordinateur)")
+
+    # 1. Update or create row in thermal_settings
+    setting = db.query(ThermalSettings).filter(ThermalSettings.equipment_type == "pool").first()
+    if not setting:
+        setting = ThermalSettings(equipment_type="pool")
+        db.add(setting)
+
+    if req.target_temperature is not None:
+        setting.target_temperature = req.target_temperature
+    elif setting.target_temperature is None:
+        setting.target_temperature = 14.0
+
+    if req.filtration_mode is not None:
+        setting.filtration_mode = req.filtration_mode
+    elif setting.filtration_mode is None:
+        setting.filtration_mode = "auto"
+
+    if req.mode is not None:
+        setting.mode = req.mode
+    elif setting.mode is None:
+        setting.mode = "standby"
+
+    setting.updated_by = author
+    setting.updated_at = datetime.utcnow()
+    db.commit()
+    db.refresh(setting)
+
+    # 2. Build human-readable details
+    temp_str = f"{setting.target_temperature:.1f}°C" if setting.target_temperature is not None else "14.0°C"
+    filt_str = setting.filtration_mode or "auto"
+    details = req.details or f"Filtration piscine réglée sur '{filt_str}' (Consigne: {temp_str}, Mode: {setting.mode})"
+
+    # 3. Log action
+    db.add(Log(
+        action="POOL_SETTINGS_UPDATE",
+        user_name=author,
+        details=details
+    ))
+    db.commit()
+
+    # 4. Trigger email to members with notif_thermal_changes == True
+    subscribed_members = db.query(Member).filter(
+        Member.notif_thermal_changes == True,
+        Member.email.isnot(None)
+    ).all()
+    target_emails = [m.email for m in subscribed_members if m.email]
+
+    if target_emails:
+        try:
+            send_thermal_change_email(
+                target_emails=target_emails,
+                author_name=author,
+                equipment_type="Piscine Klereo (Villa Rosing)",
+                details=details
+            )
+        except Exception as email_err:
+            logger.error(f"[POOL SETTINGS] Erreur lors de l'envoi d'e-mail: {email_err}")
+
+    return PoolSettingsResponse(
+        target_temperature=setting.target_temperature,
+        filtration_mode=setting.filtration_mode,
+        mode=setting.mode,
+        updated_by=setting.updated_by,
+        updated_at=setting.updated_at,
+        message=f"Réglages piscine enregistrés ({filt_str}) et notification transmise aux associés abonnés.",
+        status="ok"
     )
 
 

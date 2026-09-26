@@ -16,6 +16,7 @@ from app.services.email_service import (
     send_vote_required_email,
     send_vote_closed_email,
     send_stay_booked_email,
+    send_thermal_change_email,
     send_password_reset_email,
     notify_all_members_project_vote,
     ALLOWED_RECIPIENTS,
@@ -179,3 +180,31 @@ def test_default_member_emails_list_filtering(hermetic_resend_mock):
     assert hermetic_resend_mock.call_count == 1
     call_payload = hermetic_resend_mock.call_args[1]["json"]
     assert call_payload["to"] == ["hellenvillierssci@gmail.com"]
+
+
+def test_template_thermal_change_blocked(hermetic_resend_mock):
+    """Vérifie que send_thermal_change_email bloque les destinataires non autorisés (ex: Hortense, Joséphine)."""
+    res = send_thermal_change_email(
+        target_emails="josephine_jamet@yahoo.fr",
+        author_name="Henri Jamet",
+        equipment_type="Chauffage ViCare (Presbytère)",
+        details="Consigne à 20.0°C"
+    )
+    assert res == {"status": "blocked_by_whitelist", "id": "local_mock_blocked"}
+    assert hermetic_resend_mock.call_count == 0
+
+
+def test_template_thermal_change_allowed_henri(hermetic_resend_mock):
+    """Vérifie que send_thermal_change_email vers Henri passe le filtre sans fuite."""
+    res = send_thermal_change_email(
+        target_emails="hellenvillierssci@gmail.com",
+        author_name="Henri Jamet",
+        equipment_type="Chauffage ViCare (Presbytère)",
+        details="Consigne à 20.0°C"
+    )
+    assert res.get("id") == "mock_firewall_resend_msg_2026"
+    assert hermetic_resend_mock.call_count == 1
+    call_payload = hermetic_resend_mock.call_args[1]["json"]
+    assert call_payload["to"] == ["hellenvillierssci@gmail.com"]
+    assert "[Domaine d'Hellenvilliers] Modification des consignes thermiques — Chauffage ViCare (Presbytère)" in call_payload["subject"]
+

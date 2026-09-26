@@ -735,3 +735,55 @@ def notify_all_members_project_vote(
         submitted_by=submitted_by,
         description=description
     )
+
+
+def send_thermal_change_email(
+    target_emails: Union[str, List[str]],
+    author_name: str,
+    equipment_type: str,
+    details: str
+) -> dict:
+    """
+    Template 5: MODIFICATION DES CONSIGNES THERMIQUES (Chauffage ViCare & Piscine Klereo)
+    Notifies subscribed members when heating or pool settings are adjusted.
+    Enforces the strict hermetic family firewall (only hellenvillierssci@gmail.com is allowed).
+    """
+    blocked = check_firewall(target_emails)
+    if blocked:
+        return blocked
+
+    subject = f"[Domaine d'Hellenvilliers] Modification des consignes thermiques — {equipment_type}"
+    preheader = f"Consignes modifiées par {author_name} pour {equipment_type} : {details}"
+    action_url = f"{APP_BASE_URL}/sejour"
+
+    content_html = f"""
+    <p>Bonjour,</p>
+    <p>Une modification des consignes thermiques a été enregistrée par <strong>{author_name}</strong> :</p>
+
+    <div style="background-color: #f9f8f6; border: 1px solid #e5e3dc; border-radius: 6px; padding: 20px; margin: 20px 0;">
+        <div style="font-size: 16px; font-weight: bold; color: #1e3a2f; margin-bottom: 8px;">
+            {equipment_type}
+        </div>
+        <div style="font-size: 14px; color: #1f2937; margin-bottom: 12px; line-height: 1.6;">
+            <strong>Détails de la modification :</strong> {details}
+        </div>
+        <div style="font-size: 12px; color: #6b7280; line-height: 1.5; border-top: 1px dashed #e5e3dc; padding-top: 10px; margin-top: 10px;">
+            Cette modification a été validée et enregistrée. Tous les associés ayant activé l'option de notification thermique reçoivent cet avis pour le suivi et la maîtrise énergétique du domaine.
+        </div>
+    </div>
+
+    <p style="color: #4b5563; font-size: 14px;">
+        Vous pouvez consulter le tableau de bord et les télémesures en direct sur l'espace Séjour de l'application.
+    </p>
+    """
+
+    html_body = render_email_layout(
+        title=f"Consignes Thermiques — {equipment_type}",
+        preheader=preheader,
+        content_html=content_html,
+        action_url=action_url,
+        action_label="Consulter l'espace Séjour & Énergie"
+    )
+
+    return send_email(to_email=target_emails, subject=subject, html_content=html_body)
+

@@ -920,7 +920,9 @@ export async function fetchMemberSettings(memberIdOrName = 'current') {
     notify_new_task: true,
     notify_pending_vote: true,
     notify_final_decision: true,
-    notify_new_stay: true
+    notify_new_stay: true,
+    notif_thermal_changes: false,
+    notify_thermal_changes: false
   };
 
   const cacheKey = `sci_settings_${memberIdOrName}`;
@@ -976,6 +978,33 @@ export async function updateMemberSettings(memberIdOrName = 'current', settings)
   }
 
   return settings;
+}
+
+// Thermal & Pool Settings Endpoints
+export async function saveHeatingSettings({ target_temperature, mode, author_name, details } = {}) {
+  const res = await fetch(`${API_BASE}/heating/settings`, {
+    method: 'POST',
+    headers: getAuthJsonHeaders(),
+    body: JSON.stringify({ target_temperature, mode, author_name, details }),
+  });
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({}));
+    throw new Error(err.detail || 'Erreur lors de l\'enregistrement des réglages de chauffage');
+  }
+  return res.json();
+}
+
+export async function savePoolSettings({ target_temperature, filtration_mode, mode, author_name, details } = {}) {
+  const res = await fetch(`${API_BASE}/pool/settings`, {
+    method: 'POST',
+    headers: getAuthJsonHeaders(),
+    body: JSON.stringify({ target_temperature, filtration_mode, mode, author_name, details }),
+  });
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({}));
+    throw new Error(err.detail || 'Erreur lors de l\'enregistrement des réglages piscine');
+  }
+  return res.json();
 }
 
 
