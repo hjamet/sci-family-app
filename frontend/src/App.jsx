@@ -10,6 +10,7 @@ import ProjectsPage from './components/ProjectsPage';
 import AdminPage from './components/AdminPage';
 import VademecumPage from './components/VademecumPage';
 import HeatingPage from './pages/HeatingPage';
+import SettingsPage from './pages/SettingsPage';
 import BookingModal from './components/BookingModal';
 import { fetchProperties } from './api';
 
@@ -28,6 +29,7 @@ export default function App() {
     if (path === '/admin') return 'admin';
     if (path === '/vademecum' || path === '/sejour') return 'sejour';
     if (path === '/energie' || path === '/chauffage') return 'energie';
+    if (path === '/parametres' || path === '/settings') return 'parametres';
     return 'home';
   };
 
@@ -55,6 +57,8 @@ export default function App() {
       sejour: '/sejour',
       energie: '/energie',
       chauffage: '/energie',
+      parametres: '/parametres',
+      settings: '/parametres',
     };
     const targetPath = routeMap[tabId] || (typeof tabId === 'string' && tabId.startsWith('/') ? tabId : '/');
     navigate(targetPath);
@@ -180,6 +184,15 @@ export default function App() {
               />
             }
           />
+          <Route
+            path="/parametres"
+            element={
+              <SettingsPage
+                currentUser={currentUser}
+              />
+            }
+          />
+          <Route path="/settings" element={<Navigate to="/parametres" replace />} />
           <Route path="/login" element={<Navigate to="/" replace />} />
           <Route path="*" element={<Navigate to="/" replace />} />
         </Routes>

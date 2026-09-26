@@ -255,43 +255,49 @@ export default function CalendarPage({ properties, currentUser = 'Henri Jamet' }
   return (
     <div className="flex flex-col w-full pb-16 space-y-6">
       
-      {/* ========================================== */}
-      {/* 1. EN-TÊTE DE PAGE STATUTAIRE & ACTIONS   */}
-      {/* ========================================== */}
-      <section className="w-full pt-4">
-        <div className="flex flex-col lg:flex-row lg:items-end justify-between gap-6 mb-6">
-          <div className="flex flex-col">
-            <span className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full bg-sage-soft text-primary font-label-sm text-xs font-semibold self-start mb-2">
-              <span className="material-symbols-outlined text-[16px]">domain</span>
-              Domaine d'Hellenvilliers • Saison {selectedYear || 'Multi-années'}
+      {/* ========================================================================= */}
+      {/* 1. EN-TÊTE HARMONISÉ HERO                                                 */}
+      {/* ========================================================================= */}
+      <section className="relative overflow-hidden rounded-2xl bg-amber-50/70 border border-amber-200/60 dark:bg-amber-950/20 dark:border-amber-800/40 p-6 sm:p-8 shadow-sm">
+        {/* Subtle decorative glow */}
+        <div className="absolute -right-24 -top-24 w-96 h-96 rounded-full bg-amber-200/40 dark:bg-amber-800/10 blur-3xl pointer-events-none"></div>
+        <div className="absolute -left-12 -bottom-12 w-64 h-64 rounded-full bg-yellow-200/30 dark:bg-yellow-800/10 blur-2xl pointer-events-none"></div>
+
+        <div className="relative z-10 flex flex-col md:flex-row md:items-center justify-between gap-4">
+          <div className="space-y-1.5 max-w-3xl">
+            <span className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full bg-amber-100/90 text-amber-900 dark:bg-amber-900/50 dark:text-amber-200 font-label-sm text-xs font-semibold uppercase tracking-wider">
+              <span className="w-2 h-2 rounded-full bg-amber-600 dark:bg-amber-400 animate-pulse"></span>
+              PLANNING & OCCUPATION
             </span>
-            <h1 className="font-display-lg text-2xl sm:text-3xl lg:text-display-lg text-forest-deep leading-tight font-bold">
-              Calendrier d'Occupation & Passages des Associés
+            <h1 className="font-display-lg text-2xl sm:text-3xl lg:text-display-lg text-forest-deep dark:text-amber-50 tracking-tight font-bold mt-2">
+              Calendrier des Séjours
             </h1>
-            <p className="font-body-xl text-xs sm:text-sm text-on-surface-variant mt-2 max-w-3xl">
-              Domaine d'Hellenvilliers • Régulation harmonieuse des 7 chambres entre la <strong className="font-semibold text-forest-deep">Villa Rosing</strong> (4 ch.) et <strong className="font-semibold text-forest-deep">Le Presbytère</strong> (3 ch.).
+            <p className="font-body-md text-sm sm:text-base text-on-surface-variant dark:text-amber-200/80 leading-relaxed">
+              Réservations des associés, occupation des demeures et calendrier 2026-2027.
             </p>
           </div>
 
-          {/* Action Primaire : Ouvrir Réservation */}
-          <div className="flex items-center gap-3 shrink-0">
+          {/* Boutons d'Action Rapide */}
+          <div className="flex flex-wrap sm:flex-nowrap items-center gap-3 shrink-0 pt-2 md:pt-0">
             <button
               type="button"
               onClick={() => {
                 setEditingReservation(null);
                 setIsBookingOpen(true);
               }}
-              className="group flex items-center justify-center gap-2 px-6 py-3.5 bg-white border-2 border-primary text-primary hover:bg-sage-soft font-label-lg text-sm sm:text-base font-bold rounded-2xl shadow-sm hover:shadow-md transition-all duration-200 cursor-pointer whitespace-nowrap"
+              className="group flex items-center justify-center gap-2 px-5 py-3.5 rounded-xl bg-white dark:bg-slate-900 border-2 border-primary text-primary dark:text-amber-400 hover:bg-amber-100/50 font-label-lg text-sm sm:text-base font-bold shadow-sm hover:shadow-md transition-all duration-200 cursor-pointer whitespace-nowrap"
             >
               <span className="material-symbols-outlined text-[22px] group-hover:scale-110 transition-transform">
                 edit_calendar
               </span>
-              <span>Réserver un nouveau séjour</span>
+              <span>+ Nouveau séjour</span>
             </button>
           </div>
         </div>
+      </section>
 
-        {/* Barre de Contrôles & Filtres Horizontale */}
+      {/* Barre de Contrôles & Filtres Horizontale */}
+      <section className="w-full">
         <div className="bg-surface-container-lowest rounded-2xl p-4 sm:p-space-md shadow-sm border border-border-subtle flex flex-col xl:flex-row items-stretch xl:items-center justify-between gap-4">
           
           {/* Commutateur de Vues (3 onglets Stitch) */}

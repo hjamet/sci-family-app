@@ -325,10 +325,55 @@ export default function VademecumPage({ properties, currentUser }) {
       )}
 
       {/* ===================================================================== */}
-      {/* 1. EN-TÊTE DU SÉJOUR                                                  */}
+      {/* 1. EN-TÊTE HARMONISÉ HERO                                             */}
       {/* ===================================================================== */}
-      <section className="relative bg-surface-container-lowest rounded-lg p-6 sm:p-8 lg:p-10 shadow-sm border border-border-subtle mb-10 overflow-hidden">
-        <div className="relative z-10 flex flex-col xl:flex-row items-start xl:items-center justify-between gap-8">
+      <section className="relative overflow-hidden rounded-2xl bg-emerald-50/70 border border-emerald-200/60 dark:bg-emerald-950/20 dark:border-emerald-800/40 p-6 sm:p-8 shadow-sm mb-8">
+        {/* Subtle decorative glow */}
+        <div className="absolute -right-24 -top-24 w-96 h-96 rounded-full bg-emerald-200/40 dark:bg-emerald-900/15 blur-3xl pointer-events-none"></div>
+        <div className="absolute -left-12 -bottom-12 w-64 h-64 rounded-full bg-teal-200/30 dark:bg-teal-900/10 blur-2xl pointer-events-none"></div>
+
+        <div className="relative z-10 flex flex-col md:flex-row md:items-center justify-between gap-4">
+          <div className="space-y-1.5 max-w-3xl">
+            <span className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full bg-emerald-100/90 text-emerald-900 dark:bg-emerald-900/50 dark:text-emerald-200 font-label-sm text-xs font-semibold uppercase tracking-wider">
+              <span className="w-2 h-2 rounded-full bg-emerald-600 dark:bg-emerald-400 animate-pulse"></span>
+              VADÉMÉCUM & VIE DU DOMAINE
+            </span>
+            <h1 className="font-display-lg text-2xl sm:text-3xl lg:text-display-lg text-forest-deep dark:text-emerald-50 tracking-tight font-bold mt-2">
+              Séjour & Intendance
+            </h1>
+            <p className="font-body-md text-sm sm:text-base text-on-surface-variant dark:text-emerald-200/80 leading-relaxed">
+              Consignes d'arrivée et départ, équipements et confort thermique du domaine.
+            </p>
+          </div>
+
+          {/* Boutons d'Action Rapide */}
+          <div className="flex flex-wrap sm:flex-nowrap items-center gap-3 shrink-0 pt-2 md:pt-0">
+            <button
+              onClick={() => setIsEditStayOpen(true)}
+              className="group flex items-center justify-center gap-2 px-5 py-3.5 rounded-xl bg-white dark:bg-slate-900 border-2 border-outline-variant text-on-surface hover:bg-canvas-slate hover:border-outline font-label-lg text-sm sm:text-base transition-all duration-200 shadow-sm cursor-pointer whitespace-nowrap"
+              type="button"
+            >
+              <span className="material-symbols-outlined text-[22px] text-on-surface-variant group-hover:scale-110 transition-transform">edit_calendar</span>
+              <span>Modifier le séjour</span>
+            </button>
+
+            <button
+              onClick={() => window.print()}
+              className="group flex items-center justify-center gap-2 px-5 py-3.5 rounded-xl bg-white dark:bg-slate-900 border-2 border-primary text-primary hover:bg-sage-soft font-label-lg text-sm sm:text-base font-bold shadow-sm hover:shadow-md transition-all duration-200 cursor-pointer whitespace-nowrap"
+              type="button"
+            >
+              <span className="material-symbols-outlined text-[22px] group-hover:scale-110 transition-transform">print</span>
+              <span>Télécharger le livret (PDF)</span>
+            </button>
+          </div>
+        </div>
+      </section>
+
+      {/* ===================================================================== */}
+      {/* 2. DÉTAIL DU PROCHAIN SÉJOUR AU DOMAINE                                */}
+      {/* ===================================================================== */}
+      <section className="relative bg-surface-container-lowest rounded-2xl p-6 sm:p-8 shadow-sm border border-border-subtle mb-10 overflow-hidden">
+        <div className="relative z-10 flex flex-col xl:flex-row items-start justify-between gap-6">
           
           {/* Left: Stay Identifiers & Status */}
           <div className="flex flex-col gap-4 max-w-2xl">
@@ -343,9 +388,9 @@ export default function VademecumPage({ properties, currentUser }) {
             </div>
 
             <div>
-              <h1 className="font-display-lg text-display-lg text-primary tracking-tight leading-tight">
+              <h2 className="font-display-md text-xl sm:text-2xl text-forest-deep tracking-tight font-bold">
                 Mon Prochain Séjour au Domaine
-              </h1>
+              </h2>
             </div>
 
             {/* Schedule badges */}
@@ -415,24 +460,23 @@ export default function VademecumPage({ properties, currentUser }) {
 
           </div>
 
-          {/* Right: Fast Actions Panel (senior-friendly large targets) */}
-          <div className="flex flex-col sm:flex-row xl:flex-col gap-3.5 w-full xl:w-72 shrink-0">
+          {/* Right: Quick actions for stay */}
+          <div className="flex flex-col sm:flex-row xl:flex-col gap-3 w-full xl:w-64 shrink-0">
             <button
               onClick={() => setIsEditStayOpen(true)}
-              className="w-full h-14 px-6 rounded-full bg-surface-container-lowest border-2 border-primary text-primary hover:bg-sage-soft active:bg-primary-fixed-dim transition-all shadow-sm flex items-center justify-center gap-2.5 font-label-lg text-label-lg group font-bold"
+              className="w-full py-3 px-4 rounded-xl bg-white border border-border-subtle hover:bg-canvas-slate text-on-surface font-label-md text-sm font-semibold transition-all shadow-sm flex items-center justify-center gap-2 cursor-pointer"
               type="button"
             >
-              <span className="material-symbols-outlined text-[22px] group-hover:scale-110 transition-transform">edit_calendar</span>
-              <span>Modifier le séjour</span>
+              <span className="material-symbols-outlined text-[20px] text-primary">edit_calendar</span>
+              <span>Gérer les dates</span>
             </button>
-
             <button
-              onClick={() => window.print()}
-              className="w-full h-14 px-6 rounded-full bg-surface-container-lowest border-2 border-primary text-primary hover:bg-sage-soft active:bg-primary-fixed-dim transition-all shadow-sm flex items-center justify-center gap-2.5 font-label-lg text-label-lg group font-bold"
+              onClick={() => setIsChecklistModalOpen(true)}
+              className="w-full py-3 px-4 rounded-xl bg-white border border-border-subtle hover:bg-canvas-slate text-on-surface font-label-md text-sm font-semibold transition-all shadow-sm flex items-center justify-center gap-2 cursor-pointer"
               type="button"
             >
-              <span className="material-symbols-outlined text-[22px] group-hover:scale-110 transition-transform">print</span>
-              <span>Feuille d'arrivée (PDF)</span>
+              <span className="material-symbols-outlined text-[20px] text-primary">checklist</span>
+              <span>Checklist départ</span>
             </button>
           </div>
 

@@ -416,44 +416,54 @@ export default function AdminInfoPage({ currentUser }) {
     <div className="w-full pb-16 animate-in fade-in duration-200">
       
       {/* ========================================================================= */}
-      {/* SUB-HEADER / TITLE & QUICK ACTION BUTTONS                                 */}
+      {/* 1. EN-TÊTE HARMONISÉ HERO                                                 */}
       {/* ========================================================================= */}
-      <div className="flex flex-col md:flex-row md:items-center justify-between gap-space-md py-space-md border-b border-border-subtle">
-        <div className="flex flex-col">
-          <h1 className="font-headline-lg text-headline-lg text-forest-deep tracking-tight mt-1">
-            Administratif &amp; Documents
-          </h1>
-          <p className="font-body-md text-xs text-on-surface-variant mt-0.5">
-            Portail Familial &amp; Patrimonial • Suivi budgétaire, actes notariés et pièces justificatives
-          </p>
-        </div>
+      <section className="relative overflow-hidden rounded-2xl bg-rose-50/70 border border-rose-200/60 dark:bg-rose-950/20 dark:border-rose-800/40 p-6 sm:p-8 shadow-sm mb-6">
+        {/* Subtle decorative glow */}
+        <div className="absolute -right-24 -top-24 w-96 h-96 rounded-full bg-rose-200/40 dark:bg-rose-900/15 blur-3xl pointer-events-none"></div>
+        <div className="absolute -left-12 -bottom-12 w-64 h-64 rounded-full bg-pink-200/30 dark:bg-pink-900/10 blur-2xl pointer-events-none"></div>
 
-        {/* Quick Actions Buttons */}
-        <div className="flex flex-wrap items-center gap-space-sm">
-          <button
-            id="btn-open-operation"
-            type="button"
-            onClick={() => {
-              setOperationType('in');
-              setIsOperationModalOpen(true);
-            }}
-            className="inline-flex items-center justify-center gap-2 h-[52px] px-6 rounded-DEFAULT bg-surface-container-lowest border-2 border-primary text-primary font-label-lg text-label-lg shadow-sm hover:bg-sage-soft transition-all active:scale-[0.98] cursor-pointer"
-          >
-            <span className="material-symbols-outlined text-[22px]">payments</span>
-            <span>Ajouter une opération</span>
-          </button>
+        <div className="relative z-10 flex flex-col md:flex-row md:items-center justify-between gap-4">
+          <div className="space-y-1.5 max-w-3xl">
+            <span className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full bg-rose-100/90 text-rose-900 dark:bg-rose-900/50 dark:text-rose-200 font-label-sm text-xs font-semibold uppercase tracking-wider">
+              <span className="w-2 h-2 rounded-full bg-rose-600 dark:bg-rose-400 animate-pulse"></span>
+              PORTAIL FAMILIAL & PATRIMOINE
+            </span>
+            <h1 className="font-display-lg text-2xl sm:text-3xl lg:text-display-lg text-forest-deep dark:text-rose-50 tracking-tight font-bold mt-2">
+              Administratif &amp; Documents
+            </h1>
+            <p className="font-body-md text-sm sm:text-base text-on-surface-variant dark:text-rose-200/80 leading-relaxed">
+              Suivi budgétaire, comptes bancaires, actes notariés et pièces justificatives.
+            </p>
+          </div>
 
-          <button
-            id="btn-open-upload"
-            type="button"
-            onClick={() => setIsUploadModalOpen(true)}
-            className="inline-flex items-center justify-center gap-2 h-[52px] px-6 rounded-DEFAULT bg-surface-container-lowest border-2 border-primary text-primary font-label-lg text-label-lg shadow-sm hover:bg-sage-soft transition-all active:scale-[0.98] cursor-pointer"
-          >
-            <span className="material-symbols-outlined text-[22px]">upload_file</span>
-            <span>Téléverser un document</span>
-          </button>
+          {/* Quick Actions Buttons */}
+          <div className="flex flex-wrap sm:flex-nowrap items-center gap-3 shrink-0 pt-2 md:pt-0">
+            <button
+              id="btn-open-operation"
+              type="button"
+              onClick={() => {
+                setOperationType('in');
+                setIsOperationModalOpen(true);
+              }}
+              className="group flex items-center justify-center gap-2 px-5 py-3.5 rounded-xl bg-white dark:bg-slate-900 border-2 border-outline-variant text-on-surface hover:bg-canvas-slate hover:border-outline font-label-lg text-sm sm:text-base transition-all duration-200 shadow-sm cursor-pointer whitespace-nowrap"
+            >
+              <span className="material-symbols-outlined text-[22px] text-on-surface-variant group-hover:scale-110 transition-transform">payments</span>
+              <span>Ajouter une opération</span>
+            </button>
+
+            <button
+              id="btn-open-upload"
+              type="button"
+              onClick={() => setIsUploadModalOpen(true)}
+              className="group flex items-center justify-center gap-2 px-5 py-3.5 rounded-xl bg-white dark:bg-slate-900 border-2 border-primary text-primary hover:bg-sage-soft font-label-lg text-sm sm:text-base font-bold shadow-sm hover:shadow-md transition-all duration-200 cursor-pointer whitespace-nowrap"
+            >
+              <span className="material-symbols-outlined text-[22px] group-hover:scale-110 transition-transform">upload_file</span>
+              <span>+ Déposer une pièce</span>
+            </button>
+          </div>
         </div>
-      </div>
+      </section>
 
       {/* ========================================================================= */}
       {/* SECTION 1 : FINANCIAL QUICK SUMMARY (3 HIGH-IMPACT KPI CARDS)             */}

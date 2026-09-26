@@ -4,7 +4,7 @@ import shutil
 import uuid
 import logging
 from datetime import datetime, timedelta
-from typing import List, Optional
+from typing import List, Optional, Any, Dict
 from fastapi import FastAPI, Depends, HTTPException, Query, UploadFile, File, Form, status, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
@@ -14,10 +14,10 @@ from sqlalchemy import func
 
 from .database import engine, Base, get_db
 from .models import (
-    Property, User, Issue, Comment, IssueComment, Reservation, Project,
+    Property, User, Member, Issue, Comment, IssueComment, Reservation, Project,
     ProjectVote, ProjectComment, AdminDocument, MemberAvailability,
     VademecumItem, MaintenanceTask, StayTaskAssignment, Task, TaskComment, Log,
-    BankAccount, BankTransaction, BankAuthSession
+    BankAccount, BankTransaction, BankAuthSession, MemberSettings
 )
 from .schemas import (
     LoginRequest, PropertyResponse, UserResponse, TokenResponse,
@@ -37,16 +37,27 @@ from .schemas import (
     TaskCreate, TaskUpdate, TaskResponse, TaskCommentCreate, TaskCommentResponse, TaskCommentReactRequest, TaskCloseRequest,
     ALLOWED_REACTION_EMOJIS,
     BankAuthStartRequest, BankAuthStartResponse, BankAuthCallbackRequest,
-    BankAccountResponse, BankTransactionResponse, BankSyncResponse, BankStatusResponse
+    BankAccountResponse, BankTransactionResponse, BankSyncResponse, BankStatusResponse,
+    ProfileUpdateRequest, ChangePasswordRequest, MemberSettingsResponse, MemberSettingsUpdate,
+    VoteSubmissionRequest
 )
 from .seed import seed_database
 from .services.workload_balancer import calculate_workload_distribution
 from .services.vicare_service import ViCareService
 from .services.banking import enable_banking_service
 from .security import (
-    rate_limiter, verify_password, create_access_token, decode_access_token, normalize_prenom
+    rate_limiter, verify_password, hash_password, create_access_token, decode_access_token, normalize_prenom
 )
-from .email_service import notify_coordinator_new_issue, notify_all_members_project_vote
+from .services.email_service import (
+    send_email,
+    send_task_assigned_email,
+    send_vote_required_email,
+    send_vote_closed_email,
+    send_stay_booked_email,
+    notify_coordinator_new_issue,
+    notify_all_members_project_vote
+)
+from .migrate_notifications import migrate_engine
 from dotenv import load_dotenv
 load_dotenv()
 
@@ -137,6 +148,7 @@ def run_task_migrations():
 try:
     run_project_migrations()
     run_task_migrations()
+    migrate_engine(engine)
 except Exception as e:
     print(f"Migration notice: {e}")
 
@@ -352,6 +364,219 @@ def login(req: LoginRequest, request: Request, db: Session = Depends(get_db)):
 def get_me(current_user: User = Depends(get_current_user)):
     """Returns profile info for currently logged in user."""
     return current_user
+
+@app.get("/api/auth/profile", response_model=MemberSettingsResponse)
+def get_auth_profile(current_user: User = Depends(get_current_user)):
+    """Returns email, identity, and the 4 notification toggles for currently logged in user."""
+    return {
+        "id": current_user.id,
+        "member_id": current_user.id,
+        "prenom": current_user.prenom,
+        "name": current_user.name,
+        "email": current_user.email,
+        "notif_task_assigned": getattr(current_user, "notif_task_assigned", True),
+        "notif_vote_needed": getattr(current_user, "notif_vote_needed", True),
+        "notif_vote_closed": getattr(current_user, "notif_vote_closed", True),
+        "notif_stay_booked": getattr(current_user, "notif_stay_booked", True),
+        "notify_new_task": getattr(current_user, "notif_task_assigned", True),
+        "notify_pending_vote": getattr(current_user, "notif_vote_needed", True),
+        "notify_final_decision": getattr(current_user, "notif_vote_closed", True),
+        "notify_new_stay": getattr(current_user, "notif_stay_booked", True),
+    }
+
+@app.patch("/api/auth/profile", response_model=MemberSettingsResponse)
+@app.put("/api/auth/profile", response_model=MemberSettingsResponse)
+def update_auth_profile(
+    data: ProfileUpdateRequest,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db)
+):
+    """Updates email and the 4 notification preferences for currently logged in user."""
+    if data.email is not None:
+        email_clean = data.email.strip().lower()
+        if email_clean and "@" not in email_clean:
+            raise HTTPException(status_code=400, detail="Adresse e-mail invalide.")
+        if email_clean and email_clean != (current_user.email or "").lower():
+            existing = db.query(User).filter(func.lower(User.email) == email_clean).first()
+            if existing and existing.id != current_user.id:
+                raise HTTPException(status_code=400, detail="Cette adresse e-mail est déjà utilisée par un autre associé.")
+        current_user.email = email_clean or None
+    if data.name is not None and data.name.strip():
+        current_user.name = data.name.strip()
+
+    # Notification preferences on Member table
+    if data.notif_task_assigned is not None:
+        current_user.notif_task_assigned = data.notif_task_assigned
+    elif data.notify_new_task is not None:
+        current_user.notif_task_assigned = data.notify_new_task
+
+    if data.notif_vote_needed is not None:
+        current_user.notif_vote_needed = data.notif_vote_needed
+    elif data.notify_pending_vote is not None:
+        current_user.notif_vote_needed = data.notify_pending_vote
+
+    if data.notif_vote_closed is not None:
+        current_user.notif_vote_closed = data.notif_vote_closed
+    elif data.notify_final_decision is not None:
+        current_user.notif_vote_closed = data.notify_final_decision
+
+    if data.notif_stay_booked is not None:
+        current_user.notif_stay_booked = data.notif_stay_booked
+    elif data.notify_new_stay is not None:
+        current_user.notif_stay_booked = data.notify_new_stay
+
+    db.commit()
+    db.refresh(current_user)
+
+    return {
+        "id": current_user.id,
+        "member_id": current_user.id,
+        "prenom": current_user.prenom,
+        "name": current_user.name,
+        "email": current_user.email,
+        "notif_task_assigned": getattr(current_user, "notif_task_assigned", True),
+        "notif_vote_needed": getattr(current_user, "notif_vote_needed", True),
+        "notif_vote_closed": getattr(current_user, "notif_vote_closed", True),
+        "notif_stay_booked": getattr(current_user, "notif_stay_booked", True),
+        "notify_new_task": getattr(current_user, "notif_task_assigned", True),
+        "notify_pending_vote": getattr(current_user, "notif_vote_needed", True),
+        "notify_final_decision": getattr(current_user, "notif_vote_closed", True),
+        "notify_new_stay": getattr(current_user, "notif_stay_booked", True),
+    }
+
+@app.post("/api/auth/change-password")
+def change_password(
+    data: ChangePasswordRequest,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db)
+):
+    """Changes password for the currently logged in user directly in-app."""
+    old_pw = data.old_password or data.current_password
+    if not old_pw:
+        raise HTTPException(status_code=400, detail="Veuillez saisir votre mot de passe actuel.")
+    if not data.new_password:
+        raise HTTPException(status_code=400, detail="Veuillez saisir votre nouveau mot de passe.")
+    if data.confirm_password is not None and data.confirm_password != data.new_password:
+        raise HTTPException(status_code=400, detail="Le nouveau mot de passe et sa confirmation ne correspondent pas.")
+    if len(data.new_password.strip()) < 4:
+        raise HTTPException(status_code=400, detail="Le nouveau mot de passe doit comporter au moins 4 caractères.")
+
+    if not verify_password(old_pw.strip(), current_user.password):
+        raise HTTPException(status_code=400, detail="Le mot de passe actuel est incorrect.")
+
+    current_user.password = hash_password(data.new_password.strip())
+    try:
+        log_entry = Log(
+            action="CHANGE_PASSWORD",
+            user_name=current_user.prenom,
+            details=f"Mot de passe mis à jour pour {current_user.prenom}"
+        )
+        db.add(log_entry)
+    except Exception:
+        pass
+
+    db.commit()
+    return {"message": "Mot de passe modifié avec succès.", "success": True}
+
+@app.get("/api/members/{member_id}/settings", response_model=MemberSettingsResponse)
+def get_member_settings(
+    member_id: int,
+    db: Session = Depends(get_db)
+):
+    """Returns email and the 4 notification toggles for specified member."""
+    member = db.query(Member).filter(Member.id == member_id).first()
+    if not member:
+        raise HTTPException(status_code=404, detail="Membre introuvable.")
+    return {
+        "id": member.id,
+        "member_id": member.id,
+        "prenom": member.prenom,
+        "name": member.name,
+        "email": member.email,
+        "notif_task_assigned": getattr(member, "notif_task_assigned", True),
+        "notif_vote_needed": getattr(member, "notif_vote_needed", True),
+        "notif_vote_closed": getattr(member, "notif_vote_closed", True),
+        "notif_stay_booked": getattr(member, "notif_stay_booked", True),
+        "notify_new_task": getattr(member, "notif_task_assigned", True),
+        "notify_pending_vote": getattr(member, "notif_vote_needed", True),
+        "notify_final_decision": getattr(member, "notif_vote_closed", True),
+        "notify_new_stay": getattr(member, "notif_stay_booked", True),
+    }
+
+@app.put("/api/members/{member_id}/settings", response_model=MemberSettingsResponse)
+@app.patch("/api/members/{member_id}/settings", response_model=MemberSettingsResponse)
+def update_member_settings(
+    member_id: int,
+    data: MemberSettingsUpdate,
+    db: Session = Depends(get_db)
+):
+    """Updates email and the 4 notification preferences for specified member."""
+    member = db.query(Member).filter(Member.id == member_id).first()
+    if not member:
+        raise HTTPException(status_code=404, detail="Membre introuvable.")
+
+    if data.email is not None:
+        email_clean = data.email.strip().lower()
+        if email_clean and "@" not in email_clean:
+            raise HTTPException(status_code=400, detail="Adresse e-mail invalide.")
+        if email_clean and email_clean != (member.email or "").lower():
+            existing = db.query(Member).filter(func.lower(Member.email) == email_clean).first()
+            if existing and existing.id != member.id:
+                raise HTTPException(status_code=400, detail="Cette adresse e-mail est déjà utilisée.")
+        member.email = email_clean or None
+
+    if data.notif_task_assigned is not None:
+        member.notif_task_assigned = data.notif_task_assigned
+    elif data.notify_new_task is not None:
+        member.notif_task_assigned = data.notify_new_task
+
+    if data.notif_vote_needed is not None:
+        member.notif_vote_needed = data.notif_vote_needed
+    elif data.notify_pending_vote is not None:
+        member.notif_vote_needed = data.notify_pending_vote
+
+    if data.notif_vote_closed is not None:
+        member.notif_vote_closed = data.notif_vote_closed
+    elif data.notify_final_decision is not None:
+        member.notif_vote_closed = data.notify_final_decision
+
+    if data.notif_stay_booked is not None:
+        member.notif_stay_booked = data.notif_stay_booked
+    elif data.notify_new_stay is not None:
+        member.notif_stay_booked = data.notify_new_stay
+
+    db.commit()
+    db.refresh(member)
+    return {
+        "id": member.id,
+        "member_id": member.id,
+        "prenom": member.prenom,
+        "name": member.name,
+        "email": member.email,
+        "notif_task_assigned": getattr(member, "notif_task_assigned", True),
+        "notif_vote_needed": getattr(member, "notif_vote_needed", True),
+        "notif_vote_closed": getattr(member, "notif_vote_closed", True),
+        "notif_stay_booked": getattr(member, "notif_stay_booked", True),
+        "notify_new_task": getattr(member, "notif_task_assigned", True),
+        "notify_pending_vote": getattr(member, "notif_vote_needed", True),
+        "notify_final_decision": getattr(member, "notif_vote_closed", True),
+        "notify_new_stay": getattr(member, "notif_stay_booked", True),
+    }
+
+@app.get("/api/auth/settings", response_model=MemberSettingsResponse)
+def get_current_user_settings(
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db)
+):
+    return get_member_settings(current_user.id, db)
+
+@app.put("/api/auth/settings", response_model=MemberSettingsResponse)
+def update_current_user_settings(
+    data: MemberSettingsUpdate,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db)
+):
+    return update_member_settings(current_user.id, data, db)
 
 @app.get("/api/users", response_model=List[UserResponse])
 def get_users(db: Session = Depends(get_db)):
@@ -777,6 +1002,31 @@ def create_reservation(res: ReservationCreate, db: Session = Depends(get_db)):
     db.add(db_res)
     db.commit()
     db.refresh(db_res)
+
+    # Email Trigger 4: Notify other family members if notif_stay_booked is True
+    try:
+        booker_name = db_res.user_name or "Un associé"
+        booker_first = booker_name.strip().split()[0].lower()
+        other_members = db.query(Member).filter(Member.email.isnot(None)).all()
+        stay_recipients = [
+            m.email for m in other_members
+            if getattr(m, 'notif_stay_booked', True) and m.email and m.prenom.strip().lower() != booker_first
+        ]
+        if stay_recipients:
+            send_stay_booked_email(
+                to_email=stay_recipients,
+                member_name=booker_name,
+                start_date=db_res.start_date,
+                end_date=db_res.end_date,
+                property_name=db_res.property_name or prop_name or "Domaine d'Hellenvilliers",
+                rooms=db_res.selected_rooms,
+                guest_count=db_res.guest_count or 1,
+                reservation_id=db_res.id,
+                notes=db_res.notes
+            )
+    except Exception as e:
+        logger.error(f"[EMAIL ERROR] Failed to send stay booked notification: {e}")
+
     return db_res
 
 @app.patch("/api/reservations/{reservation_id}", response_model=ReservationResponse)
@@ -950,11 +1200,29 @@ def create_project(proj: ProjectCreate, db: Session = Depends(get_db)):
         responsible=proj.responsible,
         photo_url=first_photo,
         photo_urls=photo_urls_str,
-        status="SOUMIS"
+        status="EN_VOTE" if proj.decision_mode == "SOUMETTRE_AU_VOTE" else "SOUMIS"
     )
     db.add(db_proj)
     db.commit()
     db.refresh(db_proj)
+
+    # Email notification trigger: notify members with notif_vote_needed=True if project is open for voting
+    if db_proj.status == "EN_VOTE":
+        try:
+            member_users = db.query(Member).filter(Member.email.isnot(None)).all()
+            member_emails = [u.email for u in member_users if getattr(u, 'notif_vote_needed', True) and u.email]
+            if member_emails:
+                send_vote_required_email(
+                    to_email=member_emails,
+                    vote_title=db_proj.title,
+                    submitted_by=db_proj.submitted_by or "Associé SCI",
+                    description=db_proj.description or "",
+                    estimated_cost=float(db_proj.estimated_cost or 0.0),
+                    project_id=db_proj.id
+                )
+        except Exception as e:
+            logger.error(f"[EMAIL ERROR] Failed to send project vote notification on creation: {e}")
+
     return format_project_response(db_proj)
 
 @app.post("/api/projects/upload-photos")
@@ -1028,19 +1296,20 @@ def approve_project_by_coordinator(
     db.commit()
     db.refresh(db_proj)
 
-    # Email notification trigger: notify all members if submitted to vote (non-blocking)
+    # Email notification trigger: notify members with notif_vote_needed=True when project enters voting
     if db_proj.status == "EN_VOTE" and old_status != "EN_VOTE":
         try:
-            member_users = db.query(User).filter(User.email.isnot(None)).all()
-            member_emails = [u.email for u in member_users if u.email]
-            notify_all_members_project_vote(
-                project_title=db_proj.title,
-                submitted_by=db_proj.submitted_by or "Associé SCI",
-                description=db_proj.description or "",
-                estimated_cost=float(db_proj.estimated_cost or 0.0),
-                project_id=db_proj.id,
-                member_emails=member_emails if member_emails else None
-            )
+            member_users = db.query(Member).filter(Member.email.isnot(None)).all()
+            member_emails = [u.email for u in member_users if getattr(u, 'notif_vote_needed', True) and u.email]
+            if member_emails:
+                send_vote_required_email(
+                    to_email=member_emails,
+                    vote_title=db_proj.title,
+                    submitted_by=db_proj.submitted_by or "Associé SCI",
+                    description=db_proj.description or "",
+                    estimated_cost=float(db_proj.estimated_cost or 0.0),
+                    project_id=db_proj.id
+                )
         except Exception as e:
             logger.error(f"[EMAIL ERROR] Failed to send project vote notification from approve: {e}")
             print(f"[EMAIL ERROR] Failed to send project vote notification from approve: {e}")
@@ -1092,19 +1361,20 @@ def review_project(project_id: int, review: ProjectReview, db: Session = Depends
     db.commit()
     db.refresh(db_proj)
 
-    # Email notification trigger: notify all members when a project enters voting (non-blocking)
+    # Email notification trigger: notify members with notif_vote_needed=True when project enters voting
     if db_proj.status == "EN_VOTE" and (old_status != "EN_VOTE" or review.decision_mode == "SOUMETTRE_AU_VOTE"):
         try:
-            member_users = db.query(User).filter(User.email.isnot(None)).all()
-            member_emails = [u.email for u in member_users if u.email]
-            notify_all_members_project_vote(
-                project_title=db_proj.title,
-                submitted_by=db_proj.submitted_by or "Associé SCI",
-                description=db_proj.description or "",
-                estimated_cost=float(db_proj.estimated_cost or 0.0),
-                project_id=db_proj.id,
-                member_emails=member_emails if member_emails else None
-            )
+            member_users = db.query(Member).filter(Member.email.isnot(None)).all()
+            member_emails = [u.email for u in member_users if getattr(u, 'notif_vote_needed', True) and u.email]
+            if member_emails:
+                send_vote_required_email(
+                    to_email=member_emails,
+                    vote_title=db_proj.title,
+                    submitted_by=db_proj.submitted_by or "Associé SCI",
+                    description=db_proj.description or "",
+                    estimated_cost=float(db_proj.estimated_cost or 0.0),
+                    project_id=db_proj.id
+                )
         except Exception as e:
             logger.error(f"[EMAIL ERROR] Failed to send project vote notification from review: {e}")
             print(f"[EMAIL ERROR] Failed to send project vote notification from review: {e}")
@@ -1128,8 +1398,13 @@ def update_project_cost(project_id: int, payload: dict, db: Session = Depends(ge
     return format_project_response(db_proj)
 
 
-@app.post("/api/projects/{project_id}/vote")
-def cast_vote(project_id: int, vote_in: ProjectVoteCreate, db: Session = Depends(get_db)):
+def process_vote_submission(
+    project_id: int,
+    user_name: str,
+    vote_val: Any,
+    comment: Optional[str],
+    db: Session
+) -> dict:
     db_proj = db.query(Project).filter(Project.id == project_id).first()
     if not db_proj:
         raise HTTPException(status_code=404, detail="Projet non trouvé")
@@ -1137,7 +1412,7 @@ def cast_vote(project_id: int, vote_in: ProjectVoteCreate, db: Session = Depends
     if db_proj.status not in ["EN_VOTE", "SOUMIS"]:
         raise HTTPException(status_code=400, detail="Ce projet n'est pas ouvert au vote actuellement.")
 
-    vote_str = vote_in.vote.value.upper() if hasattr(vote_in.vote, 'value') else str(vote_in.vote).upper()
+    vote_str = vote_val.value.upper() if hasattr(vote_val, 'value') else str(vote_val).upper()
     valid_votes = ["OUI", "NON", "ABSTENTION", "REPORT_PROCHAINE_AG", "POUR", "CONTRE"]
     if vote_str not in valid_votes:
         raise HTTPException(status_code=400, detail=f"Le vote doit être l'un de : {', '.join(valid_votes)}.")
@@ -1149,25 +1424,91 @@ def cast_vote(project_id: int, vote_in: ProjectVoteCreate, db: Session = Depends
 
     existing_vote = db.query(ProjectVote).filter(
         ProjectVote.project_id == project_id,
-        ProjectVote.user_name == vote_in.user_name
+        ProjectVote.user_name == user_name
     ).first()
 
     if existing_vote:
         existing_vote.vote = vote_str
-        existing_vote.comment = vote_in.comment
+        existing_vote.comment = comment
         existing_vote.voted_at = datetime.utcnow()
     else:
         new_vote = ProjectVote(
             project_id=project_id,
-            user_name=vote_in.user_name,
+            user_name=user_name,
             vote=vote_str,
-            comment=vote_in.comment
+            comment=comment
         )
         db.add(new_vote)
 
     db.commit()
     db.refresh(db_proj)
+
+    # Check if ALL associates have voted (7 associates in SCI Familiale)
+    all_project_votes = db.query(ProjectVote).filter(ProjectVote.project_id == project_id).all()
+    distinct_voters = {v.user_name.strip().lower() for v in all_project_votes if v.user_name}
+    total_associates = db.query(Member).count() or 7
+
+    # If all members have expressed their vote, finalize decision and trigger final email
+    if len(distinct_voters) >= total_associates and db_proj.status in ["EN_VOTE", "SOUMIS", "REPORT_AG"]:
+        votes_summary = {"pour": 0, "contre": 0, "abstention": 0, "report_prochaine_ag": 0}
+        for v in all_project_votes:
+            v_s = (v.vote or "").upper()
+            if v_s in ("POUR", "OUI"):
+                votes_summary["pour"] += 1
+            elif v_s in ("CONTRE", "NON"):
+                votes_summary["contre"] += 1
+            elif v_s == "ABSTENTION":
+                votes_summary["abstention"] += 1
+            elif "REPORT" in v_s:
+                votes_summary["report_prochaine_ag"] += 1
+
+        if votes_summary["report_prochaine_ag"] > 0:
+            db_proj.status = "REPORT_AG"
+            db_proj.add_to_ag_agenda = True
+            decision = "REPORTÉ PROCHAINE AG"
+        elif votes_summary["pour"] > votes_summary["contre"]:
+            db_proj.status = "APPROUVE"
+            decision = "ADOPTÉ"
+        else:
+            db_proj.status = "REFUSE"
+            decision = "REJETÉ"
+
+        db_proj.updated_at = datetime.utcnow()
+        db.commit()
+        db.refresh(db_proj)
+
+        # Email Trigger 3: Send final decision email if notif_vote_closed is True
+        try:
+            members_to_notify = db.query(Member).filter(Member.email.isnot(None)).all()
+            closed_recipients = [
+                m.email for m in members_to_notify
+                if getattr(m, 'notif_vote_closed', True) and m.email
+            ]
+            if closed_recipients:
+                send_vote_closed_email(
+                    to_email=closed_recipients,
+                    vote_title=db_proj.title,
+                    decision=decision,
+                    votes_summary=votes_summary,
+                    total_votes=len(all_project_votes),
+                    project_id=db_proj.id,
+                    estimated_cost=float(db_proj.estimated_cost or 0.0)
+                )
+        except Exception as e:
+            logger.error(f"[EMAIL ERROR] Failed to send vote closed notification: {e}")
+
     return format_project_response(db_proj)
+
+
+@app.post("/api/projects/{project_id}/vote")
+def cast_vote(project_id: int, vote_in: ProjectVoteCreate, db: Session = Depends(get_db)):
+    return process_vote_submission(project_id, vote_in.user_name, vote_in.vote, vote_in.comment, db)
+
+
+@app.post("/api/votes")
+def submit_vote_endpoint(vote_req: VoteSubmissionRequest, db: Session = Depends(get_db)):
+    return process_vote_submission(vote_req.project_id, vote_req.user_name, vote_req.vote, vote_req.comment, db)
+
 
 
 @app.get("/api/projects/{project_id}/comments", response_model=List[ProjectCommentResponse])
@@ -1646,6 +1987,36 @@ def create_task(payload: dict, db: Session = Depends(get_db)):
     db.add(db_task)
     db.commit()
     db.refresh(db_task)
+
+    # Email Trigger 1: Notify assignee if notif_task_assigned is True
+    try:
+        assignee = None
+        if db_task.assignee_id:
+            assignee = db.query(Member).filter(Member.id == db_task.assignee_id).first()
+        elif db_task.assigned_members:
+            try:
+                assigned_list = json.loads(db_task.assigned_members)
+                if assigned_list and isinstance(assigned_list, list):
+                    first_name = str(assigned_list[0]).strip().split()[0].lower()
+                    assignee = db.query(Member).filter(func.lower(Member.prenom) == first_name).first()
+            except Exception:
+                pass
+
+        if assignee and assignee.email and getattr(assignee, 'notif_task_assigned', True):
+            send_task_assigned_email(
+                to_email=assignee.email,
+                task_title=db_task.title,
+                domain=db_task.subject or db_task.category or "SCI Familiale",
+                location=db_task.category or "Domaine d'Hellenvilliers",
+                priority=db_task.priority or "Normale",
+                charge=db_task.complexity or "Modérée",
+                task_id=db_task.id,
+                assignee_name=assignee.prenom,
+                deadline=db_task.deadline
+            )
+    except Exception as e:
+        logger.error(f"[EMAIL ERROR] Failed to send task assignment notification: {e}")
+
     return format_task_response(db_task, include_comments=True)
 
 
@@ -1659,6 +2030,7 @@ def get_task(task_id: str, db: Session = Depends(get_db)):
 @app.put("/api/tasks/{task_id}")
 def update_task(task_id: str, payload: dict, db: Session = Depends(get_db)):
     task = resolve_task_by_id_or_ref(task_id, db)
+    old_assignee_id = task.assignee_id
 
     if "title" in payload and payload["title"] is not None:
         task.title = payload["title"]
@@ -1700,6 +2072,26 @@ def update_task(task_id: str, payload: dict, db: Session = Depends(get_db)):
     task.updated_at = datetime.utcnow()
     db.commit()
     db.refresh(task)
+
+    # Email Trigger 1 (Reassignment): If newly assigned to a member, notify if notif_task_assigned is True
+    if "assignee_id" in payload and payload["assignee_id"] and payload["assignee_id"] != old_assignee_id:
+        try:
+            assignee = db.query(Member).filter(Member.id == payload["assignee_id"]).first()
+            if assignee and assignee.email and getattr(assignee, 'notif_task_assigned', True):
+                send_task_assigned_email(
+                    to_email=assignee.email,
+                    task_title=task.title,
+                    domain=task.subject or task.category or "SCI Familiale",
+                    location=task.category or "Domaine d'Hellenvilliers",
+                    priority=task.priority or "Normale",
+                    charge=task.complexity or "Modérée",
+                    task_id=task.id,
+                    assignee_name=assignee.prenom,
+                    deadline=task.deadline
+                )
+        except Exception as e:
+            logger.error(f"[EMAIL ERROR] Failed to send task assignment notification on update: {e}")
+
     return format_task_response(task, include_comments=True)
 
 

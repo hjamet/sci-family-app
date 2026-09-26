@@ -33,6 +33,10 @@ CREATE TABLE IF NOT EXISTS members (
     password VARCHAR(255) NOT NULL DEFAULT 'pass123',
     role VARCHAR(150) DEFAULT 'Membre Associé',
     avatar_color VARCHAR(50) DEFAULT 'cyan',
+    notif_task_assigned BOOLEAN DEFAULT TRUE,
+    notif_vote_needed BOOLEAN DEFAULT TRUE,
+    notif_vote_closed BOOLEAN DEFAULT TRUE,
+    notif_stay_booked BOOLEAN DEFAULT TRUE,
     created_at TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP
 );
 

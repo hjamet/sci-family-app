@@ -144,7 +144,7 @@ export default function Header({
         </nav>
 
         {/* User Profile, Mobile Menu Button & Logout Dropdown */}
-        <div className="flex items-center gap-3 shrink-0" ref={dropdownRef}>
+        <div className="flex items-center gap-2 sm:gap-3 shrink-0" ref={dropdownRef}>
           <div className="hidden sm:flex flex-col text-right">
             <span className="font-label-md text-label-md text-on-surface leading-tight font-semibold">
               {displayName}
@@ -153,6 +153,25 @@ export default function Header({
               Gérant / Coordinateur
             </span>
           </div>
+
+          {/* Bouton Paramètres (Engrenage / Settings) discret et élégant */}
+          <button
+            type="button"
+            onClick={() => {
+              if (setActiveTab) setActiveTab('parametres');
+              if (onNavigate) onNavigate('/parametres', 'parametres');
+              setIsUserMenuOpen(false);
+            }}
+            className={`w-9 h-9 rounded-full flex items-center justify-center transition-all cursor-pointer ${
+              activeTab === 'parametres'
+                ? 'bg-sage-soft text-primary ring-2 ring-primary/40 shadow-xs font-bold'
+                : 'bg-canvas-slate hover:bg-sage-soft/70 text-on-surface-variant hover:text-primary border border-border-subtle shadow-xs'
+            }`}
+            title="Paramètres & Préférences"
+            aria-label="Paramètres & Préférences"
+          >
+            <span className="material-symbols-outlined text-[19px]">settings</span>
+          </button>
 
           {/* User Profile Avatar Button */}
           <button
@@ -204,6 +223,28 @@ export default function Header({
                 ))}
               </div>
 
+              {/* Accès Paramètres dans le menu utilisateur */}
+              <div className="py-1 border-b border-slate-100">
+                <button
+                  type="button"
+                  onClick={() => {
+                    setIsUserMenuOpen(false);
+                    if (setActiveTab) setActiveTab('parametres');
+                    if (onNavigate) onNavigate('/parametres', 'parametres');
+                  }}
+                  className={`w-full px-4 py-2 text-left text-xs font-semibold flex items-center gap-2 cursor-pointer transition-colors ${
+                    activeTab === 'parametres'
+                      ? 'bg-sage-soft text-primary font-bold'
+                      : 'text-on-surface hover:bg-sage-soft/70'
+                  }`}
+                >
+                  <span className="material-symbols-outlined text-[17px] text-primary">
+                    settings
+                  </span>
+                  Paramètres &amp; Préférences
+                </button>
+              </div>
+
               <div className="pt-1">
                 <button
                   type="button"
@@ -247,6 +288,25 @@ export default function Header({
                 </button>
               );
             })}
+            {/* Bouton Paramètres dans le menu mobile */}
+            <button
+              type="button"
+              onClick={() => {
+                setIsMobileMenuOpen(false);
+                if (setActiveTab) setActiveTab('parametres');
+                if (onNavigate) onNavigate('/parametres', 'parametres');
+              }}
+              className={`p-3 rounded-xl text-left font-label-md text-xs font-semibold flex items-center gap-2 transition-all cursor-pointer ${
+                activeTab === 'parametres'
+                  ? 'bg-sage-soft text-primary font-bold shadow-xs'
+                  : 'text-on-surface hover:bg-canvas-slate'
+              }`}
+            >
+              <span className={`material-symbols-outlined text-[18px] ${activeTab === 'parametres' ? 'text-primary' : 'text-outline'}`}>
+                settings
+              </span>
+              <span className="truncate">Paramètres</span>
+            </button>
           </div>
         </div>
       )}

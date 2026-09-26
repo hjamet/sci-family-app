@@ -33,6 +33,10 @@ class MemberBase(BaseModel):
     email: Optional[str] = None
     role: str = "Membre Associé"
     avatar_color: str = "cyan"
+    notif_task_assigned: bool = True
+    notif_vote_needed: bool = True
+    notif_vote_closed: bool = True
+    notif_stay_booked: bool = True
 
 class MemberCreate(MemberBase):
     password: str = "pass123"
@@ -44,6 +48,10 @@ class MemberUpdate(BaseModel):
     role: Optional[str] = None
     avatar_color: Optional[str] = None
     password: Optional[str] = None
+    notif_task_assigned: Optional[bool] = None
+    notif_vote_needed: Optional[bool] = None
+    notif_vote_closed: Optional[bool] = None
+    notif_stay_booked: Optional[bool] = None
 
 class MemberResponse(MemberBase):
     id: int
@@ -55,6 +63,30 @@ UserBase = MemberBase
 UserCreate = MemberCreate
 UserResponse = MemberResponse
 
+class MemberSettingsResponse(BaseModel):
+    id: int
+    prenom: str
+    name: str
+    email: Optional[str] = None
+    notif_task_assigned: bool = True
+    notif_vote_needed: bool = True
+    notif_vote_closed: bool = True
+    notif_stay_booked: bool = True
+
+    class Config:
+        from_attributes = True
+
+class MemberSettingsUpdate(BaseModel):
+    email: Optional[str] = None
+    notif_task_assigned: Optional[bool] = None
+    notif_vote_needed: Optional[bool] = None
+    notif_vote_closed: Optional[bool] = None
+    notif_stay_booked: Optional[bool] = None
+
+class ChangePasswordRequest(BaseModel):
+    old_password: str
+    new_password: str
+
 class TokenResponse(BaseModel):
     access_token: str
     token_type: str = "bearer"
@@ -65,6 +97,10 @@ class TokenResponse(BaseModel):
     email: Optional[str] = None
     role: Optional[str] = None
     avatar_color: Optional[str] = None
+    notif_task_assigned: Optional[bool] = None
+    notif_vote_needed: Optional[bool] = None
+    notif_vote_closed: Optional[bool] = None
+    notif_stay_booked: Optional[bool] = None
 
 # Property Schemas
 class PropertyBase(BaseModel):
@@ -318,6 +354,8 @@ class ProjectCreate(BaseModel):
     responsible: Optional[str] = None
     photo_url: Optional[str] = None
     photo_urls: Optional[List[str]] = []
+    decision_mode: Optional[str] = None
+    status: Optional[str] = None
 
 class ProjectApprove(BaseModel):
     estimated_cost: Optional[float] = 0.0
@@ -854,6 +892,67 @@ class BankStatusResponse(BaseModel):
     valid_until: Optional[str] = None
     message: Optional[str] = None
     reauth_url: Optional[str] = None
+
+
+class ProfileUpdateRequest(BaseModel):
+    email: Optional[str] = None
+    name: Optional[str] = None
+    notif_task_assigned: Optional[bool] = None
+    notif_vote_needed: Optional[bool] = None
+    notif_vote_closed: Optional[bool] = None
+    notif_stay_booked: Optional[bool] = None
+    notify_new_task: Optional[bool] = None
+    notify_pending_vote: Optional[bool] = None
+    notify_final_decision: Optional[bool] = None
+    notify_new_stay: Optional[bool] = None
+
+
+class ChangePasswordRequest(BaseModel):
+    old_password: Optional[str] = None
+    current_password: Optional[str] = None
+    new_password: str
+    confirm_password: Optional[str] = None
+
+
+class MemberSettingsResponse(BaseModel):
+    id: Optional[int] = None
+    member_id: Optional[int] = None
+    prenom: Optional[str] = None
+    name: Optional[str] = None
+    email: Optional[str] = None
+    notif_task_assigned: bool = True
+    notif_vote_needed: bool = True
+    notif_vote_closed: bool = True
+    notif_stay_booked: bool = True
+    # Aliases for legacy compatibility
+    notify_new_task: bool = True
+    notify_pending_vote: bool = True
+    notify_final_decision: bool = True
+    notify_new_stay: bool = True
+
+    class Config:
+        from_attributes = True
+
+
+class MemberSettingsUpdate(BaseModel):
+    email: Optional[str] = None
+    notif_task_assigned: Optional[bool] = None
+    notif_vote_needed: Optional[bool] = None
+    notif_vote_closed: Optional[bool] = None
+    notif_stay_booked: Optional[bool] = None
+    notify_new_task: Optional[bool] = None
+    notify_pending_vote: Optional[bool] = None
+    notify_final_decision: Optional[bool] = None
+    notify_new_stay: Optional[bool] = None
+
+
+class VoteSubmissionRequest(BaseModel):
+    project_id: int
+    user_name: str
+    vote: str
+    comment: Optional[str] = None
+
+
 
 
 

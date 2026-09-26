@@ -15,6 +15,12 @@ class Member(Base):
     avatar_color = Column(String(50), default="cyan")
     created_at = Column(DateTime, default=datetime.utcnow)
 
+    # Notification preferences
+    notif_task_assigned = Column(Boolean, default=True, nullable=False, server_default="1")
+    notif_vote_needed = Column(Boolean, default=True, nullable=False, server_default="1")
+    notif_vote_closed = Column(Boolean, default=True, nullable=False, server_default="1")
+    notif_stay_booked = Column(Boolean, default=True, nullable=False, server_default="1")
+
     tasks = relationship("Task", back_populates="assignee", foreign_keys="Task.assignee_id")
     task_comments = relationship("TaskComment", back_populates="author", foreign_keys="TaskComment.author_id")
 
@@ -361,6 +367,21 @@ class BankAuthSession(Base):
     expires_at = Column(DateTime, nullable=True)
     accounts_data = Column(Text, nullable=True)
     created_at = Column(DateTime, default=datetime.utcnow)
+
+
+class MemberSettings(Base):
+    __tablename__ = "member_settings"
+
+    id = Column(Integer, primary_key=True, index=True)
+    member_id = Column(Integer, ForeignKey("members.id", ondelete="CASCADE"), unique=True, nullable=False)
+    notify_new_task = Column(Boolean, default=True)
+    notify_pending_vote = Column(Boolean, default=True)
+    notify_final_decision = Column(Boolean, default=True)
+    notify_new_stay = Column(Boolean, default=True)
+    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+
+    member = relationship("Member", backref="settings")
+
 
 
 

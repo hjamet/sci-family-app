@@ -276,40 +276,49 @@ export default function TasksPage({ currentUser = 'Henri Jamet' }) {
     <div className="flex flex-col w-full pb-16">
       
       {/* ========================================================================= */}
-      {/* 1. TOP AMBIENT BANNER / BREADCRUMB & ACTIONS (Stitch)                     */}
+      {/* 1. EN-TÊTE HARMONISÉ HERO                                                 */}
       {/* ========================================================================= */}
-      <div className="flex flex-col md:flex-row md:items-end justify-between gap-space-md pt-space-md pb-space-lg">
-        <div className="space-y-1.5 max-w-3xl">
-          <div className="flex items-center gap-space-xs text-on-surface-variant font-label-sm text-label-sm">
-            <span className="material-symbols-outlined text-[16px] text-primary">domain</span>
-            <span>Domaine d'Hellenvilliers • Travaux & Intendance</span>
+      <section className="relative overflow-hidden rounded-2xl bg-slate-100/80 border border-slate-200/80 dark:bg-slate-900/30 dark:border-slate-800/40 p-6 sm:p-8 shadow-sm mb-6">
+        {/* Subtle decorative glow */}
+        <div className="absolute -right-24 -top-24 w-96 h-96 rounded-full bg-slate-200/50 dark:bg-slate-800/20 blur-3xl pointer-events-none"></div>
+        <div className="absolute -left-12 -bottom-12 w-64 h-64 rounded-full bg-blue-100/40 dark:bg-blue-900/10 blur-2xl pointer-events-none"></div>
+
+        <div className="relative z-10 flex flex-col md:flex-row md:items-center justify-between gap-4">
+          <div className="space-y-1.5 max-w-3xl">
+            <span className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full bg-slate-200/80 text-slate-800 dark:bg-slate-800/60 dark:text-slate-200 font-label-sm text-xs font-semibold uppercase tracking-wider">
+              <span className="w-2 h-2 rounded-full bg-slate-600 dark:bg-slate-400 animate-pulse"></span>
+              ENTRETIEN & DÉCISIONS
+            </span>
+            <h1 className="font-display-lg text-2xl sm:text-3xl lg:text-display-lg text-forest-deep dark:text-slate-100 tracking-tight font-bold mt-2">
+              Tâches & Chantiers
+            </h1>
+            <p className="font-body-md text-sm sm:text-base text-on-surface-variant dark:text-slate-300 leading-relaxed">
+              Missions réparties entre associés, avancement des travaux et votes décisionnels.
+            </p>
           </div>
-          <h1 className="font-headline-lg text-headline-lg text-forest-deep tracking-tight">
-            Registre des Tâches, Chantiers & Missions
-          </h1>
-        </div>
 
-        {/* Actions strictly adhering to button rules: bg-white, border-2, icon + text */}
-        <div className="flex items-center gap-space-sm shrink-0 flex-wrap">
-          <button
-            onClick={() => window.print()}
-            className="h-[50px] px-5 rounded-DEFAULT bg-surface-container-lowest border-2 border-outline-variant text-on-surface font-label-md text-label-md hover:bg-canvas-slate hover:border-outline transition-all duration-200 flex items-center gap-2 shadow-sm cursor-pointer"
-            type="button"
-          >
-            <span className="material-symbols-outlined text-[20px] text-on-surface-variant">download</span>
-            <span>Exporter en PDF</span>
-          </button>
+          {/* Actions : Style Signature */}
+          <div className="flex flex-wrap sm:flex-nowrap items-center gap-3 shrink-0 pt-2 md:pt-0">
+            <button
+              onClick={() => window.print()}
+              className="group flex items-center justify-center gap-2 px-5 py-3.5 rounded-xl bg-white dark:bg-slate-900 border-2 border-outline-variant text-on-surface hover:bg-canvas-slate hover:border-outline font-label-lg text-sm sm:text-base transition-all duration-200 shadow-sm cursor-pointer whitespace-nowrap"
+              type="button"
+            >
+              <span className="material-symbols-outlined text-[20px] text-on-surface-variant group-hover:scale-110 transition-transform">download</span>
+              <span>Exporter en PDF</span>
+            </button>
 
-          <button
-            onClick={() => setIsCreateModalOpen(true)}
-            className="h-[50px] px-6 rounded-DEFAULT bg-surface-container-lowest border-2 border-primary-container text-primary-container font-label-md text-label-md hover:bg-sage-soft hover:border-primary transition-all duration-200 flex items-center gap-2 shadow-sm cursor-pointer font-bold"
-            type="button"
-          >
-            <span className="material-symbols-outlined text-[20px] text-primary-container">add_task</span>
-            <span>Nouvelle tâche ou mission</span>
-          </button>
+            <button
+              onClick={() => setIsCreateModalOpen(true)}
+              className="group flex items-center justify-center gap-2 px-5 py-3.5 rounded-xl bg-white dark:bg-slate-900 border-2 border-primary text-primary hover:bg-sage-soft font-label-lg text-sm sm:text-base font-bold shadow-sm hover:shadow-md transition-all duration-200 cursor-pointer whitespace-nowrap"
+              type="button"
+            >
+              <span className="material-symbols-outlined text-[22px] group-hover:scale-110 transition-transform">add_task</span>
+              <span>+ Proposer une tâche</span>
+            </button>
+          </div>
         </div>
-      </div>
+      </section>
 
       {/* ========================================================================= */}
       {/* 2. KPI OVERVIEW STRIP: 3 METRIC CARDS (Stitch)                            */}
