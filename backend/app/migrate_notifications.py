@@ -210,6 +210,12 @@ def migrate_engine(engine):
                     );
                 """))
 
+                # admin_documents drive_file_id
+                try:
+                    conn.execute(text("ALTER TABLE admin_documents ADD COLUMN IF NOT EXISTS drive_file_id VARCHAR(255);"))
+                except Exception as doc_mig_err:
+                    logger.warning(f"[MIGRATION NOTICE] admin_documents drive_file_id notice: {doc_mig_err}")
+
                 # Refresh users view if exists
                 try:
                     conn.execute(text("CREATE OR REPLACE VIEW users AS SELECT * FROM members;"))

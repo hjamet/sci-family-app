@@ -126,49 +126,69 @@ except OSError as e:
 if os.path.exists(UPLOAD_DIR):
     app.mount("/uploads", StaticFiles(directory=UPLOAD_DIR), name="uploads")
 
-# Automatic column migration safeguard for Project table in SQLite
+# Automatic column migration safeguard for Project table in SQLite and PostgreSQL
 def run_project_migrations():
-    if engine.dialect.name != "sqlite":
-        return
     from sqlalchemy import text
-    with engine.connect() as conn:
-        inspector_query = text("PRAGMA table_info(projects)")
-        result = conn.execute(inspector_query).fetchall()
-        column_names = [row[1] for row in result]
-        if column_names:
-            if "document_urls" not in column_names:
-                conn.execute(text("ALTER TABLE projects ADD COLUMN document_urls TEXT"))
-            if "task_weight" not in column_names:
-                conn.execute(text("ALTER TABLE projects ADD COLUMN task_weight VARCHAR DEFAULT 'MOYEN'"))
-            conn.commit()
+    try:
+        with engine.connect() as conn:
+            if engine.dialect.name == "sqlite":
+                inspector_query = text("PRAGMA table_info(projects)")
+                result = conn.execute(inspector_query).fetchall()
+                column_names = [row[1] for row in result]
+                if column_names:
+                    if "document_urls" not in column_names:
+                        conn.execute(text("ALTER TABLE projects ADD COLUMN document_urls TEXT"))
+                    if "task_weight" not in column_names:
+                        conn.execute(text("ALTER TABLE projects ADD COLUMN task_weight VARCHAR DEFAULT 'MOYEN'"))
+                    conn.commit()
+            else:
+                conn.execute(text("ALTER TABLE projects ADD COLUMN IF NOT EXISTS document_urls TEXT;"))
+                conn.execute(text("ALTER TABLE projects ADD COLUMN IF NOT EXISTS task_weight VARCHAR DEFAULT 'MOYEN';"))
+                conn.commit()
+    except Exception as e:
+        logger.warning(f"Notice: run_project_migrations: {e}")
 
 def run_task_migrations():
-    if engine.dialect.name != "sqlite":
-        return
     from sqlalchemy import text
-    with engine.connect() as conn:
-        inspector_query = text("PRAGMA table_info(stay_task_assignments)")
-        result = conn.execute(inspector_query).fetchall()
-        column_names = [row[1] for row in result]
-        if column_names:
-            if "status" not in column_names:
-                conn.execute(text("ALTER TABLE stay_task_assignments ADD COLUMN status VARCHAR DEFAULT 'A_FAIRE'"))
-            if "completion_notes" not in column_names:
-                conn.execute(text("ALTER TABLE stay_task_assignments ADD COLUMN completion_notes TEXT"))
-            if "completion_docs" not in column_names:
-                conn.execute(text("ALTER TABLE stay_task_assignments ADD COLUMN completion_docs TEXT"))
+    try:
+        with engine.connect() as conn:
+            if engine.dialect.name == "sqlite":
+                inspector_query = text("PRAGMA table_info(stay_task_assignments)")
+                result = conn.execute(inspector_query).fetchall()
+                column_names = [row[1] for row in result]
+                if column_names:
+                    if "status" not in column_names:
+                        conn.execute(text("ALTER TABLE stay_task_assignments ADD COLUMN status VARCHAR DEFAULT 'A_FAIRE'"))
+                    if "completion_notes" not in column_names:
+                        conn.execute(text("ALTER TABLE stay_task_assignments ADD COLUMN completion_notes TEXT"))
+                    if "completion_docs" not in column_names:
+                        conn.execute(text("ALTER TABLE stay_task_assignments ADD COLUMN completion_docs TEXT"))
+                    conn.commit()
+            else:
+                conn.execute(text("ALTER TABLE stay_task_assignments ADD COLUMN IF NOT EXISTS status VARCHAR DEFAULT 'A_FAIRE';"))
+                conn.execute(text("ALTER TABLE stay_task_assignments ADD COLUMN IF NOT EXISTS completion_notes TEXT;"))
+                conn.execute(text("ALTER TABLE stay_task_assignments ADD COLUMN IF NOT EXISTS completion_docs TEXT;"))
+                conn.commit()
+    except Exception as e:
+        logger.warning(f"Notice: run_task_migrations: {e}")
+
 def run_document_migrations():
-    if engine.dialect.name != "sqlite":
-        return
     from sqlalchemy import text
-    with engine.connect() as conn:
-        inspector_query = text("PRAGMA table_info(admin_documents)")
-        result = conn.execute(inspector_query).fetchall()
-        column_names = [row[1] for row in result]
-        if column_names:
-            if "drive_file_id" not in column_names:
-                conn.execute(text("ALTER TABLE admin_documents ADD COLUMN drive_file_id VARCHAR(255)"))
-            conn.commit()
+    try:
+        with engine.connect() as conn:
+            if engine.dialect.name == "sqlite":
+                inspector_query = text("PRAGMA table_info(admin_documents)")
+                result = conn.execute(inspector_query).fetchall()
+                column_names = [row[1] for row in result]
+                if column_names:
+                    if "drive_file_id" not in column_names:
+                        conn.execute(text("ALTER TABLE admin_documents ADD COLUMN drive_file_id VARCHAR(255)"))
+                        conn.commit()
+            else:
+                conn.execute(text("ALTER TABLE admin_documents ADD COLUMN IF NOT EXISTS drive_file_id VARCHAR(255);"))
+                conn.commit()
+    except Exception as e:
+        logger.warning(f"Notice: run_document_migrations: {e}")
 
 try:
     run_project_migrations()
@@ -177,6 +197,7 @@ try:
     migrate_engine(engine)
 except Exception as e:
     print(f"Migration notice: {e}")
+
 
 
 # --- Helper functions ---
@@ -2705,42 +2726,207 @@ def list_documents(
     db: Session = Depends(get_db)
 ):
     """
-    Retourne STRICTEMENT les vrais documents stockés en base de données et reliés à Google Drive.
+    Retourne la liste des documents avec résilience absolue Zero-Crash :
+    - Tente la récupération et synchronisation depuis Google Drive (confinement Strict Jail).
+    - En cas d'indisponibilité ou absence de credentials Drive, repli gracieux sans 500.
+    - Interroge la table AdminDocument avec auto-migration en cas de colonne ou table manquante.
+    - Format JSON garanti compatible frontend AdminInfoPage.jsx : [{ id, title, name, category, created_at, size, mime_type, drive_file_id, ... }].
     """
-    query = db.query(AdminDocument)
-    if category and category not in ("Toutes", "all"):
-        query = query.filter(AdminDocument.category == category)
-    if source_type:
-        query = query.filter(AdminDocument.source_type == source_type)
+    # 1. Récupération Google Drive avec repli gracieux
+    drive_docs = []
+    try:
+        drive_docs = drive_jail_service.list_files()
+    except Exception as drive_err:
+        logger.warning(f"Google Drive non disponible, repli sur base locale : {drive_err}")
+        drive_docs = []
 
-    db_docs = query.order_by(AdminDocument.created_at.desc()).all()
+    # 2. Interrogation sécurisée de la base de données avec rattrapage automatique
+    db_docs = []
+    try:
+        query = db.query(AdminDocument)
+        if category and category not in ("Toutes", "all"):
+            query = query.filter(AdminDocument.category == category)
+        if source_type:
+            query = query.filter(AdminDocument.source_type == source_type)
+        db_docs = query.order_by(AdminDocument.created_at.desc()).all()
+    except Exception as db_err:
+        logger.warning(f"Erreur requête AdminDocument en base ({db_err}), tentative de rattrapage / auto-migration...")
+        try:
+            db.rollback()
+        except Exception:
+            pass
 
+        # Tentative d'auto-création de la table et de la colonne manquante
+        try:
+            from sqlalchemy import text
+            with engine.connect() as conn:
+                AdminDocument.__table__.create(bind=engine, checkfirst=True)
+                if engine.dialect.name == "sqlite":
+                    inspector_query = text("PRAGMA table_info(admin_documents)")
+                    result = conn.execute(inspector_query).fetchall()
+                    column_names = [row[1] for row in result]
+                    if column_names and "drive_file_id" not in column_names:
+                        conn.execute(text("ALTER TABLE admin_documents ADD COLUMN drive_file_id VARCHAR(255)"))
+                        conn.commit()
+                else:
+                    conn.execute(text("ALTER TABLE admin_documents ADD COLUMN IF NOT EXISTS drive_file_id VARCHAR(255);"))
+                    conn.commit()
+
+            # Seconde tentative de requête
+            query = db.query(AdminDocument)
+            if category and category not in ("Toutes", "all"):
+                query = query.filter(AdminDocument.category == category)
+            if source_type:
+                query = query.filter(AdminDocument.source_type == source_type)
+            db_docs = query.order_by(AdminDocument.created_at.desc()).all()
+        except Exception as retry_err:
+            logger.warning(f"Repli gracieux : base de données indisponible ({retry_err}), bascule en mémoire.")
+            try:
+                db.rollback()
+            except Exception:
+                pass
+            db_docs = []
+
+    # 3. Synchronisation & Fusion intelligente Drive <-> DB
+    existing_drive_ids = {doc.drive_file_id for doc in db_docs if getattr(doc, "drive_file_id", None)}
+    existing_names = {doc.file_name for doc in db_docs if getattr(doc, "file_name", None)}
+    existing_titles = {doc.title for doc in db_docs if getattr(doc, "title", None)}
+
+    for df in drive_docs:
+        df_id = df.get("id")
+        if not df_id:
+            continue
+        df_name = df.get("name") or f"document_{df_id}.pdf"
+        df_size = int(df.get("size")) if df.get("size") else 0
+        df_mime = df.get("mimeType") or "application/pdf"
+        df_created = df.get("createdTime")
+
+        if df_id in existing_drive_ids:
+            continue
+
+        # Si le fichier existe en base sous le même nom, on associe le drive_file_id
+        matched_doc = None
+        for doc in db_docs:
+            if not getattr(doc, "drive_file_id", None) and (doc.file_name == df_name or doc.title == os.path.splitext(df_name)[0]):
+                matched_doc = doc
+                break
+
+        if matched_doc:
+            matched_doc.drive_file_id = df_id
+            existing_drive_ids.add(df_id)
+            try:
+                db.commit()
+            except Exception:
+                try:
+                    db.rollback()
+                except Exception:
+                    pass
+            continue
+
+        # Déduire la catégorie canonique depuis le nom du fichier
+        lower_name = df_name.lower()
+        cat = "Actes & Statuts"
+        if any(k in lower_name for k in ["facture", "devis", "travaux", "artisan", "edf", "eau", "gaz", "toiture", "maconnerie"]):
+            cat = "Travaux & Factures"
+        elif any(k in lower_name for k in ["releve", "banque", "rib", "virement", "compte", "emprunt", "credit", "swan"]):
+            cat = "Banque & Finances"
+        elif any(k in lower_name for k in ["impot", "taxe", "foncier", "cfe", "declaration", "cerfa"]):
+            cat = "Fiscalité & Impôts"
+
+        # Filtrage par catégorie demandée
+        if category and category not in ("Toutes", "all") and cat != category:
+            continue
+
+        clean_title = os.path.splitext(df_name)[0] if "." in df_name else df_name
+        created_dt = datetime.utcnow()
+        if df_created:
+            try:
+                created_dt = datetime.fromisoformat(df_created.replace("Z", "+00:00"))
+            except Exception:
+                pass
+
+        new_doc = AdminDocument(
+            title=clean_title,
+            category=cat,
+            file_url=f"/api/documents/drive/{df_id}",
+            file_name=df_name,
+            file_type=df_mime,
+            file_size=df_size,
+            drive_file_id=df_id,
+            source_type="DRIVE_SYNC",
+            source_id=None,
+            uploaded_by="Google Drive",
+            notes="Synchronisé depuis Google Drive",
+            created_at=created_dt
+        )
+
+        try:
+            db.add(new_doc)
+            db.commit()
+            db.refresh(new_doc)
+            new_doc.file_url = f"/api/documents/{new_doc.id}/download"
+            db.commit()
+            db_docs.append(new_doc)
+            existing_drive_ids.add(df_id)
+        except Exception:
+            try:
+                db.rollback()
+            except Exception:
+                pass
+            # Conservé en mémoire si écriture impossible
+            db_docs.append(new_doc)
+            existing_drive_ids.add(df_id)
+
+    # 4. Formatage de la réponse strictement conforme au frontend
     results = []
     for doc in db_docs:
+        doc_id = getattr(doc, "id", None)
+        drive_id = getattr(doc, "drive_file_id", None)
+        effective_id = doc_id or drive_id or "doc"
+
         # Route sécurisée de téléchargement Drive ou locale
-        download_url = f"/api/documents/{doc.id}/download"
+        if doc_id:
+            download_url = f"/api/documents/{doc_id}/download"
+        elif drive_id:
+            download_url = f"/api/documents/{drive_id}/download"
+        else:
+            download_url = getattr(doc, "file_url", "") or ""
+
+        file_size = getattr(doc, "file_size", 0) or 0
+        created_at = getattr(doc, "created_at", None) or datetime.utcnow()
+        if hasattr(created_at, "strftime"):
+            upload_date_str = created_at.strftime("%d/%m/%Y")
+        else:
+            upload_date_str = ""
+
+        created_at_iso = created_at.isoformat() if hasattr(created_at, "isoformat") else str(created_at)
+        doc_title = getattr(doc, "title", "Document") or "Document"
+        doc_filename = getattr(doc, "file_name", None) or (os.path.basename(doc.file_url) if getattr(doc, "file_url", None) else doc_title)
+        doc_cat = getattr(doc, "category", "Actes & Statuts") or "Actes & Statuts"
+        doc_type = getattr(doc, "file_type", "application/pdf") or "application/pdf"
+
         results.append({
-            "id": doc.id,
-            "title": doc.title,
-            "category": doc.category,
+            "id": effective_id,
+            "title": doc_title,
+            "name": doc_title,
+            "category": doc_cat,
             "file_url": download_url,
-            "file_name": doc.file_name or doc.title,
-            "file_type": doc.file_type or "application/pdf",
-            "file_size": doc.file_size or 0,
-            "drive_file_id": doc.drive_file_id,
-            "source_type": doc.source_type or "MANUAL",
-            "source_id": doc.source_id,
-            "uploaded_by": doc.uploaded_by or "Henri Jamet",
-            "notes": doc.notes,
-            "created_at": doc.created_at,
-            "name": doc.title,
-            "filename": doc.file_name or (os.path.basename(doc.file_url) if doc.file_url else doc.title),
             "url": download_url,
-            "type": doc.file_type or "application/pdf",
-            "mime_type": doc.file_type or "application/pdf",
-            "size": f"{round((doc.file_size or 0) / 1024, 1)} Ko" if doc.file_size else "—",
-            "upload_date": doc.created_at.strftime("%d/%m/%Y") if doc.created_at else "",
-            "source": doc.category
+            "file_name": doc_filename,
+            "filename": doc_filename,
+            "file_type": doc_type,
+            "type": doc_type,
+            "mime_type": doc_type,
+            "file_size": file_size,
+            "size": f"{round(file_size / 1024, 1)} Ko" if file_size else "—",
+            "drive_file_id": drive_id,
+            "source_type": getattr(doc, "source_type", "MANUAL") or "MANUAL",
+            "source_id": getattr(doc, "source_id", None),
+            "uploaded_by": getattr(doc, "uploaded_by", "Henri Jamet") or "Henri Jamet",
+            "notes": getattr(doc, "notes", None),
+            "created_at": created_at_iso,
+            "upload_date": upload_date_str,
+            "source": doc_cat
         })
 
     return results

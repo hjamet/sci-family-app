@@ -136,12 +136,14 @@ CREATE TABLE IF NOT EXISTS admin_documents (
     file_name VARCHAR(255),
     file_type VARCHAR(100),
     file_size INTEGER,
+    drive_file_id VARCHAR(255),
     source_type VARCHAR(50),
     source_id INTEGER,
     uploaded_by VARCHAR(100),
     notes TEXT,
     created_at TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP
 );
+ALTER TABLE admin_documents ADD COLUMN IF NOT EXISTS drive_file_id VARCHAR(255);
 
 -- TABLE: document_categories (Catégories maison de documents)
 CREATE TABLE IF NOT EXISTS document_categories (

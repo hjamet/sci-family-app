@@ -53,6 +53,7 @@ test_*.py
 !backend/test_drive_quota.py
 !backend/test_drive_oauth.py
 !backend/test_drive_documents_crud.py
+!backend/test_documents_resilience.py
 
 # OS / IDE
 .DS_Store
