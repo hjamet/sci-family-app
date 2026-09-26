@@ -4,6 +4,7 @@ import { fetchTasks, createTask, fetchProjects, createProject } from '../api';
 import TaskDetailModal from './TaskDetailModal';
 import VoteRoofModal from './VoteRoofModal';
 import NewProjectModal from './NewProjectModal';
+import NewTaskModal from './NewTaskModal';
 
 const AUTHENTIC_ASSOCIATES = [
   { id: 'all', name: 'Tous les associés', shortName: 'Tous' },
@@ -30,6 +31,7 @@ export default function TasksPage({ currentUser = 'Henri Jamet' }) {
   const [selectedPriority, setSelectedPriority] = useState('Toutes');
   const [selectedAssignee, setSelectedAssignee] = useState('all');
   const [selectedSubject, setSelectedSubject] = useState('all');
+  const [selectedCategory, setSelectedCategory] = useState('all');
 
   // Voting Spotlight Carrousel State
   const [activeVoteIndex, setActiveVoteIndex] = useState(0);
@@ -39,15 +41,6 @@ export default function TasksPage({ currentUser = 'Henri Jamet' }) {
   const [isCreateModalOpen, setIsCreateModalOpen] = useState(false);
   const [isRoofVoteModalOpen, setIsRoofVoteModalOpen] = useState(false);
   const [isNewProjectModalOpen, setIsNewProjectModalOpen] = useState(false);
-
-  // New task form state
-  const [newTitle, setNewTitle] = useState('');
-  const [newDescription, setNewDescription] = useState('');
-  const [newSubject, setNewSubject] = useState('Rosing');
-  const [newPriority, setNewPriority] = useState('Normale');
-  const [newBudget, setNewBudget] = useState(300);
-  const [newAssignee, setNewAssignee] = useState('Henri Jamet');
-  const [creating, setCreating] = useState(false);
 
   // Dynamic filter options based on authentic members and active tasks count
   const memberFilterOptions = useMemo(() => {
@@ -149,62 +142,16 @@ export default function TasksPage({ currentUser = 'Henri Jamet' }) {
     loadTasks();
   }, []);
 
-  const handleCreateTask = async (e) => {
-    e.preventDefault();
-    if (!newTitle.trim()) return;
-
-    try {
-      setCreating(true);
-      const payload = {
-        title: newTitle.trim(),
-        description: newDescription.trim(),
-        subject: newSubject,
-        priority: newPriority,
-        budget: parseFloat(newBudget) || 0,
-        assignee_name: newAssignee,
-        assigned_members: [newAssignee],
-        category: 'Chantier du Domaine',
-      };
-      await createTask(payload);
-      setIsCreateModalOpen(false);
-      setNewTitle('');
-      setNewDescription('');
-      await loadTasks();
-    } catch (err) {
-      console.error('Erreur création tâche:', err);
-      // Fallback local instantané
-      const newTaskObj = {
-        id: Date.now(),
-        ref: `T-2026-${Math.floor(100 + Math.random() * 900)}`,
-        title: newTitle.trim(),
-        description: newDescription.trim() || 'Tâche planifiée pour le domaine.',
-        category: 'Chantier du Domaine',
-        subject: newSubject,
-        priority: newPriority,
-        status: 'EN_COURS',
-        complexity: 'Modérée',
-        budget: parseFloat(newBudget) || 0,
-        budget_label: `${parseFloat(newBudget) || 0} € TTC`,
-        budget_type: 'Prévisionnel',
-        assignee: newAssignee,
-        assigned_members: [newAssignee],
-        role_label: 'Responsable',
-        step_label: 'Étape 1/3 : Cadrage initial',
-        step_icon: 'construction',
-        progress: 25,
-        deadline: 'Sous 30 jours',
-        subject_icon: newSubject === 'Presbytère' ? 'home_work' : newSubject === 'Piscine' ? 'pool' : 'home',
-        avatars: [
-          { initials: newAssignee.split(' ').map(n => n[0]).join('').substring(0, 2).toUpperCase() || 'HJ', name: newAssignee, bg: 'bg-primary text-on-primary' }
-        ],
-      };
-      setTasks(prev => [newTaskObj, ...prev]);
-      setIsCreateModalOpen(false);
-      setNewTitle('');
-      setNewDescription('');
-    } finally {
-      setCreating(false);
+  const handleTaskCreated = async (createdTask) => {
+    if (createdTask) {
+      setTasks((prev) => {
+        if (prev.some((t) => t.id === createdTask.id || (createdTask.ref && t.ref === createdTask.ref))) {
+          return prev;
+        }
+        return [createdTask, ...prev];
+      });
     }
+    await loadTasks();
   };
 
   const handleCreateProjectSubmit = async (projectData) => {
@@ -266,6 +213,13 @@ export default function TasksPage({ currentUser = 'Henri Jamet' }) {
       if (t.subject?.toLowerCase() !== selectedSubject.toLowerCase()) return false;
     }
 
+    // Filtre Domaine / Catégorie
+    if (selectedCategory !== 'all') {
+      const cat = selectedCategory.toLowerCase();
+      const taskCat = (t.category || '').toLowerCase();
+      if (!taskCat.includes(cat)) return false;
+    }
+
     return true;
   });
 
@@ -299,10 +253,24 @@ export default function TasksPage({ currentUser = 'Henri Jamet' }) {
     t.assignee_name === currentUserName || 
     (Array.isArray(t.assigned_members) && t.assigned_members.includes(currentUserName))
   ).length;
-  const completedTasksCount = tasks.filter(t => t.status === 'TERMINÉE' || t.status === 'VALIDÉ' || t.status === 'ARCHIVÉ').length;
-  const avgProgress = tasks.length > 0 
-    ? Math.round((completedTasksCount / tasks.length) * 100) 
-    : 0;
+
+  const completedTasksCount = tasks.filter(t => 
+    t.status === 'TERMINÉE' || 
+    t.status === 'TERMINEE' || 
+    t.status === 'VALIDÉ' || 
+    t.status === 'VALIDE' || 
+    t.status === 'ARCHIVÉ' || 
+    t.status === 'ARCHIVEE' || 
+    t.status === 'completed'
+  ).length;
+
+  const totalTasks = tasks.length;
+  const openTasksCount = Math.max(0, totalTasks - completedTasksCount);
+
+  // ANNOTATION 4 : Avec 0 tâche (ou 0 tâche ouverte restante), l'avancement doit être strictement de 100% !
+  const avgProgress = totalTasks === 0 || openTasksCount === 0 
+    ? 100 
+    : Math.round((completedTasksCount / totalTasks) * 100);
 
   return (
     <div className="flex flex-col w-full pb-16">
@@ -427,12 +395,14 @@ export default function TasksPage({ currentUser = 'Henri Jamet' }) {
                   strokeWidth="4"
                 ></circle>
               </svg>
-              <span className="absolute text-[11px] font-bold text-forest-deep">{completedTasksCount}/{tasks.length}</span>
+              <span className="absolute text-[11px] font-bold text-forest-deep">
+                {totalTasks === 0 ? '100%' : `${completedTasksCount}/${totalTasks}`}
+              </span>
             </div>
           </div>
           <div className="mt-4 pt-3 flex items-center justify-between text-on-surface-variant font-label-sm text-label-sm">
             <span>{completedTasksCount} chantiers achevés</span>
-            <span className="text-primary font-semibold">{tasks.length - completedTasksCount} en cours</span>
+            <span className="text-primary font-semibold">{openTasksCount} en cours</span>
           </div>
         </div>
 
@@ -705,8 +675,8 @@ export default function TasksPage({ currentUser = 'Henri Jamet' }) {
           </div>
         </div>
 
-        {/* Filter Multi-Level Row: Dropdown Selectors for Associés, Bâtiments, Statuts */}
-        <div className="grid grid-cols-1 md:grid-cols-2 gap-space-sm pt-2">
+        {/* Filter Multi-Level Row: Dropdown Selectors for Associés, Catégorie, Bâtiments */}
+        <div className="grid grid-cols-1 md:grid-cols-3 gap-space-sm pt-2">
           {/* Associé Responsable */}
           <div className="flex flex-col gap-1.5">
             <label className="font-label-sm text-label-sm text-on-surface font-semibold flex items-center gap-1.5" htmlFor="assigneeFilter">
@@ -722,6 +692,28 @@ export default function TasksPage({ currentUser = 'Henri Jamet' }) {
               {memberFilterOptions.map((m) => (
                 <option key={m.id} value={m.id}>{m.label}</option>
               ))}
+            </select>
+          </div>
+
+          {/* Domaine / Catégorie (Spécification Annotation 5) */}
+          <div className="flex flex-col gap-1.5">
+            <label className="font-label-sm text-label-sm text-on-surface font-semibold flex items-center gap-1.5" htmlFor="categoryFilter">
+              <span className="material-symbols-outlined text-[18px] text-primary">category</span>
+              Domaine / Catégorie
+            </label>
+            <select
+              id="categoryFilter"
+              value={selectedCategory}
+              onChange={(e) => setSelectedCategory(e.target.value)}
+              className="h-[46px] px-3.5 bg-canvas-slate rounded-DEFAULT font-label-sm text-label-sm text-on-surface font-medium focus:ring-2 focus:ring-primary focus:outline-none cursor-pointer"
+            >
+              <option value="all">Tous les domaines</option>
+              <option value="entretien">Entretien</option>
+              <option value="travaux">Travaux</option>
+              <option value="espaces verts">Espaces verts</option>
+              <option value="administratif">Administratif</option>
+              <option value="piscine">Piscine</option>
+              <option value="chauffage">Chauffage</option>
             </select>
           </div>
 
@@ -741,6 +733,7 @@ export default function TasksPage({ currentUser = 'Henri Jamet' }) {
               <option value="rosing">Rosing</option>
               <option value="presbytere">Presbytère</option>
               <option value="piscine">Piscine</option>
+              <option value="jardin">Jardin</option>
               <option value="sci">SCI</option>
             </select>
           </div>
@@ -780,18 +773,29 @@ export default function TasksPage({ currentUser = 'Henri Jamet' }) {
             <p className="font-body-md text-xs sm:text-sm text-on-surface-variant max-w-md mt-1">
               Modifiez vos termes de recherche ou réinitialisez les filtres pour afficher l'ensemble des chantiers.
             </p>
-            <button
-              type="button"
-              onClick={() => {
-                setSearchTerm('');
-                setSelectedPriority('Toutes');
-                setSelectedAssignee('all');
-                setSelectedSubject('all');
-              }}
-              className="mt-4 px-4 py-2 bg-sage-soft text-forest-deep text-xs font-bold rounded-DEFAULT hover:bg-emerald-100 transition-colors cursor-pointer"
-            >
-              Réinitialiser les filtres
-            </button>
+            <div className="flex items-center gap-3 mt-4">
+              <button
+                type="button"
+                onClick={() => {
+                  setSearchTerm('');
+                  setSelectedPriority('Toutes');
+                  setSelectedAssignee('all');
+                  setSelectedSubject('all');
+                  setSelectedCategory('all');
+                }}
+                className="px-4 py-2 bg-canvas-slate text-on-surface text-xs font-bold rounded-DEFAULT hover:bg-slate-200 transition-colors cursor-pointer"
+              >
+                Réinitialiser les filtres
+              </button>
+              <button
+                type="button"
+                onClick={() => setIsCreateModalOpen(true)}
+                className="px-4 py-2 bg-sage-soft text-primary-container text-xs font-bold rounded-DEFAULT hover:bg-emerald-100 transition-colors cursor-pointer flex items-center gap-1.5"
+              >
+                <span className="material-symbols-outlined text-[16px]">add_task</span>
+                <span>Proposer une tâche</span>
+              </button>
+            </div>
           </div>
         ) : (
           sortedTasks.map((t) => {
@@ -832,12 +836,35 @@ export default function TasksPage({ currentUser = 'Henri Jamet' }) {
                       {t.priority}
                     </span>
 
+                    {/* Domaine / Catégorie */}
+                    {t.category && (
+                      <span className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full bg-sage-soft text-forest-deep font-label-sm text-label-sm font-semibold">
+                        <span className="material-symbols-outlined text-[16px] text-primary">
+                          {t.category === 'Entretien' ? 'handyman' :
+                           t.category === 'Travaux' ? 'construction' :
+                           t.category === 'Espaces verts' ? 'yard' :
+                           t.category === 'Administratif' ? 'description' :
+                           t.category === 'Piscine' ? 'pool' :
+                           t.category === 'Chauffage' ? 'thermostat' : 'category'}
+                        </span>
+                        {t.category}
+                      </span>
+                    )}
+
                     <span className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full bg-canvas-slate text-on-surface font-label-sm text-label-sm">
                       <span className="material-symbols-outlined text-[16px] text-on-surface-variant">
                         {t.subject_icon || 'home_work'}
                       </span>
                       {t.subject}
                     </span>
+
+                    {/* Estimation de charge / points */}
+                    {t.complexity && (
+                      <span className="inline-flex items-center gap-1 px-2.5 py-1 rounded-full bg-canvas-slate text-on-surface-variant font-label-sm text-label-sm border border-slate-200">
+                        <span className="material-symbols-outlined text-[15px] text-primary">bolt</span>
+                        <span>{t.complexity}</span>
+                      </span>
+                    )}
 
                     {t.extra_tag && (
                       <span className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full bg-canvas-slate text-on-surface font-label-sm text-label-sm">
@@ -985,138 +1012,13 @@ export default function TasksPage({ currentUser = 'Henri Jamet' }) {
         />
       )}
 
-      {/* Modale de Création Rapide de Tâche */}
-      {isCreateModalOpen && (
-        <div
-          aria-modal="true"
-          role="dialog"
-          className="fixed inset-0 z-50 bg-black/60 backdrop-blur-sm flex items-center justify-center p-4 overflow-y-auto"
-        >
-          <div className="bg-white rounded-3xl p-6 sm:p-7 max-w-xl w-full shadow-2xl border border-slate-200 space-y-5 animate-in zoom-in-95 duration-150">
-            <div className="flex items-center justify-between border-b border-slate-100 pb-3">
-              <div className="flex items-center gap-2.5">
-                <div className="w-10 h-10 rounded-xl bg-sage-soft text-primary flex items-center justify-center">
-                  <span className="material-symbols-outlined text-[24px]">add_task</span>
-                </div>
-                <div>
-                  <h3 className="font-headline-sm text-base sm:text-lg font-bold text-forest-deep">
-                    Nouvelle tâche ou mission
-                  </h3>
-                  <p className="text-xs text-on-surface-variant">
-                    Ajout au registre du Domaine d'Hellenvilliers
-                  </p>
-                </div>
-              </div>
-              <button
-                type="button"
-                onClick={() => setIsCreateModalOpen(false)}
-                className="w-8 h-8 rounded-full bg-slate-100 hover:bg-slate-200 text-slate-500 flex items-center justify-center cursor-pointer"
-              >
-                <span className="material-symbols-outlined text-[18px]">close</span>
-              </button>
-            </div>
-
-            <form onSubmit={handleCreateTask} className="space-y-4 text-xs sm:text-sm">
-              <div className="space-y-1">
-                <label className="font-semibold text-on-surface block">Titre de la mission</label>
-                <input
-                  type="text"
-                  required
-                  value={newTitle}
-                  onChange={(e) => setNewTitle(e.target.value)}
-                  placeholder="Ex: Réparation volets bibliothèque, taille haie..."
-                  className="w-full h-11 px-3 bg-canvas-slate rounded-DEFAULT border border-slate-300 focus:outline-none focus:ring-2 focus:ring-primary"
-                />
-              </div>
-
-              <div className="space-y-1">
-                <label className="font-semibold text-on-surface block">Description détaillée</label>
-                <textarea
-                  rows={3}
-                  value={newDescription}
-                  onChange={(e) => setNewDescription(e.target.value)}
-                  placeholder="Objectif, urgence, prestataires éventuels..."
-                  className="w-full p-3 bg-canvas-slate rounded-DEFAULT border border-slate-300 focus:outline-none focus:ring-2 focus:ring-primary resize-none"
-                />
-              </div>
-
-              <div className="grid grid-cols-2 gap-3">
-                <div className="space-y-1">
-                  <label className="font-semibold text-on-surface block">Sujet</label>
-                  <select
-                    value={newSubject}
-                    onChange={(e) => setNewSubject(e.target.value)}
-                    className="w-full h-10 px-3 bg-canvas-slate rounded-DEFAULT border border-slate-300 cursor-pointer"
-                  >
-                    <option value="Rosing">Rosing</option>
-                    <option value="Presbytère">Presbytère</option>
-                    <option value="Piscine">Piscine</option>
-                    <option value="Jardin">Jardin</option>
-                    <option value="SCI">SCI</option>
-                  </select>
-                </div>
-
-                <div className="space-y-1">
-                  <label className="font-semibold text-on-surface block">Priorité</label>
-                  <select
-                    value={newPriority}
-                    onChange={(e) => setNewPriority(e.target.value)}
-                    className="w-full h-10 px-3 bg-canvas-slate rounded-DEFAULT border border-slate-300 cursor-pointer"
-                  >
-                    <option value="Critique">Critique</option>
-                    <option value="Haute">Haute</option>
-                    <option value="Normale">Normale</option>
-                    <option value="Planifié">Planifié</option>
-                  </select>
-                </div>
-              </div>
-
-              <div className="grid grid-cols-2 gap-3">
-                <div className="space-y-1">
-                  <label className="font-semibold text-on-surface block">Budget prévisionnel (€ TTC)</label>
-                  <input
-                    type="number"
-                    value={newBudget}
-                    onChange={(e) => setNewBudget(e.target.value)}
-                    className="w-full h-10 px-3 bg-canvas-slate rounded-DEFAULT border border-slate-300"
-                  />
-                </div>
-
-                <div className="space-y-1">
-                  <label className="font-semibold text-on-surface block">Responsable assigné</label>
-                  <select
-                    value={newAssignee}
-                    onChange={(e) => setNewAssignee(e.target.value)}
-                    className="w-full h-10 px-3 bg-canvas-slate rounded-DEFAULT border border-slate-300 cursor-pointer"
-                  >
-                    {AUTHENTIC_ASSOCIATES.filter((m) => m.id !== 'all').map((m) => (
-                      <option key={m.id} value={m.name}>{m.name}</option>
-                    ))}
-                  </select>
-                </div>
-              </div>
-
-              <div className="flex items-center justify-end gap-3 pt-3 border-t border-slate-100">
-                <button
-                  type="button"
-                  onClick={() => setIsCreateModalOpen(false)}
-                  className="px-4 py-2 rounded-DEFAULT bg-white border border-slate-300 text-slate-700 font-semibold hover:bg-slate-100 cursor-pointer"
-                >
-                  Annuler
-                </button>
-                <button
-                  type="submit"
-                  disabled={creating}
-                  className="px-5 py-2 rounded-DEFAULT bg-white border-2 border-emerald-600 text-emerald-800 hover:bg-emerald-50 font-bold transition-all shadow-xs flex items-center gap-1.5 cursor-pointer disabled:opacity-50"
-                >
-                  <span className="material-symbols-outlined text-[16px]">add_circle</span>
-                  Créer la tâche
-                </button>
-              </div>
-            </form>
-          </div>
-        </div>
-      )}
+      {/* Modale de Création Propre et Complète de Tâche (Annotations 4 & 5) */}
+      <NewTaskModal
+        isOpen={isCreateModalOpen}
+        onClose={() => setIsCreateModalOpen(false)}
+        currentUser={currentUser}
+        onTaskCreated={handleTaskCreated}
+      />
 
     </div>
   );

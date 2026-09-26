@@ -13,9 +13,37 @@ const ASSOCIATES_LIST = [
   { id: 'eugenie', label: 'Eugénie Jamet' },
 ];
 
+const MONTH_NAMES_FR = [
+  'Janvier', 'Février', 'Mars', 'Avril', 'Mai', 'Juin',
+  'Juillet', 'Août', 'Septembre', 'Octobre', 'Novembre', 'Décembre'
+];
+
+function formatYMD(d) {
+  const y = d.getFullYear();
+  const m = String(d.getMonth() + 1).padStart(2, '0');
+  const day = String(d.getDate()).padStart(2, '0');
+  return `${y}-${m}-${day}`;
+}
+
+function getDatesFromISOWeek(weekNumber, year = 2026) {
+  const jan4 = new Date(year, 0, 4);
+  const jan4Day = jan4.getDay() || 7;
+  const monday = new Date(year, 0, 4 - (jan4Day - 1) + (weekNumber - 1) * 7);
+  const sunday = new Date(monday.getFullYear(), monday.getMonth(), monday.getDate() + 6);
+  return {
+    startDate: formatYMD(monday),
+    endDate: formatYMD(sunday),
+  };
+}
+
 export default function CalendarPage({ properties, currentUser = 'Henri Jamet' }) {
   const [selectedYear, setSelectedYear] = useState(2026);
   const [viewMode, setViewMode] = useState('agenda'); // 'agenda' | 'month' | 'year'
+  const [currentDate, setCurrentDate] = useState(() => new Date(2026, 7, 1)); // Août 2026 par défaut
+  const [dragStart, setDragStart] = useState(null);
+  const [dragEnd, setDragEnd] = useState(null);
+  const [isSelecting, setIsSelecting] = useState(false);
+  const [isDraggingRange, setIsDraggingRange] = useState(false);
   const [filterRosing, setFilterRosing] = useState(true);
   const [filterPresbytere, setFilterPresbytere] = useState(true);
   const [memberFilter, setMemberFilter] = useState('all');
@@ -41,11 +69,91 @@ export default function CalendarPage({ properties, currentUser = 'Henri Jamet' }
     loadReservations();
   }, [selectedYear]);
 
+  // Synchronise l'année du calendrier mensuel avec le filtre d'année s'il change
+  useEffect(() => {
+    if (selectedYear && currentDate.getFullYear() !== selectedYear) {
+      setCurrentDate((prev) => new Date(selectedYear, prev.getMonth(), 1));
+    }
+  }, [selectedYear]);
+
+  const handlePrevMonth = () => {
+    setCurrentDate((prev) => {
+      const next = new Date(prev.getFullYear(), prev.getMonth() - 1, 1);
+      if (selectedYear !== null && next.getFullYear() !== selectedYear) {
+        setSelectedYear(next.getFullYear());
+      }
+      return next;
+    });
+  };
+
+  const handleNextMonth = () => {
+    setCurrentDate((prev) => {
+      const next = new Date(prev.getFullYear(), prev.getMonth() + 1, 1);
+      if (selectedYear !== null && next.getFullYear() !== selectedYear) {
+        setSelectedYear(next.getFullYear());
+      }
+      return next;
+    });
+  };
+
   const handleResetFilters = () => {
     setFilterRosing(true);
     setFilterPresbytere(true);
     setMemberFilter('all');
     setSelectedYear(2026);
+    setCurrentDate(new Date(2026, 7, 1));
+  };
+
+  const handleOpenBooking = (startDateStr, endDateStr) => {
+    let start = startDateStr;
+    let end = endDateStr || startDateStr;
+    if (start > end) {
+      const temp = start;
+      start = end;
+      end = temp;
+    }
+    const isSingleDay = start === end;
+    setEditingReservation({
+      start_date: start,
+      end_date: end,
+      user_name: currentUser || 'Henri Jamet',
+      arrival_time: isSingleDay ? '10:00' : '15:00',
+      departure_time: isSingleDay ? '18:00' : '11:00',
+    });
+    setIsBookingOpen(true);
+  };
+
+  const handleMouseDown = (dateStr) => {
+    setDragStart(dateStr);
+    setDragEnd(dateStr);
+    setIsSelecting(true);
+    setIsDraggingRange(false);
+  };
+
+  const handleMouseEnter = (dateStr) => {
+    if (isSelecting) {
+      if (dateStr !== dragStart) {
+        setIsDraggingRange(true);
+      }
+      setDragEnd(dateStr);
+    }
+  };
+
+  const handleMouseUp = (dateStr) => {
+    if (isSelecting) {
+      setIsSelecting(false);
+      if (isDraggingRange && dragStart && dragEnd && dragStart !== dragEnd) {
+        handleOpenBooking(dragStart, dragEnd);
+      }
+      setDragStart(null);
+      setDragEnd(null);
+      setTimeout(() => setIsDraggingRange(false), 50);
+    }
+  };
+
+  const handleCellClick = (dateStr) => {
+    if (isDraggingRange) return;
+    handleOpenBooking(dateStr, dateStr);
   };
 
   // Filter reservations based on active filters
@@ -89,6 +197,60 @@ export default function CalendarPage({ properties, currentUser = 'Henri Jamet' }
 
   const bookedWeeksCount = Object.keys(bookedWeeksMap).length;
   const freeWeeksCount = Math.max(0, 52 - bookedWeeksCount);
+
+  const currentYear = currentDate.getFullYear();
+  const currentMonth = currentDate.getMonth();
+
+  // Grille mensuelle dynamique (décalage du 1er jour, 28/29/30/31 jours, complétion 7 jours)
+  const calendarDays = (() => {
+    const firstDayOfMonth = new Date(currentYear, currentMonth, 1);
+    const daysInMonth = new Date(currentYear, currentMonth + 1, 0).getDate();
+    const firstDayWeekday = (firstDayOfMonth.getDay() + 6) % 7; // Lun = 0, Dim = 6
+
+    const prevMonthDaysCount = new Date(currentYear, currentMonth, 0).getDate();
+    const prevMonthYear = currentMonth === 0 ? currentYear - 1 : currentYear;
+    const prevMonth = currentMonth === 0 ? 11 : currentMonth - 1;
+
+    const days = [];
+
+    // Jours du mois précédent
+    for (let i = firstDayWeekday - 1; i >= 0; i--) {
+      const dayNum = prevMonthDaysCount - i;
+      const dateStr = formatYMD(new Date(prevMonthYear, prevMonth, dayNum));
+      days.push({
+        day: dayNum,
+        dateStr,
+        isCurrentMonth: false,
+      });
+    }
+
+    // Jours du mois en cours
+    for (let dayNum = 1; dayNum <= daysInMonth; dayNum++) {
+      const dateStr = formatYMD(new Date(currentYear, currentMonth, dayNum));
+      days.push({
+        day: dayNum,
+        dateStr,
+        isCurrentMonth: true,
+      });
+    }
+
+    // Jours du mois suivant pour compléter les semaines de 7 jours
+    const totalCells = Math.ceil(days.length / 7) * 7;
+    const nextMonthYear = currentMonth === 11 ? currentYear + 1 : currentYear;
+    const nextMonth = currentMonth === 11 ? 0 : currentMonth + 1;
+    const trailingCount = totalCells - days.length;
+
+    for (let dayNum = 1; dayNum <= trailingCount; dayNum++) {
+      const dateStr = formatYMD(new Date(nextMonthYear, nextMonth, dayNum));
+      days.push({
+        day: dayNum,
+        dateStr,
+        isCurrentMonth: false,
+      });
+    }
+
+    return days;
+  })();
 
   return (
     <div className="flex flex-col w-full pb-16 space-y-6">
@@ -443,10 +605,12 @@ export default function CalendarPage({ properties, currentUser = 'Henri Jamet' }
                 </div>
                 <div>
                   <h2 className="font-headline-md text-lg sm:text-headline-md text-forest-deep font-bold">
-                    Août 2026
+                    {MONTH_NAMES_FR[currentMonth]} {currentYear}
                   </h2>
                   <p className="font-body-md text-xs sm:text-sm text-on-surface-variant">
-                    Occupation estivale simultanée des deux demeures (Villa Rosing & Presbytère)
+                    {currentMonth >= 5 && currentMonth <= 8
+                      ? 'Occupation estivale simultanée des deux demeures (Villa Rosing & Presbytère)'
+                      : 'Occupation et présences au domaine (Villa Rosing & Le Presbytère)'}
                   </p>
                 </div>
               </div>
@@ -454,18 +618,22 @@ export default function CalendarPage({ properties, currentUser = 'Henri Jamet' }
               <div className="flex items-center gap-2">
                 <button
                   type="button"
+                  onClick={handlePrevMonth}
                   className="p-2 rounded-xl bg-canvas-slate hover:bg-slate-200 text-on-surface-variant transition-colors cursor-pointer"
                   title="Mois précédent"
+                  aria-label="Mois précédent"
                 >
                   <span className="material-symbols-outlined text-[20px]">chevron_left</span>
                 </button>
-                <span className="font-label-md text-xs sm:text-sm px-3 py-1.5 rounded-xl bg-sage-soft text-forest-deep font-bold">
-                  Août 2026
+                <span className="font-label-md text-xs sm:text-sm px-3 py-1.5 rounded-xl bg-sage-soft text-forest-deep font-bold min-w-[130px] text-center">
+                  {MONTH_NAMES_FR[currentMonth]} {currentYear}
                 </span>
                 <button
                   type="button"
+                  onClick={handleNextMonth}
                   className="p-2 rounded-xl bg-canvas-slate hover:bg-slate-200 text-on-surface-variant transition-colors cursor-pointer"
                   title="Mois suivant"
+                  aria-label="Mois suivant"
                 >
                   <span className="material-symbols-outlined text-[20px]">chevron_right</span>
                 </button>
@@ -473,60 +641,91 @@ export default function CalendarPage({ properties, currentUser = 'Henri Jamet' }
             </div>
 
             {/* Monthly Calendar Grid */}
-            <div className="grid grid-cols-7 gap-px bg-border-subtle border border-border-subtle rounded-xl overflow-hidden mt-6 text-xs">
+            <div
+              className="grid grid-cols-7 gap-px bg-border-subtle border border-border-subtle rounded-xl overflow-hidden mt-6 text-xs select-none"
+              onMouseLeave={() => {
+                if (isSelecting) {
+                  setIsSelecting(false);
+                  setDragStart(null);
+                  setDragEnd(null);
+                  setIsDraggingRange(false);
+                }
+              }}
+            >
               {['Lun', 'Mar', 'Mer', 'Jeu', 'Ven', 'Sam', 'Dim'].map((d) => (
                 <div key={d} className="bg-surface-container-low p-2.5 text-center font-label-sm font-bold text-on-surface-variant uppercase tracking-wider">
                   {d}
                 </div>
               ))}
 
-              {/* Leading days from July */}
-              {[27, 28, 29, 30, 31].map((day) => (
-                <div key={`prev_${day}`} className="bg-canvas-slate/60 min-h-[90px] p-2 text-outline-variant">
-                  <span className="font-semibold">{day}</span>
-                </div>
-              ))}
+              {calendarDays.map((cell, idx) => {
+                const dayStays = displayStays.filter((s) => s.start_date <= cell.dateStr && cell.dateStr <= s.end_date);
+                const hasStay = dayStays.length > 0;
+                
+                // Selection highlight calculation
+                const minDrag = dragStart && dragEnd ? (dragStart < dragEnd ? dragStart : dragEnd) : null;
+                const maxDrag = dragStart && dragEnd ? (dragStart < dragEnd ? dragEnd : dragStart) : null;
+                const isInSelectedRange = isSelecting && minDrag && maxDrag && cell.dateStr >= minDrag && cell.dateStr <= maxDrag;
 
-              {/* Dynamic Days 1 to 31 for August 2026 */}
-              {Array.from({ length: 31 }, (_, i) => i + 1).map((day) => {
-                const dayStr = `2026-08-${String(day).padStart(2, '0')}`;
-                const stay = displayStays.find((s) => s.start_date <= dayStr && dayStr <= s.end_date);
-                const isPlenary = stay?.isPlenary || stay?.status === 'Rassemblement Plénier';
+                let cellBg = cell.isCurrentMonth ? 'bg-surface-container-lowest' : 'bg-canvas-slate/60 text-outline-variant';
+                if (isInSelectedRange) {
+                  cellBg = 'bg-emerald-100 ring-2 ring-forest-deep text-forest-deep font-bold z-10';
+                } else if (hasStay) {
+                  const anyPlenary = dayStays.some((s) => s?.isPlenary || s?.status === 'Rassemblement Plénier');
+                  cellBg = anyPlenary ? 'bg-sage-soft/50 border-l-2 border-forest-deep' : 'bg-emerald-50/50';
+                }
 
                 return (
                   <div
-                    key={`aug_${day}`}
-                    className={`min-h-[90px] p-2 transition-colors ${
-                      stay
-                        ? isPlenary
-                          ? 'bg-sage-soft/50 min-h-[90px] p-2 border-l-2 border-forest-deep'
-                          : 'bg-emerald-50/50'
-                        : 'bg-surface-container-lowest'
-                    }`}
+                    key={`${cell.dateStr}_${idx}`}
+                    onMouseDown={() => handleMouseDown(cell.dateStr)}
+                    onMouseEnter={() => handleMouseEnter(cell.dateStr)}
+                    onMouseUp={() => handleMouseUp(cell.dateStr)}
+                    onClick={() => handleCellClick(cell.dateStr)}
+                    className={`group min-h-[95px] p-2 transition-all cursor-pointer hover:bg-slate-100/70 hover:shadow-xs relative flex flex-col justify-between ${cellBg}`}
+                    title={`Date : ${cell.dateStr} — Cliquer pour réserver ou glisser pour une plage`}
                   >
-                    <span className={`font-semibold ${stay ? 'text-forest-deep font-bold' : 'text-on-surface'}`}>{day}</span>
-                    {stay ? (
-                      <div
-                        className={`mt-1 text-[11px] font-semibold px-1.5 py-0.5 rounded truncate ${
-                          isPlenary ? 'bg-forest-deep text-white font-bold' : 'bg-sage-soft text-forest-deep'
-                        }`}
-                        title={`${stay.user_name} (${stay.property_name})`}
-                      >
-                        {stay.user_name}
+                    <div>
+                      <div className="flex items-center justify-between">
+                        <span className={`font-semibold ${cell.isCurrentMonth ? (hasStay ? 'text-forest-deep font-bold' : 'text-on-surface') : 'text-outline-variant'}`}>
+                          {cell.day}
+                        </span>
+                        <span className="material-symbols-outlined text-[14px] opacity-0 group-hover:opacity-100 transition-opacity text-primary" title="Réserver ce jour">
+                          add_circle
+                        </span>
                       </div>
-                    ) : (
-                      <div className="mt-1 text-[11px] text-on-surface-variant/40 italic">Manoir libre</div>
-                    )}
+
+                      {hasStay ? (
+                        <div className="space-y-1 mt-1">
+                          {dayStays.map((stay) => {
+                            const isPlenary = stay?.isPlenary || stay?.status === 'Rassemblement Plénier';
+                            return (
+                              <div
+                                key={stay.id}
+                                onClick={(e) => {
+                                  e.stopPropagation();
+                                  setEditingReservation(stay);
+                                  setIsBookingOpen(true);
+                                }}
+                                className={`text-[11px] font-semibold px-1.5 py-0.5 rounded truncate cursor-pointer hover:opacity-85 transition-opacity ${
+                                  isPlenary ? 'bg-forest-deep text-white font-bold' : 'bg-sage-soft text-forest-deep'
+                                }`}
+                                title={`${stay.user_name} (${stay.property_name}) — Cliquer pour modifier`}
+                              >
+                                {stay.user_name}
+                              </div>
+                            );
+                          })}
+                        </div>
+                      ) : (
+                        <div className="mt-1 text-[11px] text-on-surface-variant/40 italic group-hover:text-primary transition-colors">
+                          Manoir libre
+                        </div>
+                      )}
+                    </div>
                   </div>
                 );
               })}
-
-              {/* Trailing days into Sept */}
-              {[1, 2, 3, 4, 5, 6].map((day) => (
-                <div key={`next_${day}`} className="bg-canvas-slate/60 min-h-[90px] p-2 text-outline-variant">
-                  <span className="font-semibold">{day}</span>
-                </div>
-              ))}
             </div>
 
             {/* Legend */}
@@ -580,6 +779,7 @@ export default function CalendarPage({ properties, currentUser = 'Henri Jamet' }
                 const stay = bookedWeeksMap[w];
                 const isBooked = !!stay;
                 const isPlenary = isBooked && (stay?.isPlenary || stay?.status === 'Rassemblement Plénier');
+                const { startDate: weekStartDate, endDate: weekEndDate } = getDatesFromISOWeek(w, selectedYear || 2026);
                 
                 // Coloration thématique fidèle Stitch
                 let cellClass = 'bg-canvas-slate text-on-surface-variant border-border-subtle hover:bg-white';
@@ -618,10 +818,16 @@ export default function CalendarPage({ properties, currentUser = 'Henri Jamet' }
                       if (stay) {
                         setEditingReservation(stay);
                         setIsBookingOpen(true);
+                      } else {
+                        handleOpenBooking(weekStartDate, weekEndDate);
                       }
                     }}
-                    title={stay ? `Semaine ${w} : ${stay.user_name} (${stay.property_name})` : `Semaine ${w} : Libre`}
-                    className={`p-2.5 rounded-xl text-center border transition-all cursor-pointer ${cellClass}`}
+                    title={
+                      stay
+                        ? `Semaine ${w} (${weekStartDate} au ${weekEndDate}) : ${stay.user_name} (${stay.property_name}) — Cliquer pour voir ou modifier`
+                        : `Semaine ${w} (${weekStartDate} au ${weekEndDate}) : Libre — Cliquer pour réserver ce créneau`
+                    }
+                    className={`p-2.5 rounded-xl text-center border transition-all cursor-pointer hover:shadow-md hover:scale-[1.02] ${cellClass}`}
                   >
                     <span className="text-[11px] font-bold uppercase tracking-wider block">
                       S{w < 10 ? `0${w}` : w}
@@ -629,6 +835,9 @@ export default function CalendarPage({ properties, currentUser = 'Henri Jamet' }
                     <p className={`text-[11px] mt-1 truncate ${labelClass}`}>
                       {labelText}
                     </p>
+                    <span className="text-[9px] opacity-60 block mt-0.5 truncate">
+                      {weekStartDate.slice(5)} → {weekEndDate.slice(5)}
+                    </span>
                   </div>
                 );
               })}

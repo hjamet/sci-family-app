@@ -77,8 +77,17 @@ export default function BookingModal({
       if (initialReservation.user_name) setApplicant(initialReservation.user_name);
       if (initialReservation.start_date) setStartDate(initialReservation.start_date);
       if (initialReservation.end_date) setEndDate(initialReservation.end_date);
-      if (initialReservation.arrival_time) setArrivalTime(initialReservation.arrival_time);
-      if (initialReservation.departure_time) setDepartureTime(initialReservation.departure_time);
+      const isSingleDay = initialReservation.start_date && initialReservation.end_date && initialReservation.start_date === initialReservation.end_date;
+      if (initialReservation.arrival_time) {
+        setArrivalTime(initialReservation.arrival_time);
+      } else if (isSingleDay) {
+        setArrivalTime('10:00');
+      }
+      if (initialReservation.departure_time) {
+        setDepartureTime(initialReservation.departure_time);
+      } else if (isSingleDay) {
+        setDepartureTime('18:00');
+      }
       if (initialReservation.guest_count || initialReservation.guests) {
         setGuestCount(parseInt(initialReservation.guest_count || initialReservation.guests, 10) || 3);
       }
@@ -166,8 +175,12 @@ export default function BookingModal({
       setError("Veuillez sélectionner les dates d'arrivée et de départ.");
       return;
     }
-    if (new Date(endDate) <= new Date(startDate)) {
-      setError("La date de départ doit être postérieure à la date d'arrivée.");
+    if (new Date(endDate) < new Date(startDate)) {
+      setError("La date de départ doit être postérieure ou égale à la date d'arrivée.");
+      return;
+    }
+    if (startDate === endDate && arrivalTime && departureTime && departureTime <= arrivalTime) {
+      setError("Pour une réservation sur une seule journée, l'heure de départ doit être postérieure à l'heure d'arrivée.");
       return;
     }
     if (!cohabitationAgreement) {
