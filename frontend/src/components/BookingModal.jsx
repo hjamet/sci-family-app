@@ -1007,7 +1007,7 @@ export default function BookingModal({
             </div>
           </section>
 
-          {/* Modal Footer / Boutons d'action */}
+          {/* Modal Footer / Boutons d'action (Annotation 7) */}
           <footer className="flex items-center justify-between gap-3 pt-space-sm border-t border-border-subtle/80 flex-wrap shrink-0">
             <div>
               {isEditMode && (
@@ -1015,31 +1015,23 @@ export default function BookingModal({
                   type="button"
                   onClick={handleDeleteBooking}
                   disabled={submitting}
-                  className="px-4 py-2 text-rose-700 bg-rose-50 hover:bg-rose-100 border border-rose-200 rounded-xl font-medium text-sm flex items-center gap-1.5 transition-colors cursor-pointer disabled:opacity-50"
+                  className="px-5 py-2.5 rounded-xl text-sm font-semibold inline-flex items-center gap-2 bg-rose-50 hover:bg-rose-100 text-rose-700 border border-rose-200 shadow-sm active:scale-95 transition-all cursor-pointer disabled:opacity-50"
                 >
-                  <span className="material-symbols-outlined text-sm">delete</span>
+                  <span className="material-symbols-outlined text-[18px]">delete</span>
                   Annuler ce séjour
                 </button>
               )}
             </div>
-            <div className="flex items-center gap-3">
-              <button
-                type="button"
-                onClick={onClose}
-                className="h-[52px] px-6 rounded-full bg-surface-container-lowest border-2 border-border-subtle hover:border-outline text-on-surface font-label-lg text-label-lg inline-flex items-center gap-2 transition-all cursor-pointer"
-              >
-                <span className="material-symbols-outlined text-[20px]">cancel</span>
-                Fermer
-              </button>
+            <div className="flex items-center gap-3 ml-auto">
               <button
                 type="submit"
                 disabled={submitting}
-                className="h-[52px] px-7 rounded-full bg-surface-container-lowest border-2 border-primary-container hover:bg-sage-soft active:bg-primary-fixed text-primary-container font-label-lg text-label-lg inline-flex items-center gap-2 transition-all shadow-sm cursor-pointer disabled:opacity-50"
+                className="px-5 py-2.5 rounded-xl bg-surface-container-lowest border-2 border-primary-container hover:bg-sage-soft active:bg-primary-fixed text-primary-container text-sm font-semibold inline-flex items-center gap-2 transition-all shadow-sm active:scale-95 cursor-pointer disabled:opacity-50"
               >
                 {submitting ? (
-                  <span className="inline-block w-5 h-5 border-2 border-primary-container border-t-transparent rounded-full animate-spin"></span>
+                  <span className="inline-block w-4 h-4 border-2 border-primary-container border-t-transparent rounded-full animate-spin"></span>
                 ) : (
-                  <span className="material-symbols-outlined text-[20px]" style={{ fontVariationSettings: '"FILL" 1' }}>
+                  <span className="material-symbols-outlined text-[18px]" style={{ fontVariationSettings: '"FILL" 1' }}>
                     check_circle
                   </span>
                 )}

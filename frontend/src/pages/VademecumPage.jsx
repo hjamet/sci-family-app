@@ -822,7 +822,6 @@ export default function VademecumPage({ properties, currentUser }) {
               <div className="p-3.5 bg-white rounded-xl border border-border-subtle flex items-center justify-between gap-2 shadow-sm">
                 <div className="flex flex-col min-w-0 pr-1">
                   <span className="font-label-md text-label-md text-on-surface font-semibold leading-tight">Consigne chauffage</span>
-                  <span className="font-label-sm text-xs text-on-surface-variant mt-0.5 whitespace-nowrap">Recommandé 19°C – 20°C</span>
                 </div>
                 <div className="flex items-center gap-1.5 shrink-0 bg-canvas-slate p-1 rounded-full border border-border-subtle">
                   <button
@@ -868,19 +867,44 @@ export default function VademecumPage({ properties, currentUser }) {
                 </div>
               </div>
 
-              {/* Fuel Gauge */}
-              <div className="p-3 bg-white rounded-xl border border-border-subtle flex items-center justify-between gap-3 shadow-xs">
-                <div className="flex items-center gap-2.5 min-w-0">
-                  <span className="material-symbols-outlined text-amber-600 text-[20px]">local_gas_station</span>
-                  <div className="flex flex-col min-w-0">
-                    <span className="text-xs font-semibold text-on-surface">Cuve Fioul (Éts JOSSE)</span>
-                    <span className="text-[11px] text-on-surface-variant">Capacité totale 3000 L</span>
+              {/* Fuel Gauge (Annotation 1) */}
+              {(() => {
+                const fuelRemaining = heatingStatus?.fuel_liters_remaining != null ? heatingStatus.fuel_liters_remaining : 2720;
+                const fuelCapacity = heatingStatus?.fuel_capacity_liters != null ? heatingStatus.fuel_capacity_liters : 3000;
+                const fuelPercent = Math.min(100, Math.max(0, Math.round((fuelRemaining / fuelCapacity) * 100)));
+
+                return (
+                  <div className="p-3.5 bg-white rounded-xl border border-border-subtle flex flex-col gap-2.5 shadow-xs">
+                    <div className="flex items-center justify-between gap-2 flex-wrap">
+                      <div className="flex items-center gap-2 min-w-0">
+                        <span className="material-symbols-outlined text-amber-600 text-[20px] shrink-0">local_gas_station</span>
+                        <div className="flex flex-col min-w-0">
+                          <span className="text-xs font-semibold text-on-surface">Cuve Fioul (Éts JOSSE)</span>
+                          <span className="text-[11px] text-on-surface-variant">Capacité totale {fuelCapacity.toLocaleString('fr-FR')} L</span>
+                        </div>
+                      </div>
+                      <span className="font-headline-sm text-xs font-bold text-amber-950 bg-amber-50 border border-amber-200/80 tabular-nums shrink-0 px-2.5 py-1 rounded-md">
+                        {fuelRemaining.toLocaleString('fr-FR')} L / {fuelCapacity.toLocaleString('fr-FR')} L • {fuelPercent}%
+                      </span>
+                    </div>
+
+                    {/* Stylized progress bar */}
+                    <div className="w-full bg-slate-100 dark:bg-slate-800/80 backdrop-blur-xs h-3 rounded-full overflow-hidden shadow-inner border border-slate-200/70 p-0.5">
+                      <div
+                        className="bg-gradient-to-r from-amber-600 to-amber-400 h-full rounded-full overflow-hidden shadow-inner transition-all duration-500"
+                        style={{ width: `${fuelPercent}%` }}
+                      />
+                    </div>
+
+                    {/* Level indicators */}
+                    <div className="flex items-center justify-between text-[10px] font-semibold text-on-surface-variant/80 px-0.5">
+                      <span>0 L</span>
+                      <span>1 500 L</span>
+                      <span>3 000 L</span>
+                    </div>
                   </div>
-                </div>
-                <span className="font-headline-sm text-xs font-bold text-primary tabular-nums shrink-0 px-2.5 py-1 rounded-md bg-sage-soft">
-                  {heatingStatus?.fuel_liters_remaining != null ? `${heatingStatus.fuel_liters_remaining} L` : '2720 L'}
-                </span>
-              </div>
+                );
+              })()}
 
             </div>
           </div>
@@ -909,7 +933,6 @@ export default function VademecumPage({ properties, currentUser }) {
               <div className="p-3.5 bg-white rounded-xl border border-border-subtle flex items-center justify-between gap-2 shadow-sm">
                 <div className="flex flex-col min-w-0 pr-1">
                   <span className="font-label-md text-label-md text-on-surface font-semibold leading-tight">Consigne ECS</span>
-                  <span className="font-label-sm text-xs text-on-surface-variant mt-0.5 whitespace-nowrap">Recommandé 50°C – 55°C</span>
                 </div>
                 <div className="flex items-center gap-1.5 shrink-0 bg-canvas-slate p-1 rounded-full border border-border-subtle">
                   <button
@@ -1006,7 +1029,6 @@ export default function VademecumPage({ properties, currentUser }) {
               <div className="p-3.5 bg-white rounded-xl border border-border-subtle flex items-center justify-between gap-2 shadow-sm">
                 <div className="flex flex-col min-w-0 pr-1">
                   <span className="font-label-md text-label-md text-on-surface font-semibold leading-tight">Consigne eau bassin</span>
-                  <span className="font-label-sm text-xs text-on-surface-variant mt-0.5 whitespace-nowrap">Seuil hors-gel 14°C</span>
                 </div>
                 <div className="flex items-center gap-1.5 shrink-0 bg-canvas-slate p-1 rounded-full border border-border-subtle">
                   <button
@@ -1134,7 +1156,11 @@ export default function VademecumPage({ properties, currentUser }) {
               const isHigh = task.priorityType === 'high' || task.priority === 'Critique' || task.priority === 'Haute';
               const assigneeName = task.assignee || (Array.isArray(task.assigned_members) && task.assigned_members[0]) || resolveCurrentUserFullName(currentUser);
               const initials = assigneeName.split(' ').map(n => n[0]).join('').substring(0, 2).toUpperCase() || 'HJ';
-              const partner = task.partner || (Array.isArray(task.assigned_members) && task.assigned_members.length > 1 ? `Avec ${task.assigned_members.slice(1).join(', ')}` : 'Autonomie');
+              const partner = (task.partner && task.partner !== 'Autonomie')
+                ? task.partner
+                : (Array.isArray(task.assigned_members) && task.assigned_members.length > 1
+                    ? `Avec ${task.assigned_members.slice(1).join(', ')}`
+                    : null);
               const budgetText = task.budget_label || (task.budget ? `${task.budget} € TTC` : 'Inclus SCI');
 
               return (
@@ -1184,7 +1210,9 @@ export default function VademecumPage({ properties, currentUser }) {
                       </div>
                       <div className="flex flex-col leading-tight">
                         <span className="text-xs font-semibold text-on-surface">En charge : {assigneeName}</span>
-                        <span className="text-[11px] text-on-surface-variant">{partner}</span>
+                        {partner && (
+                          <span className="text-[11px] text-on-surface-variant">{partner}</span>
+                        )}
                       </div>
                     </div>
                     <button
