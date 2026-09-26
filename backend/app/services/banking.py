@@ -424,17 +424,32 @@ class EnableBankingService:
                     accounts_data.extend(s_accounts)
                 except Exception as ex:
                     logger.warning(f"Erreur lecture session {s.session_id} : {ex}")
+                if not accounts_data and getattr(s, "accounts_data", None):
+                    try:
+                        cached_accs = json.loads(s.accounts_data)
+                        if isinstance(cached_accs, list):
+                            accounts_data.extend(cached_accs)
+                    except Exception:
+                        pass
 
         for acc in accounts_data:
-            acc_id = acc.get("account_id") or acc.get("uid") or acc.get("id")
-            if not acc_id:
-                continue
-
+            # Extraction robuste de l'IBAN
             iban = None
-            if "account_id" in acc and isinstance(acc["account_id"], dict):
-                iban = acc["account_id"].get("iban")
-            elif "iban" in acc:
+            if isinstance(acc.get("account_id"), dict):
+                iban = acc.get("account_id", {}).get("iban")
+            elif isinstance(acc.get("iban"), str):
                 iban = acc.get("iban")
+            elif isinstance(acc.get("account_id"), str) and acc.get("account_id", "").startswith("FR"):
+                iban = acc.get("account_id")
+
+            # Extraction robuste de l'identifiant Enable Banking (UID ou ID)
+            acc_uid = acc.get("uid") or acc.get("id")
+            if not acc_uid and not isinstance(acc.get("account_id"), dict):
+                acc_uid = acc.get("account_id")
+
+            acc_id = acc_uid or iban or (acc.get("account_id", {}).get("iban") if isinstance(acc.get("account_id"), dict) else None)
+            if not acc_id or not isinstance(acc_id, str):
+                continue
 
             # Récupération du solde
             balance_val = 0.0

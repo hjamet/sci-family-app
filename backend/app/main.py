@@ -3265,6 +3265,8 @@ def banking_callback_redirect(
             db_sess = db.query(BankAuthSession).filter(BankAuthSession.session_id == session_id).first()
 
         if db_sess:
+            if session_id and db_sess.session_id != session_id:
+                db_sess.session_id = session_id
             db_sess.status = "AUTHORIZED"
             db_sess.authorized_at = datetime.utcnow()
             db_sess.expires_at = datetime.utcnow() + timedelta(days=180)
