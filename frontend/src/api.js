@@ -811,7 +811,13 @@ export async function reactToTaskComment(taskId, commentId, emoji, userName) {
 
 // Piscine Telemetry
 export async function fetchPiscineStatus() {
-  const res = await fetch(`${API_BASE}/piscine/status`, {
+  try {
+    const res = await fetch(`${API_BASE}/pool/status`, {
+      headers: getAuthHeaders()
+    });
+    if (res.ok) return await res.json();
+  } catch (_) {}
+  const res = await fetch(`${API_BASE}/piscine/status?live=true`, {
     headers: getAuthHeaders()
   });
   if (!res.ok) throw new Error('Erreur lors de la récupération du statut piscine');

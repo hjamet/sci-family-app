@@ -91,6 +91,15 @@ export default function AdminInfoPage({ currentUser }) {
     }
   };
 
+  // Détermine si des données bancaires réelles et actives sont disponibles (fallback défensif false)
+  const hasRealBankData = Boolean(
+    bankStatus &&
+    bankStatus.status === 'ok' &&
+    !bankStatus.needs_reauth &&
+    bankStatus.total_balance !== undefined &&
+    bankStatus.total_balance !== null
+  );
+
   // Documents State (Zéro document fictif — branché sur /api/documents)
   const [documents, setDocuments] = useState([]);
   const [isDocsLoading, setIsDocsLoading] = useState(true);
