@@ -24,8 +24,13 @@ pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
 
 
 def hash_password(password: str) -> str:
-    """Hashes plain password using passlib bcrypt."""
-    return pwd_context.hash(password)
+    """Hashes plain password using bcrypt (or passlib fallback)."""
+    try:
+        import bcrypt
+        salt = bcrypt.gensalt()
+        return bcrypt.hashpw(password.encode("utf-8")[:72], salt).decode("utf-8")
+    except Exception:
+        return pwd_context.hash(password)
 
 
 def verify_password(plain_password: str, hashed_password: str) -> bool:

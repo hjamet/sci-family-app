@@ -1,6 +1,7 @@
 import React, { useState, useEffect, useCallback } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { fetchProjects, fetchReservations, fetchTasks } from '../api';
+import NewTaskModal from './NewTaskModal';
 
 export default function DashboardPage({
   currentUser = 'Henri',
@@ -13,6 +14,7 @@ export default function DashboardPage({
   const [reservations, setReservations] = useState([]);
   const [tasks, setTasks] = useState([]);
   const [loading, setLoading] = useState(true);
+  const [isNewTaskModalOpen, setIsNewTaskModalOpen] = useState(false);
 
   const userPrenom = typeof currentUser === 'object'
     ? (currentUser?.prenom || 'Henri')
@@ -113,14 +115,14 @@ export default function DashboardPage({
           </div>
 
           {/* Boutons d'Action Rapide : Style Signature (Fond Blanc + Bordure 2px + Icône + Texte) */}
-          <div className="flex flex-wrap sm:flex-nowrap items-stretch gap-space-xs sm:gap-space-sm pt-space-xs xl:pt-0">
+          <div className="flex flex-wrap items-center gap-2.5 sm:gap-3 shrink-0 pt-space-xs xl:pt-0">
             <button
               type="button"
               onClick={() => {
                 if (onOpenBooking) onOpenBooking();
                 else navigateTo('/calendrier');
               }}
-              className="group flex items-center justify-center gap-2 px-5 py-3.5 rounded-DEFAULT bg-white border-2 border-primary text-primary hover:bg-sage-soft font-label-lg text-sm sm:text-label-lg transition-all duration-200 shadow-sm cursor-pointer whitespace-nowrap"
+              className="group flex items-center justify-center gap-2 px-5 py-3.5 rounded-DEFAULT bg-white border-2 border-primary text-primary hover:bg-sage-soft font-label-lg text-sm sm:text-base font-bold transition-all duration-200 shadow-sm cursor-pointer whitespace-nowrap"
             >
               <span className="material-symbols-outlined text-[22px] group-hover:scale-110 transition-transform">
                 event_available
@@ -130,8 +132,19 @@ export default function DashboardPage({
 
             <button
               type="button"
+              onClick={() => setIsNewTaskModalOpen(true)}
+              className="group flex items-center justify-center gap-2 px-5 py-3.5 rounded-DEFAULT bg-white border-2 border-primary text-primary hover:bg-sage-soft font-label-lg text-sm sm:text-base font-bold shadow-sm hover:shadow-md transition-all duration-200 cursor-pointer whitespace-nowrap"
+            >
+              <span className="material-symbols-outlined text-[22px] group-hover:scale-110 transition-transform">
+                add_task
+              </span>
+              <span>Proposer une tâche</span>
+            </button>
+
+            <button
+              type="button"
               onClick={() => navigateTo('/sejour')}
-              className="group flex items-center justify-center gap-2 px-5 py-3.5 rounded-DEFAULT bg-white border-2 border-outline-variant text-on-surface hover:border-outline hover:bg-canvas-slate font-label-lg text-sm sm:text-label-lg transition-all duration-200 shadow-sm cursor-pointer whitespace-nowrap"
+              className="group flex items-center justify-center gap-2 px-5 py-3.5 rounded-DEFAULT bg-white border-2 border-outline-variant text-on-surface hover:border-outline hover:bg-canvas-slate font-label-lg text-sm sm:text-base transition-all duration-200 shadow-sm cursor-pointer whitespace-nowrap"
             >
               <span className="material-symbols-outlined text-[22px] text-primary group-hover:rotate-12 transition-transform">
                 key
@@ -142,9 +155,9 @@ export default function DashboardPage({
             <button
               type="button"
               onClick={() => navigateTo('/taches')}
-              className="flex items-center justify-center gap-2 px-5 py-3.5 rounded-DEFAULT bg-white border-2 border-primary text-primary hover:bg-sage-soft font-label-lg text-sm sm:text-label-lg font-semibold transition-all shadow-sm cursor-pointer whitespace-nowrap"
+              className="group flex items-center justify-center gap-2 px-5 py-3.5 rounded-DEFAULT bg-white border-2 border-outline-variant text-on-surface hover:border-outline hover:bg-canvas-slate font-label-lg text-sm sm:text-base font-semibold transition-all duration-200 shadow-sm cursor-pointer whitespace-nowrap"
             >
-              <span className="material-symbols-outlined text-[22px]">checklist</span>
+              <span className="material-symbols-outlined text-[22px] text-primary">checklist</span>
               <span>Voir toutes les tâches</span>
             </button>
           </div>
@@ -720,6 +733,16 @@ export default function DashboardPage({
         </div>
 
       </section>
+
+      {/* Modale de Création de Tâche */}
+      <NewTaskModal
+        isOpen={isNewTaskModalOpen}
+        onClose={() => setIsNewTaskModalOpen(false)}
+        currentUser={currentUser}
+        onTaskCreated={() => {
+          loadDashboardData();
+        }}
+      />
 
     </div>
   );

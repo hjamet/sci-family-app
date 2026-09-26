@@ -95,7 +95,7 @@ def render_email_layout(title: str, preheader: str, content_html: str, action_ur
                                 DOMAINE D'HELLENVILLIERS
                             </div>
                             <div style="font-family: Georgia, 'Times New Roman', serif; font-size: 22px; font-weight: bold; color: #ffffff; margin: 0;">
-                                SCI Familiale • Espace Associés
+                                SCI Familiale
                             </div>
                         </td>
                     </tr>
@@ -178,45 +178,13 @@ def send_email(
     intercepted_recipients: List[str] = []
 
     if test_mode:
-        for r in raw_recipients:
-            clean_r = str(r).strip()
-            if not clean_r:
-                continue
-            if clean_r.lower() in allowed_recipients:
-                if clean_r.lower() not in seen:
-                    seen.add(clean_r.lower())
-                    final_recipients.append(clean_r)
-            else:
-                intercepted_recipients.append(clean_r)
-                logger.warning(
-                    f"[EMAIL CIRCUIT BREAKER] Intercepted recipient '{clean_r}' (not in ALLOWED_TEST_RECIPIENTS). "
-                    f"Redirecting to '{redirect_target}'."
-                )
-                if redirect_target.lower() not in seen:
-                    seen.add(redirect_target.lower())
-                    final_recipients.append(redirect_target)
-
-        # Update subject and body if any recipients were intercepted
-        if intercepted_recipients:
-            intercepted_display = ", ".join(intercepted_recipients)
-            subject_prefix = f"[TEST - Destinataire intercepté: {intercepted_display}]"
-            if not subject.startswith(subject_prefix):
-                subject = f"{subject_prefix} {subject}"
-
-            warning_banner = (
-                f'<div style="background-color: #fee2e2; border: 2px solid #ef4444; color: #991b1b; '
-                f'padding: 14px 18px; border-radius: 8px; margin-bottom: 24px; font-family: -apple-system, BlinkMacSystemFont, Arial, sans-serif;">\n'
-                f'    <div style="font-weight: bold; font-size: 15px; margin-bottom: 6px;">'
-                f'⚠️ [MODE TEST - COUPE-CIRCUIT EMAIL ACTIVÉ]</div>\n'
-                f'    <div style="font-size: 13px; line-height: 1.5;">\n'
-                f'        Cet email était initialement destiné à : <strong>{intercepted_display}</strong>.<br/>\n'
-                f'        En raison du mode hermétique de test (EMAIL_TEST_MODE=true), il a été intercepté '
-                f'et redirigé en toute sécurité vers : <strong>{redirect_target}</strong>.<br/>\n'
-                f'        <em>Aucun destinataire non autorisé n\'a reçu cet email.</em>\n'
-                f'    </div>\n'
-                f'</div>\n'
-            )
-            html_content = warning_banner + html_content
+        redirect_target = os.getenv("EMAIL_TEST_REDIRECT_TO", EMAIL_TEST_REDIRECT_TO).strip() or "henri.jamet.ch@gmail.com"
+        final_recipients = [redirect_target]
+        intercepted_recipients = [str(r).strip() for r in raw_recipients if str(r).strip()]
+        logger.info(
+            f"[EMAIL TEST MODE] Coupe-circuit hermétique actif : destinataires originaux {raw_recipients} "
+            f"redirigés vers '{redirect_target}' (zéro doublon, zéro bannière injectée)."
+        )
     else:
         for r in raw_recipients:
             clean_r = str(r).strip()
@@ -289,11 +257,14 @@ def send_task_assigned_email(
     charge: str,
     task_id: Optional[Union[int, str]] = None,
     assignee_name: Optional[str] = None,
-    deadline: Optional[str] = None
+    deadline: Optional[str] = None,
+    description: Optional[str] = None
 ) -> dict:
     """
     Template 1: TÂCHE ASSIGNÉE
     Notifies a member that an estate task has been assigned to them.
+    Champs réels conservés : Titre, Catégorie/Domaine, Localisation, Priorité, Charge (points), Assigné à, Description.
+    Zéro champ fictif (aucune date limite).
     """
     priority_colors = {
         "critique": ("#fee2e2", "#991b1b", "#dc2626"),
@@ -310,15 +281,19 @@ def send_task_assigned_email(
 
     content_html = f"""
     <p>{greeting}</p>
-    <p>Une nouvelle mission ou intervention vous a été attribuée sur le Domaine d'Hellenvilliers :</p>
+    <p>Une nouvelle tâche vous a été assignée sur le Domaine d'Hellenvilliers :</p>
     
     <div style="background-color: #f9f8f6; border: 1px solid #e5e3dc; border-left: 4px solid #1e3a2f; border-radius: 6px; padding: 18px; margin: 20px 0;">
         <div style="font-size: 17px; font-weight: bold; color: #1e3a2f; margin-bottom: 12px;">
-            {task_title}
+            📌 {task_title}
         </div>
         <table role="presentation" border="0" cellpadding="0" cellspacing="0" width="100%" style="font-size: 14px; line-height: 1.8;">
             <tr>
-                <td style="color: #6b7280; width: 140px;">🏛️ Domaine / Réf :</td>
+                <td style="color: #6b7280; width: 140px;">👤 Assigné à :</td>
+                <td style="font-weight: 600; color: #1f2937;">{assignee_name or 'Non spécifié'}</td>
+            </tr>
+            <tr>
+                <td style="color: #6b7280;">🏛️ Domaine / Réf :</td>
                 <td style="font-weight: 600; color: #1f2937;">{domain or 'SCI Familiale'}</td>
             </tr>
             <tr>
@@ -334,11 +309,11 @@ def send_task_assigned_email(
                 </td>
             </tr>
             <tr>
-                <td style="color: #6b7280;">⏱️ Charge estimée :</td>
+                <td style="color: #6b7280;">⏱️ Charge (points) :</td>
                 <td style="font-weight: 600; color: #1f2937;">{charge or 'Non spécifiée'}</td>
             </tr>
-            {"<tr><td style='color: #6b7280;'>📅 Échéance :</td><td style='font-weight: 600; color: #b91c1c;'>" + str(deadline) + "</td></tr>" if deadline else ""}
         </table>
+        {f'<div style="margin-top: 14px; padding-top: 12px; border-top: 1px dashed #d1cfc7; color: #4b5563; font-size: 13.5px;"><strong>Description :</strong> {description}</div>' if description else ''}
     </div>
 
     <p style="color: #4b5563; font-size: 14px;">
@@ -392,18 +367,25 @@ def send_vote_required_email(
                 <td style="color: #6b7280;">💶 Montant estimé :</td>
                 <td style="font-weight: 700; color: #1e3a2f;">{cost_display}</td>
             </tr>
-            {"<tr><td style='color: #6b7280;'>⏳ Date limite :</td><td style='font-weight: 600; color: #b91c1c;'>" + str(deadline) + "</td></tr>" if deadline else ""}
         </table>
         {f'<div style="margin-top: 14px; padding-top: 12px; border-top: 1px dashed #d1cfc7; font-style: italic; color: #4b5563; font-size: 13.5px;">« {description} »</div>' if description else ''}
     </div>
 
-    <p style="font-size: 14px; color: #374151;">
-        <strong>Règle statutaire :</strong> 1 associé = 1 voix. Merci de voter selon l'une des 4 options :
-        <span style="color: #059669; font-weight: 600;">Pour</span>,
-        <span style="color: #dc2626; font-weight: 600;">Contre</span>,
-        <span style="color: #6b7280; font-weight: 600;">Abstention</span> ou
-        <span style="color: #d97706; font-weight: 600;">Report prochaine AG</span>.
-    </p>
+    <div style="background-color: #faf9f6; border: 1px solid #e5e3dc; border-left: 4px solid #b89047; border-radius: 6px; padding: 16px 20px; margin: 24px 0; font-size: 14px; line-height: 1.6;">
+        <div style="font-weight: bold; color: #1e3a2f; margin-bottom: 6px; font-size: 15px;">
+            ⚖️ Règle statutaire : 1 associé = 1 voix.
+        </div>
+        <div style="color: #374151; margin-bottom: 8px;">
+            Merci de voter selon l'une des 4 options : 
+            <strong style="color: #059669;">Pour</strong>, 
+            <strong style="color: #dc2626;">Contre</strong>, 
+            <strong style="color: #6b7280;">Abstention</strong> ou 
+            <strong style="color: #d97706;">Report prochaine AG</strong>.
+        </div>
+        <div style="font-size: 13px; color: #6b7280; font-style: italic; border-top: 1px dashed #e5e3dc; padding-top: 6px;">
+            Note importante : Une seule voix demandant le report décale automatiquement la décision à la prochaine Assemblée Générale.
+        </div>
+    </div>
     """
 
     subject = f"[SCI Hellenvilliers] 🗳️ Vote requis : {vote_title}"
@@ -493,7 +475,7 @@ def send_vote_closed_email(
                     <td style="padding: 3px 0;">🟢 Pour : <strong>{pour_cnt}</strong></td>
                     <td style="padding: 3px 0;">🔴 Contre : <strong>{contre_cnt}</strong></td>
                     <td style="padding: 3px 0;">⚪ Abstention : <strong>{abst_cnt}</strong></td>
-                    {f'<td style="padding: 3px 0;">🟡 Report AG : <strong>{report_cnt}</strong></td>' if report_cnt > 0 else ''}
+                    <td style="padding: 3px 0;">🟡 Report AG : <strong>{report_cnt}</strong></td>
                 </tr>
             </table>
         </div>
@@ -534,8 +516,15 @@ def send_stay_booked_email(
     """
     rooms_display = ""
     if rooms:
+        if isinstance(rooms, str):
+            try:
+                parsed = json.loads(rooms)
+                if isinstance(parsed, list):
+                    rooms = parsed
+            except Exception:
+                pass
         if isinstance(rooms, list):
-            rooms_display = ", ".join(rooms)
+            rooms_display = ", ".join(str(r) for r in rooms if r)
         else:
             rooms_display = str(rooms)
 

@@ -2012,7 +2012,7 @@ def create_task(payload: dict, db: Session = Depends(get_db)):
                 charge=db_task.complexity or "Modérée",
                 task_id=db_task.id,
                 assignee_name=assignee.prenom,
-                deadline=db_task.deadline
+                description=db_task.description
             )
     except Exception as e:
         logger.error(f"[EMAIL ERROR] Failed to send task assignment notification: {e}")
@@ -2087,7 +2087,7 @@ def update_task(task_id: str, payload: dict, db: Session = Depends(get_db)):
                     charge=task.complexity or "Modérée",
                     task_id=task.id,
                     assignee_name=assignee.prenom,
-                    deadline=task.deadline
+                    description=task.description
                 )
         except Exception as e:
             logger.error(f"[EMAIL ERROR] Failed to send task assignment notification on update: {e}")
