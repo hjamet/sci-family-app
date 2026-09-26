@@ -664,9 +664,10 @@ class PiscineStatusResponse(BaseModel):
     frederic_jamet_agreement: str = "Prise en charge contrat DECLERCQ à 100% jusqu’au 31/12/2026."
     agreement_status: str = "Actif (100% pris en charge par Frédéric Jamet)"
     contract_provider: str = "DECLERCQ PISCINES"
-    radio_link_ok: bool = False
-    radio_status: str = "Liaison radio K-Link interrompue"
-    radio_alert: str = "⚠️ Liaison radio K-Link interrompue (coffret piscine hors portée) - Données non actualisées - Réappairage matériel requis sur place"
+    radio_link_ok: bool = True
+    radio_status: str = "Liaison radio K-Link active"
+    radio_alert: Optional[str] = None
+    radio_error: bool = False
     test_mode_read_only: bool = True
     message: str = "Garde-fou de sécurité inviolable actif (Garde-fou Henri #1) : Mode lecture seule permanent. Toute commande actionneur piscine est formellement interdite."
     class Config:

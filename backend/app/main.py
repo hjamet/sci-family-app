@@ -3348,16 +3348,18 @@ def banking_callback_redirect(
     db: Session = Depends(get_db)
 ):
     """Callback de redirection bancaire suite au consentement de l'associé."""
+    import urllib.parse
     if error:
         logger.warning(f"Retour d'erreur lors du consentement bancaire : {error}")
-        return RedirectResponse(url=f"/admin?banking=error&msg={error}")
+        err_msg = urllib.parse.quote(str(error))
+        return RedirectResponse(url=f"/admin?banking=error&msg={err_msg}")
 
     if not code:
         raise HTTPException(status_code=400, detail="Code d'autorisation manquant dans le callback bancaire")
 
     try:
         session_info = enable_banking_service.authorize_session(code=code)
-        session_id = session_info.get("session_id")
+        session_id = session_info.get("session_id") if isinstance(session_info, dict) else None
 
         # Mise à jour de la session en base
         db_sess = db.query(BankAuthSession).filter(BankAuthSession.session_id == (state or session_id)).first()
@@ -3370,7 +3372,8 @@ def banking_callback_redirect(
             db_sess.status = "AUTHORIZED"
             db_sess.authorized_at = datetime.utcnow()
             db_sess.expires_at = datetime.utcnow() + timedelta(days=180)
-            db_sess.accounts_data = json.dumps(session_info.get("accounts", []))
+            raw_accs = session_info.get("accounts", []) if isinstance(session_info, dict) else []
+            db_sess.accounts_data = json.dumps(raw_accs)
             db.commit()
 
         # Synchronisation immédiate des soldes et transactions
@@ -3378,8 +3381,9 @@ def banking_callback_redirect(
 
         return RedirectResponse(url="/admin?banking=success")
     except Exception as e:
-        logger.error(f"Échec finalisation callback bancaire : {e}")
-        return RedirectResponse(url=f"/admin?banking=error&msg={str(e)}")
+        logger.error(f"Échec finalisation callback bancaire : {e}", exc_info=True)
+        err_msg = urllib.parse.quote(str(e))
+        return RedirectResponse(url=f"/admin?banking=error&msg={err_msg}")
 
 
 @app.post("/api/banking/callback", tags=["Banking"])

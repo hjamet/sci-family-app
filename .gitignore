@@ -44,6 +44,7 @@ test_*.py
 !backend/tests/test_forgot_password.py
 !backend/tests/test_email_firewall.py
 !backend/tests/test_thermal_notifications.py
+!backend/tests/test_banking_callback.py
 
 # OS / IDE
 .DS_Store

@@ -340,24 +340,91 @@ class EnableBankingService:
         """Récupère l'état et les comptes associés à une session d'autorisation."""
         return self._api_request("GET", f"/sessions/{session_id}")
 
-    def get_accounts(self) -> List[Dict[str, Any]]:
-        """Récupère les comptes bancaires autorisés."""
-        data = self._api_request("GET", "/accounts")
-        return data.get("accounts", [])
+    @staticmethod
+    def _extract_account_id_str(account_id: Any) -> Optional[str]:
+        """Extrait sous forme de chaîne de caractères l'identifiant de compte bancaire.
+        
+        Gère de façon robuste :
+        - str pur (UUID ou IBAN)
+        - dict avec uid, account_id (str ou dict avec iban), ou id
+        """
+        if not account_id:
+            return None
+        if isinstance(account_id, str):
+            val = account_id.strip()
+            return val if val else None
+        if isinstance(account_id, dict):
+            raw = account_id.get("uid") or account_id.get("id")
+            if isinstance(raw, str) and raw.strip():
+                return raw.strip()
+            raw_acc = account_id.get("account_id")
+            if isinstance(raw_acc, str) and raw_acc.strip():
+                return raw_acc.strip()
+            if isinstance(raw_acc, dict):
+                sub = raw_acc.get("iban") or raw_acc.get("other") or raw_acc.get("id")
+                if isinstance(sub, str) and sub.strip():
+                    return sub.strip()
+            raw_iban = account_id.get("iban")
+            if isinstance(raw_iban, str) and raw_iban.strip():
+                return raw_iban.strip()
+        return None
 
-    def get_account_balances(self, account_id: str) -> List[Dict[str, Any]]:
+    def get_accounts(self) -> List[Any]:
+        """Récupère les comptes bancaires autorisés."""
+        try:
+            data = self._api_request("GET", "/accounts")
+            if isinstance(data, dict):
+                res = data.get("accounts", [])
+                return res if isinstance(res, list) else []
+            elif isinstance(data, list):
+                return data
+            return []
+        except Exception as e:
+            logger.warning(f"Impossible de récupérer /accounts : {e}")
+            return []
+
+    def get_account_details(self, account_id: Any) -> Dict[str, Any]:
+        """Récupère les détails d'un compte bancaire (IBAN, titulaire, devise, etc.)."""
+        acc_str = self._extract_account_id_str(account_id)
+        if not acc_str:
+            return {}
+        try:
+            data = self._api_request("GET", f"/accounts/{acc_str}")
+            return data if isinstance(data, dict) else {}
+        except Exception as e:
+            logger.debug(f"Détails compte non disponibles via API pour {acc_str} : {e}")
+            return {}
+
+    def get_account_balances(self, account_id: Any) -> List[Dict[str, Any]]:
         """Récupère les soldes d'un compte bancaire."""
-        data = self._api_request("GET", f"/accounts/{account_id}/balances")
-        return data.get("balances", [])
+        acc_str = self._extract_account_id_str(account_id)
+        if not acc_str:
+            logger.warning(f"Identifiant de compte invalide pour solde : {account_id}")
+            return []
+        try:
+            data = self._api_request("GET", f"/accounts/{acc_str}/balances")
+            if isinstance(data, dict):
+                balances = data.get("balances", [])
+                return balances if isinstance(balances, list) else []
+            elif isinstance(data, list):
+                return data
+            return []
+        except Exception as e:
+            logger.warning(f"Erreur API balances pour compte {acc_str} : {e}")
+            return []
 
     def get_account_transactions(
         self,
-        account_id: str,
+        account_id: Any,
         date_from: Optional[str] = None,
         date_to: Optional[str] = None
     ) -> List[Dict[str, Any]]:
         """Récupère les transactions d'un compte bancaire."""
-        endpoint = f"/accounts/{account_id}/transactions"
+        acc_str = self._extract_account_id_str(account_id)
+        if not acc_str:
+            logger.warning(f"Identifiant de compte invalide pour transactions : {account_id}")
+            return []
+        endpoint = f"/accounts/{acc_str}/transactions"
         params = []
         if date_from:
             params.append(f"date_from={date_from}")
@@ -366,8 +433,17 @@ class EnableBankingService:
         if params:
             endpoint += "?" + "&".join(params)
 
-        data = self._api_request("GET", endpoint)
-        return data.get("transactions", [])
+        try:
+            data = self._api_request("GET", endpoint)
+            if isinstance(data, dict):
+                txs = data.get("transactions", [])
+                return txs if isinstance(txs, list) else []
+            elif isinstance(data, list):
+                return data
+            return []
+        except Exception as e:
+            logger.warning(f"Erreur API transactions pour compte {acc_str} : {e}")
+            return []
 
     def categorize_transaction(self, label: str, amount: float) -> str:
         """Attribue automatiquement une catégorie analytique de la SCI aux transactions."""
@@ -396,9 +472,14 @@ class EnableBankingService:
             return "Dépense Courante Domaine"
 
     def sync_database(self, db: Session, session_id: Optional[str] = None) -> Dict[str, Any]:
-        """Synchronise les soldes et transactions depuis Enable Banking vers la base SQLite."""
-        # 1. Identifier les comptes à synchroniser
-        accounts_to_sync = []
+        """Synchronise les soldes et transactions depuis Enable Banking vers la base SQLite.
+        
+        Supporte de façon robuste :
+        - Les sessions retournant des comptes sous forme de list of strings (UIDs purs)
+        - Les sessions retournant des comptes sous forme de list of dicts
+        - L'interrogation sécurisée des détails, soldes et transactions sans régression
+        """
+        accounts_data = []
         
         # Si une session est spécifiée ou présente en base
         sessions_query = db.query(BankAuthSession).filter(BankAuthSession.status == "AUTHORIZED")
@@ -411,17 +492,20 @@ class EnableBankingService:
 
         # Récupération via l'API Enable Banking
         try:
-            accounts_data = self.get_accounts()
+            accounts_res = self.get_accounts()
+            if isinstance(accounts_res, list):
+                accounts_data.extend(accounts_res)
         except Exception as e:
             logger.warning(f"Impossible de lister les comptes globaux Enable Banking ({e}), tentative via sessions...")
-            accounts_data = []
 
         if not accounts_data and active_sessions:
             for s in active_sessions:
                 try:
                     s_detail = self.get_session(s.session_id)
-                    s_accounts = s_detail.get("accounts", [])
-                    accounts_data.extend(s_accounts)
+                    if isinstance(s_detail, dict):
+                        s_accounts = s_detail.get("accounts", [])
+                        if isinstance(s_accounts, list):
+                            accounts_data.extend(s_accounts)
                 except Exception as ex:
                     logger.warning(f"Erreur lecture session {s.session_id} : {ex}")
                 if not accounts_data and getattr(s, "accounts_data", None):
@@ -432,46 +516,103 @@ class EnableBankingService:
                     except Exception:
                         pass
 
+        # Traitement défensif universel de chaque compte
+        seen_account_ids = set()
+
         for acc in accounts_data:
-            # Extraction robuste de l'IBAN
+            if not acc:
+                continue
+
             iban = None
-            if isinstance(acc.get("account_id"), dict):
-                iban = acc.get("account_id", {}).get("iban")
-            elif isinstance(acc.get("iban"), str):
-                iban = acc.get("iban")
-            elif isinstance(acc.get("account_id"), str) and acc.get("account_id", "").startswith("FR"):
-                iban = acc.get("account_id")
+            acc_id = None
+            acc_name = None
+            currency = "EUR"
 
-            # Extraction robuste de l'identifiant Enable Banking (UID ou ID)
-            acc_uid = acc.get("uid") or acc.get("id")
-            if not acc_uid and not isinstance(acc.get("account_id"), dict):
-                acc_uid = acc.get("account_id")
+            if isinstance(acc, dict):
+                acc_uid = acc.get("uid") or acc.get("id")
+                raw_acc_id = acc.get("account_id")
 
-            acc_id = acc_uid or iban or (acc.get("account_id", {}).get("iban") if isinstance(acc.get("account_id"), dict) else None)
+                if isinstance(raw_acc_id, dict):
+                    iban = raw_acc_id.get("iban")
+                    acc_id = acc_uid or iban or raw_acc_id.get("other")
+                elif isinstance(raw_acc_id, str):
+                    acc_id = acc_uid or raw_acc_id
+                    if raw_acc_id.startswith("FR") or len(raw_acc_id) >= 14:
+                        iban = raw_acc_id
+                else:
+                    acc_id = acc_uid
+
+                if not iban and isinstance(acc.get("iban"), str):
+                    iban = acc.get("iban")
+
+                acc_name = acc.get("name") or acc.get("account_name")
+                currency = acc.get("currency") or "EUR"
+
+            elif isinstance(acc, str):
+                acc_id = acc.strip()
+                # Tenter d'enrichir avec les détails du compte depuis l'API Enable Banking
+                try:
+                    detail_res = self.get_account_details(acc_id)
+                    if isinstance(detail_res, dict) and detail_res:
+                        raw_acc_id = detail_res.get("account_id")
+                        if isinstance(raw_acc_id, dict):
+                            iban = raw_acc_id.get("iban")
+                        elif isinstance(raw_acc_id, str) and (raw_acc_id.startswith("FR") or len(raw_acc_id) >= 14):
+                            iban = raw_acc_id
+
+                        if not iban and isinstance(detail_res.get("iban"), str):
+                            iban = detail_res.get("iban")
+
+                        acc_name = detail_res.get("name") or detail_res.get("account_name")
+                        currency = detail_res.get("currency") or "EUR"
+                except Exception as ex:
+                    logger.debug(f"Détails complémentaires non récupérés pour {acc_id} : {ex}")
+            else:
+                logger.warning(f"Format de compte inattendu ignoré : {type(acc)}")
+                continue
+
             if not acc_id or not isinstance(acc_id, str):
                 continue
+
+            if acc_id in seen_account_ids:
+                continue
+            seen_account_ids.add(acc_id)
 
             # Récupération du solde
             balance_val = 0.0
             balance_type = "interimAvailable"
-            currency = acc.get("currency", "EUR")
             try:
                 balances = self.get_account_balances(acc_id)
-                if balances:
+                if balances and isinstance(balances, list):
                     bal_obj = balances[0]
-                    balance_val = float(bal_obj.get("balance_amount", {}).get("amount", 0.0))
-                    balance_type = bal_obj.get("balance_type", "interimAvailable")
-                    currency = bal_obj.get("balance_amount", {}).get("currency", currency)
+                    if isinstance(bal_obj, dict):
+                        bal_amt = bal_obj.get("balance_amount")
+                        if isinstance(bal_amt, dict):
+                            try:
+                                balance_val = float(bal_amt.get("amount", 0.0))
+                            except (ValueError, TypeError):
+                                balance_val = 0.0
+                            currency = bal_amt.get("currency", currency)
+                        elif isinstance(bal_amt, (int, float)):
+                            balance_val = float(bal_amt)
+                        balance_type = bal_obj.get("balance_type", "interimAvailable")
+                    elif isinstance(bal_obj, (int, float)):
+                        balance_val = float(bal_obj)
             except Exception as e:
                 logger.warning(f"Erreur récupération solde pour compte {acc_id} : {e}")
 
             # Upsert BankAccount
             db_account = db.query(BankAccount).filter(BankAccount.account_id == acc_id).first()
+            if not db_account and iban:
+                db_account = db.query(BankAccount).filter(BankAccount.iban == iban).first()
+
+            final_name = acc_name or "Compte Swan SCI Hellenvilliers"
+
             if not db_account:
                 db_account = BankAccount(
                     account_id=acc_id,
                     iban=iban,
-                    name=acc.get("name") or "Compte Swan SCI Hellenvilliers",
+                    name=final_name,
                     currency=currency,
                     balance=balance_val,
                     balance_type=balance_type,
@@ -481,10 +622,13 @@ class EnableBankingService:
                 db.add(db_account)
                 db.flush()
             else:
+                db_account.account_id = acc_id
                 db_account.balance = balance_val
                 db_account.balance_type = balance_type
                 if iban:
                     db_account.iban = iban
+                if acc_name:
+                    db_account.name = acc_name
                 db_account.last_synced_at = datetime.utcnow()
 
             synced_accounts_count += 1
@@ -492,47 +636,81 @@ class EnableBankingService:
             # Récupération des transactions
             try:
                 tx_list = self.get_account_transactions(acc_id)
-                for tx in tx_list:
-                    tx_id = tx.get("transaction_id") or tx.get("entry_reference") or f"tx_{acc_id}_{tx.get('booking_date')}_{tx.get('transaction_amount', {}).get('amount')}"
-                    
-                    # Vérifier si déjà existante
-                    existing_tx = db.query(BankTransaction).filter(BankTransaction.transaction_id == tx_id).first()
-                    if existing_tx:
-                        continue
+                if isinstance(tx_list, list):
+                    for tx in tx_list:
+                        if not isinstance(tx, dict):
+                            continue
 
-                    amount_val = float(tx.get("transaction_amount", {}).get("amount", 0.0))
-                    # Si c'est un débit, vérifier le signe
-                    credit_debit = tx.get("credit_debit_indicator", "")
-                    if credit_debit == "DBIT" and amount_val > 0:
-                        amount_val = -amount_val
+                        amt_field = tx.get("transaction_amount")
+                        amt_str = amt_field.get("amount") if isinstance(amt_field, dict) else amt_field
+                        tx_id = (
+                            tx.get("transaction_id")
+                            or tx.get("entry_reference")
+                            or f"tx_{acc_id}_{tx.get('booking_date')}_{amt_str}"
+                        )
 
-                    remittance = ""
-                    rem_info = tx.get("remittance_information", [])
-                    if isinstance(rem_info, list):
-                        remittance = " ".join(rem_info)
-                    elif isinstance(rem_info, str):
-                        remittance = rem_info
+                        # Vérifier si déjà existante
+                        existing_tx = db.query(BankTransaction).filter(BankTransaction.transaction_id == tx_id).first()
+                        if existing_tx:
+                            continue
 
-                    creditor = tx.get("creditor", {}).get("name") if isinstance(tx.get("creditor"), dict) else None
-                    debtor = tx.get("debtor", {}).get("name") if isinstance(tx.get("debtor"), dict) else None
+                        amount_val = 0.0
+                        tx_curr = currency
+                        if isinstance(amt_field, dict):
+                            try:
+                                amount_val = float(amt_field.get("amount", 0.0))
+                            except (ValueError, TypeError):
+                                amount_val = 0.0
+                            tx_curr = amt_field.get("currency", currency)
+                        elif isinstance(amt_field, (int, float)):
+                            amount_val = float(amt_field)
+                        elif isinstance(amt_field, str):
+                            try:
+                                amount_val = float(amt_field)
+                            except (ValueError, TypeError):
+                                amount_val = 0.0
 
-                    category = self.categorize_transaction(remittance or creditor or debtor or "", amount_val)
+                        # Si c'est un débit, vérifier le signe
+                        credit_debit = tx.get("credit_debit_indicator", "")
+                        if credit_debit == "DBIT" and amount_val > 0:
+                            amount_val = -amount_val
 
-                    new_tx = BankTransaction(
-                        transaction_id=tx_id,
-                        account_id=db_account.id,
-                        booking_date=tx.get("booking_date") or tx.get("value_date") or datetime.utcnow().strftime("%Y-%m-%d"),
-                        value_date=tx.get("value_date"),
-                        amount=amount_val,
-                        currency=tx.get("transaction_amount", {}).get("currency", "EUR"),
-                        remittance_information=remittance,
-                        creditor_name=creditor,
-                        debtor_name=debtor,
-                        category=category,
-                        raw_json=json.dumps(tx)
-                    )
-                    db.add(new_tx)
-                    synced_transactions_count += 1
+                        remittance = ""
+                        rem_info = tx.get("remittance_information", [])
+                        if isinstance(rem_info, list):
+                            remittance = " ".join(str(r) for r in rem_info if r)
+                        elif isinstance(rem_info, str):
+                            remittance = rem_info
+
+                        creditor = None
+                        if isinstance(tx.get("creditor"), dict):
+                            creditor = tx.get("creditor", {}).get("name")
+                        elif isinstance(tx.get("creditor"), str):
+                            creditor = tx.get("creditor")
+
+                        debtor = None
+                        if isinstance(tx.get("debtor"), dict):
+                            debtor = tx.get("debtor", {}).get("name")
+                        elif isinstance(tx.get("debtor"), str):
+                            debtor = tx.get("debtor")
+
+                        category = self.categorize_transaction(remittance or creditor or debtor or "", amount_val)
+
+                        new_tx = BankTransaction(
+                            transaction_id=tx_id,
+                            account_id=db_account.id,
+                            booking_date=tx.get("booking_date") or tx.get("value_date") or datetime.utcnow().strftime("%Y-%m-%d"),
+                            value_date=tx.get("value_date"),
+                            amount=amount_val,
+                            currency=tx_curr,
+                            remittance_information=remittance,
+                            creditor_name=creditor,
+                            debtor_name=debtor,
+                            category=category,
+                            raw_json=json.dumps(tx)
+                        )
+                        db.add(new_tx)
+                        synced_transactions_count += 1
 
             except Exception as e:
                 logger.warning(f"Erreur récupération transactions pour compte {acc_id} : {e}")
