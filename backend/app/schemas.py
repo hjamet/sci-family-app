@@ -652,6 +652,10 @@ class HeatingTemperatureRequest(BaseModel):
 # --- Piscine Schemas ---
 class PiscineStatusResponse(BaseModel):
     water_temperature: float = 13.5
+    air_temperature: Optional[float] = None
+    ph_value: Optional[float] = None
+    redox_value: Optional[float] = None
+    filter_pressure: Optional[float] = None
     frost_protection_target: float = 14.0
     pac_state: str = "Mise en veille hivernale"
     pac_power: str = "20 kW"
@@ -659,7 +663,7 @@ class PiscineStatusResponse(BaseModel):
     filtration_state: str = "En veille (Actif 03h00 - 06h00)"
     filtration_cycle: str = "03h00 — 06h00 (Heures Creuses)"
     hivernage_status: str = "Hivernage Actif"
-    sensor_location: str = "Sonde skimmer sud"
+    sensor_location: str = "Sonde Kompact skimmer"
     winter_warning: str = "Chauffage du bassin déconseillé & formellement proscrit en octobre-mars. Surcoût électrique estimé à plus de 450 €/semaine ! Le bassin est placé en protocole pré-hivernage DECLERCQ PISCINES."
     frederic_jamet_agreement: str = "Prise en charge contrat DECLERCQ à 100% jusqu’au 31/12/2026."
     agreement_status: str = "Actif (100% pris en charge par Frédéric Jamet)"
@@ -670,6 +674,10 @@ class PiscineStatusResponse(BaseModel):
     radio_error: bool = False
     test_mode_read_only: bool = True
     message: str = "Garde-fou de sécurité inviolable actif (Garde-fou Henri #1) : Mode lecture seule permanent. Toute commande actionneur piscine est formellement interdite."
+    pool_nickname: Optional[str] = "Ma piscine"
+    system_id: Optional[int] = 91360
+    last_update: Optional[str] = None
+    alerts: Optional[List[str]] = None
     class Config:
         from_attributes = True
 

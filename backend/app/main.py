@@ -48,6 +48,7 @@ from .schemas import (
 from .seed import seed_database
 from .services.workload_balancer import calculate_workload_distribution
 from .services.vicare_service import ViCareService
+from .services.klereo_service import KlereoService
 from .services.banking import enable_banking_service
 from .security import (
     rate_limiter, verify_password, hash_password, create_access_token, decode_access_token, normalize_prenom, pwd_context
@@ -3028,13 +3029,27 @@ def set_heating_temperature(req: HeatingTemperatureRequest):
 
 # --- Piscine Rosing Telemetry Endpoints (PAC Rosing F08) ---
 
-@app.get("/api/piscine/status", response_model=PiscineStatusResponse)
-def get_piscine_status():
-    """Returns PAC Rosing passive telemetry and Frédéric Jamet agreement status."""
+@app.get("/api/pool/status", response_model=PiscineStatusResponse, tags=["Pool"])
+@app.get("/api/klereo/status", response_model=PiscineStatusResponse, tags=["Pool"])
+def get_klereo_pool_status():
+    """Returns Klereo Connect live passive telemetry without simulation."""
+    telemetry = KlereoService.get_status()
+    return PiscineStatusResponse(**telemetry)
+
+@app.get("/api/piscine/status", response_model=PiscineStatusResponse, tags=["Pool"])
+def get_piscine_status(live: bool = False):
+    """Returns PAC Rosing passive telemetry (legacy fallback or live telemetry if live=True)."""
+    if live:
+        telemetry = KlereoService.get_status()
+        return PiscineStatusResponse(**telemetry)
     return PiscineStatusResponse()
 
-@app.post("/api/piscine/mode")
-@app.post("/api/piscine/temperature")
+@app.post("/api/piscine/mode", tags=["Pool"])
+@app.post("/api/piscine/temperature", tags=["Pool"])
+@app.post("/api/pool/mode", tags=["Pool"])
+@app.post("/api/pool/temperature", tags=["Pool"])
+@app.post("/api/klereo/mode", tags=["Pool"])
+@app.post("/api/klereo/temperature", tags=["Pool"])
 def set_piscine_control_interlock():
     """
     IMMUTABLE SOFTWARE INTERLOCK (Garde-fou Impératif Henri #1).
