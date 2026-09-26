@@ -162,21 +162,21 @@ export default function DashboardPage({
         >
           <div className="absolute -right-6 -bottom-6 w-32 h-32 rounded-full bg-white/10 blur-xl pointer-events-none group-hover:scale-150 transition-transform duration-500"></div>
           <div className="relative z-10 flex items-center justify-between gap-3">
-            <div className="w-12 h-12 rounded-xl bg-white/15 backdrop-blur-sm flex items-center justify-center text-emerald-200 group-hover:bg-white group-hover:text-[#065f46] transition-all duration-300 shadow-sm">
+            <div className="w-12 h-12 rounded-xl bg-white/15 backdrop-blur-sm flex items-center justify-center text-emerald-200 group-hover:bg-white group-hover:text-[#065f46] transition-all duration-200 shadow-sm opacity-0 group-hover:opacity-100 pointer-events-none group-hover:pointer-events-auto">
               <span className="material-symbols-outlined text-[28px]">how_to_vote</span>
             </div>
-            <span className="opacity-90 group-hover:opacity-100 transition-opacity duration-300 inline-flex items-center gap-1 text-[11px] font-semibold uppercase tracking-wider px-2.5 py-1 rounded-full bg-white/15 backdrop-blur-sm text-emerald-100">
+            <span className="opacity-0 group-hover:opacity-100 transition-opacity duration-200 pointer-events-none group-hover:pointer-events-auto inline-flex items-center gap-1 text-[11px] font-semibold uppercase tracking-wider px-2.5 py-1 rounded-full bg-white/15 backdrop-blur-sm text-emerald-100">
               1 voix = 1 pers.
             </span>
           </div>
           <div className="relative z-10 mt-3">
             <h3 className="font-headline-md text-headline-sm font-bold tracking-tight text-white flex items-center justify-between">
               <span>Votes & Chantiers</span>
-              <span className="material-symbols-outlined text-sm opacity-0 -translate-x-2 group-hover:opacity-100 group-hover:translate-x-0 transition-all duration-300 text-white">
+              <span className="material-symbols-outlined text-sm opacity-0 -translate-x-2 group-hover:opacity-100 group-hover:translate-x-0 transition-all duration-200 text-white pointer-events-none group-hover:pointer-events-auto">
                 arrow_forward
               </span>
             </h3>
-            <p className="font-body-md text-xs leading-relaxed text-emerald-100/90 font-medium mt-2">
+            <p className="font-body-md text-xs leading-relaxed text-emerald-100/90 font-medium mt-2 opacity-0 group-hover:opacity-100 transition-opacity duration-200 pointer-events-none group-hover:pointer-events-auto">
               Liste des tâches à faire et des décisions à prendre.
             </p>
           </div>
@@ -189,21 +189,21 @@ export default function DashboardPage({
         >
           <div className="absolute -right-6 -bottom-6 w-32 h-32 rounded-full bg-white/10 blur-xl pointer-events-none group-hover:scale-150 transition-transform duration-500"></div>
           <div className="relative z-10 flex items-center justify-between gap-3">
-            <div className="w-12 h-12 rounded-xl bg-white/15 backdrop-blur-sm flex items-center justify-center text-blue-200 group-hover:bg-white group-hover:text-[#0f4c81] transition-all duration-300 shadow-sm">
+            <div className="w-12 h-12 rounded-xl bg-white/15 backdrop-blur-sm flex items-center justify-center text-blue-200 group-hover:bg-white group-hover:text-[#0f4c81] transition-all duration-200 shadow-sm opacity-0 group-hover:opacity-100 pointer-events-none group-hover:pointer-events-auto">
               <span className="material-symbols-outlined text-[28px]">folder_shared</span>
             </div>
-            <span className="opacity-90 group-hover:opacity-100 transition-opacity duration-300 inline-flex items-center gap-1 text-[11px] font-semibold uppercase tracking-wider px-2.5 py-1 rounded-full bg-white/15 backdrop-blur-sm text-blue-100">
+            <span className="opacity-0 group-hover:opacity-100 transition-opacity duration-200 pointer-events-none group-hover:pointer-events-auto inline-flex items-center gap-1 text-[11px] font-semibold uppercase tracking-wider px-2.5 py-1 rounded-full bg-white/15 backdrop-blur-sm text-blue-100">
               Statuts & CCA
             </span>
           </div>
           <div className="relative z-10 mt-3">
             <h3 className="font-headline-md text-headline-sm font-bold tracking-tight text-white flex items-center justify-between">
               <span>Administratif & Budget</span>
-              <span className="material-symbols-outlined text-sm opacity-0 -translate-x-2 group-hover:opacity-100 group-hover:translate-x-0 transition-all duration-300 text-white">
+              <span className="material-symbols-outlined text-sm opacity-0 -translate-x-2 group-hover:opacity-100 group-hover:translate-x-0 transition-all duration-200 text-white pointer-events-none group-hover:pointer-events-auto">
                 arrow_forward
               </span>
             </h3>
-            <p className="font-body-md text-xs leading-relaxed text-blue-100/90 font-medium mt-2">
+            <p className="font-body-md text-xs leading-relaxed text-blue-100/90 font-medium mt-2 opacity-0 group-hover:opacity-100 transition-opacity duration-200 pointer-events-none group-hover:pointer-events-auto">
               Factures des membres, aperçu des comptes banquaires et Documents administratifs de la SCI
             </p>
           </div>
@@ -216,21 +216,21 @@ export default function DashboardPage({
         >
           <div className="absolute -right-6 -bottom-6 w-32 h-32 rounded-full bg-white/10 blur-xl pointer-events-none group-hover:scale-150 transition-transform duration-500"></div>
           <div className="relative z-10 flex items-center justify-between gap-3">
-            <div className="w-12 h-12 rounded-xl bg-white/15 backdrop-blur-sm flex items-center justify-center text-amber-200 group-hover:bg-white group-hover:text-[#d97706] transition-all duration-300 shadow-sm">
+            <div className="w-12 h-12 rounded-xl bg-white/15 backdrop-blur-sm flex items-center justify-center text-amber-200 group-hover:bg-white group-hover:text-[#d97706] transition-all duration-200 shadow-sm opacity-0 group-hover:opacity-100 pointer-events-none group-hover:pointer-events-auto">
               <span className="material-symbols-outlined text-[28px]">calendar_month</span>
             </div>
-            <span className="opacity-90 group-hover:opacity-100 transition-opacity duration-300 inline-flex items-center gap-1 text-[11px] font-semibold uppercase tracking-wider px-2.5 py-1 rounded-full bg-white/15 backdrop-blur-sm text-amber-100">
+            <span className="opacity-0 group-hover:opacity-100 transition-opacity duration-200 pointer-events-none group-hover:pointer-events-auto inline-flex items-center gap-1 text-[11px] font-semibold uppercase tracking-wider px-2.5 py-1 rounded-full bg-white/15 backdrop-blur-sm text-amber-100">
               52 Semaines
             </span>
           </div>
           <div className="relative z-10 mt-3">
             <h3 className="font-headline-md text-headline-sm font-bold tracking-tight text-white flex items-center justify-between">
               <span>Calendrier des Passages</span>
-              <span className="material-symbols-outlined text-sm opacity-0 -translate-x-2 group-hover:opacity-100 group-hover:translate-x-0 transition-all duration-300 text-white">
+              <span className="material-symbols-outlined text-sm opacity-0 -translate-x-2 group-hover:opacity-100 group-hover:translate-x-0 transition-all duration-200 text-white pointer-events-none group-hover:pointer-events-auto">
                 arrow_forward
               </span>
             </h3>
-            <p className="font-body-md text-xs leading-relaxed text-amber-100/90 font-medium mt-2">
+            <p className="font-body-md text-xs leading-relaxed text-amber-100/90 font-medium mt-2 opacity-0 group-hover:opacity-100 transition-opacity duration-200 pointer-events-none group-hover:pointer-events-auto">
               Réservation et calendrier des passages
             </p>
           </div>
@@ -243,7 +243,7 @@ export default function DashboardPage({
         >
           <div className="absolute -right-6 -bottom-6 w-32 h-32 rounded-full bg-white/10 blur-xl pointer-events-none group-hover:scale-150 transition-transform duration-500"></div>
           <div className="relative z-10 flex items-center justify-between gap-3">
-            <div className="w-12 h-12 rounded-xl bg-white/15 backdrop-blur-sm flex items-center justify-center text-teal-200 group-hover:bg-white group-hover:text-[#0d9488] transition-all duration-300 shadow-sm">
+            <div className="w-12 h-12 rounded-xl bg-white/15 backdrop-blur-sm flex items-center justify-center text-teal-200 group-hover:bg-white group-hover:text-[#0d9488] transition-all duration-200 shadow-sm opacity-0 group-hover:opacity-100 pointer-events-none group-hover:pointer-events-auto">
               <span className="material-symbols-outlined text-[28px]">key</span>
             </div>
             <span
@@ -251,7 +251,7 @@ export default function DashboardPage({
                 e.stopPropagation();
                 navigateTo('/energie');
               }}
-              className="opacity-90 group-hover:opacity-100 transition-opacity duration-300 inline-flex items-center gap-1 text-[11px] font-semibold uppercase tracking-wider px-2.5 py-1 rounded-full bg-white/15 backdrop-blur-sm text-teal-100 hover:bg-white/30 cursor-pointer"
+              className="opacity-0 group-hover:opacity-100 transition-opacity duration-200 pointer-events-none group-hover:pointer-events-auto inline-flex items-center gap-1 text-[11px] font-semibold uppercase tracking-wider px-2.5 py-1 rounded-full bg-white/15 backdrop-blur-sm text-teal-100 hover:bg-white/30 cursor-pointer"
               title="Consulter la télémesure & chauffage ViCare"
             >
               Guide & Énergie
@@ -260,16 +260,15 @@ export default function DashboardPage({
           <div className="relative z-10 mt-3">
             <h3 className="font-headline-md text-headline-sm font-bold tracking-tight text-white flex items-center justify-between">
               <span>Séjour & Chauffage</span>
-              <span className="material-symbols-outlined text-sm opacity-0 -translate-x-2 group-hover:opacity-100 group-hover:translate-x-0 transition-all duration-300 text-white">
+              <span className="material-symbols-outlined text-sm opacity-0 -translate-x-2 group-hover:opacity-100 group-hover:translate-x-0 transition-all duration-200 text-white pointer-events-none group-hover:pointer-events-auto">
                 arrow_forward
               </span>
             </h3>
-            <p className="font-body-md text-xs leading-relaxed text-teal-100/90 font-medium mt-2">
+            <p className="font-body-md text-xs leading-relaxed text-teal-100/90 font-medium mt-2 opacity-0 group-hover:opacity-100 transition-opacity duration-200 pointer-events-none group-hover:pointer-events-auto">
               Gestion du Chauffage et de la piscine pour le séjour, tâches attribuées et Vademecum
             </p>
           </div>
         </div>
-
 
       </section>
 
@@ -585,10 +584,6 @@ export default function DashboardPage({
           <div className="space-y-space-xs border-b border-outline-variant/20 pb-space-sm">
             <div className="flex items-center justify-between gap-2 flex-wrap">
               <div className="flex items-center gap-2">
-                <span className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full bg-amber-soft text-amber-rich font-label-sm text-label-sm font-semibold">
-                  <span className="material-symbols-outlined text-[16px]">shield_person</span>
-                  Coordinateur & Gérant
-                </span>
                 <span className="text-xs text-on-surface-variant font-medium">Henri Jamet</span>
               </div>
               <span className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full bg-sage-soft text-primary font-label-sm text-xs font-semibold">

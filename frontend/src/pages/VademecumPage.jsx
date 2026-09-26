@@ -47,6 +47,52 @@ export default function VademecumPage({ properties, currentUser }) {
   const [dhwTarget, setDhwTarget] = useState(55.0);
   const [poolTarget, setPoolTarget] = useState(14.0);
 
+  // Horaires prévues de mise en marche & arrêt (Parité Stitch)
+  const [heatSchedule, setHeatSchedule] = useState({
+    start: 'Ven. 19 oct. — 14:00',
+    end: 'Dim. 25 oct. — 18:30',
+  });
+  const [dhwSchedule, setDhwSchedule] = useState({
+    start: 'Ven. 19 oct. — 12:00',
+    end: 'Dim. 25 oct. — 19:00',
+  });
+  const [poolSchedule, setPoolSchedule] = useState({
+    pac: 'Déconseillée (Hiver)',
+    filtration: '2h/jour (Hors-gel auto)',
+  });
+
+  const [scheduleModal, setScheduleModal] = useState({
+    isOpen: false,
+    system: null,
+    field: null,
+    label: '',
+    value: '',
+  });
+
+  const handleOpenScheduleModal = (system, field, label, currentValue) => {
+    setScheduleModal({
+      isOpen: true,
+      system,
+      field,
+      label,
+      value: currentValue,
+    });
+  };
+
+  const handleSaveSchedule = (e) => {
+    e.preventDefault();
+    const { system, field, value } = scheduleModal;
+    if (system === 'heat') {
+      setHeatSchedule(prev => ({ ...prev, [field]: value }));
+    } else if (system === 'dhw') {
+      setDhwSchedule(prev => ({ ...prev, [field]: value }));
+    } else if (system === 'pool') {
+      setPoolSchedule(prev => ({ ...prev, [field]: value }));
+    }
+    showToast(`Horaire mis à jour : ${value}`);
+    setScheduleModal(prev => ({ ...prev, isOpen: false }));
+  };
+
   // Real Tasks loaded from Database
   const [tasks, setTasks] = useState([]);
 
@@ -294,10 +340,6 @@ export default function VademecumPage({ properties, currentUser }) {
                 <span className="material-symbols-outlined text-[16px]">engineering</span>
                 {stayData.status}
               </span>
-              <span className="px-3 py-1 rounded-full bg-sage-soft font-label-sm text-label-sm text-primary flex items-center gap-1.5 font-semibold">
-                <span className="material-symbols-outlined text-[16px] text-amber-600">partly_cloudy_day</span>
-                {stayData.weather}
-              </span>
             </div>
 
             <div>
@@ -417,15 +459,10 @@ export default function VademecumPage({ properties, currentUser }) {
               </p>
             </div>
           </div>
-          <div className="inline-flex items-center gap-2 px-3.5 py-1.5 rounded-full bg-sage-soft border border-sage-border text-primary font-label-sm text-xs font-semibold shrink-0 shadow-sm">
-            <span className="w-2 h-2 rounded-full bg-primary"></span>
-            <span className="material-symbols-outlined text-[16px]">sensors</span>
-            <span>Système connecté (ViCare &amp; Klereo)</span>
-          </div>
         </div>
 
         <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
-          {/* Volet 1 : Chauffage Maison / PAC */}
+          {/* Volet 1 : Chauffage */}
           <div className="p-5 rounded-2xl bg-canvas-slate border border-border-subtle flex flex-col justify-between gap-5 shadow-sm">
             <div className="flex flex-col gap-4">
               <div className="flex items-center justify-between border-b border-border-subtle pb-3 gap-2">
@@ -434,13 +471,13 @@ export default function VademecumPage({ properties, currentUser }) {
                   <h3 className="font-headline-sm text-headline-sm text-on-surface font-semibold truncate">Chauffage</h3>
                   <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full bg-sage-soft text-primary font-label-sm text-[11px] font-bold shrink-0">
                     <span className="w-1.5 h-1.5 rounded-full bg-primary"></span>
-                    {heatingStatus?.mode ? 'ViCare Actif' : 'En marche'}
+                    En marche
                   </span>
                 </div>
                 <div className="flex items-center gap-1 px-2.5 py-1 rounded-full bg-white border border-border-subtle shrink-0">
-                  <span className="font-label-sm text-xs text-outline">Ambiance :</span>
+                  <span className="font-label-sm text-xs text-outline">Actuelle :</span>
                   <span className="font-headline-sm text-xs text-on-surface font-bold tabular-nums">
-                    {heatingStatus?.room_temperature != null ? `${heatingStatus.room_temperature.toFixed(1)}°C` : '20.5°C'}
+                    {heatingStatus?.room_temperature != null ? `${heatingStatus.room_temperature.toFixed(1)}°C` : '15.2°C'}
                   </span>
                 </div>
               </div>
@@ -448,7 +485,7 @@ export default function VademecumPage({ properties, currentUser }) {
               <div className="p-3.5 bg-white rounded-xl border border-border-subtle flex items-center justify-between gap-2 shadow-sm">
                 <div className="flex flex-col min-w-0 pr-1">
                   <span className="font-label-md text-label-md text-on-surface font-semibold leading-tight">Température cible</span>
-                  <span className="font-label-sm text-xs text-on-surface-variant mt-0.5 whitespace-nowrap">Charte SCI : 19°C – 20°C max</span>
+                  <span className="font-label-sm text-xs text-on-surface-variant mt-0.5 whitespace-nowrap">Recommandé 19°C – 20°C</span>
                 </div>
                 <div className="flex items-center gap-1.5 shrink-0 bg-canvas-slate p-1 rounded-full border border-border-subtle">
                   <button
@@ -476,47 +513,48 @@ export default function VademecumPage({ properties, currentUser }) {
               </div>
 
               <div className="space-y-2.5">
-                <div className="p-2.5 rounded-xl bg-white border border-border-subtle flex items-center justify-between gap-2 shadow-sm text-xs">
-                  <span className="text-on-surface-variant flex items-center gap-1">
-                    <span className="material-symbols-outlined text-[15px] text-primary">thermostat</span>
-                    Chaudière Viessmann :
-                  </span>
-                  <span className="font-bold text-on-surface">
-                    {heatingStatus?.boiler_temperature != null ? `${heatingStatus.boiler_temperature.toFixed(1)}°C` : '48.0°C'}
-                  </span>
+                <div className="p-2.5 rounded-xl bg-white border border-border-subtle flex items-center justify-between gap-2 shadow-sm">
+                  <div className="flex flex-col min-w-0">
+                    <span className="font-label-sm text-[11px] text-on-surface-variant flex items-center gap-1 font-medium">
+                      <span className="material-symbols-outlined text-[14px] text-primary">play_arrow</span>
+                      Mise en marche prévue
+                    </span>
+                    <span className="font-label-md text-xs font-semibold text-on-surface pl-4 mt-0.5 truncate">
+                      {heatSchedule.start}
+                    </span>
+                  </div>
+                  <button
+                    onClick={() => handleOpenScheduleModal('heat', 'start', 'Chauffage — Mise en marche prévue', heatSchedule.start)}
+                    className="h-8 px-3 rounded-lg bg-surface-container hover:bg-surface-container-high text-primary font-label-sm text-xs font-semibold shrink-0 transition-colors cursor-pointer"
+                    type="button"
+                  >
+                    Modifier
+                  </button>
                 </div>
-                <div className="p-2.5 rounded-xl bg-white border border-border-subtle flex items-center justify-between gap-2 shadow-sm text-xs">
-                  <span className="text-on-surface-variant flex items-center gap-1">
-                    <span className="material-symbols-outlined text-[15px] text-outline">cloud</span>
-                    Temp. extérieure sonder :
-                  </span>
-                  <span className="font-bold text-on-surface">
-                    {heatingStatus?.outside_temperature != null ? `${heatingStatus.outside_temperature.toFixed(1)}°C` : '14.2°C'}
-                  </span>
-                </div>
-                <div className="p-2.5 rounded-xl bg-white border border-border-subtle flex items-center justify-between gap-2 shadow-sm text-xs">
-                  <span className="text-on-surface-variant flex items-center gap-1">
-                    <span className="material-symbols-outlined text-[15px] text-amber-rich">local_gas_station</span>
-                    Cuve fioul Presbytère :
-                  </span>
-                  <span className="font-bold text-forest-deep">
-                    {heatingStatus?.fuel_liters_remaining != null ? `${heatingStatus.fuel_liters_remaining.toLocaleString('fr-FR')} L` : '2 720 L'}
-                  </span>
+
+                <div className="p-2.5 rounded-xl bg-white border border-border-subtle flex items-center justify-between gap-2 shadow-sm">
+                  <div className="flex flex-col min-w-0">
+                    <span className="font-label-sm text-[11px] text-on-surface-variant flex items-center gap-1 font-medium">
+                      <span className="material-symbols-outlined text-[14px] text-outline">stop</span>
+                      Arrêt prévu
+                    </span>
+                    <span className="font-label-md text-xs font-semibold text-on-surface pl-4 mt-0.5 truncate">
+                      {heatSchedule.end}
+                    </span>
+                  </div>
+                  <button
+                    onClick={() => handleOpenScheduleModal('heat', 'end', 'Chauffage — Arrêt prévu', heatSchedule.end)}
+                    className="h-8 px-3 rounded-lg bg-surface-container hover:bg-surface-container-high text-primary font-label-sm text-xs font-semibold shrink-0 transition-colors cursor-pointer"
+                    type="button"
+                  >
+                    Modifier
+                  </button>
                 </div>
               </div>
             </div>
-            <div className="pt-2.5 border-t border-border-subtle flex items-center justify-between text-xs text-on-surface-variant">
-              <span className="flex items-center gap-1 text-[11px]">
-                <span className="material-symbols-outlined text-[14px] text-secondary">check_circle</span>
-                Chaudière Presbytère (ViCare)
-              </span>
-              <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-md bg-sage-soft text-primary text-[11px] font-semibold">
-                Lecture seule active
-              </span>
-            </div>
           </div>
 
-          {/* Volet 2 : Eau Chaude Sanitaire */}
+          {/* Volet 2 : Eau Chaude */}
           <div className="p-5 rounded-2xl bg-canvas-slate border border-border-subtle flex flex-col justify-between gap-5 shadow-sm">
             <div className="flex flex-col gap-4">
               <div className="flex items-center justify-between border-b border-border-subtle pb-3 gap-2">
@@ -529,9 +567,9 @@ export default function VademecumPage({ properties, currentUser }) {
                   </span>
                 </div>
                 <div className="flex items-center gap-1 px-2.5 py-1 rounded-full bg-white border border-border-subtle shrink-0">
-                  <span className="font-label-sm text-xs text-outline">Ballon ECS :</span>
+                  <span className="font-label-sm text-xs text-outline">Actuelle (250L) :</span>
                   <span className="font-headline-sm text-xs text-on-surface font-bold tabular-nums">
-                    {heatingStatus?.dhw_temperature != null ? `${heatingStatus.dhw_temperature.toFixed(1)}°C` : '52.0°C'}
+                    {heatingStatus?.dhw_temperature != null ? `${heatingStatus.dhw_temperature.toFixed(1)}°C` : '48.0°C'}
                   </span>
                 </div>
               </div>
@@ -567,47 +605,54 @@ export default function VademecumPage({ properties, currentUser }) {
               </div>
 
               <div className="space-y-2.5">
-                <div className="p-2.5 rounded-xl bg-white border border-border-subtle flex items-center justify-between gap-2 shadow-sm text-xs">
-                  <span className="text-on-surface-variant flex items-center gap-1">
-                    <span className="material-symbols-outlined text-[15px] text-primary">storage</span>
-                    Capacité stockage :
-                  </span>
-                  <span className="font-bold text-on-surface">250 Litres émaillé</span>
+                <div className="p-2.5 rounded-xl bg-white border border-border-subtle flex items-center justify-between gap-2 shadow-sm">
+                  <div className="flex flex-col min-w-0">
+                    <span className="font-label-sm text-[11px] text-on-surface-variant flex items-center gap-1 font-medium">
+                      <span className="material-symbols-outlined text-[14px] text-primary">play_arrow</span>
+                      Mise en marche prévue
+                    </span>
+                    <span className="font-label-md text-xs font-semibold text-on-surface pl-4 mt-0.5 truncate">
+                      {dhwSchedule.start}
+                    </span>
+                  </div>
+                  <button
+                    onClick={() => handleOpenScheduleModal('dhw', 'start', 'Eau Chaude — Mise en marche prévue', dhwSchedule.start)}
+                    className="h-8 px-3 rounded-lg bg-surface-container hover:bg-surface-container-high text-primary font-label-sm text-xs font-semibold shrink-0 transition-colors cursor-pointer"
+                    type="button"
+                  >
+                    Modifier
+                  </button>
                 </div>
-                <div className="p-2.5 rounded-xl bg-white border border-border-subtle flex items-center justify-between gap-2 shadow-sm text-xs">
-                  <span className="text-on-surface-variant flex items-center gap-1">
-                    <span className="material-symbols-outlined text-[15px] text-secondary">verified</span>
-                    Cycle anti-légionelle :
-                  </span>
-                  <span className="font-bold text-forest-deep">Automatique (60°C hebdo)</span>
-                </div>
-                <div className="p-2.5 rounded-xl bg-white border border-border-subtle flex items-center justify-between gap-2 shadow-sm text-xs">
-                  <span className="text-on-surface-variant flex items-center gap-1">
-                    <span className="material-symbols-outlined text-[15px] text-outline">schedule</span>
-                    Plage de chauffe :
-                  </span>
-                  <span className="font-semibold text-on-surface">Heures Creuses (02h-07h)</span>
+
+                <div className="p-2.5 rounded-xl bg-white border border-border-subtle flex items-center justify-between gap-2 shadow-sm">
+                  <div className="flex flex-col min-w-0">
+                    <span className="font-label-sm text-[11px] text-on-surface-variant flex items-center gap-1 font-medium">
+                      <span className="material-symbols-outlined text-[14px] text-outline">stop</span>
+                      Arrêt prévu
+                    </span>
+                    <span className="font-label-md text-xs font-semibold text-on-surface pl-4 mt-0.5 truncate">
+                      {dhwSchedule.end}
+                    </span>
+                  </div>
+                  <button
+                    onClick={() => handleOpenScheduleModal('dhw', 'end', 'Eau Chaude — Arrêt prévu', dhwSchedule.end)}
+                    className="h-8 px-3 rounded-lg bg-surface-container hover:bg-surface-container-high text-primary font-label-sm text-xs font-semibold shrink-0 transition-colors cursor-pointer"
+                    type="button"
+                  >
+                    Modifier
+                  </button>
                 </div>
               </div>
             </div>
-            <div className="pt-2.5 border-t border-border-subtle flex items-center justify-between text-xs text-on-surface-variant">
-              <span className="flex items-center gap-1 text-[11px]">
-                <span className="material-symbols-outlined text-[14px] text-secondary">check_circle</span>
-                Ballon 250L Presbytère
-              </span>
-              <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-md bg-sage-soft text-primary text-[11px] font-semibold">
-                Sonde ViCare OK
-              </span>
-            </div>
           </div>
 
-          {/* Volet 3 : Piscine Klereo */}
+          {/* Volet 3 : Piscine */}
           <div className="p-5 rounded-2xl bg-canvas-slate border border-border-subtle flex flex-col justify-between gap-5 shadow-sm">
             <div className="flex flex-col gap-4">
               <div className="flex items-center justify-between border-b border-border-subtle pb-3 gap-2">
                 <div className="flex items-center gap-2 min-w-0">
                   <span className="material-symbols-outlined text-primary text-[22px]">pool</span>
-                  <h3 className="font-headline-sm text-headline-sm text-on-surface font-semibold truncate">Piscine Klereo</h3>
+                  <h3 className="font-headline-sm text-headline-sm text-on-surface font-semibold truncate">Piscine</h3>
                 </div>
                 <div className="flex items-center gap-1 px-2.5 py-1 rounded-full bg-white border border-border-subtle shrink-0">
                   <span className="font-label-sm text-xs text-outline">Eau :</span>
@@ -622,21 +667,10 @@ export default function VademecumPage({ properties, currentUser }) {
                 </div>
               </div>
 
-              {/* Prominent Badge Interruption Radio K-Link */}
-              <div className="p-3 bg-amber-soft border border-amber-300 rounded-xl text-amber-rich flex items-start gap-2.5 text-xs shadow-xs">
-                <span className="material-symbols-outlined text-[20px] shrink-0 text-amber-rich mt-0.5">wifi_off</span>
-                <div>
-                  <p className="font-bold text-amber-900">⚠️ Interruption radio K-Link 868 MHz</p>
-                  <p className="text-[11px] text-amber-800 mt-0.5 leading-snug">
-                    {piscineStatus?.radio_alert || "Liaison radio K-Link interrompue (coffret piscine hors portée) - Données non actualisées - Réappairage matériel requis sur place"}
-                  </p>
-                </div>
-              </div>
-
               <div className="p-3.5 bg-white rounded-xl border border-border-subtle flex items-center justify-between gap-2 shadow-sm">
                 <div className="flex flex-col min-w-0 pr-1">
-                  <span className="font-label-md text-label-md text-on-surface font-semibold leading-tight">Consigne PAC bassin</span>
-                  <span className="font-label-sm text-xs text-on-surface-variant mt-0.5 whitespace-nowrap">Chauffage déconseillé en hiver</span>
+                  <span className="font-label-md text-label-md text-on-surface font-semibold leading-tight">Température cible</span>
+                  <span className="font-label-sm text-xs text-on-surface-variant mt-0.5 whitespace-nowrap">Recommandé 26°C – 28°C été</span>
                 </div>
                 <div className="flex items-center gap-1.5 shrink-0 bg-canvas-slate p-1 rounded-full border border-border-subtle">
                   <button
@@ -663,16 +697,43 @@ export default function VademecumPage({ properties, currentUser }) {
                 </div>
               </div>
 
-              <div className="space-y-2">
-                <div className="p-2.5 rounded-xl bg-white border border-border-subtle flex items-center justify-between gap-2 shadow-sm text-xs">
-                  <span className="text-on-surface-variant flex items-center gap-1">
-                    <span className="material-symbols-outlined text-[15px] text-amber-rich">warning</span>
-                    Protocole Hivernage :
-                  </span>
-                  <span className="font-bold text-amber-rich">PAC coupée (Hors-gel auto 2h/j)</span>
+              <div className="space-y-2.5">
+                <div className="p-2.5 rounded-xl bg-white border border-border-subtle flex items-center justify-between gap-2 shadow-sm">
+                  <div className="flex flex-col min-w-0">
+                    <span className="font-label-sm text-[11px] text-on-surface-variant flex items-center gap-1 font-medium">
+                      <span className="material-symbols-outlined text-[14px] text-amber-rich">warning</span>
+                      Mise en marche PAC
+                    </span>
+                    <span className="font-label-md text-xs font-semibold text-amber-rich pl-4 mt-0.5 truncate">
+                      {poolSchedule.pac}
+                    </span>
+                  </div>
+                  <button
+                    onClick={() => handleOpenScheduleModal('pool', 'pac', 'Piscine — Mise en marche PAC', poolSchedule.pac)}
+                    className="h-8 px-3 rounded-lg bg-surface-container hover:bg-surface-container-high text-primary font-label-sm text-xs font-semibold shrink-0 transition-colors cursor-pointer"
+                    type="button"
+                  >
+                    Modifier
+                  </button>
                 </div>
-                <div className="p-2 rounded-lg bg-surface-container-low border border-border-subtle text-[11px] text-on-surface-variant leading-snug">
-                  <strong>Contrat d'entretien :</strong> DECLERCQ PISCINES (100% pris en charge par Frédéric Jamet jusqu'au 31/12/2026).
+
+                <div className="p-2.5 rounded-xl bg-white border border-border-subtle flex items-center justify-between gap-2 shadow-sm">
+                  <div className="flex flex-col min-w-0">
+                    <span className="font-label-sm text-[11px] text-on-surface-variant flex items-center gap-1 font-medium">
+                      <span className="material-symbols-outlined text-[14px] text-primary">autorenew</span>
+                      Filtration programmée
+                    </span>
+                    <span className="font-label-md text-xs font-semibold text-on-surface pl-4 mt-0.5 truncate">
+                      {poolSchedule.filtration}
+                    </span>
+                  </div>
+                  <button
+                    onClick={() => handleOpenScheduleModal('pool', 'filtration', 'Piscine — Filtration programmée', poolSchedule.filtration)}
+                    className="h-8 px-3 rounded-lg bg-surface-container hover:bg-surface-container-high text-primary font-label-sm text-xs font-semibold shrink-0 transition-colors cursor-pointer"
+                    type="button"
+                  >
+                    Modifier
+                  </button>
                 </div>
               </div>
             </div>
@@ -694,7 +755,7 @@ export default function VademecumPage({ properties, currentUser }) {
                 <span className="material-symbols-outlined text-[12px]">sync</span>Pompe ON
               </div>
               <div className="inline-flex items-center gap-1 px-2 py-0.5 rounded-md bg-surface-container text-outline text-[11px] font-medium">
-                PAC OFF (Hiver)
+                PAC OFF
               </div>
             </div>
           </div>
@@ -1247,6 +1308,59 @@ export default function VademecumPage({ properties, currentUser }) {
               </div>
             </form>
 
+          </div>
+        </div>
+      )}
+
+      {/* Modal 6: Schedule Edit Modal (Parité Stitch Horaires Prévues) */}
+      {scheduleModal.isOpen && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/40 backdrop-blur-xs animate-in fade-in duration-200">
+          <div className="bg-white rounded-2xl max-w-md w-full p-6 shadow-2xl border border-border-subtle flex flex-col gap-4 animate-in zoom-in-95 duration-200">
+            <div className="flex items-center justify-between border-b border-border-subtle pb-3">
+              <div className="flex items-center gap-2">
+                <span className="material-symbols-outlined text-primary text-[22px]">schedule</span>
+                <h3 className="font-headline-sm text-sm font-bold text-forest-deep">
+                  Modifier la programmation horaire
+                </h3>
+              </div>
+              <button
+                type="button"
+                onClick={() => setScheduleModal(prev => ({ ...prev, isOpen: false }))}
+                className="w-8 h-8 rounded-full hover:bg-canvas-slate flex items-center justify-center text-on-surface-variant cursor-pointer"
+              >
+                <span className="material-symbols-outlined text-[18px]">close</span>
+              </button>
+            </div>
+            <form onSubmit={handleSaveSchedule} className="flex flex-col gap-4">
+              <div>
+                <label className="block text-xs font-bold text-on-surface mb-1">
+                  {scheduleModal.label}
+                </label>
+                <input
+                  type="text"
+                  value={scheduleModal.value}
+                  onChange={(e) => setScheduleModal(prev => ({ ...prev, value: e.target.value }))}
+                  required
+                  placeholder="ex: Ven. 19 oct. — 14:00"
+                  className="w-full px-3.5 py-2.5 bg-canvas-slate border border-border-subtle rounded-xl text-xs font-medium text-on-surface focus:outline-none focus:border-primary"
+                />
+              </div>
+              <div className="flex items-center justify-end gap-3 pt-3 border-t border-border-subtle">
+                <button
+                  type="button"
+                  onClick={() => setScheduleModal(prev => ({ ...prev, isOpen: false }))}
+                  className="px-4 py-2 rounded-full text-xs font-semibold text-on-surface-variant hover:bg-canvas-slate cursor-pointer"
+                >
+                  Annuler
+                </button>
+                <button
+                  type="submit"
+                  className="px-5 py-2 rounded-full bg-primary hover:bg-forest-deep text-white text-xs font-bold shadow-sm transition cursor-pointer"
+                >
+                  Enregistrer l'horaire
+                </button>
+              </div>
+            </form>
           </div>
         </div>
       )}
