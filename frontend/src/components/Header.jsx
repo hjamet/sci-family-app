@@ -320,21 +320,122 @@ export default function Header({
           })}
         </nav>
 
-        {/* User Profile, Mobile Menu Button & Logout Dropdown */}
-        <div className="flex items-center gap-2 sm:gap-3 shrink-0" ref={dropdownRef}>
+        {/* Action Toolbar : [🔔 Notifications] [⚙️ Paramètres] [📊 Statistiques] [👤 Profil] */}
+        <div className="flex items-center gap-2 sm:gap-3 shrink-0">
           <div className="hidden sm:flex flex-col text-right">
             <span className="font-label-md text-label-md text-on-surface leading-tight font-semibold">
               {displayName}
             </span>
           </div>
 
-          {/* Bouton Paramètres (Engrenage / Settings) discret et élégant */}
+          {/* 1. Bouton [🔔 Notifications] avec popover élégant */}
+          <div className="relative" ref={notifRef}>
+            <button
+              type="button"
+              onClick={() => {
+                setIsNotifOpen((prev) => !prev);
+                setIsUserMenuOpen(false);
+              }}
+              className={`w-9 h-9 rounded-full flex items-center justify-center transition-all relative cursor-pointer ${
+                isNotifOpen
+                  ? 'bg-sage-soft text-primary ring-2 ring-primary/40 shadow-xs font-bold'
+                  : 'bg-canvas-slate hover:bg-sage-soft/70 text-on-surface-variant hover:text-primary border border-border-subtle shadow-xs'
+              }`}
+              title="Notifications & Alertes"
+              aria-label="Notifications & Alertes"
+            >
+              <span className="material-symbols-outlined text-[20px]">notifications</span>
+              {unreadCount > 0 && (
+                <span className="absolute -top-1 -right-1 min-w-[17px] h-[17px] px-1 bg-amber-600 text-white text-[10px] font-bold rounded-full flex items-center justify-center shadow-xs animate-pulse ring-2 ring-white">
+                  {unreadCount}
+                </span>
+              )}
+            </button>
+
+            {/* Menu Déroulant Popover Notifications */}
+            {isNotifOpen && (
+              <div className="absolute right-0 top-full mt-2 w-80 bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-2xl shadow-2xl z-50 p-3 animate-in fade-in zoom-in-95 duration-150">
+                {/* En-tête */}
+                <div className="flex items-center justify-between pb-2 mb-2 border-b border-slate-100 dark:border-slate-800">
+                  <div className="flex items-center gap-1.5">
+                    <span className="material-symbols-outlined text-[18px] text-primary">notifications</span>
+                    <span className="font-bold text-xs text-slate-900 dark:text-slate-100">Notifications</span>
+                    {unreadCount > 0 && (
+                      <span className="px-1.5 py-0.2 rounded-full bg-amber-100 dark:bg-amber-950 text-amber-800 dark:text-amber-300 text-[10px] font-bold">
+                        {unreadCount}
+                      </span>
+                    )}
+                  </div>
+                  {unreadCount > 0 && (
+                    <button
+                      type="button"
+                      onClick={markAllAsRead}
+                      className="text-[11px] font-semibold text-primary hover:text-primary-container dark:text-emerald-400 hover:underline cursor-pointer"
+                    >
+                      Tout marquer comme lu
+                    </button>
+                  )}
+                </div>
+
+                {/* Liste des alertes et mentions récentes */}
+                <div className="flex flex-col gap-1.5 max-h-72 overflow-y-auto pr-1">
+                  {notifications.length === 0 ? (
+                    <p className="text-center py-4 text-xs text-slate-500">Aucune alerte ou notification</p>
+                  ) : (
+                    notifications.map((notif) => {
+                      const isUnread = !readNotifIds.includes(notif.id);
+                      return (
+                        <div
+                          key={notif.id}
+                          onClick={() => handleNotificationClick(notif)}
+                          className={`p-2.5 rounded-xl transition-all cursor-pointer flex items-start gap-2.5 ${
+                            isUnread
+                              ? 'bg-emerald-50/70 dark:bg-emerald-950/30 hover:bg-emerald-100/70 dark:hover:bg-emerald-900/40 border border-emerald-200/60 dark:border-emerald-800/40 shadow-2xs'
+                              : 'hover:bg-slate-50 dark:hover:bg-slate-800/60 border border-transparent'
+                          }`}
+                        >
+                          <div
+                            className={`w-7 h-7 rounded-lg flex items-center justify-center shrink-0 mt-0.5 ${
+                              notif.type === 'alert'
+                                ? 'bg-amber-100 text-amber-700 dark:bg-amber-900/60 dark:text-amber-300'
+                                : notif.type === 'vote'
+                                ? 'bg-purple-100 text-purple-700 dark:bg-purple-900/60 dark:text-purple-300'
+                                : 'bg-emerald-100 text-emerald-700 dark:bg-emerald-900/60 dark:text-emerald-300'
+                            }`}
+                          >
+                            <span className="material-symbols-outlined text-[16px]">{notif.icon || 'notifications'}</span>
+                          </div>
+                          <div className="flex-1 min-w-0">
+                            <div className="flex items-center justify-between gap-1">
+                              <p className={`text-xs truncate ${isUnread ? 'font-bold text-slate-900 dark:text-slate-100' : 'font-medium text-slate-700 dark:text-slate-300'}`}>
+                                {notif.title}
+                              </p>
+                              <span className="text-[10px] text-slate-400 shrink-0">{notif.time}</span>
+                            </div>
+                            <p className="text-[11px] text-slate-500 dark:text-slate-400 line-clamp-2 mt-0.5 leading-snug">
+                              {notif.description}
+                            </p>
+                          </div>
+                          {isUnread && (
+                            <span className="w-2 h-2 rounded-full bg-amber-500 shrink-0 mt-2"></span>
+                          )}
+                        </div>
+                      );
+                    })
+                  )}
+                </div>
+              </div>
+            )}
+          </div>
+
+          {/* 2. Bouton [⚙️ Paramètres] */}
           <button
             type="button"
             onClick={() => {
               if (setActiveTab) setActiveTab('parametres');
               if (onNavigate) onNavigate('/parametres', 'parametres');
               setIsUserMenuOpen(false);
+              setIsNotifOpen(false);
             }}
             className={`w-9 h-9 rounded-full flex items-center justify-center transition-all cursor-pointer ${
               activeTab === 'parametres'
@@ -347,16 +448,82 @@ export default function Header({
             <span className="material-symbols-outlined text-[19px]">settings</span>
           </button>
 
-          {/* User Profile Avatar Button */}
+          {/* 3. Bouton [📊 Statistiques] */}
           <button
             type="button"
-            onClick={() => setIsUserMenuOpen(!isUserMenuOpen)}
-            className="w-9 h-9 rounded-full bg-primary hover:bg-primary-container text-white flex items-center justify-center ring-2 ring-primary/20 shadow-sm transition-all focus:outline-none focus:ring-2 focus:ring-emerald-500 cursor-pointer"
-            title="Menu profil"
-            aria-label="Menu profil"
+            onClick={() => {
+              if (setActiveTab) setActiveTab('admin');
+              if (onNavigate) onNavigate('/admin', 'admin');
+              setIsUserMenuOpen(false);
+              setIsNotifOpen(false);
+            }}
+            className={`w-9 h-9 rounded-full flex items-center justify-center transition-all cursor-pointer ${
+              activeTab === 'statistiques' || activeTab === 'admin'
+                ? 'bg-sage-soft text-primary ring-2 ring-primary/40 shadow-xs font-bold'
+                : 'bg-canvas-slate hover:bg-sage-soft/70 text-on-surface-variant hover:text-primary border border-border-subtle shadow-xs'
+            }`}
+            title="Statistiques & Finances"
+            aria-label="Statistiques & Finances"
           >
-            <span className="material-symbols-outlined text-[18px]">person</span>
+            <span className="material-symbols-outlined text-[19px]">bar_chart</span>
           </button>
+
+          {/* 4. Bouton [👤 Profil] avec menu déroulant */}
+          <div className="relative" ref={dropdownRef}>
+            <button
+              type="button"
+              onClick={() => {
+                setIsUserMenuOpen(!isUserMenuOpen);
+                setIsNotifOpen(false);
+              }}
+              className="w-9 h-9 rounded-full bg-primary hover:bg-primary-container text-white flex items-center justify-center ring-2 ring-primary/20 shadow-sm transition-all focus:outline-none focus:ring-2 focus:ring-emerald-500 cursor-pointer"
+              title="Menu profil"
+              aria-label="Menu profil"
+            >
+              <span className="material-symbols-outlined text-[18px]">person</span>
+            </button>
+
+            {/* User Profile Dropdown Menu */}
+            {isUserMenuOpen && (
+              <div className="absolute right-0 top-full mt-2 w-56 rounded-2xl bg-white shadow-xl border border-border-subtle py-2 z-50 animate-in fade-in zoom-in-95 duration-150">
+                <div className="px-4 py-2 border-b border-slate-100">
+                  <p className="text-xs text-on-surface-variant">Connecté en tant que</p>
+                  <p className="font-bold text-sm text-emerald-950 truncate">{displayName}</p>
+                </div>
+
+                {/* Mobile nav links inside dropdown fallback */}
+                <div className="lg:hidden border-b border-slate-100 py-1">
+                  {NAV_ITEMS.map((item) => (
+                    <button
+                      key={item.id}
+                      type="button"
+                      onClick={() => handleTabClick(item)}
+                      className="w-full px-4 py-2 text-left text-xs font-semibold text-on-surface hover:bg-sage-soft flex items-center gap-2 cursor-pointer"
+                    >
+                      <span className="material-symbols-outlined text-[16px] text-primary">
+                        {item.icon}
+                      </span>
+                      {item.label}
+                    </button>
+                  ))}
+                </div>
+
+                <div className="pt-1">
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setIsUserMenuOpen(false);
+                      if (onLogout) onLogout();
+                    }}
+                    className="w-full px-4 py-2.5 text-left text-xs font-bold text-error hover:bg-error-container/30 flex items-center gap-2 transition-colors cursor-pointer"
+                  >
+                    <span className="material-symbols-outlined text-[18px]">logout</span>
+                    Se déconnecter
+                  </button>
+                </div>
+              </div>
+            )}
+          </div>
 
           {/* Mobile Menu Hamburger Button */}
           <button
@@ -370,47 +537,6 @@ export default function Header({
               {isMobileMenuOpen ? 'close' : 'menu'}
             </span>
           </button>
-
-          {/* User Profile Dropdown Menu */}
-          {isUserMenuOpen && (
-            <div className="absolute right-6 top-16 mt-2 w-56 rounded-2xl bg-white shadow-xl border border-border-subtle py-2 z-50 animate-in fade-in zoom-in-95 duration-150">
-              <div className="px-4 py-2 border-b border-slate-100">
-                <p className="text-xs text-on-surface-variant">Connecté en tant que</p>
-                <p className="font-bold text-sm text-emerald-950 truncate">{displayName}</p>
-              </div>
-
-              {/* Mobile nav links inside dropdown fallback */}
-              <div className="lg:hidden border-b border-slate-100 py-1">
-                {NAV_ITEMS.map((item) => (
-                  <button
-                    key={item.id}
-                    type="button"
-                    onClick={() => handleTabClick(item)}
-                    className="w-full px-4 py-2 text-left text-xs font-semibold text-on-surface hover:bg-sage-soft flex items-center gap-2 cursor-pointer"
-                  >
-                    <span className="material-symbols-outlined text-[16px] text-primary">
-                      {item.icon}
-                    </span>
-                    {item.label}
-                  </button>
-                ))}
-              </div>
-
-              <div className="pt-1">
-                <button
-                  type="button"
-                  onClick={() => {
-                    setIsUserMenuOpen(false);
-                    if (onLogout) onLogout();
-                  }}
-                  className="w-full px-4 py-2.5 text-left text-xs font-bold text-error hover:bg-error-container/30 flex items-center gap-2 transition-colors cursor-pointer"
-                >
-                  <span className="material-symbols-outlined text-[18px]">logout</span>
-                  Se déconnecter
-                </button>
-              </div>
-            </div>
-          )}
         </div>
 
       </div>
@@ -439,6 +565,20 @@ export default function Header({
                 </button>
               );
             })}
+            {/* Bouton Notifications dans le menu mobile */}
+            <button
+              type="button"
+              onClick={() => {
+                setIsMobileMenuOpen(false);
+                setIsNotifOpen(true);
+              }}
+              className="p-3 rounded-xl text-left font-label-md text-xs font-semibold flex items-center gap-2 transition-all cursor-pointer text-on-surface hover:bg-canvas-slate"
+            >
+              <span className="material-symbols-outlined text-[18px] text-outline">
+                notifications
+              </span>
+              <span className="truncate">Notifications {unreadCount > 0 ? `(${unreadCount})` : ''}</span>
+            </button>
             {/* Bouton Paramètres dans le menu mobile */}
             <button
               type="button"
@@ -457,6 +597,25 @@ export default function Header({
                 settings
               </span>
               <span className="truncate">Paramètres</span>
+            </button>
+            {/* Bouton Statistiques dans le menu mobile */}
+            <button
+              type="button"
+              onClick={() => {
+                setIsMobileMenuOpen(false);
+                if (setActiveTab) setActiveTab('admin');
+                if (onNavigate) onNavigate('/admin', 'admin');
+              }}
+              className={`p-3 rounded-xl text-left font-label-md text-xs font-semibold flex items-center gap-2 transition-all cursor-pointer ${
+                activeTab === 'admin'
+                  ? 'bg-sage-soft text-primary font-bold shadow-xs'
+                  : 'text-on-surface hover:bg-canvas-slate'
+              }`}
+            >
+              <span className={`material-symbols-outlined text-[18px] ${activeTab === 'admin' ? 'text-primary' : 'text-outline'}`}>
+                bar_chart
+              </span>
+              <span className="truncate">Statistiques</span>
             </button>
           </div>
         </div>

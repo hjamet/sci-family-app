@@ -1212,7 +1212,13 @@ export default function VademecumPage({ properties, currentUser }) {
             </div>
           ) : (
             tasks.map((task, idx) => {
-              const isCompleted = task.status === 'completed';
+              const isCompleted =
+                task.status === 'completed' ||
+                task.status === 'TERMINE' ||
+                task.status === 'TERMINÉE' ||
+                task.status === 'TERMINEE' ||
+                task.status === 'VALIDÉ' ||
+                task.status === 'VALIDE';
               const isHigh = task.priorityType === 'high' || task.priority === 'Critique' || task.priority === 'Haute';
               const assigneeName = task.assignee || (Array.isArray(task.assigned_members) && task.assigned_members[0]) || resolveCurrentUserFullName(currentUser);
               const initials = assigneeName.split(' ').map(n => n[0]).join('').substring(0, 2).toUpperCase() || 'HJ';
