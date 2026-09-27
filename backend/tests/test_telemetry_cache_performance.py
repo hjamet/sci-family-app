@@ -120,17 +120,38 @@ def test_vicare_cache_hit_and_stale_fallback():
 
 def test_banking_status_cache_hit():
     """Vérifie que /api/banking/status interroge en direct-live sans cache périmé."""
-    # Premier appel
-    with patch.object(enable_banking_service, "get_account_balances") as mock_bal:
-        resp1 = client.get("/api/banking/status")
-        assert resp1.status_code == 200
-        assert mock_bal.call_count == 1
+    from app.database import SessionLocal
+    from app.models import BankAccount
+    import datetime
+    db = SessionLocal()
+    acc = db.query(BankAccount).first()
+    created_acc = False
+    if not acc:
+        acc = BankAccount(account_id="acc_test_live", name="Test Account", balance=100.0, last_synced_at=datetime.datetime.now())
+        db.add(acc)
+        db.commit()
+        created_acc = True
+    elif not acc.last_synced_at:
+        acc.last_synced_at = datetime.datetime.now()
+        db.commit()
 
-    # Deuxième appel immédiat : ré-interroge en direct (zéro cache)
-    with patch.object(enable_banking_service, "get_account_balances") as mock_bal2:
-        resp2 = client.get("/api/banking/status")
-        assert resp2.status_code == 200
-        assert mock_bal2.call_count == 1
+    try:
+        # Premier appel
+        with patch.object(enable_banking_service, "get_account_balances") as mock_bal:
+            resp1 = client.get("/api/banking/status")
+            assert resp1.status_code == 200
+            assert mock_bal.call_count == 1
+
+        # Deuxième appel immédiat : ré-interroge en direct (zéro cache)
+        with patch.object(enable_banking_service, "get_account_balances") as mock_bal2:
+            resp2 = client.get("/api/banking/status")
+            assert resp2.status_code == 200
+            assert mock_bal2.call_count == 1
+    finally:
+        if created_acc:
+            db.delete(acc)
+            db.commit()
+        db.close()
 
 
 def test_drive_list_files_cache_hit():

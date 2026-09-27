@@ -165,6 +165,11 @@ def test_03_mention_triggered_on_task_message_endpoint():
             assert kwargs.get("message_text") == payload["content"]
             assert f"/taches?id={task.id}" in kwargs.get("target_url")
     finally:
+        if task:
+            from app.models import TaskComment
+            db.query(TaskComment).filter(TaskComment.task_id == task.id).delete()
+            db.query(Task).filter(Task.id == task.id).delete()
+            db.commit()
         db.close()
 
 
@@ -343,4 +348,9 @@ def test_07_mention_triggered_on_project_messages():
             assert kwargs.get("message_text") == payload["content"]
             assert f"/taches?project_id={project.id}" in kwargs.get("target_url")
     finally:
+        if project:
+            from app.models import ProjectComment
+            db.query(ProjectComment).filter(ProjectComment.project_id == project.id).delete()
+            db.query(Project).filter(Project.id == project.id).delete()
+            db.commit()
         db.close()

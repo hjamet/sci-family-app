@@ -42,10 +42,12 @@ def is_email_disabled() -> bool:
     Désactive formellement 100% des envois d'e-mails vers l'extérieur.
     Actif par défaut (DISABLE_ALL_EMAILS=True ou env DISABLE_ALL_EMAILS != 'false').
     """
-    if DISABLE_ALL_EMAILS:
+    env_val = os.getenv("DISABLE_ALL_EMAILS", "").strip().lower()
+    if env_val in ("false", "0", "no"):
+        return False
+    if env_val in ("true", "1", "yes"):
         return True
-    env_val = os.getenv("DISABLE_ALL_EMAILS", "true").strip().lower()
-    return env_val not in ("false", "0", "no")
+    return DISABLE_ALL_EMAILS
 
 def get_circuit_breaker_response() -> dict:
     """Retour standardisé du coupe-circuit d'urgence."""

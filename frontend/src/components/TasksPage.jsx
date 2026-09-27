@@ -114,23 +114,19 @@ export default function TasksPage({ currentUser = 'Henri Jamet' }) {
     });
   }, [tasks]);
 
-  // Synchronisation des votes de toiture
-  const [roofVoteStats, setRoofVoteStats] = useState({
-    pourCount: 4,
-    totalCount: 7,
-    pourPct: 57,
-    abstentionPct: 14,
-    attentePct: 29,
-    pourNames: 'Hortense, Henri, Marguerite, Eugénie',
-    hasVoted: true,
-  });
-
   // Liste des scrutins en cours pour le carrousel (dérivée dynamiquement des projets réels en BDD)
   const votesList = useMemo(() => {
     if (!projects || projects.length === 0) {
       return [];
     }
-    return projects.map((p, idx) => {
+    // Ne proposer au vote que les projets actifs (non archivés, non clôturés, non déjà adoptés/rejetés)
+    const activeProjects = projects.filter((p) => {
+      if (!p) return false;
+      const st = String(p.status || '').toUpperCase().trim();
+      return !['ARCHIVE', 'ARCHIVEE', 'CLOS', 'TERMINE', 'ADOPTE', 'REJETE'].includes(st);
+    });
+
+    return activeProjects.map((p, idx) => {
       const votes = Array.isArray(p.votes) ? p.votes : [];
       const pourVotes = votes.filter(v => v && ['OUI', 'POUR'].includes(String(v.vote || v.choice || '').toUpperCase()));
       const absVotes = votes.filter(v => v && String(v.vote || v.choice || '').toUpperCase() === 'ABSTENTION');
@@ -152,7 +148,7 @@ export default function TasksPage({ currentUser = 'Henri Jamet' }) {
       return {
         ...p,
         id: p.id,
-        number: `${idx + 1} sur ${projects.length}`,
+        number: `${idx + 1} sur ${activeProjects.length}`,
         badgeStatus: p.status === 'EN_COURS' ? 'Vote formel en cours' : (p.status || 'Consultation'),
         budgetText: `Enveloppe budgétaire : ${(p.estimated_cost || 0).toLocaleString('fr-FR')} € TTC`,
         title: p.title,
@@ -221,17 +217,8 @@ export default function TasksPage({ currentUser = 'Henri Jamet' }) {
     await loadTasks();
   };
 
-  const handleVoteRoofSubmit = (voteResult) => {
-    if (voteResult?.vote === 'POUR') {
-      setRoofVoteStats(prev => ({
-        ...prev,
-        pourCount: 5,
-        pourPct: 71,
-        abstentionPct: 14,
-        attentePct: 15,
-        pourNames: 'Hortense, Henri, Marguerite, Eugénie, Associé',
-      }));
-    }
+  const handleVoteRoofSubmit = async () => {
+    await loadTasks();
   };
 
   const userMeta = useMemo(() => resolveUserMeta(currentUser), [currentUser]);

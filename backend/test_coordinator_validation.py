@@ -77,6 +77,17 @@ def db_session():
     try:
         yield db
     finally:
+        task_titles = [
+            "Tâche Test Autorisation",
+            "Nettoyage toiture Rosings",
+            "Vérification niveau fioul et vanne",
+            "Pose étagères buanderie"
+        ]
+        created_task_ids = [t.id for t in db.query(Task).filter(Task.title.in_(task_titles)).all()]
+        if created_task_ids:
+            db.query(TaskComment).filter(TaskComment.task_id.in_(created_task_ids)).delete(synchronize_session=False)
+            db.query(Task).filter(Task.id.in_(created_task_ids)).delete(synchronize_session=False)
+            db.commit()
         db.close()
 
 

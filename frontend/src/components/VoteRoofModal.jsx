@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import { MarkdownContent } from './common/RichTextEditor';
 import DocumentViewerModal from './DocumentViewerModal';
 import FamilyChat from './common/FamilyChat';
@@ -57,15 +57,15 @@ class VoteErrorBoundary extends React.Component {
   }
 }
 
-// 7 associés statutaires de la SCI Hellenvilliers
+// 7 associés statutaires de la SCI Hellenvilliers (Tous initialisés neutres en attente de vote réel)
 const DEFAULT_ASSOCIATES = [
   {
     id: 'henri',
     name: 'Henri Jamet',
     role: 'Gérance SCI',
     isGerance: true,
-    vote: 'POUR',
-    date: '12 mai 2026, 14:30',
+    vote: 'EN_ATTENTE',
+    date: null,
     initials: 'HJ'
   },
   {
@@ -73,8 +73,8 @@ const DEFAULT_ASSOCIATES = [
     name: 'Hortense Jamet',
     role: 'Associée',
     isGerance: false,
-    vote: 'POUR',
-    date: '14 mai 2026, 10:20',
+    vote: 'EN_ATTENTE',
+    date: null,
     initials: 'HJ'
   },
   {
@@ -82,8 +82,8 @@ const DEFAULT_ASSOCIATES = [
     name: 'Marguerite Jamet',
     role: 'Associée',
     isGerance: false,
-    vote: 'POUR',
-    date: '14 mai 2026, 16:45',
+    vote: 'EN_ATTENTE',
+    date: null,
     initials: 'MJ'
   },
   {
@@ -91,8 +91,8 @@ const DEFAULT_ASSOCIATES = [
     name: 'Eugénie Jamet',
     role: 'Associée',
     isGerance: false,
-    vote: 'POUR',
-    date: '15 mai 2026, 08:15',
+    vote: 'EN_ATTENTE',
+    date: null,
     initials: 'EJ'
   },
   {
@@ -100,8 +100,8 @@ const DEFAULT_ASSOCIATES = [
     name: 'Joséphine Jamet',
     role: 'Associée',
     isGerance: false,
-    vote: 'ABSTENTION',
-    date: '15 mai 2026, 09:15',
+    vote: 'EN_ATTENTE',
+    date: null,
     initials: 'JJ'
   },
   {
@@ -185,121 +185,100 @@ function VoteRoofModalInner({
 }) {
   const currentUserName = resolveUserName(currentUser);
 
-  // Normalisation des propriétés du projet avec fallbacks complets
+  // Normalisation des propriétés du projet avec fallbacks neutres dynamiques
   const activeProject = project || {};
-  const projectTitle = activeProject.title || 'Réfection Couverture & Isolation Combles Presbytère';
-  const projectDescription = activeProject.description || "Remplacement complet des ardoises vétustes sur le versant Nord du Presbytère, reprise des liteaux et pose d'un isolant en laine de bois haute densité (R=7 m²·K/W). Ce chantier fait suite aux infiltrations constatées lors des pluies d'avril et sécurise la charpente avant les expertises de plâtrerie intérieure.";
-  const projectRef = activeProject.ref || (activeProject.id ? `VOTE-2026-${String(activeProject.id).padStart(2, '0')}` : 'VOTE-2026-04');
-  const projectReporter = activeProject.submitted_by || activeProject.reporter?.name || (typeof activeProject.reporter === 'string' ? activeProject.reporter : 'Henri Jamet');
+  const projectTitle = activeProject.title || 'Consultation & Scrutin des Associés';
+  const projectDescription = activeProject.description || "Aucune description détaillée n'a été renseignée pour ce projet.";
+  const projectRef = activeProject.ref || (activeProject.id ? `VOTE-2026-${String(activeProject.id).padStart(2, '0')}` : 'VOTE-2026');
+  const projectReporter = activeProject.submitted_by || activeProject.reporter?.name || (typeof activeProject.reporter === 'string' ? activeProject.reporter : 'Non assigné');
   const projectBudget = typeof activeProject.estimated_cost === 'number'
     ? `${activeProject.estimated_cost.toLocaleString('fr-FR')} € TTC`
-    : (activeProject.budgetText || (activeProject.estimated_cost ? String(activeProject.estimated_cost) : '4 850,00 € TTC'));
-  const projectSubject = activeProject.category || activeProject.subject || 'Le Presbytère';
-  const projectBadgeStatus = activeProject.badgeStatus || (activeProject.status === 'EN_COURS' ? 'Vote formel en cours' : (activeProject.status || 'Chantier Prioritaire 2026'));
+    : (activeProject.budgetText || (activeProject.estimated_cost ? `${activeProject.estimated_cost} € TTC` : '—'));
+  const projectSubject = activeProject.category || activeProject.subject || 'SCI Familiale';
+  const projectBadgeStatus = activeProject.badgeStatus || (activeProject.status === 'EN_VOTE' ? 'Vote formel en cours' : (activeProject.status || 'Initiative'));
+
+  const voteSectionRef = useRef(null);
 
   // Liste nominative des 7 associés statutaires de la SCI Hellenvilliers
   const [associatesVotes, setAssociatesVotes] = useState(() => {
     const votesArr = Array.isArray(project?.votes) ? project.votes : [];
-    if (votesArr.length > 0) {
-      return DEFAULT_ASSOCIATES.map(assoc => {
-        const assocNameLower = String(assoc.name || '').toLowerCase();
-        const assocIdLower = String(assoc.id || '').toLowerCase();
-        const found = votesArr.find(v => {
-          if (!v) return false;
-          const vName = safeExtractVoterName(v).toLowerCase();
-          return (vName && (vName.includes(assocNameLower) || assocNameLower.includes(vName) || vName.includes(assocIdLower))) ||
-                 (v.user_id && v.user_id === assoc.id) ||
-                 (v.member_id && v.member_id === assoc.id);
-        });
-        if (found) {
-          return {
-            ...assoc,
-            vote: safeExtractVoteChoice(found) || 'EN_ATTENTE',
-            date: found.date || found.created_at || found.voted_at || 'Mai 2026'
-          };
-        }
-        return { ...assoc, vote: 'EN_ATTENTE', date: null };
+    return DEFAULT_ASSOCIATES.map(assoc => {
+      const assocNameLower = String(assoc.name || '').toLowerCase();
+      const assocIdLower = String(assoc.id || '').toLowerCase();
+      const found = votesArr.find(v => {
+        if (!v) return false;
+        const vName = safeExtractVoterName(v).toLowerCase();
+        return (vName && (vName.includes(assocNameLower) || assocNameLower.includes(vName) || vName.includes(assocIdLower))) ||
+               (v.user_id && v.user_id === assoc.id) ||
+               (v.member_id && v.member_id === assoc.id);
       });
-    }
-    return DEFAULT_ASSOCIATES;
+      if (found) {
+        return {
+          ...assoc,
+          vote: safeExtractVoteChoice(found) || 'EN_ATTENTE',
+          date: found.date || found.created_at || found.voted_at || 'Mai 2026'
+        };
+      }
+      return { ...assoc, vote: 'EN_ATTENTE', date: null };
+    });
   });
 
   // Synchronisation dynamique si le projet change
   useEffect(() => {
     const votesArr = Array.isArray(project?.votes) ? project.votes : [];
-    if (votesArr.length > 0) {
-      setAssociatesVotes(prev => (prev || DEFAULT_ASSOCIATES).map(assoc => {
-        const assocNameLower = String(assoc.name || '').toLowerCase();
-        const assocIdLower = String(assoc.id || '').toLowerCase();
-        const found = votesArr.find(v => {
-          if (!v) return false;
-          const vName = safeExtractVoterName(v).toLowerCase();
-          return (vName && (vName.includes(assocNameLower) || assocNameLower.includes(vName) || vName.includes(assocIdLower))) ||
-                 (v.user_id && v.user_id === assoc.id) ||
-                 (v.member_id && v.member_id === assoc.id);
-        });
-        if (found) {
-          return {
-            ...assoc,
-            vote: safeExtractVoteChoice(found) || 'EN_ATTENTE',
-            date: found.date || found.created_at || found.voted_at || 'Mai 2026'
-          };
-        }
-        return assoc;
-      }));
-    }
+    setAssociatesVotes(DEFAULT_ASSOCIATES.map(assoc => {
+      const assocNameLower = String(assoc.name || '').toLowerCase();
+      const assocIdLower = String(assoc.id || '').toLowerCase();
+      const found = votesArr.find(v => {
+        if (!v) return false;
+        const vName = safeExtractVoterName(v).toLowerCase();
+        return (vName && (vName.includes(assocNameLower) || assocNameLower.includes(vName) || vName.includes(assocIdLower))) ||
+               (v.user_id && v.user_id === assoc.id) ||
+               (v.member_id && v.member_id === assoc.id);
+      });
+      if (found) {
+        return {
+          ...assoc,
+          vote: safeExtractVoteChoice(found) || 'EN_ATTENTE',
+          date: found.date || found.created_at || found.voted_at || 'Mai 2026'
+        };
+      }
+      return { ...assoc, vote: 'EN_ATTENTE', date: null };
+    }));
   }, [project]);
 
-  // Messages du fil de discussion familial
-  const [messages, setMessages] = useState([
-    {
-      id: 1,
-      author: 'Hortense Jamet',
-      initials: 'HJ',
-      isGerance: false,
-      date: '14 mai, 10:15',
-      content: "J'ai lu le devis des Éts Josse, la garantie décennale est bien incluse et ils s'engagent à intervenir dès la première semaine de juin. Ça me paraît essentiel avant l'été !",
-      reactions: [
-        { emoji: '👍', count: 2 },
-        { emoji: '❤️', count: 1 }
-      ]
-    },
-    {
-      id: 2,
-      author: 'Henri Jamet',
-      initials: 'HJ',
-      isGerance: true,
-      date: '14 mai, 11:42',
-      content: "Exactement Hortense. De plus, le montant reste inférieur à l'enveloppe prévisionnelle votée lors de la dernière AG. La trésorerie sur le compte Crédit Agricole est suffisante sans appel de fonds exceptionnel.",
-      reactions: [
-        { emoji: '👍', count: 3 },
-        { emoji: '💡', count: 1 }
-      ]
-    },
-    {
-      id: 3,
-      author: 'Joséphine Jamet',
-      initials: 'JJ',
-      isGerance: false,
-      date: '15 mai, 09:12',
-      content: "Je me suis abstenue car je voulais vérifier si l'artisan incluait la reprise de la gouttière en zinc côté jardin ?",
-      reactions: []
-    },
-    {
-      id: 4,
-      author: 'Henri Jamet',
-      initials: 'HJ',
-      isGerance: true,
-      date: '15 mai, 09:30',
-      content: "Oui Joséphine, vérifié en page 3 du devis Éts Josse, remplacement de 12 mètres linéaires de chéneau en zinc compris. Tout est intégré.",
-      reactions: [
-        { emoji: '👌', count: 2 }
-      ]
+  // Messages du fil de discussion familial (chargés dynamiquement depuis le projet réel)
+  const [messages, setMessages] = useState(() => {
+    if (Array.isArray(activeProject.comments) && activeProject.comments.length > 0) {
+      return activeProject.comments.map((c, idx) => ({
+        id: c.id || idx + 1,
+        author: c.author_name || c.author || 'Associé',
+        initials: (c.author_name || c.author || 'A').split(' ').map(w => w[0]).join('').slice(0, 2).toUpperCase(),
+        isGerance: (c.author_name || '').toLowerCase().includes('henri'),
+        date: c.created_at ? new Date(c.created_at).toLocaleDateString('fr-FR') : '',
+        content: c.content || '',
+        reactions: c.reactions || []
+      }));
     }
-  ]);
+    return [];
+  });
+
+  useEffect(() => {
+    if (Array.isArray(activeProject.comments)) {
+      setMessages(activeProject.comments.map((c, idx) => ({
+        id: c.id || idx + 1,
+        author: c.author_name || c.author || 'Associé',
+        initials: (c.author_name || c.author || 'A').split(' ').map(w => w[0]).join('').slice(0, 2).toUpperCase(),
+        isGerance: (c.author_name || '').toLowerCase().includes('henri'),
+        date: c.created_at ? new Date(c.created_at).toLocaleDateString('fr-FR') : '',
+        content: c.content || '',
+        reactions: c.reactions || []
+      })));
+    }
+  }, [activeProject.comments]);
 
   // Formulaire de vote interactif direct
-  const [selectedVote, setSelectedVote] = useState('POUR');
+  const [selectedVote, setSelectedVote] = useState(null);
   const [toastMessage, setToastMessage] = useState(null);
 
   // Vue détaillée du tableau des associés
@@ -378,30 +357,14 @@ function VoteRoofModalInner({
   const isAgReportRequested = reportAgCount > 0;
   const isMajoriteAtteinte = pourCount >= 4;
 
-  // Documents justificatifs sécurisés
+  // Documents justificatifs sécurisés (100% dynamiques réels, zéro faux devis par défaut)
   const documentsList = (Array.isArray(activeProject.documents) && activeProject.documents.length > 0)
     ? activeProject.documents
     : (Array.isArray(activeProject.files) && activeProject.files.length > 0)
     ? activeProject.files
     : (Array.isArray(activeProject.document_urls) && activeProject.document_urls.length > 0)
     ? activeProject.document_urls
-    : [
-        {
-          name: 'Devis-2026-Ets-Josse-Couverture-Presbytere.pdf',
-          desc: 'Devis Éts Josse • 4 850,00 € TTC • Garantie décennale • 1.4 Mo',
-          details: 'Devis réfection toiture Presbytère par les Éts Josse'
-        },
-        {
-          name: 'Rapport-Diagnostic-Infiltrations-Avril2026.pdf',
-          desc: 'Constat photos & humidimétrie • 850 Ko',
-          details: 'Rapport technique constat infiltrations pluies avril 2026'
-        },
-        {
-          name: 'Extrait-PV-AG-Aout2025-Poutres.pdf',
-          desc: 'Mandat cadre & délégation de gérance • 420 Ko',
-          details: "Extrait du Procès-Verbal de l'AG d'août 2025"
-        }
-      ];
+    : [];
 
   // Enregistrement direct du vote en 1 clic
   const handleCastVote = async (voteChoice) => {
@@ -552,15 +515,27 @@ function VoteRoofModalInner({
             <span className="font-semibold text-xs sm:text-sm text-slate-800">Scrutin &amp; Délibération des Associés</span>
           </div>
 
-          {/* Action Quitter / Fermer */}
-          <button 
-            onClick={onClose}
-            aria-label="Fermer la fenêtre" 
-            className="w-9 h-9 rounded-full flex items-center justify-center text-on-surface-variant hover:bg-surface-container-highest hover:text-on-surface transition-colors focus:outline-none cursor-pointer" 
-            type="button"
-          >
-            <span className="material-symbols-outlined text-2xl">close</span>
-          </button>
+          <div className="flex items-center gap-2">
+            <button
+              type="button"
+              onClick={() => voteSectionRef.current?.scrollIntoView({ behavior: 'smooth' })}
+              className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-emerald-50 hover:bg-emerald-100 text-emerald-800 border border-emerald-300 text-xs font-bold transition-all shadow-xs cursor-pointer"
+              title="Aller directement aux boutons de vote"
+            >
+              <span>👇</span>
+              <span>Voter directement</span>
+            </button>
+
+            {/* Action Quitter / Fermer */}
+            <button 
+              onClick={onClose}
+              aria-label="Fermer la fenêtre" 
+              className="w-9 h-9 rounded-full flex items-center justify-center text-on-surface-variant hover:bg-surface-container-highest hover:text-on-surface transition-colors focus:outline-none cursor-pointer" 
+              type="button"
+            >
+              <span className="material-symbols-outlined text-2xl">close</span>
+            </button>
+          </div>
         </header>
 
         {/* 2. CORPS DE LA MODALE : 2 COLONNES (7 cols gauche / 5 cols droite sur lg) */}
@@ -590,7 +565,7 @@ function VoteRoofModalInner({
             </div>
 
             {/* Description & Objectifs */}
-            <div className="flex flex-col gap-3 bg-canvas-slate rounded-xl p-4 border border-border-subtle">
+            <div className="flex flex-col gap-3 bg-canvas-slate rounded-[14px] p-4 border border-border-subtle">
               <h2 className="font-headline-sm text-sm sm:text-base font-bold text-on-surface flex items-center gap-2">
                 <span className="material-symbols-outlined text-forest-deep text-xl">description</span>
                 Description des travaux &amp; Enjeux
@@ -611,48 +586,54 @@ function VoteRoofModalInner({
               </div>
 
               <div className="flex flex-col gap-2">
-                {documentsList.map((doc, idx) => {
-                  const docName = typeof doc === 'string' ? doc : (doc.name || doc.filename || `Document_${idx + 1}.pdf`);
-                  const docDesc = typeof doc === 'object' ? (doc.desc || doc.description || doc.details || 'Pièce certifiée') : 'Pièce certifiée';
-                  const docDetails = typeof doc === 'object' ? (doc.details || doc.name || docName) : docName;
-                  return (
-                    <div key={idx} className="flex items-center justify-between p-3 bg-canvas-slate hover:bg-surface-container transition-colors rounded-xl border border-border-subtle">
-                      <div className="flex items-center gap-3 min-w-0">
-                        <div className="w-10 h-10 rounded-lg bg-error-container text-error flex items-center justify-center shrink-0">
-                          <span className="material-symbols-outlined text-xl">picture_as_pdf</span>
+                {documentsList.length === 0 ? (
+                  <div className="p-4 bg-canvas-slate rounded-xl text-center text-xs text-on-surface-variant border border-dashed border-border-subtle">
+                    Aucune pièce jointe ou devis téléversé pour ce projet.
+                  </div>
+                ) : (
+                  documentsList.map((doc, idx) => {
+                    const docName = typeof doc === 'string' ? doc : (doc.name || doc.filename || `Document_${idx + 1}.pdf`);
+                    const docDesc = typeof doc === 'object' ? (doc.desc || doc.description || doc.details || 'Pièce certifiée') : 'Pièce certifiée';
+                    const docDetails = typeof doc === 'object' ? (doc.details || doc.name || docName) : docName;
+                    return (
+                      <div key={idx} className="flex items-center justify-between p-3 bg-canvas-slate hover:bg-surface-container transition-colors rounded-xl border border-border-subtle">
+                        <div className="flex items-center gap-3 min-w-0">
+                          <div className="w-10 h-10 rounded-lg bg-error-container text-error flex items-center justify-center shrink-0">
+                            <span className="material-symbols-outlined text-xl">picture_as_pdf</span>
+                          </div>
+                          <div className="flex flex-col min-w-0">
+                            <span className="text-xs sm:text-sm font-semibold text-on-surface truncate">
+                              {docName}
+                            </span>
+                            <span className="text-[11px] text-on-surface-variant truncate">
+                              {docDesc}
+                            </span>
+                          </div>
                         </div>
-                        <div className="flex flex-col min-w-0">
-                          <span className="text-xs sm:text-sm font-semibold text-on-surface truncate">
-                            {docName}
-                          </span>
-                          <span className="text-[11px] text-on-surface-variant truncate">
-                            {docDesc}
-                          </span>
+                        <div className="flex items-center gap-1.5 shrink-0 ml-2">
+                          <button 
+                            onClick={() => handleViewDoc(docName, docDetails)}
+                            className="px-2.5 py-1.5 rounded-lg bg-surface-container-lowest text-primary hover:bg-sage-soft text-xs font-semibold flex items-center gap-1 shadow-xs border border-primary transition-all cursor-pointer" 
+                            type="button"
+                            title="Consulter sans télécharger"
+                          >
+                            <span className="material-symbols-outlined text-[15px]">visibility</span>
+                            <span>Consulter</span>
+                          </button>
+                          <button 
+                            onClick={() => handleDownloadDoc(docName, docDetails)}
+                            className="px-2.5 py-1.5 rounded-lg bg-primary text-white hover:bg-forest-deep text-xs font-semibold flex items-center gap-1 shadow-xs transition-all cursor-pointer" 
+                            type="button"
+                            title="Télécharger une copie"
+                          >
+                            <span className="material-symbols-outlined text-[15px]">download</span>
+                            <span>Télécharger</span>
+                          </button>
                         </div>
                       </div>
-                      <div className="flex items-center gap-1.5 shrink-0 ml-2">
-                        <button 
-                          onClick={() => handleViewDoc(docName, docDetails)}
-                          className="px-2.5 py-1.5 rounded-lg bg-surface-container-lowest text-primary hover:bg-sage-soft text-xs font-semibold flex items-center gap-1 shadow-xs border border-primary transition-all cursor-pointer" 
-                          type="button"
-                          title="Consulter sans télécharger"
-                        >
-                          <span className="material-symbols-outlined text-[15px]">visibility</span>
-                          <span>Consulter</span>
-                        </button>
-                        <button 
-                          onClick={() => handleDownloadDoc(docName, docDetails)}
-                          className="px-2.5 py-1.5 rounded-lg bg-primary text-white hover:bg-forest-deep text-xs font-semibold flex items-center gap-1 shadow-xs transition-all cursor-pointer" 
-                          type="button"
-                          title="Télécharger une copie"
-                        >
-                          <span className="material-symbols-outlined text-[15px]">download</span>
-                          <span>Télécharger</span>
-                        </button>
-                      </div>
-                    </div>
-                  );
-                })}
+                    );
+                  })
+                )}
               </div>
             </div>
 
@@ -840,7 +821,7 @@ function VoteRoofModalInner({
             </div>
 
             {/* 5. SECTION DE VOTE SOBRE & DIRECTE EN 1 CLIC */}
-            <div className="p-4 rounded-xl bg-surface-container-low border border-border-subtle flex flex-col gap-3 shadow-sm">
+            <div ref={voteSectionRef} id="section-vote" className="p-4 rounded-xl bg-surface-container-low border border-border-subtle flex flex-col gap-3 shadow-sm scroll-mt-6">
               <div className="flex items-center justify-between">
                 <span className="text-xs font-bold text-slate-700 uppercase tracking-wider">
                   Votre vote en tant que {currentAssociate.name} :

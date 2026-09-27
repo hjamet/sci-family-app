@@ -48,39 +48,18 @@ export default function App() {
           matched = allProjects.find((p) => String(p.id) === String(projectId));
         }
         if (!matched) {
-          matched = allProjects.find((p) => 
-            p.title && (p.title.toLowerCase().includes('toiture') || p.title.toLowerCase().includes('couverture'))
-          ) || allProjects.find((p) => p.status === 'voting' || p.status === 'open' || p.is_voting);
+          matched = allProjects.find((p) => p.status === 'EN_VOTE' || p.status === 'SOUMIS');
         }
       }
       if (matched) {
         setActiveVoteProject(matched);
+        setIsVoteModalOpen(true);
       } else {
-        setActiveVoteProject({
-          id: projectId || 1,
-          title: 'Réfection Couverture & Isolation Combles Presbytère',
-          description: "Remplacement complet des ardoises vétustes sur le versant Nord du Presbytère, reprise des liteaux et pose d'un isolant en laine de bois haute densité (R=7 m²·K/W). Consultation sur le devis Riffael & Denis (2 400 €).",
-          ref: 'VOTE-2026-04',
-          estimated_cost: 2400,
-          category: 'Presbytère',
-          status: 'voting',
-          votes: [],
-        });
+        navigate('/taches');
       }
     } catch {
-      setActiveVoteProject({
-        id: projectId || 1,
-        title: 'Réfection Couverture & Isolation Combles Presbytère',
-        description: "Remplacement complet des ardoises vétustes sur le versant Nord du Presbytère, reprise des liteaux et pose d'un isolant en laine de bois haute densité (R=7 m²·K/W). Consultation sur le devis Riffael & Denis (2 400 €).",
-        ref: 'VOTE-2026-04',
-        estimated_cost: 2400,
-        category: 'Presbytère',
-        status: 'voting',
-        votes: [],
-      });
+      navigate('/taches');
     }
-
-    setIsVoteModalOpen(true);
   };
 
   const handleOpenTaskModal = async (taskId, taskData) => {
@@ -90,7 +69,7 @@ export default function App() {
       return;
     }
 
-    if (taskId && taskId !== 'task-placo') {
+    if (taskId) {
       try {
         const fullTask = await fetchTaskById(taskId);
         if (fullTask) {
@@ -103,28 +82,7 @@ export default function App() {
       }
     }
 
-    const currentUserName = typeof currentUser === 'object'
-      ? (currentUser?.prenom ? `${currentUser.prenom} ${currentUser.nom || 'Jamet'}` : 'Henri Jamet')
-      : (currentUser || 'Henri Jamet');
-
-    setActiveTask({
-      id: taskId || 'task-placo',
-      title: 'Placo bibliothèque',
-      description: 'Chantier prioritaire suite à infiltration.',
-      subject: 'Presbytère',
-      priority: 'URGENT',
-      status: 'A_FAIRE',
-      assigned_members: [currentUserName],
-      complexity: 'Modérée',
-      budget: 450,
-      checklist: [
-        { text: 'Dépose des plaques de plâtre endommagées', done: false },
-        { text: 'Traitement anti-humidité et séchage des pans de mur', done: false },
-        { text: 'Pose des nouvelles plaques hydrofuges BA13', done: false },
-        { text: 'Bandes à joint et couche de finition', done: false },
-      ],
-    });
-    setIsTaskModalOpen(true);
+    navigate('/taches');
   };
 
   // Sync active tab with current location pathname

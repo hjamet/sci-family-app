@@ -81,40 +81,7 @@ export default function Header({
     return `sci_read_notifications_${uid}`;
   };
 
-  const [notifications, setNotifications] = useState([
-    {
-      id: 'notif-vote-roof',
-      title: 'Vote toiture ouvert',
-      description: 'Consultation sur le devis Riffael & Denis (2 400 €).',
-      type: 'vote',
-      projectId: 'roof',
-      path: '/taches',
-      tabId: 'taches',
-      time: 'En cours',
-      icon: 'how_to_vote',
-    },
-    {
-      id: 'notif-task-placo',
-      title: 'Tâche assignée : Placo bibliothèque',
-      description: 'Chantier prioritaire suite à infiltration.',
-      type: 'task',
-      taskId: 'task-placo',
-      path: '/taches',
-      tabId: 'taches',
-      time: 'Prioritaire',
-      icon: 'assignment_ind',
-    },
-    {
-      id: 'notif-pool-ph',
-      title: 'Alerte Bassin Klereo',
-      description: 'Niveau bas bidon pH à renouveler.',
-      type: 'alert',
-      path: '/sejour',
-      tabId: 'sejour',
-      time: 'Télémétrie',
-      icon: 'pool',
-    },
-  ]);
+  const [notifications, setNotifications] = useState([]);
 
   const [readNotifIds, setReadNotifIds] = useState(() => {
     try {
@@ -256,12 +223,8 @@ export default function Header({
             });
         }
 
-        if (isMounted && dynamicNotifs.length > 0) {
-          setNotifications((prev) => {
-            const existingIds = new Set(prev.map((n) => n.id));
-            const newOnes = dynamicNotifs.filter((n) => !existingIds.has(n.id));
-            return [...newOnes, ...prev];
-          });
+        if (isMounted) {
+          setNotifications(dynamicNotifs);
         }
       } catch (err) {
         console.warn('Erreur chargement notifications dynamiques:', err);

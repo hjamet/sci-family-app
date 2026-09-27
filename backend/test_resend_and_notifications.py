@@ -221,11 +221,16 @@ def test_07_trigger_task_assigned_route(auth_headers):
         "assignee_id": 1,  # Henri
         "deadline": "2026-09-30"
     }
-    resp = client.post("/api/tasks", json=task_payload, headers=auth_headers)
-    assert resp.status_code == 201, f"Failed to create task: {resp.text}"
-    created = resp.json()
-    assert created["title"] == "Vérification Filtre Piscine & Niveau Chlore"
-    assert created["assignee_id"] == 1
+    try:
+        resp = client.post("/api/tasks", json=task_payload, headers=auth_headers)
+        assert resp.status_code == 201, f"Failed to create task: {resp.text}"
+        created = resp.json()
+        assert created["title"] == "Vérification Filtre Piscine & Niveau Chlore"
+        assert created["assignee_id"] == 1
+    finally:
+        with SessionLocal() as db:
+            db.query(Task).filter(Task.title == "Vérification Filtre Piscine & Niveau Chlore").delete()
+            db.commit()
 
 
 def test_08_trigger_project_vote_required_route(auth_headers):
@@ -240,11 +245,18 @@ def test_08_trigger_project_vote_required_route(auth_headers):
         "submitted_by": "Hortense",
         "decision_mode": "SOUMETTRE_AU_VOTE"
     }
-    resp = client.post("/api/projects", json=proj_payload, headers=auth_headers)
-    assert resp.status_code == 201, f"Failed to create project: {resp.text}"
-    created = resp.json()
-    assert created["status"] == "EN_VOTE"
-    assert created["id"] is not None
+    try:
+        resp = client.post("/api/projects", json=proj_payload, headers=auth_headers)
+        assert resp.status_code == 201, f"Failed to create project: {resp.text}"
+        created = resp.json()
+        assert created["status"] == "EN_VOTE"
+        assert created["id"] is not None
+    finally:
+        with SessionLocal() as db:
+            subq = db.query(Project.id).filter(Project.title == "Achat Débroussailleuse Thermique Stihl")
+            db.query(ProjectVote).filter(ProjectVote.project_id.in_(subq)).delete(synchronize_session=False)
+            db.query(Project).filter(Project.title == "Achat Débroussailleuse Thermique Stihl").delete(synchronize_session=False)
+            db.commit()
 
 
 def test_09_trigger_vote_submission_and_completion_route(auth_headers):
@@ -268,26 +280,32 @@ def test_09_trigger_vote_submission_and_completion_route(auth_headers):
 
     associates = ["Henri", "Marguerite", "Hortense", "Joséphine", "Eugénie", "Frédéric", "Maman"]
 
-    # 1. Cast first 6 votes via /api/projects/{id}/vote
-    for member_name in associates[:6]:
-        v_resp = client.post(
-            f"/api/projects/{p_id}/vote",
-            json={"user_name": member_name, "vote": "POUR", "comment": f"Favorable ({member_name})"},
+    try:
+        # 1. Cast first 6 votes via /api/projects/{id}/vote
+        for member_name in associates[:6]:
+            v_resp = client.post(
+                f"/api/projects/{p_id}/vote",
+                json={"user_name": member_name, "vote": "POUR", "comment": f"Favorable ({member_name})"},
+                headers=auth_headers
+            )
+            assert v_resp.status_code == 200, f"Vote failed for {member_name}: {v_resp.text}"
+            assert v_resp.json()["status"] == "EN_VOTE"
+
+        # 2. Cast 7th (final) vote via POST /api/votes (alias route required by mission)
+        final_vote_resp = client.post(
+            "/api/votes",
+            json={"project_id": p_id, "user_name": associates[6], "vote": "POUR", "comment": "Adopté !"},
             headers=auth_headers
         )
-        assert v_resp.status_code == 200, f"Vote failed for {member_name}: {v_resp.text}"
-        assert v_resp.json()["status"] == "EN_VOTE"
-
-    # 2. Cast 7th (final) vote via POST /api/votes (alias route required by mission)
-    final_vote_resp = client.post(
-        "/api/votes",
-        json={"project_id": p_id, "user_name": associates[6], "vote": "POUR", "comment": "Adopté !"},
-        headers=auth_headers
-    )
-    assert final_vote_resp.status_code == 200, f"Final vote submission failed: {final_vote_resp.text}"
-    final_data = final_vote_resp.json()
-    # The scrutin must be closed and approved!
-    assert final_data["status"] == "APPROUVE", f"Expected APPROUVE once all 7 associates voted, got: {final_data['status']}"
+        assert final_vote_resp.status_code == 200, f"Final vote submission failed: {final_vote_resp.text}"
+        final_data = final_vote_resp.json()
+        # The scrutin must be closed and approved!
+        assert final_data["status"] == "APPROUVE", f"Expected APPROUVE once all 7 associates voted, got: {final_data['status']}"
+    finally:
+        with SessionLocal() as db:
+            db.query(ProjectVote).filter(ProjectVote.project_id == p_id).delete()
+            db.query(Project).filter(Project.id == p_id).delete()
+            db.commit()
 
 
 def test_10_trigger_stay_booked_route(auth_headers):
@@ -304,11 +322,16 @@ def test_10_trigger_stay_booked_route(auth_headers):
         "selected_rooms": ["Suite parentale Presbytère"],
         "notes": "Week-end prolongé à Hellenvilliers"
     }
-    resp = client.post("/api/reservations", json=res_payload, headers=auth_headers)
-    assert resp.status_code == 201, f"Failed to create reservation: {resp.text}"
-    data = resp.json()
-    assert data["status"] == "Confirmée"
-    assert data["user_name"] == "Henri"
+    try:
+        resp = client.post("/api/reservations", json=res_payload, headers=auth_headers)
+        assert resp.status_code == 201, f"Failed to create reservation: {resp.text}"
+        data = resp.json()
+        assert data["status"] == "Confirmée"
+        assert data["user_name"] == "Henri"
+    finally:
+        with SessionLocal() as db:
+            db.query(Reservation).filter(Reservation.notes == "Week-end prolongé à Hellenvilliers").delete()
+            db.commit()
 
 
 # ==============================================================================

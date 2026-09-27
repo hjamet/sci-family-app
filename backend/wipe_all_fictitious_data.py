@@ -16,6 +16,16 @@ from app.database import SQLALCHEMY_DATABASE_URL
 
 OFFICIAL_SWAN_ID = "f7af9598-108e-4c33-846d-b829a015c149"
 
+CANONICAL_PASSWORDS = {
+    "Henri": os.getenv("USER_HENRI_PASS", "N8xK9mP2vQ5rT7wY"),
+    "Marguerite": os.getenv("USER_MARGUERITE_PASS", "B4vL7nP1wR9tY2mK"),
+    "Hortense": os.getenv("USER_HORTENSE_PASS", "Q2mK9vL5nR1wT7pY"),
+    "Joséphine": os.getenv("USER_JOSEPHINE_PASS", "T7pY2mK9vL5nR1wQ"),
+    "Eugénie": os.getenv("USER_EUGENIE_PASS", "R9tY2mK9vL5nR1wP"),
+    "Frédéric": os.getenv("USER_FREDERIC_PASS", "L5nR1wT7pY2mK9vQ"),
+    "Maman": os.getenv("USER_MAMAN_PASS", "W1tY2mK9vL5nR1pT"),
+}
+
 def wipe_database(db_url: str, db_label: str):
     print(f"\n=======================================================")
     print(f"Purge intégrale des données fictives : {db_label}")
@@ -86,10 +96,24 @@ def wipe_database(db_url: str, db_label: str):
                 conn.execute(text("DELETE FROM bank_auth_sessions WHERE session_id LIKE 'test_%' OR status = 'TEST'"))
                 print("  [x] Sessions bancaires de test purgées.")
 
-            # 8. Vérifier la sanctuarisation intangible des 7 associés
+            # 8. Réinitialiser les mots de passe canoniques et vérifier les 7 associés
             if "members" in existing_tables:
+                from app.security import hash_password
+                for prenom, raw_pass in CANONICAL_PASSWORDS.items():
+                    hpass = hash_password(raw_pass)
+                    conn.execute(
+                        text("UPDATE members SET password = :hpass WHERE prenom = :prenom"),
+                        {"hpass": hpass, "prenom": prenom}
+                    )
+                if "users" in existing_tables:
+                    for prenom, raw_pass in CANONICAL_PASSWORDS.items():
+                        hpass = hash_password(raw_pass)
+                        conn.execute(
+                            text("UPDATE users SET password = :hpass WHERE prenom = :prenom"),
+                            {"hpass": hpass, "prenom": prenom}
+                        )
                 members = conn.execute(text("SELECT id, name, prenom, email FROM members ORDER BY id")).fetchall()
-                print(f"  [PROTECTION VÉRIFIÉE] Table 'members' : {len(members)} associés conservés.")
+                print(f"  [PROTECTION VÉRIFIÉE] Table 'members' : {len(members)} associés conservés avec mots de passe canoniques synchronisés.")
                 for m in members:
                     print(f"    - #{m[0]} {m[2]} ({m[1]}) - {m[3]}")
 

@@ -19,11 +19,28 @@ client = TestClient(app, follow_redirects=False)
 
 @pytest.fixture
 def db_session():
-    """Fournit une session de test propre isolée."""
+    """Fournit une session de test propre isolée avec teardown hermétique."""
     db = SessionLocal()
     try:
         yield db
     finally:
+        db.query(BankTransaction).filter(BankTransaction.transaction_id.like("tx_swan_test_%")).delete()
+        db.query(BankAccount).filter(BankAccount.account_id != "f7af9598-108e-4c33-846d-b829a015c149").delete()
+        swan = db.query(BankAccount).filter(BankAccount.account_id == "f7af9598-108e-4c33-846d-b829a015c149").first()
+        if not swan:
+            swan = BankAccount(
+                account_id="f7af9598-108e-4c33-846d-b829a015c149",
+                name="Compte Principal Swan SCI",
+                iban="FR7616945000000000000000000",
+                currency="EUR",
+                balance=0.0
+            )
+            db.add(swan)
+        else:
+            swan.balance = 0.0
+            swan.last_synced_at = None
+        db.query(BankAuthSession).filter(BankAuthSession.session_id.like("test_%")).delete()
+        db.commit()
         db.close()
 
 

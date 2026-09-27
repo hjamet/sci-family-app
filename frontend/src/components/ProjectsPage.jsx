@@ -79,6 +79,15 @@ export default function ProjectsPage({ properties, currentUser }) {
 
   const isCoordinator = currentUser.includes('Henri') || currentUser === 'Henri Jamet';
 
+  // Scrutin actif en cours (100% dynamique réel, zéro faux spotlight hardcodé si base vierge)
+  const activeVoteProject = projects.find(p => p.status === 'EN_VOTE');
+  const activeVotes = activeVoteProject && Array.isArray(activeVoteProject.votes) ? activeVoteProject.votes : [];
+  const activeVoteCount = activeVotes.length;
+  const activePourCount = activeVotes.filter(v => ['POUR', 'OUI'].includes(String(v.vote || v.choice || '').toUpperCase())).length;
+  const activeAbstentionCount = activeVotes.filter(v => String(v.vote || v.choice || '').toUpperCase() === 'ABSTENTION').length;
+  const activeContreCount = activeVotes.filter(v => ['CONTRE', 'NON'].includes(String(v.vote || v.choice || '').toUpperCase())).length;
+  const activeAttenteCount = Math.max(0, 7 - activePourCount - activeAbstentionCount - activeContreCount);
+
   const getStatusBadge = (status) => {
     switch (status) {
       case 'SOUMIS':
@@ -143,17 +152,19 @@ export default function ProjectsPage({ properties, currentUser }) {
           </div>
 
           <div className="flex flex-col sm:flex-row items-stretch sm:items-center gap-2.5 shrink-0">
-            <button
-              onClick={() => setIsRoofVoteModalOpen(true)}
-              className="px-5 py-3 bg-gradient-to-r from-emerald-500 to-teal-500 hover:from-emerald-400 hover:to-teal-400 text-slate-950 rounded-2xl text-sm font-black shadow-lg shadow-emerald-500/20 transition-all transform hover:-translate-y-0.5 flex items-center justify-center space-x-2 shrink-0"
-            >
-              <Vote className="h-4 w-4" />
-              <span>Participer au vote (Presbytère)</span>
-            </button>
+            {activeVoteProject && (
+              <button
+                onClick={() => setIsRoofVoteModalOpen(true)}
+                className="px-5 py-3 bg-gradient-to-r from-emerald-500 to-teal-500 hover:from-emerald-400 hover:to-teal-400 text-slate-950 rounded-2xl text-sm font-black shadow-lg shadow-emerald-500/20 transition-all transform hover:-translate-y-0.5 flex items-center justify-center space-x-2 shrink-0 cursor-pointer"
+              >
+                <Vote className="h-4 w-4" />
+                <span>Participer au vote ({activeVoteProject.title})</span>
+              </button>
+            )}
 
             <button
               onClick={() => setIsModalOpen(true)}
-              className="px-5 py-3 bg-gradient-to-r from-indigo-500 to-cyan-500 hover:from-indigo-600 hover:to-cyan-600 text-white rounded-2xl text-sm font-extrabold shadow-lg shadow-indigo-500/20 transition-all transform hover:-translate-y-0.5 flex items-center justify-center space-x-2 shrink-0"
+              className="px-5 py-3 bg-gradient-to-r from-indigo-500 to-cyan-500 hover:from-indigo-600 hover:to-cyan-600 text-white rounded-2xl text-sm font-extrabold shadow-lg shadow-indigo-500/20 transition-all transform hover:-translate-y-0.5 flex items-center justify-center space-x-2 shrink-0 cursor-pointer"
             >
               <PlusCircle className="h-4 w-4" />
               <span>Proposer une initiative</span>
@@ -162,72 +173,80 @@ export default function ProjectsPage({ properties, currentUser }) {
         </div>
       </div>
 
-      {/* Spotlight Card: Scrutin Majeur SCI (Stitch) - Réfection Couverture Presbytère */}
-      <div className="relative overflow-hidden rounded-3xl bg-gradient-to-r from-emerald-950 via-primary to-slate-900 p-6 sm:p-7 text-white shadow-xl border border-emerald-600/40">
-        <div className="absolute -top-12 -right-12 w-64 h-64 rounded-full bg-emerald-400/10 blur-3xl pointer-events-none"></div>
+      {/* Spotlight Card: Scrutin Majeur SCI (Dynamique réel uniquement si un vote est en cours) */}
+      {activeVoteProject && (
+        <div className="relative overflow-hidden rounded-3xl bg-gradient-to-r from-emerald-950 via-primary to-slate-900 p-6 sm:p-7 text-white shadow-xl border border-emerald-600/40">
+          <div className="absolute -top-12 -right-12 w-64 h-64 rounded-full bg-emerald-400/10 blur-3xl pointer-events-none"></div>
 
-        <div className="relative z-10 flex flex-col lg:flex-row lg:items-center justify-between gap-6">
-          <div className="space-y-3 max-w-3xl">
-            <div className="flex flex-wrap items-center gap-2">
-              <span className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full bg-sage-soft text-forest-deep text-xs font-bold">
-                <span className="w-2 h-2 rounded-full bg-forest-deep animate-pulse"></span>
-                VOTE FAMILIAL EN COURS • Clôture dans 3 jours (27 mai)
-              </span>
-              <span className="px-2.5 py-0.5 rounded-full bg-emerald-800/80 text-emerald-200 text-xs font-semibold">
-                Bâti &amp; Toiture • Le Presbytère
-              </span>
-              <span className="px-2.5 py-0.5 rounded-full bg-amber-soft text-amber-rich text-xs font-semibold">
-                Seuil &gt; 300 € (Art. 12 des Statuts)
-              </span>
-              <span className="px-2.5 py-0.5 rounded-full bg-emerald-800/80 text-emerald-200 text-xs font-semibold">
-                Chantier Prioritaire 2026
-              </span>
-            </div>
-
-            <div>
-              <h2 className="text-xl sm:text-2xl font-black tracking-tight text-white flex items-center gap-2">
-                <span>Réfection Couverture &amp; Isolation Combles Presbytère</span>
-              </h2>
-              <p className="text-xs sm:text-sm text-emerald-100/90 mt-1 leading-relaxed">
-                Enveloppe : <strong className="text-white font-bold">4 850 € TTC (Devis Éts Josse)</strong> • Prise en charge 100% fonds de roulement récurrent de la SCI (avec <strong className="text-white">500 € d'éco-subvention communale</strong> déjà déduits du net). Zéro appel de fonds exceptionnel.
-              </p>
-            </div>
-
-            {/* Micro-jauge et tendance */}
-            <div className="bg-white/10 backdrop-blur-md rounded-2xl p-3 border border-white/10 flex flex-col sm:flex-row sm:items-center justify-between gap-3 text-xs">
-              <div className="flex items-center gap-2">
-                <span className="font-bold text-white">Participation : 5 / 7 voix (71%)</span>
-                <span className="text-emerald-300 font-bold bg-emerald-500/20 px-2 py-0.5 rounded-full border border-emerald-400/30">
-                  ✓ Majorité qualifiée atteinte
+          <div className="relative z-10 flex flex-col lg:flex-row lg:items-center justify-between gap-6">
+            <div className="space-y-3 max-w-3xl">
+              <div className="flex flex-wrap items-center gap-2">
+                <span className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full bg-sage-soft text-forest-deep text-xs font-bold">
+                  <span className="w-2 h-2 rounded-full bg-forest-deep animate-pulse"></span>
+                  VOTE FAMILIAL EN COURS
                 </span>
+                <span className="px-2.5 py-0.5 rounded-full bg-emerald-800/80 text-emerald-200 text-xs font-semibold">
+                  {activeVoteProject.category || activeVoteProject.subject || 'SCI Familiale'}
+                </span>
+                {typeof activeVoteProject.estimated_cost === 'number' && activeVoteProject.estimated_cost > 300 && (
+                  <span className="px-2.5 py-0.5 rounded-full bg-amber-soft text-amber-rich text-xs font-semibold">
+                    Seuil &gt; 300 € (Art. 12 des Statuts)
+                  </span>
+                )}
               </div>
-              <div className="flex items-center gap-3 text-[11px] text-emerald-100">
-                <span className="text-emerald-300 font-semibold">● 4 Pour</span>
-                <span className="text-amber-300 font-semibold">● 1 Abstention</span>
-                <span className="text-slate-300 font-semibold">● 2 En attente</span>
+
+              <div>
+                <h2 className="text-xl sm:text-2xl font-black tracking-tight text-white flex items-center gap-2">
+                  <span>{activeVoteProject.title}</span>
+                </h2>
+                <p className="text-xs sm:text-sm text-emerald-100/90 mt-1 leading-relaxed">
+                  {activeVoteProject.description || "Consultation formelle des associés de la SCI."}
+                  {typeof activeVoteProject.estimated_cost === 'number' && (
+                    <span className="block mt-1">
+                      Enveloppe estimée : <strong className="text-white font-bold">{activeVoteProject.estimated_cost.toLocaleString('fr-FR')} € TTC</strong>
+                    </span>
+                  )}
+                </p>
+              </div>
+
+              {/* Micro-jauge et tendance */}
+              <div className="bg-white/10 backdrop-blur-md rounded-2xl p-3 border border-white/10 flex flex-col sm:flex-row sm:items-center justify-between gap-3 text-xs">
+                <div className="flex items-center gap-2">
+                  <span className="font-bold text-white">Participation : {activeVoteCount} / 7 voix ({Math.round((activeVoteCount / 7) * 100)}%)</span>
+                  {activePourCount >= 4 && (
+                    <span className="text-emerald-300 font-bold bg-emerald-500/20 px-2 py-0.5 rounded-full border border-emerald-400/30">
+                      ✓ Majorité qualifiée atteinte
+                    </span>
+                  )}
+                </div>
+                <div className="flex items-center gap-3 text-[11px] text-emerald-100">
+                  <span className="text-emerald-300 font-semibold">● {activePourCount} Pour</span>
+                  <span className="text-amber-300 font-semibold">● {activeAbstentionCount} Abstention</span>
+                  <span className="text-slate-300 font-semibold">● {activeAttenteCount} En attente</span>
+                </div>
               </div>
             </div>
-          </div>
 
-          <div className="flex flex-col sm:flex-row lg:flex-col gap-2.5 shrink-0 justify-center">
-            <button
-              onClick={() => setIsRoofVoteModalOpen(true)}
-              className="px-6 py-3.5 bg-gradient-to-r from-emerald-400 to-teal-300 hover:from-emerald-300 hover:to-teal-200 text-slate-950 font-black text-sm rounded-2xl shadow-xl shadow-emerald-950/40 transition-all transform hover:-translate-y-0.5 flex items-center justify-center gap-2"
-            >
-              <Vote className="h-4 w-4" />
-              <span>Participer au vote</span>
-            </button>
+            <div className="flex flex-col sm:flex-row lg:flex-col gap-2.5 shrink-0 justify-center">
+              <button
+                onClick={() => setIsRoofVoteModalOpen(true)}
+                className="px-6 py-3.5 bg-gradient-to-r from-emerald-400 to-teal-300 hover:from-emerald-300 hover:to-teal-200 text-slate-950 font-black text-sm rounded-2xl shadow-xl shadow-emerald-950/40 transition-all transform hover:-translate-y-0.5 flex items-center justify-center gap-2 cursor-pointer"
+              >
+                <Vote className="h-4 w-4" />
+                <span>Participer au vote</span>
+              </button>
 
-            <button
-              onClick={() => setIsRoofVoteModalOpen(true)}
-              className="px-4 py-2.5 bg-white/10 hover:bg-white/20 text-white font-bold text-xs rounded-xl border border-white/20 transition flex items-center justify-center gap-1.5"
-            >
-              <ShieldCheck className="h-4 w-4" />
-              <span>Consulter pièces &amp; débats</span>
-            </button>
+              <button
+                onClick={() => setIsRoofVoteModalOpen(true)}
+                className="px-4 py-2.5 bg-white/10 hover:bg-white/20 text-white font-bold text-xs rounded-xl border border-white/20 transition flex items-center justify-center gap-1.5 cursor-pointer"
+              >
+                <ShieldCheck className="h-4 w-4" />
+                <span>Consulter pièces &amp; débats</span>
+              </button>
+            </div>
           </div>
         </div>
-      </div>
+      )}
 
       {actionError && (
         <div className="p-4 bg-rose-50 border border-rose-200 rounded-xl text-rose-700 text-sm flex items-center space-x-2">
@@ -670,12 +689,12 @@ export default function ProjectsPage({ properties, currentUser }) {
         />
       )}
 
-      {/* Stitch Family Vote Modal: Réfection Couverture Presbytère */}
+      {/* Stitch Family Vote Modal: Scrutin Dynamique */}
       <VoteRoofModal
         isOpen={isRoofVoteModalOpen}
         onClose={() => setIsRoofVoteModalOpen(false)}
         currentUser={currentUser}
-        project={projects.find(p => (p.title || '').toLowerCase().includes('toiture')) || projects[0]}
+        project={activeVoteProject || projects[0]}
         onVoteSubmit={async () => {
           await loadProjects();
         }}

@@ -53,6 +53,20 @@ function parseChecklistItems(raw) {
   return [];
 }
 
+function parseTaskDocuments(raw) {
+  if (Array.isArray(raw)) return raw;
+  if (typeof raw === 'string' && raw.trim()) {
+    try {
+      const parsed = JSON.parse(raw);
+      if (Array.isArray(parsed)) return parsed;
+      if (typeof parsed === 'object' && parsed !== null) return [parsed];
+    } catch (_) {
+      return raw.split(',').map((s) => s.trim()).filter(Boolean).map((name) => ({ filename: name, name }));
+    }
+  }
+  return [];
+}
+
 export default function TaskDetailModal({
   isOpen,
   task: initialTask,
@@ -99,7 +113,7 @@ export default function TaskDetailModal({
     } else if (docItem) {
       resolved = {
         ...docItem,
-        filename: docItem.filename || docItem.name || 'Devis_EI_Perrot_2026_Avenant.pdf',
+        filename: docItem.filename || docItem.name || 'document.pdf',
         file_url: docItem.file_url || docItem.url || (docItem.id ? `/api/documents/${docItem.id}/download` : '')
       };
     }
@@ -111,7 +125,7 @@ export default function TaskDetailModal({
 
   const handleDownloadDoc = (docItem) => {
     const targetUrl = docItem?.file_url || docItem?.url || (docItem?.id ? `/api/documents/${docItem.id}/download` : '');
-    const targetName = docItem?.filename || docItem?.name || 'Devis_EI_Perrot_2026_Avenant.pdf';
+    const targetName = docItem?.filename || docItem?.name || 'document.pdf';
     if (targetUrl) {
       const a = document.createElement('a');
       a.href = targetUrl;
@@ -152,6 +166,7 @@ export default function TaskDetailModal({
   const [closingSubmitting, setClosingSubmitting] = useState(false);
 
   const fileUploadRef = useRef(null);
+  const validationSectionRef = useRef(null);
 
   const handleFileUpload = async (e) => {
     const files = e.target.files;
@@ -611,6 +626,30 @@ export default function TaskDetailModal({
               </button>
             )}
 
+            {/* Boutons de saut direct vers la section de validation (Annotation 6) */}
+            {!isNewTask && isCoordinator && (
+              <button
+                type="button"
+                onClick={() => validationSectionRef.current?.scrollIntoView({ behavior: 'smooth' })}
+                className="inline-flex items-center gap-1.5 h-11 px-3.5 rounded-xl border border-purple-300 bg-purple-50 hover:bg-purple-100 text-purple-900 font-bold text-xs sm:text-sm shadow-xs transition-colors cursor-pointer"
+                title="Faire défiler jusqu'à la section de validation"
+              >
+                <span>👇</span>
+                <span>Valider la tâche</span>
+              </button>
+            )}
+            {!isNewTask && !isCoordinator && isOpenTask && isAssignedToCurrentUser && (
+              <button
+                type="button"
+                onClick={() => validationSectionRef.current?.scrollIntoView({ behavior: 'smooth' })}
+                className="inline-flex items-center gap-1.5 h-11 px-3.5 rounded-xl border border-emerald-300 bg-emerald-50 hover:bg-emerald-100 text-emerald-900 font-bold text-xs sm:text-sm shadow-xs transition-colors cursor-pointer"
+                title="Faire défiler jusqu'à la demande de validation"
+              >
+                <span>👇</span>
+                <span>Demander la validation</span>
+              </button>
+            )}
+
             {/* Actions superviseur et membres : Valider / Invalider si en attente de validation, Demander validation pour le membre assigné (Annotation 2) */}
             {!isNewTask && (
               isPendingValidation ? (
@@ -711,7 +750,7 @@ export default function TaskDetailModal({
                     id="modal-task-title"
                     className="font-headline-lg text-xl sm:text-2xl text-forest-deep tracking-tight font-bold"
                   >
-                    {task.title || (isVoteInitiative ? "Réfection Toiture & Scrutin Statutaire" : "Renégociation Contrat Jardinier EI Perrot & Fauche Tardive")}
+                    {task.title || (isVoteInitiative ? "Nouvelle initiative au vote" : "Nouvelle tâche")}
                   </h1>
                   <p className="font-body-md text-xs text-on-surface-variant">
                     Réf. {task.ref || `${isVoteInitiative ? 'VOTE' : 'T'}-2026-${task.id || '088'}`} • Statut : {task.status || 'En cours'}
@@ -728,7 +767,7 @@ export default function TaskDetailModal({
                   </div>
 
                   <div className="p-4 bg-canvas-slate rounded-2xl font-body-lg text-xs sm:text-sm text-on-surface leading-relaxed shadow-sm border border-slate-200/60">
-                    <p>{task.description || (isVoteInitiative ? "Consultation des associés pour engagement de travaux." : "Description détaillée des travaux à accomplir sur le domaine.")}</p>
+                    <p>{task.description || (isVoteInitiative ? "Consultation des associés pour engagement de travaux." : "Aucune description détaillée renseignée.")}</p>
                   </div>
                 </div>
 
@@ -805,43 +844,129 @@ export default function TaskDetailModal({
                   </div>
 
                   <div className="flex flex-col gap-2">
-                    <div className="p-3 bg-canvas-slate rounded-xl flex items-center justify-between gap-3 shadow-xs border border-slate-200">
-                      <div className="flex items-center gap-3 min-w-0">
-                        <div className="w-10 h-10 rounded-xl bg-error-container/40 text-error flex items-center justify-center shrink-0">
-                          <span className="material-symbols-outlined text-[20px]">picture_as_pdf</span>
-                        </div>
-                        <div className="min-w-0">
-                          <p className="font-label-md text-xs font-semibold text-on-surface truncate">
-                            Devis_EI_Perrot_2026_Avenant.pdf
-                          </p>
-                          <p className="font-body-md text-[11px] text-outline">
-                            PDF • 1.2 Mo • Indexé par Henri J.
-                          </p>
-                        </div>
-                      </div>
-                      <div className="flex items-center gap-1.5 shrink-0">
-                        <button
-                          type="button"
-                          onClick={() => handleViewDocument('Devis_EI_Perrot_2026_Avenant.pdf')}
-                          className="h-8 px-2.5 rounded-lg bg-surface-container-lowest border border-primary text-primary text-xs font-semibold hover:bg-sage-soft transition-colors flex items-center gap-1 cursor-pointer"
-                          title="Consulter sans télécharger"
-                        >
-                          <span className="material-symbols-outlined text-[15px]">visibility</span>
-                          <span>Consulter</span>
-                        </button>
-                        <button
-                          type="button"
-                          onClick={() => handleDownloadDoc({ filename: 'Devis_EI_Perrot_2026_Avenant.pdf' })}
-                          className="h-8 px-2.5 rounded-lg bg-primary text-white text-xs font-semibold hover:bg-forest-deep transition-colors flex items-center gap-1 cursor-pointer shadow-xs"
-                          title="Télécharger une copie"
-                        >
-                          <span className="material-symbols-outlined text-[15px]">download</span>
-                          <span>Télécharger</span>
-                        </button>
-                      </div>
-                    </div>
+                    {parseTaskDocuments(task?.documents || task?.completion_docs).length === 0 ? (
+                      <p className="text-xs text-on-surface-variant italic py-2">
+                        Aucun document joint pour cette mission.
+                      </p>
+                    ) : (
+                      parseTaskDocuments(task?.documents || task?.completion_docs).map((docItem, idx) => {
+                        const docName = docItem.filename || docItem.name || (typeof docItem === 'string' ? docItem : `Document_${idx + 1}.pdf`);
+                        return (
+                          <div key={idx} className="p-3 bg-canvas-slate rounded-xl flex items-center justify-between gap-3 shadow-xs border border-slate-200">
+                            <div className="flex items-center gap-3 min-w-0">
+                              <div className="w-10 h-10 rounded-xl bg-error-container/40 text-error flex items-center justify-center shrink-0">
+                                <span className="material-symbols-outlined text-[20px]">picture_as_pdf</span>
+                              </div>
+                              <div className="min-w-0">
+                                <p className="font-label-md text-xs font-semibold text-on-surface truncate">
+                                  {docName}
+                                </p>
+                                <p className="font-body-md text-[11px] text-outline">
+                                  {docItem.type || 'Document'} {docItem.size ? `• ${docItem.size}` : ''}
+                                </p>
+                              </div>
+                            </div>
+                            <div className="flex items-center gap-1.5 shrink-0">
+                              <button
+                                type="button"
+                                onClick={() => handleViewDocument(docItem)}
+                                className="h-8 px-2.5 rounded-lg bg-surface-container-lowest border border-primary text-primary text-xs font-semibold hover:bg-sage-soft transition-colors flex items-center gap-1 cursor-pointer"
+                                title="Consulter sans télécharger"
+                              >
+                                <span className="material-symbols-outlined text-[15px]">visibility</span>
+                                <span>Consulter</span>
+                              </button>
+                              <button
+                                type="button"
+                                onClick={() => handleDownloadDoc(docItem)}
+                                className="h-8 px-2.5 rounded-lg bg-primary text-white text-xs font-semibold hover:bg-forest-deep transition-colors flex items-center gap-1 cursor-pointer shadow-xs"
+                                title="Télécharger une copie"
+                              >
+                                <span className="material-symbols-outlined text-[15px]">download</span>
+                                <span>Télécharger</span>
+                              </button>
+                            </div>
+                          </div>
+                        );
+                      })
+                    )}
                   </div>
                 </div>
+
+                {/* Section Validation de la Mission (#section-task-validation) */}
+                {!isNewTask && (
+                  <div
+                    ref={validationSectionRef}
+                    id="section-task-validation"
+                    className="p-5 rounded-2xl border-2 border-primary/20 bg-surface-container-low shadow-sm space-y-4 scroll-mt-6"
+                  >
+                    <div className="flex items-center justify-between">
+                      <div className="flex items-center gap-2">
+                        <span className="material-symbols-outlined text-primary text-[24px]">verified</span>
+                        <h3 className="font-headline-sm text-sm sm:text-base font-bold text-forest-deep">
+                          Validation &amp; Clôture de la Mission
+                        </h3>
+                      </div>
+                      {isPendingValidation ? (
+                        <span className="inline-flex items-center gap-1 px-3 py-1 rounded-full text-xs font-bold bg-purple-100 text-purple-800 border border-purple-300">
+                          <span className="w-2 h-2 rounded-full bg-purple-600 animate-pulse"></span>
+                          En attente d'arbitrage
+                        </span>
+                      ) : (
+                        <span className="inline-flex items-center gap-1 px-3 py-1 rounded-full text-xs font-bold bg-sage-soft text-primary">
+                          Statut : {task.status || 'En cours'}
+                        </span>
+                      )}
+                    </div>
+
+                    <p className="text-xs text-on-surface-variant leading-relaxed">
+                      {isPendingValidation
+                        ? "Le membre en charge a déclaré la réalisation des travaux. Les coordinateurs statutaires peuvent valider ou rejeter la demande."
+                        : "Une fois tous les jalons accomplis et les justificatifs déposés, demandez la validation formelle des coordinateurs de la SCI."}
+                    </p>
+
+                    <div className="pt-2 flex flex-wrap items-center gap-3">
+                      {isPendingValidation && isCoordinator && (
+                        <>
+                          <button
+                            type="button"
+                            onClick={handleValidateModalTask}
+                            className="inline-flex items-center gap-2 px-5 py-2.5 rounded-xl bg-forest-deep hover:bg-primary text-white font-bold text-xs sm:text-sm shadow-md transition-all cursor-pointer"
+                          >
+                            <span className="material-symbols-outlined text-[18px]">check_circle</span>
+                            <span>Valider et clôturer la mission</span>
+                          </button>
+                          <button
+                            type="button"
+                            onClick={handleInvalidateModalTask}
+                            className="inline-flex items-center gap-2 px-4 py-2.5 rounded-xl bg-white hover:bg-rose-50 text-rose-700 border-2 border-rose-300 font-bold text-xs sm:text-sm shadow-sm transition-all cursor-pointer"
+                          >
+                            <span className="material-symbols-outlined text-[18px]">close</span>
+                            <span>Refuser / Invalider</span>
+                          </button>
+                        </>
+                      )}
+
+                      {isOpenTask && isAssignedToCurrentUser && !isPendingValidation && (
+                        <button
+                          type="button"
+                          onClick={handleRequestValidation}
+                          className="inline-flex items-center gap-2 px-5 py-2.5 rounded-xl bg-primary hover:bg-forest-deep text-white font-bold text-xs sm:text-sm shadow-md transition-all cursor-pointer"
+                        >
+                          <span className="material-symbols-outlined text-[18px]">send</span>
+                          <span>Demander la validation aux coordinateurs</span>
+                        </button>
+                      )}
+
+                      {!isCoordinator && isPendingValidation && (
+                        <div className="text-xs font-semibold text-purple-900 bg-purple-50 p-3 rounded-xl border border-purple-200 w-full flex items-center gap-2">
+                          <span className="material-symbols-outlined text-purple-700 text-[18px]">hourglass_top</span>
+                          <span>Votre demande de validation a été transmise aux coordinateurs de la SCI.</span>
+                        </div>
+                      )}
+                    </div>
+                  </div>
+                )}
 
               </div>
             )}

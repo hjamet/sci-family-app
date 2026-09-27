@@ -261,7 +261,7 @@ export default function StatistiquesPage({ currentUser }) {
       <HouseUsageChart reservations={reservations} />
 
       {/* Jauge de Répartition des Charges & Responsabilités */}
-      <WorkloadDashboard />
+      <WorkloadDashboard currentUser={currentUser} />
     </div>
   );
 }
