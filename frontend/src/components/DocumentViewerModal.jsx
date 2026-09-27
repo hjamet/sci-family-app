@@ -100,12 +100,9 @@ export default function DocumentViewerModal({
         }
       } catch (err) {
         console.warn('DocumentViewerModal fetch notice:', err.message);
-        // Fallback : utiliser directement l'URL brute
+        // Ne JAMAIS injecter rawUrl comme blobUrl pour éviter le déclenchement intempestif de téléchargement par l'iframe
         if (isMounted) {
-          setBlobUrl(rawUrl);
-          if (!isPdf && !isImage && !isText) {
-            setLoadError('Format de fichier non prévisualisable directement.');
-          }
+          setLoadError('Aperçu direct indisponible pour ce format. Utilisez le bouton Télécharger pour consulter le fichier.');
         }
       } finally {
         if (isMounted) {
@@ -301,27 +298,43 @@ export default function DocumentViewerModal({
 
           {/* Rendu PDF */}
           {!loadError && isPdf && (
-            <div className="w-full h-full rounded-xl overflow-hidden shadow-inner bg-slate-200 dark:bg-slate-800">
-              <iframe
-                src={blobUrl || rawUrl}
-                className="w-full h-full border-none"
-                title={fileName}
-              />
+            <div className="w-full h-full rounded-xl overflow-hidden shadow-inner bg-slate-200 dark:bg-slate-800 flex items-center justify-center">
+              {blobUrl ? (
+                <iframe
+                  src={blobUrl}
+                  className="w-full h-full border-none"
+                  title={fileName}
+                />
+              ) : (
+                <div className="flex flex-col items-center justify-center gap-3">
+                  <Loader2 className="w-8 h-8 text-primary animate-spin" />
+                  <p className="text-xs font-semibold text-slate-600 dark:text-slate-300">
+                    Chargement sécurisé du document...
+                  </p>
+                </div>
+              )}
             </div>
           )}
 
           {/* Rendu Image */}
           {!loadError && isImage && (
             <div className="w-full h-full flex items-center justify-center overflow-auto select-none">
-              <img
-                src={blobUrl || rawUrl}
-                alt={fileName}
-                style={{
-                  transform: `scale(${zoomLevel}) rotate(${rotation}deg)`,
-                  transition: 'transform 0.15s ease-out'
-                }}
-                className="max-h-full max-w-full object-contain mx-auto rounded-lg shadow-md"
-              />
+              {blobUrl || rawUrl?.startsWith('data:') || rawUrl?.startsWith('blob:') ? (
+                <img
+                  src={blobUrl || rawUrl}
+                  alt={fileName}
+                  style={{
+                    transform: `scale(${zoomLevel}) rotate(${rotation}deg)`,
+                    transition: 'transform 0.15s ease-out'
+                  }}
+                  className="max-h-full max-w-full object-contain mx-auto rounded-lg shadow-md"
+                />
+              ) : (
+                <div className="flex flex-col items-center justify-center gap-2">
+                  <Loader2 className="w-8 h-8 text-primary animate-spin" />
+                  <p className="text-xs text-slate-500">Chargement de l'image...</p>
+                </div>
+              )}
             </div>
           )}
 

@@ -967,7 +967,11 @@ export default function AdminInfoPage({ currentUser }) {
                   <td className="py-3.5 px-4 whitespace-nowrap">
                     <button
                       type="button"
-                      onClick={() => handleViewDocument(inv.filename)}
+                      onClick={(e) => {
+                        e.preventDefault();
+                        e.stopPropagation();
+                        handleViewDocument(inv.filename);
+                      }}
                       className="btn-download inline-flex items-center gap-1.5 px-2.5 py-1 rounded bg-surface-container-low text-forest-deep hover:bg-sage-soft border border-border-subtle transition-all text-xs font-semibold cursor-pointer"
                       title="Consulter le justificatif dans la visionneuse"
                     >
@@ -981,7 +985,11 @@ export default function AdminInfoPage({ currentUser }) {
                     <div className="inline-flex items-center justify-end gap-1.5">
                       <button
                         type="button"
-                        onClick={() => handleViewDocument(inv.filename)}
+                        onClick={(e) => {
+                          e.preventDefault();
+                          e.stopPropagation();
+                          handleViewDocument(inv.filename);
+                        }}
                         className="btn-view px-2.5 h-8 rounded-DEFAULT bg-surface-container-lowest border border-primary text-primary hover:bg-sage-soft transition-all text-xs font-semibold inline-flex items-center gap-1 cursor-pointer"
                         title="Consulter dans la visionneuse"
                       >
@@ -1260,7 +1268,11 @@ export default function AdminInfoPage({ currentUser }) {
                 <div className="mt-4 pt-3 border-t border-border-subtle flex items-center justify-between gap-1.5">
                   <button
                     type="button"
-                    onClick={() => handleViewDocument(doc)}
+                    onClick={(e) => {
+                      e.preventDefault();
+                      e.stopPropagation();
+                      handleViewDocument(doc);
+                    }}
                     className="btn-view flex-1 h-[40px] px-2 rounded-DEFAULT bg-surface-container-lowest border-2 border-primary text-primary font-label-sm text-xs hover:bg-sage-soft transition-all flex items-center justify-center gap-1 cursor-pointer font-bold"
                     title="Consulter le document sans télécharger"
                   >
@@ -1335,7 +1347,11 @@ export default function AdminInfoPage({ currentUser }) {
                 <div className="flex items-center gap-2 self-end md:self-auto shrink-0">
                   <button
                     type="button"
-                    onClick={() => handleViewDocument(doc)}
+                    onClick={(e) => {
+                      e.preventDefault();
+                      e.stopPropagation();
+                      handleViewDocument(doc);
+                    }}
                     className="btn-view h-[38px] px-3 rounded-DEFAULT bg-surface-container-lowest border-2 border-primary text-primary font-label-sm text-xs hover:bg-sage-soft transition-all flex items-center gap-1 cursor-pointer font-bold"
                     title="Consulter sans télécharger"
                   >
@@ -1391,9 +1407,6 @@ export default function AdminInfoPage({ currentUser }) {
                   <h3 className="font-headline-sm text-base sm:text-lg text-forest-deep font-bold">
                     Téléverser un document officiel
                   </h3>
-                  <p className="font-body-md text-xs text-on-surface-variant">
-                    Nommage canonique automatique &amp; archivage pérenne SCI Hellenvilliers
-                  </p>
                 </div>
               </div>
               <button

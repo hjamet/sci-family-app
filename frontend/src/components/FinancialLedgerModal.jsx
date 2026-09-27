@@ -70,15 +70,39 @@ export default function FinancialLedgerModal({ isOpen, onClose, initialTab = 'gr
     }));
   }, [transactions]);
 
+  // Filtre tri-période : 'all' (Depuis toujours) | '1year' (Dernière année) | '3months' (Derniers 3 mois)
+  const [periodFilter, setPeriodFilter] = useState('all');
+
+  const filteredTransactionsWithBalance = useMemo(() => {
+    if (periodFilter === 'all') return transactionsWithBalance;
+    const now = new Date();
+    const cutoff = new Date();
+    if (periodFilter === '1year') {
+      cutoff.setFullYear(now.getFullYear() - 1);
+    } else if (periodFilter === '3months') {
+      cutoff.setDate(now.getDate() - 90);
+    }
+    return transactionsWithBalance.filter((t) => {
+      const dateVal = t.booking_date || t.date;
+      if (!dateVal) return true;
+      const d = new Date(dateVal);
+      return !isNaN(d.getTime()) && d >= cutoff;
+    });
+  }, [transactionsWithBalance, periodFilter]);
+
+  const filteredNet = useMemo(() => {
+    return filteredTransactionsWithBalance.reduce((acc, t) => acc + (t.amount || 0), 0);
+  }, [filteredTransactionsWithBalance]);
+
   if (!isOpen) return null;
 
   const handleExportCsv = () => {
-    if (transactions.length === 0) {
+    if (filteredTransactionsWithBalance.length === 0) {
       alert("Aucune transaction bancaire réelle à exporter pour le moment.");
       return;
     }
     const headers = ["Date", "Libelle", "Tiers", "Type", "Montant_EUR", "Solde_Cumule_EUR"];
-    const rows = transactionsWithBalance.map((op) => [
+    const rows = filteredTransactionsWithBalance.map((op) => [
       `"${op.booking_date || ''}"`,
       `"${(op.remittance_information || op.category || '').replace(/"/g, '""')}"`,
       `"${(op.creditor_name || op.debtor_name || 'SCI').replace(/"/g, '""')}"`,
@@ -91,7 +115,7 @@ export default function FinancialLedgerModal({ isOpen, onClose, initialTab = 'gr
     const url = URL.createObjectURL(blob);
     const link = document.createElement("a");
     link.setAttribute("href", url);
-    link.setAttribute("download", `journal_bancaire_sci_hellenvilliers_${new Date().getFullYear()}.csv`);
+    link.setAttribute("download", `journal_bancaire_sci_hellenvilliers_${periodFilter}_${new Date().getFullYear()}.csv`);
     document.body.appendChild(link);
     link.click();
     document.body.removeChild(link);
@@ -173,9 +197,6 @@ export default function FinancialLedgerModal({ isOpen, onClose, initialTab = 'gr
                 `${transactions.length} ${transactions.length > 1 ? 'Opérations' : 'Opération'}`
               )}
               <Receipt className="w-4 h-4 text-emerald-600" />
-            </span>
-            <span className="text-[11px] text-emerald-700 font-semibold mt-0.5">
-              {isLoading ? 'Synchronisation...' : transactions.length > 0 ? 'Écritures réelles' : 'Zéro donnée inventée'}
             </span>
           </button>
 
@@ -266,36 +287,76 @@ export default function FinancialLedgerModal({ isOpen, onClose, initialTab = 'gr
           {/* ========================================================================= */}
           {activeTab === 'grand_livre' && (
             <div className="space-y-4">
-              <div className="flex items-center justify-between flex-wrap gap-2">
+              <div className="flex items-center justify-between flex-wrap gap-3">
                 <div>
                   <h3 className="text-base font-extrabold text-slate-900 flex items-center gap-2">
                     <Receipt className="w-4 h-4 text-emerald-600" />
-                    <span>Journal Général des Écritures Bancaires (Exercice 2026)</span>
+                    <span>Journal Général des Écritures Bancaires</span>
                   </h3>
                   <p className="text-xs text-slate-500">
                     Traçabilité chronologique complète des débits et crédits sur le compte Crédit Agricole dédié.
                   </p>
                 </div>
-                {transactions.length > 0 && (
-                  <span className="px-3 py-1 rounded-full bg-emerald-100 text-emerald-800 text-xs font-bold border border-emerald-200">
-                    {transactions.length} Écriture{transactions.length > 1 ? 's' : ''} Enregistrée{transactions.length > 1 ? 's' : ''}
-                  </span>
-                )}
+
+                {/* Sélecteur tri-période épuré (Annotation 2) */}
+                <div className="flex items-center gap-2 flex-wrap">
+                  <div className="inline-flex p-1 rounded-xl bg-slate-200/70 border border-slate-200 text-xs font-medium">
+                    <button
+                      type="button"
+                      onClick={() => setPeriodFilter('all')}
+                      className={`px-3 py-1 rounded-lg text-xs font-bold transition-all cursor-pointer ${
+                        periodFilter === 'all'
+                          ? 'bg-white text-emerald-950 shadow-xs'
+                          : 'text-slate-600 hover:text-slate-900'
+                      }`}
+                    >
+                      Depuis toujours
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => setPeriodFilter('1year')}
+                      className={`px-3 py-1 rounded-lg text-xs font-bold transition-all cursor-pointer ${
+                        periodFilter === '1year'
+                          ? 'bg-white text-emerald-950 shadow-xs'
+                          : 'text-slate-600 hover:text-slate-900'
+                      }`}
+                    >
+                      Dernière année
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => setPeriodFilter('3months')}
+                      className={`px-3 py-1 rounded-lg text-xs font-bold transition-all cursor-pointer ${
+                        periodFilter === '3months'
+                          ? 'bg-white text-emerald-950 shadow-xs'
+                          : 'text-slate-600 hover:text-slate-900'
+                      }`}
+                    >
+                      Derniers 3 mois
+                    </button>
+                  </div>
+
+                  {filteredTransactionsWithBalance.length > 0 && (
+                    <span className="px-3 py-1 rounded-full bg-emerald-100 text-emerald-800 text-xs font-bold border border-emerald-200">
+                      {filteredTransactionsWithBalance.length} Écriture{filteredTransactionsWithBalance.length > 1 ? 's' : ''} Enregistrée{filteredTransactionsWithBalance.length > 1 ? 's' : ''}
+                    </span>
+                  )}
+                </div>
               </div>
 
               {/* ÉTAT VIDE SOMBRE ET ÉLÉGANT (AUCUNE DONNÉE INVENTÉE) */}
               {isLoading ? (
                 <TableSkeleton rows={5} cols={6} />
-              ) : transactions.length === 0 ? (
+              ) : filteredTransactionsWithBalance.length === 0 ? (
                 <div className="bg-white rounded-2xl border border-slate-200 p-10 sm:p-14 text-center flex flex-col items-center justify-center shadow-xs">
                   <div className="w-16 h-16 rounded-full bg-slate-100 flex items-center justify-center text-slate-400 mb-4">
                     <Receipt className="w-8 h-8 text-slate-400" />
                   </div>
                   <h4 className="text-base font-bold text-slate-900">
-                    Aucune écriture bancaire enregistrée pour cet exercice.
+                    Aucune écriture bancaire enregistrée pour cette période.
                   </h4>
                   <p className="text-xs text-slate-500 mt-1.5 max-w-md leading-relaxed">
-                    La liaison Open Banking DSP2 est active ou en attente de synchronisation. Aucune transaction n'a encore été enregistrée sur le compte Crédit Agricole dédié pour l'exercice 2026.
+                    La liaison Open Banking DSP2 est active ou en attente de synchronisation. Aucune transaction n'a été trouvée sur le compte Crédit Agricole dédié pour la période sélectionnée.
                   </p>
                   <button
                     type="button"
@@ -323,7 +384,7 @@ export default function FinancialLedgerModal({ isOpen, onClose, initialTab = 'gr
                         </tr>
                       </thead>
                       <tbody className="divide-y divide-slate-100 text-slate-800">
-                        {transactionsWithBalance.map((op) => {
+                        {filteredTransactionsWithBalance.map((op) => {
                           const isIncome = op.amount > 0;
                           return (
                             <tr key={op.id || op.transaction_id} className="hover:bg-slate-50/80 transition-colors">
@@ -367,11 +428,11 @@ export default function FinancialLedgerModal({ isOpen, onClose, initialTab = 'gr
                           <td className="py-3.5 px-4 text-left" colSpan={4}>
                             Solde Net Constaté
                           </td>
-                          <td className={`py-3.5 px-4 text-right tabular-nums font-black ${soldeNet >= 0 ? 'text-emerald-800' : 'text-rose-800'}`}>
-                            {soldeNet >= 0 ? `+${soldeNet.toLocaleString('fr-FR', { minimumFractionDigits: 2 })} €` : `${soldeNet.toLocaleString('fr-FR', { minimumFractionDigits: 2 })} €`}
+                          <td className={`py-3.5 px-4 text-right tabular-nums font-black ${filteredNet >= 0 ? 'text-emerald-800' : 'text-rose-800'}`}>
+                            {filteredNet >= 0 ? `+${filteredNet.toLocaleString('fr-FR', { minimumFractionDigits: 2 })} €` : `${filteredNet.toLocaleString('fr-FR', { minimumFractionDigits: 2 })} €`}
                           </td>
                           <td className="py-3.5 px-4 text-right tabular-nums text-slate-900 font-black text-sm">
-                            {soldeNet >= 0 ? `+${soldeNet.toLocaleString('fr-FR', { minimumFractionDigits: 2 })} €` : `${soldeNet.toLocaleString('fr-FR', { minimumFractionDigits: 2 })} €`}
+                            {filteredNet >= 0 ? `+${filteredNet.toLocaleString('fr-FR', { minimumFractionDigits: 2 })} €` : `${filteredNet.toLocaleString('fr-FR', { minimumFractionDigits: 2 })} €`}
                           </td>
                         </tr>
                       </tfoot>
