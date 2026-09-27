@@ -943,39 +943,21 @@ export default function TasksPage({ currentUser = 'Henri Jamet' }) {
         {loading ? (
           <TasksContainerSkeleton count={4} />
         ) : sortedTasks.length === 0 ? (
-          <div className="col-span-full py-12 px-6 bg-surface-container-lowest rounded-xl border border-dashed border-border-subtle flex flex-col items-center justify-center text-center">
-            <div className="w-14 h-14 rounded-full bg-sage-soft text-forest-deep flex items-center justify-center mb-3">
-              <span className="material-symbols-outlined text-[32px]">checklist_rtl</span>
+          <div className="col-span-full bg-surface-container-low border border-subtle rounded-2xl p-8 flex flex-col items-center justify-center text-center py-12">
+            <div className="w-14 h-14 rounded-full bg-surface-container flex items-center justify-center text-on-surface-variant mb-3">
+              <span className="material-symbols-outlined text-[28px]">checklist</span>
             </div>
-            <h4 className="font-headline-sm text-base font-bold text-forest-deep">
-              Aucune tâche ne correspond à vos critères
-            </h4>
-            <p className="font-body-md text-xs sm:text-sm text-on-surface-variant max-w-md mt-1">
-              Modifiez vos termes de recherche ou réinitialisez les filtres pour afficher l'ensemble des chantiers.
-            </p>
-            <div className="flex items-center gap-3 mt-4">
-              <button
-                type="button"
-                onClick={() => {
-                  setSearchTerm('');
-                  setSelectedPriority('Toutes');
-                  setSelectedAssignee('all');
-                  setSelectedSubject('all');
-                  setSelectedCategory('all');
-                }}
-                className="px-4 py-2 bg-canvas-slate text-on-surface text-xs font-bold rounded-DEFAULT hover:bg-slate-200 transition-colors cursor-pointer"
-              >
-                Réinitialiser les filtres
-              </button>
-              <button
-                type="button"
-                onClick={handleOpenCreateTask}
-                className="px-4 py-2 bg-sage-soft text-primary-container text-xs font-bold rounded-DEFAULT hover:bg-emerald-100 transition-colors cursor-pointer flex items-center gap-1.5"
-              >
-                <span className="material-symbols-outlined text-[16px]">add_task</span>
-                <span>Proposer une tâche</span>
-              </button>
-            </div>
+            <h3 className="font-headline-sm text-headline-sm text-forest-deep font-bold mb-4">
+              Aucune tâche en cours
+            </h3>
+            <button
+              type="button"
+              onClick={handleOpenCreateTask}
+              className="h-[48px] px-6 rounded-DEFAULT bg-surface-container-lowest border-2 border-primary text-primary hover:bg-sage-soft font-label-md text-label-md transition-all flex items-center gap-2.5 font-bold cursor-pointer shadow-sm hover:shadow"
+            >
+              <span className="material-symbols-outlined text-[22px]">add_task</span>
+              <span>Soumettre une nouvelle proposition de tâche</span>
+            </button>
           </div>
         ) : (
           sortedTasks.map((t) => (

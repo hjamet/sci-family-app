@@ -1230,27 +1230,8 @@ export default function TaskDetailModal({
                       )}
                     </div>
 
-                    {/* Annotation 7 : Porteur exclusif currentUser en mode vote vs sélecteur en mode tâche */}
-                    {isVoteInitiative ? (
-                      <div className="space-y-1.5">
-                        <label className="font-label-md text-xs font-semibold text-on-surface">
-                          Porteur du projet (Rapporteur)
-                        </label>
-                        <div className="flex items-center gap-3 p-3 bg-canvas-slate rounded-xl border border-slate-200">
-                          <div className="w-8 h-8 rounded-full bg-forest-deep text-white flex items-center justify-center font-bold text-xs shrink-0 shadow-xs">
-                            {(currentUserName || 'Henri Jamet').split(' ').map((n) => n[0]).join('').slice(0, 2).toUpperCase()}
-                          </div>
-                          <div className="flex flex-col min-w-0">
-                            <span className="font-label-md text-xs sm:text-sm font-bold text-forest-deep truncate">
-                              {currentUserName || 'Henri Jamet'}
-                            </span>
-                            <span className="text-[11px] text-on-surface-variant font-medium">
-                              Associé déclarant et porteur exclusif de l'initiative au vote
-                            </span>
-                          </div>
-                        </div>
-                      </div>
-                    ) : (
+                    {/* Annotation 8 : Suppression de l'indicateur de porteur en mode vote, conservation des membres attribués en mode tâche */}
+                    {!isVoteInitiative && (
                       <div className="space-y-1.5">
                         <label className="font-label-md text-xs font-semibold text-on-surface">
                           Membres attribués
@@ -1394,25 +1375,6 @@ export default function TaskDetailModal({
                             Aucune option personnalisée définie. Cliquez sur « Ajouter une option ».
                           </p>
                         )}
-                      </div>
-
-                      {/* Options statutaires intangibles (lecture seule) */}
-                      <div className="p-3 bg-slate-50 rounded-xl border border-slate-200 space-y-2">
-                        <span className="text-[11px] font-bold text-slate-600 uppercase tracking-wider block">
-                          Options statutaires obligatoires (incluses par défaut) :
-                        </span>
-                        <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
-                          <div className="flex items-center gap-2 p-2 bg-white rounded-lg border border-slate-200 text-xs text-slate-700 select-none shadow-xs">
-                            <span className="w-2.5 h-2.5 rounded-full border-2 border-slate-400 bg-white"></span>
-                            <span className="font-semibold">⚪ Voter blanc</span>
-                            <span className="text-[10px] text-slate-400 ml-auto">(Statutaire)</span>
-                          </div>
-                          <div className="flex items-center gap-2 p-2 bg-white rounded-lg border border-slate-200 text-xs text-slate-700 select-none shadow-xs">
-                            <span className="material-symbols-outlined text-[15px] text-slate-500">account_balance</span>
-                            <span className="font-semibold">🏛️ Reporter à l'AG</span>
-                            <span className="text-[10px] text-slate-400 ml-auto">(Statutaire)</span>
-                          </div>
-                        </div>
                       </div>
                     </div>
                   )}
