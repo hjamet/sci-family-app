@@ -142,8 +142,8 @@ export default function BookingModal({
   const [arrivalTime, setArrivalTime] = useState('15:00');
   const [departureTime, setDepartureTime] = useState('11:00');
 
-  // Annotation 4 : Pas d'associé déclarant manuel, Intitulé + Description facultative
-  const [stayTitle, setStayTitle] = useState('Séjour estival en famille');
+  // Annotation 2 : Intitulé vide par défaut en mode création, Description facultative
+  const [stayTitle, setStayTitle] = useState('');
   const [description, setDescription] = useState('');
 
   // Annotation 3 : Sélecteur multiple pour membres et chips pour invités
@@ -151,7 +151,8 @@ export default function BookingModal({
   const [externalGuests, setExternalGuests] = useState([]);
   const [guestInputValue, setGuestInputValue] = useState('');
 
-  const [cohabitationAgreement, setCohabitationAgreement] = useState(true);
+  // Annotation 1 : Régime de cohabitation à 3 options ('total' | 'other_building' | 'exclusive')
+  const [cohabitationType, setCohabitationType] = useState('total');
   const [notes, setNotes] = useState('');
 
   // Contrôles domotiques d'anticipation
@@ -248,20 +249,24 @@ export default function BookingModal({
         setSelectedRooms([]);
       }
 
-      if (typeof initialReservation.accepts_extra_family === 'boolean') {
-        setCohabitationAgreement(initialReservation.accepts_extra_family);
+      if (initialReservation.cohabitation_type) {
+        setCohabitationType(initialReservation.cohabitation_type);
+      } else if (initialReservation.accepts_extra_family === false) {
+        setCohabitationType('exclusive');
+      } else {
+        setCohabitationType('total');
       }
     } else {
       setStartDate('2026-08-10');
       setEndDate('2026-08-17');
       setArrivalTime('15:00');
       setDepartureTime('11:00');
-      setStayTitle('Séjour estival en famille');
+      setStayTitle('');
       setDescription('');
       setSelectedMembers([loggedInUserName]);
       setExternalGuests([]);
       setGuestInputValue('');
-      setCohabitationAgreement(true);
+      setCohabitationType('total');
       setNotes('');
       setSelectedRooms([]); // Annotation 1 : ZÉRO CHAMBRE SÉLECTIONNÉE PAR DÉFAUT
       setPoolHeating(false);
@@ -325,11 +330,6 @@ export default function BookingModal({
       setError("Pour une réservation sur une seule journée, l'heure de départ doit être postérieure à l'heure d'arrivée.");
       return;
     }
-    if (!cohabitationAgreement) {
-      setError("Veuillez accepter la charte de cohabitation bienveillante du domaine.");
-      return;
-    }
-
     try {
       setSubmitting(true);
       setError(null);
@@ -389,7 +389,8 @@ export default function BookingModal({
         chambers_used: selectedRooms.length,
         selected_rooms: selectedRooms,
         rooms_count: selectedRooms.length,
-        accepts_extra_family: cohabitationAgreement,
+        cohabitation_type: cohabitationType,
+        accepts_extra_family: cohabitationType !== 'exclusive',
         notes: notesParts.join(' • '),
       };
 
@@ -431,6 +432,22 @@ export default function BookingModal({
 
   const rosingRooms = ROOMS.filter((r) => r.house === 'rosing');
   const presbytereRooms = ROOMS.filter((r) => r.house === 'presbytere');
+  const hasSelectedRosing = selectedRooms.some((rName) => {
+    const found = ROOMS.find((r) => r.name === rName);
+    return found ? found.house === 'rosing' : false;
+  });
+  const hasSelectedPresb = selectedRooms.some((rName) => {
+    const found = ROOMS.find((r) => r.name === rName);
+    return found ? found.house === 'presbytere' : false;
+  });
+  const isOtherBuildingDisabled = hasSelectedRosing && hasSelectedPresb;
+
+  useEffect(() => {
+    if (isOtherBuildingDisabled && cohabitationType === 'other_building') {
+      setCohabitationType('total');
+    }
+  }, [isOtherBuildingDisabled, cohabitationType]);
+
   const totalOccupants = selectedMembers.length + externalGuests.length;
 
   return (
@@ -965,30 +982,108 @@ export default function BookingModal({
             </div>
           </section>
 
-          {/* SECTION 6: Cohabitation & Notes logistiques */}
+          {/* SECTION 6: Régime de cohabitation & Notes logistiques */}
           <section className="flex flex-col gap-space-xs">
             <label className="font-label-lg text-label-lg text-on-surface flex items-center gap-2">
               <span className="flex items-center justify-center w-6 h-6 rounded-full bg-surface-container-high text-forest-deep text-xs font-bold">6</span>
-              Cohabitation & Notes logistiques
+              Régime de cohabitation & Notes logistiques
             </label>
 
-            {/* Option Cohabitation Conviviale */}
-            <label className="flex items-start gap-3 p-3.5 rounded-DEFAULT bg-sage-soft/60 border border-sage-border cursor-pointer hover:bg-sage-soft transition-colors select-none">
-              <input
-                type="checkbox"
-                checked={cohabitationAgreement}
-                onChange={(e) => setCohabitationAgreement(e.target.checked)}
-                className="mt-1 w-5 h-5 rounded accent-primary-container cursor-pointer shrink-0"
-              />
-              <div className="flex flex-col">
-                <span className="font-label-md text-label-md text-forest-deep font-semibold">
-                  J'accepte la cohabitation avec d'autres associés de la famille sur les chambres libres
-                </span>
-                <span className="font-body-md text-xs text-on-surface-variant mt-0.5">
-                  Facilite les passages simultanés en respectant l'intimité de chaque aile du domaine.
-                </span>
+            {/* 3 Options Horizontales de Cohabitation */}
+            <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
+              {/* Option 1 : Cohabitation Totale */}
+              <button
+                type="button"
+                onClick={() => setCohabitationType('total')}
+                className={`flex flex-col items-start p-3.5 rounded-DEFAULT text-left border-2 transition-all cursor-pointer ${
+                  cohabitationType === 'total'
+                    ? 'bg-sage-soft/80 border-primary-container shadow-xs text-forest-deep'
+                    : 'bg-surface-container-lowest border-border-subtle hover:bg-surface-container-low/50 text-on-surface'
+                }`}
+              >
+                <div className="flex items-center justify-between w-full mb-1.5">
+                  <div className="flex items-center gap-2 font-label-md text-label-md font-semibold">
+                    <span className="material-symbols-outlined text-[20px] text-primary-container">groups</span>
+                    <span>Totale</span>
+                  </div>
+                  <div className={`w-4 h-4 rounded-full border-2 flex items-center justify-center ${
+                    cohabitationType === 'total' ? 'border-primary-container' : 'border-border-subtle'
+                  }`}>
+                    {cohabitationType === 'total' && <div className="w-2 h-2 rounded-full bg-primary-container" />}
+                  </div>
+                </div>
+                <p className="font-body-md text-xs text-on-surface-variant leading-snug">
+                  Rosings & Presbytère ouverts aux autres associés sur les chambres libres.
+                </p>
+              </button>
+
+              {/* Option 2 : Autre bâtiment uniquement */}
+              <div className="relative group flex flex-col">
+                <button
+                  type="button"
+                  disabled={isOtherBuildingDisabled}
+                  onClick={() => !isOtherBuildingDisabled && setCohabitationType('other_building')}
+                  className={`flex-1 flex flex-col items-start p-3.5 rounded-DEFAULT text-left border-2 transition-all w-full ${
+                    isOtherBuildingDisabled
+                      ? 'bg-surface-container-low/40 border-border-subtle/50 text-on-surface-variant/50 cursor-not-allowed opacity-60'
+                      : cohabitationType === 'other_building'
+                      ? 'bg-sage-soft/80 border-primary-container shadow-xs text-forest-deep cursor-pointer'
+                      : 'bg-surface-container-lowest border-border-subtle hover:bg-surface-container-low/50 text-on-surface cursor-pointer'
+                  }`}
+                >
+                  <div className="flex items-center justify-between w-full mb-1.5">
+                    <div className="flex items-center gap-2 font-label-md text-label-md font-semibold">
+                      <span className="material-symbols-outlined text-[20px] text-primary-container">cottage</span>
+                      <span>Autre bâtiment</span>
+                    </div>
+                    <div className={`w-4 h-4 rounded-full border-2 flex items-center justify-center ${
+                      cohabitationType === 'other_building' ? 'border-primary-container' : 'border-border-subtle'
+                    }`}>
+                      {cohabitationType === 'other_building' && <div className="w-2 h-2 rounded-full bg-primary-container" />}
+                    </div>
+                  </div>
+                  <p className="font-body-md text-xs text-on-surface-variant leading-snug">
+                    Cohabitation restreinte à l'autre maison uniquement.
+                  </p>
+                  {isOtherBuildingDisabled && (
+                    <span className="mt-1.5 text-[11px] text-amber-700 font-medium">
+                      Indisponible (chambres dans les deux maisons)
+                    </span>
+                  )}
+                </button>
+                {isOtherBuildingDisabled && (
+                  <div className="hidden group-hover:block absolute -top-10 left-1/2 -translate-x-1/2 bg-forest-deep text-white text-xs px-2.5 py-1.5 rounded shadow-lg whitespace-nowrap z-20 pointer-events-none">
+                    Indisponible : vous occupez déjà des chambres dans Rosings et le Presbytère.
+                  </div>
+                )}
               </div>
-            </label>
+
+              {/* Option 3 : Exclusif (Privatisation) */}
+              <button
+                type="button"
+                onClick={() => setCohabitationType('exclusive')}
+                className={`flex flex-col items-start p-3.5 rounded-DEFAULT text-left border-2 transition-all cursor-pointer ${
+                  cohabitationType === 'exclusive'
+                    ? 'bg-amber-50 border-amber-600 shadow-xs text-amber-900'
+                    : 'bg-surface-container-lowest border-border-subtle hover:bg-surface-container-low/50 text-on-surface'
+                }`}
+              >
+                <div className="flex items-center justify-between w-full mb-1.5">
+                  <div className="flex items-center gap-2 font-label-md text-label-md font-semibold">
+                    <span className="material-symbols-outlined text-[20px] text-amber-700">lock</span>
+                    <span>Exclusif</span>
+                  </div>
+                  <div className={`w-4 h-4 rounded-full border-2 flex items-center justify-center ${
+                    cohabitationType === 'exclusive' ? 'border-amber-600' : 'border-border-subtle'
+                  }`}>
+                    {cohabitationType === 'exclusive' && <div className="w-2 h-2 rounded-full bg-amber-600" />}
+                  </div>
+                </div>
+                <p className="font-body-md text-xs text-on-surface-variant leading-snug">
+                  Privatisation du domaine entier. Charge corvées calculée sur les 7 chambres.
+                </p>
+              </button>
+            </div>
 
             {/* Champ Notes & Précisions Logistiques (stay-notes) */}
             <div className="flex flex-col gap-1.5 pt-1">

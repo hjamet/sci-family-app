@@ -1,5 +1,5 @@
 import React, { useState } from 'react';
-import { BarChart2, Info, Users, Home, TrendingUp } from 'lucide-react';
+import { BarChart2, TrendingUp } from 'lucide-react';
 
 const MONTH_LABELS = [
   'Jan', 'Fév', 'Mar', 'Avr', 'Mai', 'Juin',
@@ -76,9 +76,6 @@ export default function HouseUsageChart({ reservations = [] }) {
           <h2 className="text-xl sm:text-2xl font-black tracking-tight text-slate-900 dark:text-white">
             Occupation du Domaine sur 12 Mois
           </h2>
-          <p className="text-xs text-slate-500 dark:text-slate-400 mt-0.5">
-            Estimation de l'occupation simultanée des 7 chambres (Villa Rosing & Presbytère).
-          </p>
         </div>
 
         {/* Stats Summary Badge */}

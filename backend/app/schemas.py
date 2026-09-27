@@ -1,7 +1,7 @@
 import json
 from datetime import datetime
 from enum import Enum
-from typing import List, Optional, Dict
+from typing import List, Optional, Dict, Any, Union
 from pydantic import BaseModel, field_validator, Field
 
 class VoteEnum(str, Enum):
@@ -331,6 +331,7 @@ class ReservationBase(BaseModel):
     selected_rooms: Optional[List[str]] = None
     rooms_count: Optional[int] = 1
     accepts_extra_family: Optional[bool] = True
+    cohabitation_type: Optional[str] = "total"
     notes: Optional[str] = None
 
 class ReservationCreate(ReservationBase):
@@ -352,6 +353,7 @@ class ReservationUpdate(BaseModel):
     selected_rooms: Optional[List[str]] = None
     rooms_count: Optional[int] = None
     accepts_extra_family: Optional[bool] = None
+    cohabitation_type: Optional[str] = None
     notes: Optional[str] = None
 
 class ReservationResponse(BaseModel):
@@ -371,6 +373,7 @@ class ReservationResponse(BaseModel):
     selected_rooms: Optional[List[str]] = None
     rooms_count: Optional[int] = 1
     accepts_extra_family: Optional[bool] = True
+    cohabitation_type: Optional[str] = "total"
     notes: Optional[str] = None
     created_at: datetime
     property: Optional[PropertyResponse] = None
@@ -409,6 +412,7 @@ class ProjectCreate(BaseModel):
     photo_urls: Optional[List[str]] = []
     decision_mode: Optional[str] = None
     status: Optional[str] = None
+    options: Optional[List[str]] = []
 
 class ProjectApprove(BaseModel):
     estimated_cost: Optional[float] = 0.0
@@ -437,10 +441,11 @@ class ProjectReview(BaseModel):
     responsible: Optional[str] = None
     completion_notes: Optional[str] = None
     completion_docs: Optional[List[str]] = None
+    options: Optional[List[str]] = None
 
 class ProjectVoteCreate(BaseModel):
     user_name: str
-    vote: VoteEnum  # OUI, NON, ABSTENTION, REPORT_PROCHAINE_AG, POUR, CONTRE
+    vote: str  # OUI, NON, ABSTENTION, BLANC, REPORT_PROCHAINE_AG, POUR, CONTRE, or custom option text
     comment: Optional[str] = None
 
 class ProjectVoteResponse(BaseModel):
@@ -477,6 +482,7 @@ class ProjectResponse(BaseModel):
     coordinator_notes: Optional[str] = None
     completion_notes: Optional[str] = None
     completion_docs: Optional[List[str]] = []
+    options: Optional[List[str]] = []
     created_at: datetime
     updated_at: datetime
     property: Optional[PropertyResponse] = None
@@ -732,17 +738,19 @@ class TaskBase(BaseModel):
     subject: Optional[str] = "SCI"
     category: Optional[str] = None
     priority: Optional[str] = "Normale"
-    status: Optional[str] = "EN_COURS"
+    status: Optional[str] = "PROPOSED"
     is_recurring: Optional[bool] = False
     last_completed_at: Optional[datetime] = None
     complexity: Optional[str] = "Modérée"
-    budget: Optional[float] = 0.0
+    budget: Optional[float] = None
     budget_notes: Optional[str] = None
     assignee_id: Optional[int] = None
     assigned_members: Optional[List[str]] = []
     deadline: Optional[str] = None
     checklist: Optional[List[Dict]] = []
     documents: Optional[List[Dict]] = []
+    document_ids: Optional[List[int]] = None
+    attachments: Optional[List[Any]] = None
     completion_notes: Optional[str] = None
     completion_docs: Optional[List[str]] = []
     created_by: Optional[str] = "Henri"
@@ -769,6 +777,8 @@ class TaskUpdate(BaseModel):
     deadline: Optional[str] = None
     checklist: Optional[List[Dict]] = None
     documents: Optional[List[Dict]] = None
+    document_ids: Optional[List[int]] = None
+    attachments: Optional[List[Any]] = None
     completion_notes: Optional[str] = None
     completion_docs: Optional[List[str]] = None
 

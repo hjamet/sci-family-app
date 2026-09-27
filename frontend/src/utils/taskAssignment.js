@@ -91,6 +91,9 @@ export function isTaskOpen(task) {
     'cloturee',
     'cloture',
     'closed',
+    'refusee',
+    'refuse',
+    'rejected',
   ];
   return !closedNormalized.includes(norm);
 }
@@ -119,6 +122,50 @@ export function isTaskPendingValidation(task) {
     Boolean(task.requires_coordinator_validation)
   );
 }
+
+/**
+ * Vérifie si une tâche est proposée (en attente d'approbation initiale par le coordinateur).
+ */
+export function isTaskProposed(task) {
+  if (!task) return false;
+  const rawStatus = (task.status || '').trim();
+  const st = rawStatus.toUpperCase();
+  const normalized = stripAccents(rawStatus).toLowerCase().replace(/[_\s-]+/g, '_');
+  return (
+    st === 'PROPOSED' ||
+    st === 'PROPOSEE' ||
+    st === 'PROPOSÉE' ||
+    st === 'SOUMIS' ||
+    st === 'SOUMISE' ||
+    st === 'A_REVOIR' ||
+    st === 'À_REVOIR' ||
+    st === 'A REVOIR' ||
+    st === 'À REVOIR' ||
+    st === 'A_APPROUVER' ||
+    st === 'EN_ATTENTE_APPROBATION' ||
+    st === 'PENDING_APPROVAL' ||
+    normalized === 'proposed' ||
+    normalized === 'proposee' ||
+    normalized === 'a_revoir' ||
+    normalized === 'soumise' ||
+    normalized === 'soumis' ||
+    normalized === 'a_approuver' ||
+    Boolean(task.is_proposed)
+  );
+}
+
+/**
+ * Détermine la catégorie trichromatique d'une tâche :
+ * - 'orange' : proposée en attente d'approbation initiale (PROPOSED, A_REVOIR)
+ * - 'green' : terminée demandant validation finale du coordinateur (PENDING_VALIDATION, A_VALIDER)
+ * - 'blue' : en cours (EN_COURS, IN_PROGRESS, TODO, etc.)
+ */
+export function getTaskColorCategory(task) {
+  if (isTaskProposed(task)) return 'orange';
+  if (isTaskPendingValidation(task)) return 'green';
+  return 'blue';
+}
+
 
 /**
  * Comparateur universel d'assignation d'une tâche à un utilisateur donné.

@@ -16,14 +16,16 @@ def calculate_reservation_days(start_date: str, end_date: str) -> int:
 def calculate_effective_rooms(
     accepts_extra_family: Optional[bool] = True,
     rooms_count: Optional[int] = 1,
-    chambers_used: Optional[int] = 1
+    chambers_used: Optional[int] = 1,
+    cohabitation_type: Optional[str] = None
 ) -> int:
     """
     Henri's Capacity Penalty Rule:
-    If accepts_extra_family is False, exclusive booking penalty applies -> rooms_count = 7 (100% SCI capacity penalty).
+    If cohabitation_type == 'exclusive' or accepts_extra_family is False,
+    exclusive booking penalty applies -> rooms_count = 7 (100% SCI capacity penalty, ratio = 1.0).
     Otherwise, returns selected rooms_count, fallback to chambers_used or 1.
     """
-    if accepts_extra_family is False:
+    if cohabitation_type == "exclusive" or accepts_extra_family is False:
         return 7
     if rooms_count is not None and rooms_count > 0:
         return rooms_count
@@ -37,13 +39,14 @@ def calculate_reservation_score(
     end_date: str,
     accepts_extra_family: Optional[bool] = True,
     rooms_count: Optional[int] = 1,
-    chambers_used: Optional[int] = 1
+    chambers_used: Optional[int] = 1,
+    cohabitation_type: Optional[str] = None
 ) -> float:
     """
     Calculates single reservation occupation score O_u_i = days * effective_rooms.
     """
     days = calculate_reservation_days(start_date, end_date)
-    rooms = calculate_effective_rooms(accepts_extra_family, rooms_count, chambers_used)
+    rooms = calculate_effective_rooms(accepts_extra_family, rooms_count, chambers_used, cohabitation_type)
     return float(days * rooms)
 
 
@@ -54,7 +57,7 @@ def calculate_workload_distribution(
     """
     Henri's Proportional Usage Workload Model:
     - User occupation score: O_u = sum(days * rooms_count)
-    - If accepts_extra_family == False: rooms_count = 7 (100% capacity penalty).
+    - If cohabitation_type == 'exclusive' or accepts_extra_family == False: rooms_count = 7 (100% capacity penalty).
     - Target Charge Points: C_u^target = (O_u / sum(O_v)) * Total Charge Points.
     
     Accepts SQLAlchemy Reservation objects or dictionary representations.
@@ -69,6 +72,7 @@ def calculate_workload_distribution(
             start_date = res.get("start_date", "")
             end_date = res.get("end_date", "")
             accepts_extra = res.get("accepts_extra_family", True)
+            cohab_type = res.get("cohabitation_type")
             rc = res.get("rooms_count", 1)
             cu = res.get("chambers_used", 1)
         else:
@@ -76,11 +80,12 @@ def calculate_workload_distribution(
             start_date = getattr(res, "start_date", "")
             end_date = getattr(res, "end_date", "")
             accepts_extra = getattr(res, "accepts_extra_family", True)
+            cohab_type = getattr(res, "cohabitation_type", None)
             rc = getattr(res, "rooms_count", 1)
             cu = getattr(res, "chambers_used", 1)
 
         days = calculate_reservation_days(start_date, end_date)
-        rooms = calculate_effective_rooms(accepts_extra, rc, cu)
+        rooms = calculate_effective_rooms(accepts_extra, rc, cu, cohab_type)
         score = float(days * rooms)
 
         user_scores[user_name] = user_scores.get(user_name, 0.0) + score

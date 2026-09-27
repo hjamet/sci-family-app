@@ -1,6 +1,15 @@
 import React, { useState, useEffect, useMemo } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { fetchTasks, createTask, fetchProjects, validateTask, invalidateTask, getCachedData } from '../api';
+import {
+  fetchTasks,
+  createTask,
+  fetchProjects,
+  validateTask,
+  invalidateTask,
+  acceptTask,
+  rejectTask,
+  getCachedData,
+} from '../api';
 import TaskDetailModal from './TaskDetailModal';
 import VoteRoofModal from './VoteRoofModal';
 import { CardSkeleton, TasksContainerSkeleton, VoteCardSkeleton } from './SkeletonLoaders';
@@ -18,18 +27,23 @@ const AUTHENTIC_ASSOCIATES = [
   { id: 'frederic', name: 'Frédéric Jamet', shortName: 'Frédéric' },
 ];
 
-export {
-  resolveUserMeta,
-  isTaskOpen,
-  isTaskPendingValidation,
-  isTaskAssignedToUser,
-} from '../utils/taskAssignment';
 import {
   resolveUserMeta,
   isTaskOpen,
   isTaskPendingValidation,
+  isTaskProposed,
+  getTaskColorCategory,
   isTaskAssignedToUser,
 } from '../utils/taskAssignment';
+
+export {
+  resolveUserMeta,
+  isTaskOpen,
+  isTaskPendingValidation,
+  isTaskProposed,
+  getTaskColorCategory,
+  isTaskAssignedToUser,
+};
 
 export default function TasksPage({ currentUser = 'Henri Jamet' }) {
   const navigate = useNavigate();
@@ -256,6 +270,28 @@ export default function TasksPage({ currentUser = 'Henri Jamet' }) {
     }
   };
 
+  const handleAcceptTask = async (taskToAccept) => {
+    try {
+      await acceptTask(taskToAccept.id);
+      await loadTasks();
+    } catch (err) {
+      console.error('Erreur acceptation tâche:', err);
+      alert(err.message || "Erreur lors de l'acceptation de la tâche");
+    }
+  };
+
+  const handleRejectTask = async (taskToReject) => {
+    const reason = window.prompt("Motif du refus de la proposition (optionnel) :", "");
+    if (reason === null) return;
+    try {
+      await rejectTask(taskToReject.id, reason);
+      await loadTasks();
+    } catch (err) {
+      console.error('Erreur refus tâche:', err);
+      alert(err.message || "Erreur lors du refus de la tâche");
+    }
+  };
+
   // Filtrage des tâches
   const filteredTasks = tasks.filter((t) => {
     // Recherche textuelle
@@ -287,8 +323,9 @@ export default function TasksPage({ currentUser = 'Henri Jamet' }) {
       );
 
       const isPendingVal = isTaskPendingValidation(t);
-      if (isCoordinator && isTargetCurrentUser && isPendingVal) {
-        // Tâche à valider incluse dans "Mes tâches" pour le coordinateur
+      const isProposedVal = isTaskProposed(t);
+      if (isCoordinator && isTargetCurrentUser && (isPendingVal || isProposedVal)) {
+        // Tâche à valider ou proposée incluse dans "Mes tâches" pour le coordinateur
       } else if (!isTaskAssignedToUser(t, targetMeta)) {
         return false;
       }
@@ -338,11 +375,11 @@ export default function TasksPage({ currentUser = 'Henri Jamet' }) {
   const totalTasks = tasks.length;
   const totalOpenTasksCount = Math.max(0, totalTasks - completedTasksCount);
 
-  // Mes tâches parmi les tâches ouvertes (inclus les tâches à valider pour le coordinateur)
+  // Mes tâches parmi les tâches ouvertes (inclus les tâches à valider ou proposées pour le coordinateur)
   const myOpenTasksCount = useMemo(() => {
     return tasks.filter(t => {
       if (!isTaskOpen(t)) return false;
-      if (isCoordinator && isTaskPendingValidation(t)) return true;
+      if (isCoordinator && (isTaskPendingValidation(t) || isTaskProposed(t))) return true;
       return isTaskAssignedToUser(t, userMeta);
     }).length;
   }, [tasks, userMeta, isCoordinator]);
@@ -568,9 +605,6 @@ export default function TasksPage({ currentUser = 'Henri Jamet' }) {
                   </span>
                 )}
               </div>
-              <p className="font-body-md text-body-md text-on-surface-variant mt-0.5 text-xs sm:text-sm">
-                Règle de Délégation & Seuil Budgétaire : Vote statutaire requis pour tout engagement &gt; 300 € sur les fonds communs de la SCI
-              </p>
             </div>
           </div>
 
@@ -950,6 +984,8 @@ export default function TasksPage({ currentUser = 'Henri Jamet' }) {
               task={t}
               currentUser={currentUser}
               onOpen={(taskToOpen) => handleOpenInspectTask(taskToOpen)}
+              onAccept={handleAcceptTask}
+              onReject={handleRejectTask}
             />
           ))
         )}

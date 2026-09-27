@@ -1,5 +1,10 @@
-import React from 'react';
-import { isTaskPendingValidation } from '../../utils/taskAssignment';
+import React, { useState } from 'react';
+import {
+  isTaskPendingValidation,
+  isTaskProposed,
+  getTaskColorCategory,
+} from '../../utils/taskAssignment';
+import { acceptTask, rejectTask } from '../../api';
 
 function getCategoryIcon(cat) {
   if (!cat) return 'category';
@@ -30,11 +35,30 @@ export default function TaskCard({
   task,
   currentUser,
   onOpen,
+  onAccept,
+  onReject,
   className = '',
 }) {
   if (!task) return null;
 
-  const isValidationTask = isTaskPendingValidation(task);
+  const [isSubmitting, setIsSubmitting] = useState(false);
+
+  // Système Trichromatique :
+  // - Orange : tâche proposée en attente d'approbation initiale (PROPOSED, A_REVOIR, SOUMIS)
+  // - Vert : tâche terminée demandant validation finale du coordinateur (PENDING_VALIDATION, A_VALIDER)
+  // - Bleu : tâche en cours (EN_COURS, IN_PROGRESS, TODO)
+  const colorCat = getTaskColorCategory(task);
+  const isProposed = colorCat === 'orange';
+  const isValidationTask = colorCat === 'green';
+  const isInProgress = colorCat === 'blue';
+
+  const isCoordinator = Boolean(
+    currentUser?.is_coordinator === true ||
+    currentUser?.is_coordinator === 'true' ||
+    currentUser?.is_coordinator === 1 ||
+    (typeof currentUser === 'object' && (currentUser?.prenom?.toLowerCase() === 'henri' || currentUser?.prenom?.toLowerCase() === 'josephine' || currentUser?.prenom?.toLowerCase() === 'joséphine')) ||
+    (typeof currentUser === 'string' && (currentUser.toLowerCase().includes('henri') || currentUser.toLowerCase().includes('josephine') || currentUser.toLowerCase().includes('joséphine')))
+  );
 
   // Normalize priority to 'Normale', 'Haute', 'Critique'
   const rawPriority = (task.priority || 'Normale').trim();
@@ -68,7 +92,10 @@ export default function TaskCard({
     assigneeName = 'Henri Jamet';
   }
 
-  const displayAssigneeName = isValidationTask ? (task.created_by || assigneeName) : assigneeName;
+  const displayAssigneeName = (isValidationTask || isProposed)
+    ? (task.created_by || assigneeName)
+    : assigneeName;
+
   const initials = displayAssigneeName
     ? displayAssigneeName
         .split(' ')
@@ -79,7 +106,7 @@ export default function TaskCard({
         .toUpperCase()
     : 'HJ';
 
-  // Annotation 1: Calcul d'avancement opérationnel strictement basé sur la checklist / subtasks
+  // Calcul d'avancement opérationnel strictement basé sur la checklist / subtasks
   const parseItems = (raw) => {
     if (Array.isArray(raw) && raw.length > 0) return raw;
     if (typeof raw === 'string' && raw.trim()) {
@@ -103,30 +130,81 @@ export default function TaskCard({
     : 0;
   const progressPct = hasChecklist ? Math.round((completedSteps / totalSteps) * 100) : 0;
 
+  // Actions Coordinateur : Accepter
+  const handleAcceptClick = async (e) => {
+    e.stopPropagation();
+    if (isSubmitting) return;
+    try {
+      setIsSubmitting(true);
+      if (onAccept) {
+        await onAccept(task);
+      } else {
+        await acceptTask(task.id);
+        if (onOpen) onOpen(task, 'refreshed');
+      }
+    } catch (err) {
+      console.error('Erreur acceptation tâche:', err);
+      alert(err.message || 'Erreur lors de l\'acceptation de la tâche');
+    } finally {
+      setIsSubmitting(false);
+    }
+  };
+
+  // Actions Coordinateur : Refuser
+  const handleRejectClick = async (e) => {
+    e.stopPropagation();
+    if (isSubmitting) return;
+    try {
+      setIsSubmitting(true);
+      if (onReject) {
+        await onReject(task);
+      } else {
+        const reason = window.prompt('Motif du refus de la proposition (optionnel) :', '');
+        if (reason === null) return;
+        await rejectTask(task.id, reason);
+        if (onOpen) onOpen(task, 'refreshed');
+      }
+    } catch (err) {
+      console.error('Erreur refus tâche:', err);
+      alert(err.message || 'Erreur lors du refus de la tâche');
+    } finally {
+      setIsSubmitting(false);
+    }
+  };
+
   return (
     <article
       onClick={() => onOpen && onOpen(task)}
       className={`rounded-xl p-space-md lg:p-space-lg shadow-sm hover:shadow-md transition-all flex flex-col justify-between group cursor-pointer ${
-        isValidationTask
-          ? 'bg-purple-50/80 dark:bg-purple-950/40 border-2 border-purple-300 dark:border-purple-700/60 shadow-sm'
-          : 'bg-surface-container-lowest border border-border-subtle'
+        isProposed
+          ? 'bg-amber-50/70 dark:bg-amber-950/30 border-2 border-amber-300 dark:border-amber-700/60 hover:border-amber-400'
+          : isValidationTask
+          ? 'bg-emerald-50/70 dark:bg-emerald-950/30 border-2 border-emerald-300 dark:border-emerald-700/60 hover:border-emerald-400'
+          : 'bg-surface-container-lowest border-2 border-slate-200/90 dark:border-slate-800 hover:border-sky-300 dark:hover:border-sky-700'
       } ${className}`}
     >
       <div>
         {/* Badges row */}
         <div className="flex flex-wrap items-center gap-space-xs mb-3">
-          {isValidationTask && (
-            <span className="px-2.5 py-0.5 rounded-full text-xs font-bold bg-purple-100 text-purple-800 dark:bg-purple-900/60 dark:text-purple-200 border border-purple-300 flex items-center gap-1">
+          {/* Badge Trichromatique Principal */}
+          {isProposed ? (
+            <span className="px-2.5 py-0.5 rounded-full text-xs font-bold bg-amber-100 text-amber-900 dark:bg-amber-900/60 dark:text-amber-200 border border-amber-300 flex items-center gap-1">
+              <span className="material-symbols-outlined text-[15px]">pending</span> Tâche proposée
+            </span>
+          ) : isValidationTask ? (
+            <span className="px-2.5 py-0.5 rounded-full text-xs font-bold bg-emerald-100 text-emerald-800 dark:bg-emerald-900/60 dark:text-emerald-200 border border-emerald-300 flex items-center gap-1">
               <span className="material-symbols-outlined text-[15px]">verified</span> En attente de validation
+            </span>
+          ) : (
+            <span className="px-2.5 py-0.5 rounded-full text-xs font-semibold bg-sky-50 text-sky-800 dark:bg-sky-950/60 dark:text-sky-200 border border-sky-200 flex items-center gap-1">
+              <span className="material-symbols-outlined text-[15px]">play_circle</span> En cours
             </span>
           )}
 
           {/* Priority Badge */}
           <span
             className={`inline-flex items-center gap-1.5 px-3 py-1 rounded-full font-label-sm text-label-sm font-semibold ${
-              isValidationTask
-                ? 'bg-purple-200/80 text-purple-900 dark:bg-purple-800 dark:text-purple-100'
-                : isCritical
+              isCritical
                 ? 'bg-error-container/60 text-error'
                 : isHigh
                 ? 'bg-amber-soft text-amber-rich'
@@ -137,9 +215,7 @@ export default function TaskCard({
           >
             <span
               className={`w-2 h-2 rounded-full ${
-                isValidationTask
-                  ? 'bg-purple-600'
-                  : isCritical
+                isCritical
                   ? 'bg-error'
                   : isHigh
                   ? 'bg-amber-rich'
@@ -202,9 +278,11 @@ export default function TaskCard({
         <div className="mb-2">
           <h3
             className={`font-headline-sm text-headline-sm font-bold transition-colors ${
-              isValidationTask
-                ? 'text-purple-950 dark:text-purple-100'
-                : 'text-forest-deep group-hover:text-primary'
+              isProposed
+                ? 'text-amber-950 dark:text-amber-100 group-hover:text-amber-700'
+                : isValidationTask
+                ? 'text-emerald-950 dark:text-emerald-100 group-hover:text-emerald-700'
+                : 'text-forest-deep group-hover:text-sky-700 dark:text-slate-100'
             }`}
           >
             {task.title}
@@ -218,9 +296,9 @@ export default function TaskCard({
           </p>
         )}
 
-        {/* Progress Box with Shimmer (Annotation 1 : Uniquement si la tâche a des sous-tâches/checklist) */}
+        {/* Progress Box (Uniquement si la tâche a des sous-tâches/checklist) */}
         {hasChecklist && (
-          <div className="p-space-xs px-3 bg-surface-container-low rounded-DEFAULT mb-space-md border border-slate-100">
+          <div className="p-space-xs px-3 bg-surface-container-low rounded-DEFAULT mb-space-md border border-slate-100 dark:border-slate-800">
             <div className="flex items-center justify-between gap-2 mb-1.5">
               <div className="flex items-center gap-1.5 text-label-sm font-semibold text-forest-deep text-xs">
                 <span className="material-symbols-outlined text-[18px] text-primary">
@@ -230,13 +308,15 @@ export default function TaskCard({
               </div>
               <span
                 className={`font-label-sm font-bold px-2 py-0.5 rounded-full text-xs ${
-                  isValidationTask
-                    ? 'text-purple-800 bg-purple-100'
+                  isProposed
+                    ? 'text-amber-900 bg-amber-100 dark:bg-amber-900/50 dark:text-amber-200'
+                    : isValidationTask
+                    ? 'text-emerald-800 bg-emerald-100 dark:bg-emerald-900/50 dark:text-emerald-200'
                     : isCritical
                     ? 'text-error bg-error-container/40'
                     : isHigh
                     ? 'text-amber-rich bg-amber-soft'
-                    : 'text-primary bg-sage-soft'
+                    : 'text-sky-800 bg-sky-100 dark:bg-sky-900/50 dark:text-sky-200'
                 }`}
               >
                 {progressPct}%
@@ -246,13 +326,15 @@ export default function TaskCard({
             <div className="w-full h-2 bg-surface-container-high rounded-full overflow-hidden">
               <div
                 className={`h-full rounded-full transition-all duration-300 progress-shimmer ${
-                  isValidationTask
-                    ? 'bg-gradient-to-r from-purple-500 to-indigo-600'
+                  isProposed
+                    ? 'bg-gradient-to-r from-amber-500 to-orange-500'
+                    : isValidationTask
+                    ? 'bg-gradient-to-r from-emerald-500 to-teal-600'
                     : isCritical
                     ? 'bg-gradient-to-r from-red-500 to-rose-600'
                     : isHigh
                     ? 'bg-gradient-to-r from-amber-500 to-emerald-600'
-                    : 'bg-gradient-to-r from-teal-500 to-emerald-600'
+                    : 'bg-gradient-to-r from-sky-500 to-blue-600'
                 }`}
                 style={{ width: `${progressPct}%` }}
               ></div>
@@ -261,17 +343,25 @@ export default function TaskCard({
         )}
       </div>
 
-      {/* Card Footer: Assignee & Action Button */}
+      {/* Card Footer: Assignee & Action Buttons */}
       <div
         className={`pt-space-sm flex flex-col sm:flex-row sm:items-center justify-between gap-space-sm border-t ${
-          isValidationTask ? 'border-purple-200 dark:border-purple-800' : 'border-slate-100'
+          isProposed
+            ? 'border-amber-200 dark:border-amber-800/60'
+            : isValidationTask
+            ? 'border-emerald-200 dark:border-emerald-800/60'
+            : 'border-slate-100 dark:border-slate-800'
         }`}
       >
         <div className="flex items-center gap-2">
           <div className="flex -space-x-2 overflow-hidden">
             <div
               className={`w-8 h-8 rounded-full ${
-                isValidationTask ? 'bg-purple-700 text-white' : 'bg-primary text-on-primary'
+                isProposed
+                  ? 'bg-amber-600 text-white'
+                  : isValidationTask
+                  ? 'bg-emerald-700 text-white'
+                  : 'bg-sky-700 text-white'
               } font-bold text-xs flex items-center justify-center ring-2 ring-surface-container-lowest`}
               title={displayAssigneeName}
             >
@@ -280,34 +370,81 @@ export default function TaskCard({
           </div>
           <div className="flex flex-col">
             <span className="font-label-sm text-label-sm text-on-surface font-semibold leading-tight">
-              {isValidationTask
+              {isProposed
+                ? `Proposé par : ${task.created_by || assigneeName}`
+                : isValidationTask
                 ? `Soumis par : ${task.created_by || assigneeName}`
                 : assigneeName}
             </span>
             <span className="text-[12px] text-on-surface-variant leading-tight">
-              {isValidationTask
-                ? 'Validation coordinateur requise'
+              {isProposed
+                ? 'Approbation coordinateur requise'
+                : isValidationTask
+                ? 'Validation finale requise'
                 : task.role_label || 'Responsable de mission'}
             </span>
           </div>
         </div>
 
-        {/* Unified Action Button: Consulter la tâche */}
-        <button
-          type="button"
-          onClick={(e) => {
-            e.stopPropagation();
-            if (onOpen) onOpen(task);
-          }}
-          className={`h-[42px] px-5 rounded-DEFAULT transition-all flex items-center justify-center gap-2 shrink-0 font-semibold cursor-pointer border-2 shadow-xs ${
-            isValidationTask
-              ? 'bg-purple-100/80 text-purple-900 border-purple-300 hover:bg-purple-200 font-label-md text-xs sm:text-sm'
-              : 'bg-surface-container-lowest border-primary-container text-primary-container font-label-md text-xs sm:text-sm hover:bg-sage-soft hover:border-primary'
-          }`}
-        >
-          <span className="material-symbols-outlined text-[18px]">visibility</span>
-          <span>Consulter la tâche</span>
-        </button>
+        {/* Boutons d'Action */}
+        {isProposed && isCoordinator ? (
+          /* Boutons d'arbitrage pour les coordinateurs sur tâche proposée (orange) */
+          <div className="flex items-center gap-2 shrink-0 flex-wrap">
+            <button
+              type="button"
+              disabled={isSubmitting}
+              onClick={handleAcceptClick}
+              className="h-[38px] px-3.5 rounded-DEFAULT bg-emerald-600 hover:bg-emerald-700 text-white font-bold text-xs sm:text-sm flex items-center gap-1.5 shadow-sm transition-all cursor-pointer disabled:opacity-50"
+              title="Accepter la proposition et faire passer la tâche en cours (active)"
+            >
+              <span className="material-symbols-outlined text-[18px]">check</span>
+              <span>Accepter</span>
+            </button>
+
+            <button
+              type="button"
+              disabled={isSubmitting}
+              onClick={handleRejectClick}
+              className="h-[38px] px-3 rounded-DEFAULT bg-white dark:bg-slate-900 border border-rose-300 dark:border-rose-800 hover:bg-rose-50 dark:hover:bg-rose-950/40 text-rose-700 dark:text-rose-300 font-bold text-xs sm:text-sm flex items-center gap-1 shadow-xs transition-all cursor-pointer disabled:opacity-50"
+              title="Refuser la tâche proposée"
+            >
+              <span className="material-symbols-outlined text-[18px]">close</span>
+              <span>Refuser</span>
+            </button>
+
+            <button
+              type="button"
+              onClick={(e) => {
+                e.stopPropagation();
+                if (onOpen) onOpen(task);
+              }}
+              className="h-[38px] px-3 rounded-DEFAULT bg-amber-100 hover:bg-amber-200 dark:bg-amber-900/40 dark:hover:bg-amber-900/60 text-amber-900 dark:text-amber-200 border border-amber-300 font-semibold text-xs flex items-center gap-1 transition-all cursor-pointer"
+              title="Consulter et compléter la tâche (documents, assignés, checklists) avant décision"
+            >
+              <span className="material-symbols-outlined text-[16px]">edit_note</span>
+              <span>Compléter</span>
+            </button>
+          </div>
+        ) : (
+          /* Bouton de consultation standard unifié */
+          <button
+            type="button"
+            onClick={(e) => {
+              e.stopPropagation();
+              if (onOpen) onOpen(task);
+            }}
+            className={`h-[40px] px-4 rounded-DEFAULT transition-all flex items-center justify-center gap-2 shrink-0 font-semibold cursor-pointer border-2 shadow-xs ${
+              isProposed
+                ? 'bg-amber-100/80 text-amber-900 border-amber-300 hover:bg-amber-200 text-xs sm:text-sm'
+                : isValidationTask
+                ? 'bg-emerald-100/80 text-emerald-900 border-emerald-300 hover:bg-emerald-200 text-xs sm:text-sm'
+                : 'bg-surface-container-lowest border-sky-300 text-sky-900 hover:bg-sky-50 text-xs sm:text-sm'
+            }`}
+          >
+            <span className="material-symbols-outlined text-[18px]">visibility</span>
+            <span>Consulter la tâche</span>
+          </button>
+        )}
       </div>
     </article>
   );

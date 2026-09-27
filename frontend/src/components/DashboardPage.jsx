@@ -10,6 +10,8 @@ import {
   fetchBankStatus,
   validateTask,
   invalidateTask,
+  acceptTask,
+  rejectTask,
   getCachedData,
 } from '../api';
 import TaskDetailModal from './TaskDetailModal';
@@ -18,7 +20,13 @@ import BookingModal from './BookingModal';
 import TaskCard from './common/TaskCard';
 import { extractParticipants } from '../pages/CalendarPage';
 import { VoteCardSkeleton, CompactStaySkeleton, CardSkeleton } from './SkeletonLoaders';
-import { isTaskAssignedToUser, isTaskOpen, isTaskPendingValidation } from '../utils/taskAssignment';
+import {
+  isTaskAssignedToUser,
+  isTaskOpen,
+  isTaskPendingValidation,
+  isTaskProposed,
+  getTaskColorCategory,
+} from '../utils/taskAssignment';
 
 export function formatLiteraryStayDates(startDateStr, endDateStr) {
   if (!startDateStr && !endDateStr) return 'Dates à confirmer';
@@ -359,10 +367,32 @@ export default function DashboardPage({
     return isMatch(assignee) || members.some(isMatch);
   };
 
-  // Filtrage synchronisé avec /taches : Tâches ouvertes assignées + (si coordinateur) tâches en attente de validation
+  const handleAcceptTask = async (taskToAccept) => {
+    try {
+      await acceptTask(taskToAccept.id);
+      await loadDashboardData();
+    } catch (err) {
+      console.error('Erreur acceptation tâche:', err);
+      alert(err.message || "Erreur lors de l'acceptation de la tâche");
+    }
+  };
+
+  const handleRejectTask = async (taskToReject) => {
+    const reason = window.prompt("Motif du refus de la proposition (optionnel) :", "");
+    if (reason === null) return;
+    try {
+      await rejectTask(taskToReject.id, reason);
+      await loadDashboardData();
+    } catch (err) {
+      console.error('Erreur refus tâche:', err);
+      alert(err.message || "Erreur lors du refus de la tâche");
+    }
+  };
+
+  // Filtrage synchronisé avec /taches : Tâches ouvertes assignées + (si coordinateur) tâches en attente de validation ou proposées
   const myTasks = tasks.filter((t) => {
     if (!isTaskOpen(t)) return false;
-    if (isCoordinator && isTaskPendingValidation(t)) return true;
+    if (isCoordinator && (isTaskPendingValidation(t) || isTaskProposed(t))) return true;
     return isTaskAssignedToUser(t, currentUser);
   });
 
@@ -937,6 +967,8 @@ export default function DashboardPage({
                     setIsTaskEditingDirect(false);
                     setIsTaskModalOpen(true);
                   }}
+                  onAccept={handleAcceptTask}
+                  onReject={handleRejectTask}
                 />
               ))}
             </div>

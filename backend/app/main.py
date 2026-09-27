@@ -9,7 +9,7 @@ import re
 import unicodedata
 from datetime import datetime, timedelta
 from typing import List, Optional, Any, Dict
-from fastapi import FastAPI, Depends, HTTPException, Query, UploadFile, File, Form, status, Request, BackgroundTasks
+from fastapi import FastAPI, Depends, HTTPException, Query, UploadFile, File, Form, status, Request, BackgroundTasks, Body
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 from fastapi.responses import FileResponse, Response, RedirectResponse
@@ -149,13 +149,34 @@ def run_project_migrations():
                         conn.execute(text("ALTER TABLE projects ADD COLUMN document_urls TEXT"))
                     if "task_weight" not in column_names:
                         conn.execute(text("ALTER TABLE projects ADD COLUMN task_weight VARCHAR DEFAULT 'MOYEN'"))
+                    if "options" not in column_names:
+                        conn.execute(text("ALTER TABLE projects ADD COLUMN options TEXT"))
                     conn.commit()
             else:
                 conn.execute(text("ALTER TABLE projects ADD COLUMN IF NOT EXISTS document_urls TEXT;"))
                 conn.execute(text("ALTER TABLE projects ADD COLUMN IF NOT EXISTS task_weight VARCHAR DEFAULT 'MOYEN';"))
+                conn.execute(text("ALTER TABLE projects ADD COLUMN IF NOT EXISTS options TEXT;"))
                 conn.commit()
     except Exception as e:
         logger.warning(f"Notice: run_project_migrations: {e}")
+
+def run_reservation_migrations():
+    from sqlalchemy import text
+    try:
+        with engine.connect() as conn:
+            if engine.dialect.name == "sqlite":
+                inspector_query = text("PRAGMA table_info(reservations)")
+                result = conn.execute(inspector_query).fetchall()
+                column_names = [row[1] for row in result]
+                if column_names:
+                    if "cohabitation_type" not in column_names:
+                        conn.execute(text("ALTER TABLE reservations ADD COLUMN cohabitation_type VARCHAR(50) DEFAULT 'total'"))
+                    conn.commit()
+            else:
+                conn.execute(text("ALTER TABLE reservations ADD COLUMN IF NOT EXISTS cohabitation_type VARCHAR(50) DEFAULT 'total';"))
+                conn.commit()
+    except Exception as e:
+        logger.warning(f"Notice: run_reservation_migrations: {e}")
 
 def run_task_migrations():
     from sqlalchemy import text
@@ -278,6 +299,7 @@ def run_member_migrations():
 try:
     run_member_migrations()
     run_project_migrations()
+    run_reservation_migrations()
     run_task_migrations()
     run_document_migrations()
     migrate_engine(engine)
@@ -372,6 +394,19 @@ def format_project_response(project: Project) -> dict:
         except Exception:
             doc_urls_list = [u.strip() for u in raw_doc_urls.split(",") if u.strip()]
 
+    raw_options = getattr(project, "options", None)
+    options_list = []
+    if raw_options:
+        try:
+            options_list = json.loads(raw_options) if isinstance(raw_options, str) else list(raw_options)
+        except Exception:
+            options_list = [o.strip() for o in str(raw_options).split(",") if o.strip()]
+
+    options_counts = {
+        opt: sum(1 for v in votes if str(v.vote).strip().lower() == opt.strip().lower())
+        for opt in options_list
+    }
+
     return {
         "id": project.id,
         "property_id": project.property_id,
@@ -393,6 +428,7 @@ def format_project_response(project: Project) -> dict:
         "photo_urls": urls_list,
         "status": project.status,
         "decision_mode": project.decision_mode,
+        "options": options_list,
         "coordinator_notes": project.coordinator_notes,
         "created_at": project.created_at,
         "updated_at": project.updated_at,
@@ -418,6 +454,7 @@ def format_project_response(project: Project) -> dict:
             "pour_pct": pour_pct,
             "contre_pct": contre_pct,
             "abstention_pct": abstention_pct,
+            "options_counts": options_counts,
         }
     }
 
@@ -1417,25 +1454,21 @@ def create_reservation(res: ReservationCreate, db: Session = Depends(get_db)):
             prop_name = prop.name
 
     target_prop_id = res.property_id or 1
+    new_cohab = res.cohabitation_type or ("exclusive" if res.accepts_extra_family is False else "total")
+    new_accepts = (new_cohab != "exclusive") if res.accepts_extra_family is None else res.accepts_extra_family
+    if new_cohab == "exclusive":
+        new_accepts = False
 
-    # Overlap validation rule: Prevent booking overlapping dates with an existing stay,
-    # UNLESS BOTH the existing stay and the new booking accept extra family guests.
-    # Exclude cancelled/rejected reservations and isolate strictly by property_id.
-    query = db.query(Reservation).filter(
+    # Overlap validation rule:
+    # 1. If either the existing stay or the new booking is exclusive, the whole domain is privatized -> reject any overlapping stay.
+    # 2. If either stay has other_building cohabitation, reject if both target the same building.
+    # 3. If both allow cohabitation in the same building, reject if any selected rooms overlap.
+    existing_stays = db.query(Reservation).filter(
         ~Reservation.status.in_(CANCELLED_RESERVATION_STATUSES)
-    )
-    if target_prop_id == 1:
-        query = query.filter((Reservation.property_id == 1) | (Reservation.property_id == None))
-    else:
-        query = query.filter(Reservation.property_id == target_prop_id)
-
-    existing_stays = query.all()
+    ).all()
 
     for stay in existing_stays:
         if stay.status and stay.status in CANCELLED_RESERVATION_STATUSES:
-            continue
-        stay_prop_id = stay.property_id or 1
-        if stay_prop_id != target_prop_id:
             continue
         if not stay.start_date or not stay.end_date:
             continue
@@ -1451,20 +1484,44 @@ def create_reservation(res: ReservationCreate, db: Session = Depends(get_db)):
                 continue
 
         if start_dt < stay_end_dt and end_dt > stay_start_dt:
-            existing_accepts = stay.accepts_extra_family if stay.accepts_extra_family is not None else True
-            new_accepts = res.accepts_extra_family if res.accepts_extra_family is not None else True
+            stay_cohab = getattr(stay, "cohabitation_type", None) or ("exclusive" if stay.accepts_extra_family is False else "total")
+            stay_accepts = (stay_cohab != "exclusive") if stay.accepts_extra_family is None else stay.accepts_extra_family
+            stay_prop_id = stay.property_id or 1
 
-            # If EITHER stay refuses extra family cohabitation, the booking is rejected
-            if not existing_accepts or not new_accepts:
+            # Rule 1: Exclusive domain privatisation
+            if stay_cohab == "exclusive" or new_cohab == "exclusive" or not stay_accepts or not new_accepts:
                 detail_msg = (
                     f"Conflit de dates : La période du {norm_start_date} au {norm_end_date} chevauche le séjour "
                     f"de {stay.user_name} (du {stay.start_date} au {stay.end_date}). La cohabitation n'est pas autorisée "
-                    f"car l'un des séjours refuse la présence d'autres familles."
+                    f"car l'un des séjours a réservé le domaine en exclusivité."
                 )
-                raise HTTPException(
-                    status_code=400,
-                    detail=detail_msg
-                )
+                raise HTTPException(status_code=400, detail=detail_msg)
+
+            # Rule 2: other_building cohabitation
+            if stay_cohab == "other_building" or new_cohab == "other_building":
+                if stay_prop_id == target_prop_id:
+                    detail_msg = (
+                        f"Conflit de cohabitation : La période chevauche le séjour de {stay.user_name} "
+                        f"(du {stay.start_date} au {stay.end_date}) dans le même bâtiment ({prop_name}). "
+                        f"L'option « Cohabitation autre bâtiment » n'autorise des réservations simultanées que dans l'autre bâtiment."
+                    )
+                    raise HTTPException(status_code=400, detail=detail_msg)
+
+            # Rule 3: Room collision if in the same property
+            if stay_prop_id == target_prop_id and stay.selected_rooms and res.selected_rooms:
+                try:
+                    s_rooms = json.loads(stay.selected_rooms) if isinstance(stay.selected_rooms, str) else stay.selected_rooms
+                    r_rooms = res.selected_rooms if isinstance(res.selected_rooms, list) else json.loads(res.selected_rooms)
+                    colliding = set(s_rooms).intersection(set(r_rooms))
+                    if colliding:
+                        raise HTTPException(
+                            status_code=400,
+                            detail=f"Conflit de chambre : La ou les chambres suivantes sont déjà occupées par {stay.user_name} sur cette période : {', '.join(colliding)}."
+                        )
+                except HTTPException:
+                    raise
+                except Exception:
+                    pass
 
     sel_rooms_str = json.dumps(res.selected_rooms) if res.selected_rooms else None
     cnt = res.rooms_count or (len(res.selected_rooms) if res.selected_rooms else res.chambers_used or 1)
@@ -1483,7 +1540,8 @@ def create_reservation(res: ReservationCreate, db: Session = Depends(get_db)):
         chambers_used=cnt,
         selected_rooms=sel_rooms_str,
         rooms_count=cnt,
-        accepts_extra_family=res.accepts_extra_family if res.accepts_extra_family is not None else True,
+        accepts_extra_family=new_accepts,
+        cohabitation_type=new_cohab,
         status="Confirmée",  # All bookings directly confirmed!
         notes=res.notes
     )
@@ -1546,31 +1604,31 @@ def update_reservation(reservation_id: int, update: ReservationUpdate, db: Sessi
 
     target_prop_id = update.property_id or db_res.property_id or 1
     new_status = update.status if update.status is not None else db_res.status
-    new_accepts = update.accepts_extra_family if update.accepts_extra_family is not None else db_res.accepts_extra_family
 
-    # If updating dates, property, or accepts_extra_family, validate bilateral cohabitation overlap against other stays
+    updated_cohab = update.cohabitation_type if update.cohabitation_type is not None else getattr(db_res, "cohabitation_type", None)
+    if updated_cohab is None:
+        updated_cohab = "exclusive" if update.accepts_extra_family is False else "total"
+
+    new_accepts = update.accepts_extra_family if update.accepts_extra_family is not None else db_res.accepts_extra_family
+    if updated_cohab == "exclusive":
+        new_accepts = False
+    elif update.accepts_extra_family is None and update.cohabitation_type is not None:
+        new_accepts = True
+
+    # If updating dates, property, or cohabitation, validate bilateral cohabitation overlap against other stays
     # Only perform overlap check if the stay itself is active (not cancelled or rejected)
     if new_status not in CANCELLED_RESERVATION_STATUSES:
         if (update.start_date is not None or update.end_date is not None or 
-            update.accepts_extra_family is not None or update.property_id is not None or
+            update.accepts_extra_family is not None or update.cohabitation_type is not None or update.property_id is not None or
             (update.status is not None and db_res.status in CANCELLED_RESERVATION_STATUSES)):
             
-            query = db.query(Reservation).filter(
+            other_stays = db.query(Reservation).filter(
                 Reservation.id != reservation_id,
                 ~Reservation.status.in_(CANCELLED_RESERVATION_STATUSES)
-            )
-            if target_prop_id == 1:
-                query = query.filter((Reservation.property_id == 1) | (Reservation.property_id == None))
-            else:
-                query = query.filter(Reservation.property_id == target_prop_id)
-
-            other_stays = query.all()
+            ).all()
 
             for stay in other_stays:
                 if stay.status and stay.status in CANCELLED_RESERVATION_STATUSES:
-                    continue
-                stay_prop_id = stay.property_id or 1
-                if stay_prop_id != target_prop_id:
                     continue
                 if not stay.start_date or not stay.end_date:
                     continue
@@ -1586,16 +1644,30 @@ def update_reservation(reservation_id: int, update: ReservationUpdate, db: Sessi
                         continue
 
                 if start_dt < stay_end_dt and end_dt > stay_start_dt:
-                    existing_accepts = stay.accepts_extra_family if stay.accepts_extra_family is not None else True
-                    if not existing_accepts or not new_accepts:
+                    stay_cohab = getattr(stay, "cohabitation_type", None) or ("exclusive" if stay.accepts_extra_family is False else "total")
+                    stay_accepts = (stay_cohab != "exclusive") if stay.accepts_extra_family is None else stay.accepts_extra_family
+                    stay_prop_id = stay.property_id or 1
+
+                    if stay_cohab == "exclusive" or updated_cohab == "exclusive" or not stay_accepts or not new_accepts:
                         raise HTTPException(
                             status_code=400,
                             detail=(
                                 f"Conflit de dates : La période du {norm_new_start} au {norm_new_end} chevauche le séjour "
                                 f"de {stay.user_name} (du {stay.start_date} au {stay.end_date}). La cohabitation n'est pas autorisée "
-                                f"car l'un des séjours refuse la présence d'autres familles."
+                                f"car l'un des séjours a réservé le domaine en exclusivité."
                             )
                         )
+
+                    if stay_cohab == "other_building" or updated_cohab == "other_building":
+                        if stay_prop_id == target_prop_id:
+                            raise HTTPException(
+                                status_code=400,
+                                detail=(
+                                    f"Conflit de cohabitation : La période chevauche le séjour de {stay.user_name} "
+                                    f"(du {stay.start_date} au {stay.end_date}) dans le même bâtiment. "
+                                    f"L'option « Cohabitation autre bâtiment » n'autorise des réservations simultanées que dans l'autre bâtiment."
+                                )
+                            )
 
     if update.start_date is not None:
         db_res.start_date = norm_new_start
@@ -1621,6 +1693,14 @@ def update_reservation(reservation_id: int, update: ReservationUpdate, db: Sessi
         db_res.guest_count = update.guest_count
     if update.accepts_extra_family is not None:
         db_res.accepts_extra_family = update.accepts_extra_family
+        if not update.accepts_extra_family and update.cohabitation_type is None:
+            db_res.cohabitation_type = "exclusive"
+    if update.cohabitation_type is not None:
+        db_res.cohabitation_type = update.cohabitation_type
+        if update.cohabitation_type == "exclusive":
+            db_res.accepts_extra_family = False
+        elif update.accepts_extra_family is None:
+            db_res.accepts_extra_family = True
     if update.notes is not None:
         db_res.notes = update.notes
     if update.selected_rooms is not None:
@@ -1669,6 +1749,7 @@ def create_project(proj: ProjectCreate, db: Session = Depends(get_db)):
     photo_urls_str = ",".join(proj.photo_urls) if proj.photo_urls else None
     first_photo = proj.photo_url or (proj.photo_urls[0] if proj.photo_urls else None)
     doc_urls_str = json.dumps(proj.document_urls) if proj.document_urls else None
+    options_str = json.dumps(proj.options) if proj.options else None
 
     db_proj = Project(
         property_id=proj.property_id,
@@ -1688,7 +1769,8 @@ def create_project(proj: ProjectCreate, db: Session = Depends(get_db)):
         responsible=proj.responsible,
         photo_url=first_photo,
         photo_urls=photo_urls_str,
-        status="EN_VOTE" if proj.decision_mode == "SOUMETTRE_AU_VOTE" else "SOUMIS"
+        status="EN_VOTE" if proj.decision_mode == "SOUMETTRE_AU_VOTE" else "SOUMIS",
+        options=options_str
     )
     db.add(db_proj)
     db.commit()
@@ -1844,6 +1926,8 @@ def review_project(project_id: int, review: ProjectReview, db: Session = Depends
         db_proj.priority = review.priority
     if review.responsible is not None:
         db_proj.responsible = review.responsible
+    if review.options is not None:
+        db_proj.options = json.dumps(review.options)
 
     db_proj.updated_at = datetime.utcnow()
     db.commit()
@@ -1920,13 +2004,30 @@ def process_vote_submission(
     if proj_status in closed_or_archived or (not existing_vote and proj_status not in allowed_vote_statuses):
         raise HTTPException(status_code=400, detail="Ce projet n'est pas ouvert au vote actuellement.")
 
-    vote_str = vote_val.value.upper() if hasattr(vote_val, 'value') else str(vote_val).upper()
-    valid_votes = ["OUI", "NON", "ABSTENTION", "REPORT_PROCHAINE_AG", "POUR", "CONTRE"]
-    if vote_str not in valid_votes:
-        raise HTTPException(status_code=400, detail=f"Le vote doit être l'un de : {', '.join(valid_votes)}.")
+    raw_vote = vote_val.value if hasattr(vote_val, 'value') else str(vote_val)
+    vote_upper = raw_vote.upper().strip()
+    valid_votes = ["OUI", "NON", "ABSTENTION", "BLANC", "REPORT_PROCHAINE_AG", "REPORT_AG", "POUR", "CONTRE"]
 
-    # Single-Veto AG Rule: If vote is REPORT_PROCHAINE_AG, status updates to REPORT_AG and add_to_ag_agenda = True
-    if vote_str == "REPORT_PROCHAINE_AG":
+    project_options = []
+    if getattr(db_proj, "options", None):
+        try:
+            raw_opts = json.loads(db_proj.options) if isinstance(db_proj.options, str) else db_proj.options
+            if isinstance(raw_opts, list):
+                project_options = [str(o).strip() for o in raw_opts if str(o).strip()]
+        except Exception:
+            pass
+
+    is_custom_option = any(vote_upper == opt.upper() for opt in project_options)
+    matched_custom_option = next((opt for opt in project_options if vote_upper == opt.upper()), None)
+
+    if vote_upper not in valid_votes and not is_custom_option:
+        accepted_list = (project_options + ["BLANC", "REPORT_AG"]) if project_options else valid_votes
+        raise HTTPException(status_code=400, detail=f"Le vote doit être l'un de : {', '.join(accepted_list)}.")
+
+    vote_str = matched_custom_option if is_custom_option else vote_upper
+
+    # Single-Veto AG Rule: If vote is REPORT_PROCHAINE_AG or REPORT_AG, status updates to REPORT_AG and add_to_ag_agenda = True
+    if vote_str in ("REPORT_PROCHAINE_AG", "REPORT_AG"):
         db_proj.status = "REPORT_AG"
         db_proj.add_to_ag_agenda = True
 
@@ -2488,7 +2589,11 @@ def list_tasks(
 
 
 @app.post("/api/tasks", status_code=status.HTTP_201_CREATED)
-def create_task(payload: dict, db: Session = Depends(get_db)):
+def create_task(
+    payload: dict,
+    current_user: Optional[User] = Depends(get_optional_current_user),
+    db: Session = Depends(get_db)
+):
     title = payload.get("title")
     if not title:
         raise HTTPException(status_code=400, detail="Titre de la tâche obligatoire")
@@ -2497,17 +2602,54 @@ def create_task(payload: dict, db: Session = Depends(get_db)):
     subject = payload.get("subject", "SCI")
     category = payload.get("category", "Général")
     priority = payload.get("priority", "Normale")
-    task_status = payload.get("status", "EN_COURS")
     is_recurring = bool(payload.get("is_recurring", False))
     complexity = payload.get("complexity", "Modérée")
-    budget = float(payload.get("budget", 0.0) or 0.0)
+
+    # Neutralisation / purge du champ budget (100% optionnel et tolérant)
+    raw_budget = payload.get("budget")
+    try:
+        budget = float(raw_budget) if raw_budget is not None and str(raw_budget).strip() != "" else 0.0
+    except (ValueError, TypeError):
+        budget = 0.0
+
     budget_notes = payload.get("budget_notes")
     assignee_id = payload.get("assignee_id")
     assigned_members = payload.get("assigned_members")
     deadline = payload.get("deadline")
     checklist = payload.get("checklist")
     documents = payload.get("documents")
-    created_by = payload.get("created_by", "Henri")
+
+    # Auteur
+    if current_user:
+        created_by = payload.get("created_by") or current_user.prenom
+    else:
+        created_by = payload.get("created_by", "Henri")
+
+    # Détection statut coordinateur
+    is_coord = False
+    if current_user:
+        is_coord = bool(getattr(current_user, "is_coordinator", False))
+    else:
+        cb_clean = str(created_by).strip()
+        m = db.query(Member).filter(
+            or_(
+                func.lower(Member.prenom) == cb_clean.lower(),
+                func.lower(Member.name) == cb_clean.lower(),
+                Member.prenom.ilike(f"{cb_clean.split()[0]}%"),
+                Member.name.ilike(f"%{cb_clean}%")
+            )
+        ).first()
+        if m:
+            is_coord = bool(getattr(m, "is_coordinator", False))
+        elif cb_clean.lower() in ["henri", "henri jamet", "joséphine", "josephine", "joséphine jamet", "josephine jamet"]:
+            is_coord = True
+
+    # Règle d'or Henri : Par défaut PROPOSED. Seul un coordinateur peut spécifier explicitement un statut actif à la création.
+    requested_status = payload.get("status")
+    if is_coord and requested_status and str(requested_status).upper() not in ["PROPOSED", "A_REVOIR", "SOUMIS"]:
+        task_status = str(requested_status)
+    else:
+        task_status = "PROPOSED"
 
     if isinstance(assigned_members, list):
         assigned_members = json.dumps(assigned_members)
@@ -2519,10 +2661,39 @@ def create_task(payload: dict, db: Session = Depends(get_db)):
     elif checklist is None:
         checklist = json.dumps([])
 
+    # Prise en charge des documents, document_ids et attachments
+    documents_list = []
     if isinstance(documents, list):
-        documents = json.dumps(documents)
-    elif documents is None:
-        documents = json.dumps([])
+        documents_list.extend(documents)
+    elif isinstance(documents, str) and documents.strip():
+        try:
+            documents_list.extend(json.loads(documents))
+        except Exception:
+            pass
+
+    raw_attachments = payload.get("attachments")
+    if isinstance(raw_attachments, list):
+        for att in raw_attachments:
+            if isinstance(att, dict):
+                documents_list.append(att)
+            elif isinstance(att, str):
+                documents_list.append({"name": os.path.basename(att), "url": att, "type": "FILE"})
+
+    raw_doc_ids = payload.get("document_ids")
+    if isinstance(raw_doc_ids, list) and raw_doc_ids:
+        int_ids = [int(i) for i in raw_doc_ids if str(i).isdigit()]
+        if int_ids:
+            admin_docs = db.query(AdminDocument).filter(AdminDocument.id.in_(int_ids)).all()
+            for d in admin_docs:
+                documents_list.append({
+                    "id": d.id,
+                    "name": d.title or d.file_name or f"Document #{d.id}",
+                    "url": d.file_url,
+                    "type": d.file_type or "PDF",
+                    "size": f"{(d.file_size or 0) / 1024:.1f} Ko" if d.file_size else "0 Ko"
+                })
+
+    documents_json = json.dumps(documents_list)
 
     ref = payload.get("ref")
     if not ref:
@@ -2545,7 +2716,7 @@ def create_task(payload: dict, db: Session = Depends(get_db)):
         assigned_members=assigned_members,
         deadline=deadline,
         checklist=checklist,
-        documents=documents,
+        documents=documents_json,
         created_by=created_by
     )
     db.add(db_task)
@@ -2592,9 +2763,42 @@ def get_task(task_id: str, db: Session = Depends(get_db)):
 
 @app.patch("/api/tasks/{task_id}")
 @app.put("/api/tasks/{task_id}")
-def update_task(task_id: str, payload: dict, db: Session = Depends(get_db)):
+def update_task(
+    task_id: str,
+    payload: dict,
+    current_user: Optional[User] = Depends(get_optional_current_user),
+    db: Session = Depends(get_db)
+):
     task = resolve_task_by_id_or_ref(task_id, db)
     old_assignee_id = task.assignee_id
+
+    is_coord = bool(getattr(current_user, "is_coordinator", False)) if current_user else False
+    is_creator = False
+    if current_user:
+        cb = (task.created_by or "").strip().lower()
+        u_prenom = (current_user.prenom or "").strip().lower()
+        u_name = (current_user.name or "").strip().lower()
+        is_creator = bool((u_prenom and u_prenom in cb) or (u_name and u_name in cb))
+
+    # Contrôle d'habilitation : coordinateur, créateur ou membre assigné
+    if current_user and not is_coord and not is_creator:
+        is_assigned = False
+        if task.assignee_id and task.assignee_id == current_user.id:
+            is_assigned = True
+        elif task.assigned_members:
+            try:
+                assigned_list = json.loads(task.assigned_members) if isinstance(task.assigned_members, str) else task.assigned_members
+                u_p = (current_user.prenom or "").lower()
+                u_n = (current_user.name or "").lower()
+                if any(u_p in str(a).lower() or u_n in str(a).lower() for a in assigned_list):
+                    is_assigned = True
+            except Exception:
+                pass
+        if not is_assigned:
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail="Modification réservée au coordinateur, au créateur ou aux membres assignés de la tâche."
+            )
 
     if "title" in payload and payload["title"] is not None:
         task.title = payload["title"]
@@ -2607,15 +2811,27 @@ def update_task(task_id: str, payload: dict, db: Session = Depends(get_db)):
     if "priority" in payload and payload["priority"] is not None:
         task.priority = payload["priority"]
     if "status" in payload and payload["status"] is not None:
-        task.status = payload["status"]
+        new_st = str(payload["status"]).strip()
+        # Seul un coordinateur peut faire passer directement une tâche PROPOSED en statut actif via PUT/PATCH
+        if task.status == "PROPOSED" and new_st not in ["PROPOSED", "A_REVOIR", "REJECTED"]:
+            if current_user and not is_coord:
+                raise HTTPException(
+                    status_code=status.HTTP_403_FORBIDDEN,
+                    detail="Action réservée aux coordinateurs : l'activation d'une tâche proposée requiert le rôle coordinateur ou l'arbitrage via /accept."
+                )
+        task.status = new_st
     if "is_recurring" in payload and payload["is_recurring"] is not None:
         task.is_recurring = bool(payload["is_recurring"])
     if "last_completed_at" in payload and payload["last_completed_at"] is not None:
         task.last_completed_at = payload["last_completed_at"]
     if "complexity" in payload and payload["complexity"] is not None:
         task.complexity = payload["complexity"]
-    if "budget" in payload and payload["budget"] is not None:
-        task.budget = float(payload["budget"])
+    if "budget" in payload:
+        raw_budget = payload["budget"]
+        try:
+            task.budget = float(raw_budget) if raw_budget is not None and str(raw_budget).strip() != "" else 0.0
+        except (ValueError, TypeError):
+            task.budget = 0.0
     if "budget_notes" in payload and payload["budget_notes"] is not None:
         task.budget_notes = payload["budget_notes"]
     if "assignee_id" in payload:
@@ -2628,9 +2844,53 @@ def update_task(task_id: str, payload: dict, db: Session = Depends(get_db)):
     if "checklist" in payload and payload["checklist"] is not None:
         val = payload["checklist"]
         task.checklist = json.dumps(val) if isinstance(val, list) else str(val)
+
+    # Documents existants
+    existing_docs = []
+    if task.documents:
+        try:
+            existing_docs = json.loads(task.documents) if isinstance(task.documents, str) else list(task.documents)
+        except Exception:
+            existing_docs = []
+
+    # Modification directe de documents si passée
     if "documents" in payload and payload["documents"] is not None:
         val = payload["documents"]
-        task.documents = json.dumps(val) if isinstance(val, list) else str(val)
+        existing_docs = val if isinstance(val, list) else json.loads(val)
+
+    # Attachement direct de documents via document_ids (AdminDocument)
+    if "document_ids" in payload and payload["document_ids"] is not None:
+        doc_ids = payload["document_ids"]
+        if isinstance(doc_ids, list) and doc_ids:
+            int_ids = [int(i) for i in doc_ids if str(i).isdigit()]
+            if int_ids:
+                admin_docs = db.query(AdminDocument).filter(AdminDocument.id.in_(int_ids)).all()
+                existing_urls = {d.get("url") for d in existing_docs if isinstance(d, dict) and d.get("url")}
+                existing_ids = {d.get("id") for d in existing_docs if isinstance(d, dict) and d.get("id")}
+                for d in admin_docs:
+                    if d.file_url not in existing_urls and d.id not in existing_ids:
+                        existing_docs.append({
+                            "id": d.id,
+                            "name": d.title or d.file_name or f"Document #{d.id}",
+                            "url": d.file_url,
+                            "type": d.file_type or "PDF",
+                            "size": f"{(d.file_size or 0) / 1024:.1f} Ko" if d.file_size else "0 Ko"
+                        })
+
+    # Attachement direct via attachments
+    if "attachments" in payload and payload["attachments"] is not None:
+        atts = payload["attachments"]
+        if isinstance(atts, list):
+            existing_urls = {d.get("url") for d in existing_docs if isinstance(d, dict) and d.get("url")}
+            for att in atts:
+                if isinstance(att, dict):
+                    if att.get("url") not in existing_urls:
+                        existing_docs.append(att)
+                elif isinstance(att, str) and att not in existing_urls:
+                    existing_docs.append({"name": os.path.basename(att), "url": att, "type": "FILE"})
+
+    task.documents = json.dumps(existing_docs)
+
     if "completion_notes" in payload and payload["completion_notes"] is not None:
         task.completion_notes = payload["completion_notes"]
     if "completion_docs" in payload and payload["completion_docs"] is not None:
@@ -2743,6 +3003,77 @@ def invalidate_task_unified(
     db.commit()
     db.refresh(task)
     return format_task_response(task, include_comments=True)
+
+
+@app.post("/api/tasks/{task_id}/accept")
+def accept_task_proposal(
+    task_id: str,
+    payload: Optional[dict] = Body(None),
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db)
+):
+    if not getattr(current_user, "is_coordinator", False):
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Action réservée aux coordinateurs (is_coordinator requis)."
+        )
+    task = resolve_task_by_id_or_ref(task_id, db)
+
+    # Bascule le statut de la tâche de PROPOSED à TODO (ou EN_COURS)
+    target_status = "TODO"
+    if payload and (payload.get("status") or payload.get("target_status")):
+        target_status = payload.get("status") or payload.get("target_status")
+    task.status = target_status
+    task.updated_at = datetime.utcnow()
+    db.commit()
+    db.refresh(task)
+    return format_task_response(task, include_comments=True)
+
+
+@app.post("/api/tasks/{task_id}/reject")
+def reject_task_proposal(
+    task_id: str,
+    payload: Optional[dict] = Body(None),
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db)
+):
+    if not getattr(current_user, "is_coordinator", False):
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Action réservée aux coordinateurs (is_coordinator requis)."
+        )
+    task = resolve_task_by_id_or_ref(task_id, db)
+
+    # Action optionnelle : suppression définitive si demandée explicitement
+    action = payload.get("action") if payload else None
+    if action == "delete":
+        db.query(TaskComment).filter(TaskComment.task_id == task.id).delete()
+        db.delete(task)
+        db.commit()
+        return {"deleted": True, "task_id": task_id}
+
+    task.status = "REJECTED"
+    task.updated_at = datetime.utcnow()
+
+    # Si motif fourni, ajout au fil de discussion FamilyChat
+    reason = None
+    if payload:
+        reason = payload.get("reason") or payload.get("explanation") or payload.get("message")
+    if reason and str(reason).strip():
+        comment = TaskComment(
+            task_id=task.id,
+            author_id=current_user.id,
+            author_name=f"{current_user.prenom} (Coordination)",
+            author_role="Coordinateur",
+            content=f"[Proposition refusée] {str(reason).strip()}",
+            reactions="{}"
+        )
+        db.add(comment)
+
+    db.commit()
+    db.refresh(task)
+    return format_task_response(task, include_comments=True)
+
 
 
 @app.post("/api/tasks/{task_id}/submit-completion")

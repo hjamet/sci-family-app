@@ -280,6 +280,7 @@ export default function TaskDetailModal({
 
   const isAssignedToCurrentUser = isTaskAssignedToUser(task, currentUser);
   const isPendingValidation = isTaskPendingValidation(task);
+  const isProposed = isTaskProposed(task);
   const isOpenTask = isTaskOpen(task);
 
   // Load latest task details and comments when opened
@@ -518,6 +519,38 @@ export default function TaskDetailModal({
       alert(err.message || "Erreur lors de l'invalidation de la tâche.");
     }
   };
+
+  // Arbitrage Proposition Coordinateur (Accepter / Refuser)
+  const handleAcceptModalTask = async () => {
+    try {
+      if (task?.id) {
+        await acceptTask(task.id);
+        const refreshed = await fetchTaskById(task.id).catch(() => ({ ...task, status: 'EN_COURS' }));
+        setTask(refreshed);
+        syncEditFields(refreshed);
+      }
+      if (onTaskUpdated) onTaskUpdated();
+    } catch (err) {
+      console.error('Erreur acceptation tâche:', err);
+      alert(err.message || "Erreur lors de l'acceptation de la tâche.");
+    }
+  };
+
+  const handleRejectModalTask = async () => {
+    const reason = window.prompt("Motif du refus de la proposition (optionnel) :", "");
+    if (reason === null) return;
+    try {
+      if (task?.id) {
+        await rejectTask(task.id, reason);
+      }
+      if (onTaskUpdated) onTaskUpdated();
+      onClose();
+    } catch (err) {
+      console.error('Erreur refus tâche:', err);
+      alert(err.message || "Erreur lors du refus de la tâche.");
+    }
+  };
+
 
   // Background server sync for Optimistic Chat (Annotation 13 & 3)
   const sendCommentToServer = async (tempId, textToSend, authorName) => {
@@ -975,45 +1008,104 @@ export default function TaskDetailModal({
                   </div>
                 </div>
 
-                {/* Section Validation de la Mission (#section-task-validation) */}
+                {/* Section Validation & Arbitrage de la Mission (#section-task-validation) */}
                 {!isNewTask && (
                   <div
                     ref={validationSectionRef}
                     id="section-task-validation"
-                    className="p-5 rounded-2xl border-2 border-primary/20 bg-surface-container-low shadow-sm space-y-4 scroll-mt-6"
+                    className={`p-5 rounded-2xl border-2 shadow-sm space-y-4 scroll-mt-6 ${
+                      isProposed
+                        ? 'border-amber-300 bg-amber-50/70 dark:bg-amber-950/30'
+                        : isPendingValidation
+                        ? 'border-emerald-300 bg-emerald-50/70 dark:bg-emerald-950/30'
+                        : 'border-primary/20 bg-surface-container-low'
+                    }`}
                   >
                     <div className="flex items-center justify-between">
                       <div className="flex items-center gap-2">
-                        <span className="material-symbols-outlined text-primary text-[24px]">verified</span>
-                        <h3 className="font-headline-sm text-sm sm:text-base font-bold text-forest-deep">
-                          Validation &amp; Clôture de la Mission
+                        <span className={`material-symbols-outlined text-[24px] ${
+                          isProposed ? 'text-amber-700' : isPendingValidation ? 'text-emerald-700' : 'text-primary'
+                        }`}>
+                          {isProposed ? 'pending_actions' : 'verified'}
+                        </span>
+                        <h3 className="font-headline-sm text-sm sm:text-base font-bold text-forest-deep dark:text-slate-100">
+                          {isProposed
+                            ? 'Arbitrage de la Proposition de Tâche'
+                            : 'Validation & Clôture de la Mission'}
                         </h3>
                       </div>
-                      {isPendingValidation ? (
-                        <span className="inline-flex items-center gap-1 px-3 py-1 rounded-full text-xs font-bold bg-purple-100 text-purple-800 border border-purple-300">
-                          <span className="w-2 h-2 rounded-full bg-purple-600 animate-pulse"></span>
-                          En attente d'arbitrage
+                      {isProposed ? (
+                        <span className="inline-flex items-center gap-1 px-3 py-1 rounded-full text-xs font-bold bg-amber-100 text-amber-900 border border-amber-300">
+                          <span className="w-2 h-2 rounded-full bg-amber-600 animate-pulse"></span>
+                          Proposition en attente
+                        </span>
+                      ) : isPendingValidation ? (
+                        <span className="inline-flex items-center gap-1 px-3 py-1 rounded-full text-xs font-bold bg-emerald-100 text-emerald-800 border border-emerald-300">
+                          <span className="w-2 h-2 rounded-full bg-emerald-600 animate-pulse"></span>
+                          En attente de validation finale
                         </span>
                       ) : (
-                        <span className="inline-flex items-center gap-1 px-3 py-1 rounded-full text-xs font-bold bg-sage-soft text-primary">
+                        <span className="inline-flex items-center gap-1 px-3 py-1 rounded-full text-xs font-bold bg-sky-100 text-sky-800 border border-sky-200">
                           Statut : {task.status || 'En cours'}
                         </span>
                       )}
                     </div>
 
                     <p className="text-xs text-on-surface-variant leading-relaxed">
-                      {isPendingValidation
+                      {isProposed
+                        ? "Cette tâche a été proposée par un associé. Les coordinateurs peuvent l'examiner, la compléter (documents, jalons, assignés) puis l'accepter ou la refuser."
+                        : isPendingValidation
                         ? "Le membre en charge a déclaré la réalisation des travaux. Les coordinateurs statutaires peuvent valider ou rejeter la demande."
                         : "Une fois tous les jalons accomplis et les justificatifs déposés, demandez la validation formelle des coordinateurs de la SCI."}
                     </p>
 
                     <div className="pt-2 flex flex-wrap items-center gap-3">
+                      {/* Cas 1 : Tâche proposée (orange) - Arbitrage coordinateur */}
+                      {isProposed && isCoordinator && (
+                        <>
+                          <button
+                            type="button"
+                            onClick={handleAcceptModalTask}
+                            className="inline-flex items-center gap-2 px-5 py-2.5 rounded-xl bg-emerald-600 hover:bg-emerald-700 text-white font-bold text-xs sm:text-sm shadow-md transition-all cursor-pointer"
+                          >
+                            <span className="material-symbols-outlined text-[18px]">check</span>
+                            <span>Accepter et activer la tâche</span>
+                          </button>
+                          <button
+                            type="button"
+                            onClick={handleRejectModalTask}
+                            className="inline-flex items-center gap-2 px-4 py-2.5 rounded-xl bg-white hover:bg-rose-50 text-rose-700 border-2 border-rose-300 font-bold text-xs sm:text-sm shadow-sm transition-all cursor-pointer"
+                          >
+                            <span className="material-symbols-outlined text-[18px]">close</span>
+                            <span>Refuser la proposition</span>
+                          </button>
+                          {mode === 'view' && (
+                            <button
+                              type="button"
+                              onClick={() => setMode('edit')}
+                              className="inline-flex items-center gap-2 px-4 py-2.5 rounded-xl bg-amber-100 hover:bg-amber-200 text-amber-900 border border-amber-300 font-semibold text-xs sm:text-sm transition-all cursor-pointer"
+                            >
+                              <span className="material-symbols-outlined text-[18px]">edit</span>
+                              <span>Compléter avant d'accepter</span>
+                            </button>
+                          )}
+                        </>
+                      )}
+
+                      {isProposed && !isCoordinator && (
+                        <div className="text-xs font-semibold text-amber-900 bg-amber-100/70 p-3 rounded-xl border border-amber-300 w-full flex items-center gap-2">
+                          <span className="material-symbols-outlined text-amber-700 text-[18px]">hourglass_top</span>
+                          <span>Votre proposition de tâche est en cours d'examen par la coordination de la SCI.</span>
+                        </div>
+                      )}
+
+                      {/* Cas 2 : Tâche à valider (vert) - Validation finale coordinateur */}
                       {isPendingValidation && isCoordinator && (
                         <>
                           <button
                             type="button"
                             onClick={handleValidateModalTask}
-                            className="inline-flex items-center gap-2 px-5 py-2.5 rounded-xl bg-forest-deep hover:bg-primary text-white font-bold text-xs sm:text-sm shadow-md transition-all cursor-pointer"
+                            className="inline-flex items-center gap-2 px-5 py-2.5 rounded-xl bg-emerald-600 hover:bg-emerald-700 text-white font-bold text-xs sm:text-sm shadow-md transition-all cursor-pointer"
                           >
                             <span className="material-symbols-outlined text-[18px]">check_circle</span>
                             <span>Valider et clôturer la mission</span>
@@ -1029,7 +1121,15 @@ export default function TaskDetailModal({
                         </>
                       )}
 
-                      {isOpenTask && isAssignedToCurrentUser && !isPendingValidation && (
+                      {isPendingValidation && !isCoordinator && (
+                        <div className="text-xs font-semibold text-emerald-900 bg-emerald-50 p-3 rounded-xl border border-emerald-200 w-full flex items-center gap-2">
+                          <span className="material-symbols-outlined text-emerald-700 text-[18px]">hourglass_top</span>
+                          <span>Votre demande de validation a été transmise aux coordinateurs de la SCI.</span>
+                        </div>
+                      )}
+
+                      {/* Cas 3 : Tâche en cours - Demande de validation */}
+                      {isOpenTask && isAssignedToCurrentUser && !isPendingValidation && !isProposed && (
                         <button
                           type="button"
                           onClick={handleRequestValidation}
@@ -1038,13 +1138,6 @@ export default function TaskDetailModal({
                           <span className="material-symbols-outlined text-[18px]">send</span>
                           <span>Demander la validation aux coordinateurs</span>
                         </button>
-                      )}
-
-                      {!isCoordinator && isPendingValidation && (
-                        <div className="text-xs font-semibold text-purple-900 bg-purple-50 p-3 rounded-xl border border-purple-200 w-full flex items-center gap-2">
-                          <span className="material-symbols-outlined text-purple-700 text-[18px]">hourglass_top</span>
-                          <span>Votre demande de validation a été transmise aux coordinateurs de la SCI.</span>
-                        </div>
                       )}
                     </div>
                   </div>

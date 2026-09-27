@@ -971,6 +971,33 @@ export async function invalidateTask(taskId, explanation = '') {
   return res.json();
 }
 
+export async function acceptTask(taskId) {
+  const res = await fetch(`${API_BASE}/tasks/${taskId}/accept`, {
+    method: 'POST',
+    headers: getAuthHeaders(),
+  });
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({}));
+    throw new Error(err.detail || 'Erreur lors de l\'acceptation de la tâche');
+  }
+  invalidateApiCache('tasks');
+  return res.json();
+}
+
+export async function rejectTask(taskId, reason = '') {
+  const res = await fetch(`${API_BASE}/tasks/${taskId}/reject`, {
+    method: 'POST',
+    headers: getAuthJsonHeaders(),
+    body: JSON.stringify({ reason })
+  });
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({}));
+    throw new Error(err.detail || 'Erreur lors du refus de la tâche');
+  }
+  invalidateApiCache('tasks');
+  return res.json();
+}
+
 export async function deleteTask(taskId) {
   const res = await fetch(`${API_BASE}/tasks/${taskId}`, {
     method: 'DELETE',

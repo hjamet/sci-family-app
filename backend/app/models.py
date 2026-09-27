@@ -151,6 +151,7 @@ class Reservation(Base):
     selected_rooms = Column(Text, nullable=True)  # JSON-encoded list of exact room names
     rooms_count = Column(Integer, default=1, nullable=True)  # Count of rooms selected
     accepts_extra_family = Column(Boolean, default=True, nullable=True)
+    cohabitation_type = Column(String(50), default="total", nullable=True)  # total, other_building, exclusive
     notes = Column(Text, nullable=True)
     created_at = Column(DateTime, default=datetime.utcnow)
 
@@ -215,6 +216,7 @@ class Project(Base):
     coordinator_notes = Column(Text, nullable=True)
     completion_notes = Column(Text, nullable=True)
     completion_docs = Column(Text, nullable=True)
+    options = Column(Text, nullable=True)  # JSON-encoded array of custom vote options
     created_at = Column(DateTime, default=datetime.utcnow)
     updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
 
@@ -286,11 +288,11 @@ class Task(Base):
     subject = Column(String(100), nullable=False, default="SCI")  # Rosing, Presbytère, Piscine, Jardin, SCI
     category = Column(String(100), nullable=True)
     priority = Column(String(50), nullable=False, default="Normale")  # Critique, Haute, Normale, Planifié
-    status = Column(String(50), nullable=False, default="EN_COURS")  # A_FAIRE, EN_COURS, TERMINE, ARCHIVEE, SOUMIS, PENDING_VALIDATION
+    status = Column(String(50), nullable=False, default="PROPOSED")  # PROPOSED, A_FAIRE, EN_COURS, TODO, TERMINE, ARCHIVEE, SOUMIS, PENDING_VALIDATION, REJECTED
     is_recurring = Column(Boolean, default=False, nullable=False, server_default="0")
     last_completed_at = Column(DateTime, nullable=True)
     complexity = Column(String(50), default="Modérée")  # Faible, Modérée, Élevée, Expertise requise
-    budget = Column(Float, default=0.0)
+    budget = Column(Float, default=0.0, nullable=True)
     budget_notes = Column(String(255), nullable=True)
     assignee_id = Column(Integer, ForeignKey("members.id", ondelete="SET NULL"), nullable=True)
     assigned_members = Column(Text, nullable=True)  # JSON array string: ["Henri Jamet", "Hortense Jamet"]
