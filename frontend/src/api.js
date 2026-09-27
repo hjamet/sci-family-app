@@ -1228,29 +1228,16 @@ export async function changeUserPassword({ currentPassword, newPassword, confirm
     payload.current_password = currentPassword;
   }
 
-  try {
-    const res = await fetch(`${API_BASE}/auth/change-password`, {
-      method: 'POST',
-      headers: getAuthJsonHeaders(),
-      body: JSON.stringify(payload)
-    });
-    if (res.ok) {
-      return await res.json();
-    }
-    const err = await res.json().catch(() => ({}));
-    throw new Error(err.detail || 'Erreur lors du changement de mot de passe.');
-  } catch (err) {
-    // Si c'est une erreur de mot de passe incorrect retournée par le serveur
-    if (err.message && (err.message.includes('incorrect') || err.message.includes('correspondent pas'))) {
-      throw err;
-    }
-    if (!err.message.includes('fetch') && !err.message.includes('NetworkError') && !err.message.includes('Failed to fetch')) {
-      throw err;
-    }
-    // Fallback mode offline/dev : validation locale simulée avec succès
-    console.warn('API /auth/change-password indisponible, validation locale dev enregistrée');
-    return { success: true, message: 'Mot de passe modifié avec succès (mode local dev).' };
+  const res = await fetch(`${API_BASE}/auth/change-password`, {
+    method: 'POST',
+    headers: getAuthJsonHeaders(),
+    body: JSON.stringify(payload)
+  });
+  if (res.ok) {
+    return await res.json();
   }
+  const err = await res.json().catch(() => ({}));
+  throw new Error(err.detail || 'Erreur lors du changement de mot de passe.');
 }
 
 export async function fetchMemberSettings(memberIdOrName = 'current') {

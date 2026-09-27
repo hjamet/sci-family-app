@@ -399,11 +399,13 @@ class EnableBankingService:
             logger.debug(f"Détails compte non disponibles via API pour {acc_str} : {e}")
             return {}
 
-    def get_account_balances(self, account_id: Any) -> List[Dict[str, Any]]:
+    def get_account_balances(self, account_id: Any, raise_errors: bool = False) -> List[Dict[str, Any]]:
         """Récupère les soldes d'un compte bancaire."""
         acc_str = self._extract_account_id_str(account_id)
         if not acc_str:
             logger.warning(f"Identifiant de compte invalide pour solde : {account_id}")
+            if raise_errors:
+                raise ValueError(f"Identifiant de compte invalide pour solde : {account_id}")
             return []
         try:
             data = self._api_request("GET", f"/accounts/{acc_str}/balances")
@@ -415,6 +417,8 @@ class EnableBankingService:
             return []
         except Exception as e:
             logger.warning(f"Erreur API balances pour compte {acc_str} : {e}")
+            if raise_errors:
+                raise
             return []
 
     def get_account_transactions(
@@ -817,9 +821,9 @@ class EnableBankingService:
 
         try:
             if accounts:
-                target_acc_id = accounts[0].account_id
+                target_acc_id = self._extract_account_id_str(accounts[0].account_id)
                 # Tentative d'interrogation réelle du solde (timeout 3.5s)
-                self.get_account_balances(target_acc_id)
+                self.get_account_balances(target_acc_id, raise_errors=True)
                 is_query_successful = True
             elif active_sessions:
                 sess = active_sessions[0]

@@ -3897,6 +3897,29 @@ def get_stats(db: Session = Depends(get_db)):
         active_votes_count=active_votes
     )
 
+@app.get("/api/stats/leaderboard")
+def get_stats_leaderboard(year: Optional[int] = Query(2026), db: Session = Depends(get_db)):
+    """Retourne le podium annuel calculé strictement à partir des séjours réels (vide [] si aucun séjour)."""
+    query = db.query(Reservation).filter(Reservation.status.in_(["Confirmée", "Demande en attente"]))
+    if year:
+        query = query.filter(Reservation.year == year)
+    reservations = query.all()
+    if not reservations:
+        return []
+    
+    user_days = {}
+    for r in reservations:
+        try:
+            d1 = datetime.strptime(r.start_date, "%Y-%m-%d")
+            d2 = datetime.strptime(r.end_date, "%Y-%m-%d")
+            days = max(1, (d2 - d1).days + 1)
+        except Exception:
+            days = 7
+        user_days[r.user_name] = user_days.get(r.user_name, 0) + days
+
+    sorted_users = sorted(user_days.items(), key=lambda x: x[1], reverse=True)
+    return [{"rank": idx + 1, "name": name, "days": days} for idx, (name, days) in enumerate(sorted_users[:3])]
+
 @app.get("/api/calendar/ics")
 def export_calendar_ics(db: Session = Depends(get_db)):
     reservations = db.query(Reservation).filter(Reservation.status == "Confirmée").all()

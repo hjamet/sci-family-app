@@ -42,6 +42,17 @@ const ALL_MEMBERS = [
   'Élisabeth Jamet',
 ];
 
+function parseChecklistItems(raw) {
+  if (Array.isArray(raw)) return raw;
+  if (typeof raw === 'string' && raw.trim()) {
+    try {
+      const parsed = JSON.parse(raw);
+      if (Array.isArray(parsed)) return parsed;
+    } catch (_) {}
+  }
+  return [];
+}
+
 export default function TaskDetailModal({
   isOpen,
   task: initialTask,
@@ -197,12 +208,7 @@ export default function TaskDetailModal({
       complexity: initialTask?.complexity || (isVoteInitiative ? 'Élevée' : 'Modérée'),
       budget: initialTask?.budget || (isVoteInitiative ? 1500 : 0),
       assigned_members: initialTask?.assigned_members || [currentUserName || 'Henri Jamet'],
-      checklist: initialTask?.checklist || [
-        { text: 'Diagnostic initial et constat sur place', done: false },
-        { text: 'Demande de devis et consultation des artisans', done: false },
-        { text: 'Validation budgétaire en coordination', done: false },
-        { text: 'Réalisation des travaux et contrôle final', done: false },
-      ]
+      checklist: parseChecklistItems(initialTask?.checklist)
     };
 
     setTask(taskObj);
@@ -242,16 +248,7 @@ export default function TaskDetailModal({
     setEditComplexity(t.complexity || (isVoteInitiative ? 'Élevée' : 'Modérée'));
     setEditBudget(t.budget || t.estimated_cost || (isVoteInitiative ? 1500 : 0));
     setEditMembers(t.assigned_members || (t.assignee ? [t.assignee] : ['Henri Jamet']));
-    setEditChecklist(
-      Array.isArray(t.checklist) && t.checklist.length > 0
-        ? t.checklist
-        : [
-            { text: 'Diagnostic initial et constat sur place', done: true },
-            { text: 'Demande de devis et consultation des artisans', done: true },
-            { text: 'Validation budgétaire en coordination', done: false },
-            { text: 'Réalisation des travaux et contrôle final', done: false },
-          ]
-    );
+    setEditChecklist(parseChecklistItems(t.checklist));
     setEditOnsitePresence(t.onsite_presence !== false);
   };
 
@@ -259,10 +256,13 @@ export default function TaskDetailModal({
 
   // Toggle checklist item in view mode
   const handleToggleChecklist = async (index) => {
-    const updatedChecklist = [...(task.checklist || editChecklist)];
+    const baseList = parseChecklistItems(task.checklist || editChecklist);
+    const updatedChecklist = [...baseList];
+    const isDone = Boolean(updatedChecklist[index]?.done || updatedChecklist[index]?.completed || updatedChecklist[index]?.status === 'done');
     updatedChecklist[index] = {
       ...updatedChecklist[index],
-      done: !updatedChecklist[index].done,
+      done: !isDone,
+      completed: !isDone,
     };
 
     setTask({ ...task, checklist: updatedChecklist });
@@ -388,15 +388,12 @@ export default function TaskDetailModal({
   const handleRequestValidation = async () => {
     try {
       if (task?.id) {
-        try {
-          await requestTaskValidation(task.id, {
-            completion_notes: `Tâche marquée comme faite par ${currentUserName || 'le membre en charge'}. Demande de validation transmise au coordinateur.`
-          });
-        } catch (_) {
-          await updateTask(task.id, { status: 'PENDING_VALIDATION' });
-        }
-        const refreshed = await fetchTaskById(task.id).catch(() => ({ ...task, status: 'PENDING_VALIDATION' }));
+        await requestTaskValidation(task.id, {
+          completion_notes: `Tâche marquée comme faite par ${currentUserName || 'le membre en charge'}. Demande de validation transmise au coordinateur.`
+        });
+        const refreshed = await fetchTaskById(task.id);
         setTask(refreshed);
+        syncEditFields(refreshed);
       } else {
         setTask({ ...task, status: 'PENDING_VALIDATION' });
       }
@@ -564,8 +561,8 @@ export default function TaskDetailModal({
   };
 
   // Checklist stats
-  const activeChecklist = task.checklist || editChecklist;
-  const completedCount = activeChecklist.filter((i) => i.done).length;
+  const activeChecklist = parseChecklistItems(task.checklist || editChecklist);
+  const completedCount = activeChecklist.filter((i) => Boolean(i && (i.done || i.completed || i.status === 'done' || i.status === 'completed'))).length;
   const totalCount = activeChecklist.length;
 
   return (
@@ -740,35 +737,46 @@ export default function TaskDetailModal({
                   <div className="flex items-center justify-between">
                     <h2 className="font-headline-sm text-sm sm:text-base font-bold text-on-surface flex items-center gap-2">
                       <span className="material-symbols-outlined text-primary text-[20px]">fact_check</span>
-                      Plan d'action & Checklist
+                      Plan d'action &amp; Checklist
                     </h2>
-                    <span className="px-3 py-0.5 rounded-full bg-sage-soft text-primary font-label-sm text-xs font-semibold">
-                      {completedCount}/{totalCount} terminés
-                    </span>
+                    {totalCount > 0 && (
+                      <span className="px-3 py-0.5 rounded-full bg-sage-soft text-primary font-label-sm text-xs font-semibold">
+                        {completedCount}/{totalCount} terminés
+                      </span>
+                    )}
                   </div>
 
-                  <div className="flex flex-col gap-2">
-                    {activeChecklist.map((item, idx) => (
-                      <label
-                        key={idx}
-                        className={`flex items-center gap-3 p-3.5 rounded-xl cursor-pointer select-none border transition-all ${
-                          item.done
-                            ? 'bg-canvas-slate/80 border-slate-200 text-on-surface/70'
-                            : 'bg-white border-slate-200 text-on-surface hover:bg-sage-soft/30 shadow-xs'
-                        }`}
-                      >
-                        <input
-                          type="checkbox"
-                          checked={item.done}
-                          onChange={() => handleToggleChecklist(idx)}
-                          className="w-5 h-5 rounded text-primary accent-primary cursor-pointer shrink-0"
-                        />
-                        <span className={`text-xs sm:text-sm ${item.done ? 'line-through opacity-70' : 'font-medium'}`}>
-                          {item.text}
-                        </span>
-                      </label>
-                    ))}
-                  </div>
+                  {activeChecklist.length === 0 ? (
+                    <p className="text-xs text-on-surface-variant italic py-2">
+                      Aucun jalon ni sous-tâche défini pour cette mission.
+                    </p>
+                  ) : (
+                    <div className="flex flex-col gap-2">
+                      {activeChecklist.map((item, idx) => {
+                        const itemDone = Boolean(item && (item.done || item.completed || item.status === 'done' || item.status === 'completed'));
+                        return (
+                          <label
+                            key={idx}
+                            className={`flex items-center gap-3 p-3.5 rounded-xl cursor-pointer select-none border transition-all ${
+                              itemDone
+                                ? 'bg-canvas-slate/80 border-slate-200 text-on-surface/70'
+                                : 'bg-white border-slate-200 text-on-surface hover:bg-sage-soft/30 shadow-xs'
+                            }`}
+                          >
+                            <input
+                              type="checkbox"
+                              checked={itemDone}
+                              onChange={() => handleToggleChecklist(idx)}
+                              className="w-5 h-5 rounded text-primary accent-primary cursor-pointer shrink-0"
+                            />
+                            <span className={`text-xs sm:text-sm ${itemDone ? 'line-through opacity-70' : 'font-medium'}`}>
+                              {item.text || item.title || item.label || ''}
+                            </span>
+                          </label>
+                        );
+                      })}
+                    </div>
+                  )}
                 </div>
 
                 {/* Documents & Justificatifs */}

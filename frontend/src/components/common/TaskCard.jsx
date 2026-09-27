@@ -80,18 +80,19 @@ export default function TaskCard({
     : 'HJ';
 
   // Annotation 1: Calcul d'avancement opérationnel strictement basé sur la checklist / subtasks
-  const rawList = task.checklist || task.subtasks;
-  let checklistItems = [];
-  if (Array.isArray(rawList)) {
-    checklistItems = rawList;
-  } else if (typeof rawList === 'string' && rawList.trim()) {
-    try {
-      const parsed = JSON.parse(rawList);
-      if (Array.isArray(parsed)) checklistItems = parsed;
-    } catch (_) {
-      checklistItems = [];
+  const parseItems = (raw) => {
+    if (Array.isArray(raw) && raw.length > 0) return raw;
+    if (typeof raw === 'string' && raw.trim()) {
+      try {
+        const parsed = JSON.parse(raw);
+        if (Array.isArray(parsed) && parsed.length > 0) return parsed;
+      } catch (_) {}
     }
-  }
+    return [];
+  };
+  const checklistItems = parseItems(task.checklist).length > 0
+    ? parseItems(task.checklist)
+    : parseItems(task.subtasks);
 
   const hasChecklist = checklistItems.length > 0;
   const totalSteps = checklistItems.length;
@@ -238,7 +239,7 @@ export default function TaskCard({
                     : 'text-primary bg-sage-soft'
                 }`}
               >
-                {isValidationTask ? 'En attente de validation' : `${progressPct}%`}
+                {progressPct}%
               </span>
             </div>
 
@@ -253,7 +254,7 @@ export default function TaskCard({
                     ? 'bg-gradient-to-r from-amber-500 to-emerald-600'
                     : 'bg-gradient-to-r from-teal-500 to-emerald-600'
                 }`}
-                style={{ width: `${isValidationTask ? 100 : progressPct}%` }}
+                style={{ width: `${progressPct}%` }}
               ></div>
             </div>
           </div>

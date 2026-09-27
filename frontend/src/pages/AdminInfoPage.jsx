@@ -136,6 +136,8 @@ export default function AdminInfoPage({ currentUser }) {
   const [uploadFile, setUploadFile] = useState(null);
   const [uploadedFileName, setUploadedFileName] = useState('');
   const [isSubmittingUpload, setIsSubmittingUpload] = useState(false);
+  const [isDraggingFile, setIsDraggingFile] = useState(false);
+  const fileDropInputRef = useRef(null);
 
   // Création catégorie personnalisée inline
   const [isNewCategoryOpen, setIsNewCategoryOpen] = useState(false);
@@ -483,6 +485,8 @@ export default function AdminInfoPage({ currentUser }) {
 
       const newDoc = await uploadDocument(formData);
       setDocuments((prev) => [newDoc, ...prev]);
+      await loadDocuments();
+      await loadCategories();
       setIsUploadModalOpen(false);
       setUploadOrganisme('');
       setUploadTitle('');
@@ -768,7 +772,7 @@ export default function AdminInfoPage({ currentUser }) {
                     <span className="font-headline-lg text-headline-lg font-bold text-forest-deep tabular-nums">
                       {hasRealBankData && financialTotals.entrees !== null
                         ? `${financialTotals.entrees.toLocaleString('fr-FR', { minimumFractionDigits: 2, maximumFractionDigits: 2 })} €`
-                        : '?'}
+                        : '—'}
                     </span>
                   </div>
                 </div>
@@ -797,7 +801,7 @@ export default function AdminInfoPage({ currentUser }) {
                     <span className="font-headline-lg text-headline-lg font-bold text-on-surface tabular-nums">
                       {hasRealBankData && financialTotals.sorties !== null
                         ? `${financialTotals.sorties.toLocaleString('fr-FR', { minimumFractionDigits: 2, maximumFractionDigits: 2 })} €`
-                        : '?'}
+                        : '—'}
                     </span>
                   </div>
                 </div>
@@ -818,7 +822,7 @@ export default function AdminInfoPage({ currentUser }) {
                     <span className="font-headline-lg text-headline-lg font-bold text-primary tabular-nums">
                       {hasRealBankData && financialTotals.reserves !== null
                         ? `${financialTotals.reserves.toLocaleString('fr-FR', { minimumFractionDigits: 2, maximumFractionDigits: 2 })} €`
-                        : '?'}
+                        : '—'}
                     </span>
                   </div>
                 </div>
@@ -1401,18 +1405,53 @@ export default function AdminInfoPage({ currentUser }) {
                 <label className="block font-label-md text-xs font-bold text-on-surface mb-1.5">
                   Fichier numérique certifié (PDF, Scan, Image) *
                 </label>
-                <label className="border-2 border-dashed border-border-subtle hover:border-primary rounded-DEFAULT p-space-md flex flex-col items-center justify-center text-center bg-surface-container-low cursor-pointer transition-all block">
-                  <span className="material-symbols-outlined text-[36px] text-primary mb-1">cloud_upload</span>
+                <div
+                  onDragOver={(e) => {
+                    e.preventDefault();
+                    e.stopPropagation();
+                    setIsDraggingFile(true);
+                  }}
+                  onDragLeave={(e) => {
+                    e.preventDefault();
+                    e.stopPropagation();
+                    setIsDraggingFile(false);
+                  }}
+                  onDrop={(e) => {
+                    e.preventDefault();
+                    e.stopPropagation();
+                    setIsDraggingFile(false);
+                    if (e.dataTransfer.files && e.dataTransfer.files[0]) {
+                      const file = e.dataTransfer.files[0];
+                      setUploadFile(file);
+                      setUploadedFileName(file.name);
+                      if (!uploadTitle) {
+                        const base = file.name.substring(0, file.name.lastIndexOf('.')) || file.name;
+                        setUploadTitle(base);
+                      }
+                    }
+                  }}
+                  onClick={() => fileDropInputRef.current?.click()}
+                  className={`border-2 border-dashed rounded-DEFAULT p-space-md flex flex-col items-center justify-center text-center cursor-pointer transition-all ${
+                    isDraggingFile
+                      ? 'border-primary bg-primary/5 ring-2 ring-primary/20'
+                      : uploadFile
+                      ? 'border-emerald-500 bg-emerald-50/40 dark:bg-emerald-950/20'
+                      : 'border-border-subtle hover:border-primary bg-surface-container-low'
+                  }`}
+                >
+                  <span className={`material-symbols-outlined text-[36px] mb-1 ${uploadFile ? 'text-emerald-600' : 'text-primary'}`}>
+                    {uploadFile ? 'task' : 'cloud_upload'}
+                  </span>
                   <span className="font-label-md text-sm text-on-surface font-semibold">
                     {uploadedFileName ? uploadedFileName : "Glissez votre document ici ou parcourez vos dossiers"}
                   </span>
                   <span className="font-body-md text-xs text-on-surface-variant mt-0.5">
-                    Format officiel PDF recommandé, scan ou image (Max 25 Mo)
+                    {uploadFile ? "Fichier sélectionné prêt pour l'archivage" : "Format officiel PDF recommandé, scan ou image (Max 25 Mo)"}
                   </span>
                   <input
                     id="file-drop-input"
+                    ref={fileDropInputRef}
                     type="file"
-                    required
                     accept=".pdf,.png,.jpg,.jpeg,.doc,.docx"
                     className="hidden"
                     onChange={(e) => {
@@ -1427,7 +1466,7 @@ export default function AdminInfoPage({ currentUser }) {
                       }
                     }}
                   />
-                </label>
+                </div>
               </div>
 
               {/* Champ 1 : Organisme émetteur ou destinataire */}
@@ -1644,7 +1683,7 @@ export default function AdminInfoPage({ currentUser }) {
       {/* MODAL ÉDITION DE CATÉGORIE (#modal-edit-category) (Annotation 10)         */}
       {/* ========================================================================= */}
       {isEditCategoryModalOpen && selectedEditingCat && (
-        <div id="modal-edit-category" className="fixed inset-0 z-60 bg-inverse-surface/50 backdrop-blur-xs flex items-center justify-center p-4">
+        <div id="modal-edit-category" className="fixed inset-0 z-[70] bg-inverse-surface/50 backdrop-blur-xs flex items-center justify-center p-4">
           <div className="bg-surface-container-lowest w-full max-w-lg rounded-2xl p-space-lg shadow-[0_20px_48px_-12px_rgba(15,23,42,0.25)] border border-border-subtle relative max-h-[90vh] overflow-y-auto animate-in fade-in duration-150">
             
             {/* Modal Header */}

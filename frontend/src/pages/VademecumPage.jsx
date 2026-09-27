@@ -104,6 +104,11 @@ function formatPureRoomName(raw) {
 export default function VademecumPage({ properties, currentUser, reservations = [] }) {
   const location = useLocation();
 
+  // Multi-page stay state (Annotation 2 : Navigation multi-pages avec Page 0 Domaine seul)
+  const [upcomingStays, setUpcomingStays] = useState([]);
+  const [currentPageIndex, setCurrentPageIndex] = useState(0); // 0 = Domaine seul, 1..N = Séjours futurs
+  const [stayLoading, setStayLoading] = useState(true);
+
   // Navigation automatique vers la section Vadémécum si ancre #vademecum présente (Annotation 5)
   useEffect(() => {
     const scrollToVademecum = () => {
@@ -122,11 +127,6 @@ export default function VademecumPage({ properties, currentUser, reservations = 
       };
     }
   }, [location.hash, stayLoading]);
-
-  // Multi-page stay state (Annotation 2 : Navigation multi-pages avec Page 0 Domaine seul)
-  const [upcomingStays, setUpcomingStays] = useState([]);
-  const [currentPageIndex, setCurrentPageIndex] = useState(0); // 0 = Domaine seul, 1..N = Séjours futurs
-  const [stayLoading, setStayLoading] = useState(true);
 
   const totalStays = upcomingStays.length;
   const currentStay = currentPageIndex > 0 ? upcomingStays[currentPageIndex - 1] : null;
@@ -1497,7 +1497,7 @@ export default function VademecumPage({ properties, currentUser, reservations = 
       {/* ===================================================================== */}
       {/* 4. VADÉMÉCUM ESSENTIEL DU DOMAINE (Accès direct en séjour)            */}
       {/* ===================================================================== */}
-      <section id="vademecum" className="bg-surface-container-lowest rounded-lg p-6 sm:p-8 lg:p-10 shadow-sm border border-border-subtle mb-6 w-full max-w-full">
+      <section id="vademecum" className="scroll-mt-24 bg-surface-container-lowest rounded-lg p-6 sm:p-8 lg:p-10 shadow-sm border border-border-subtle mb-6 w-full max-w-full">
         
         {/* Section Header */}
         <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 mb-8">

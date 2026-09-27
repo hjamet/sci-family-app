@@ -125,27 +125,9 @@ def clean_database(engine_url: str, label: str):
         else:
             prop_id = prop[0]
             
-        # 7. Vademecum original
+        # 7. Vademecum purge
         conn.execute(text("DELETE FROM vademecum_items"))
-        from datetime import datetime
-        now = datetime.utcnow()
-        for item in AUTHENTIC_VADEMECUM:
-            conn.execute(
-                text(
-                    "INSERT INTO vademecum_items (property_id, category, title, content, code_to_copy, importance, updated_at) "
-                    "VALUES (:prop_id, :category, :title, :content, :code_to_copy, :importance, :now)"
-                ),
-                {
-                    "prop_id": prop_id,
-                    "category": item["category"],
-                    "title": item["title"],
-                    "content": item["content"],
-                    "code_to_copy": item["code_to_copy"],
-                    "importance": item["importance"],
-                    "now": now
-                }
-            )
-        print(f"  [x] Vadémécum original synchronisé ({len(AUTHENTIC_VADEMECUM)} fiches authentiques).")
+        print("  [x] Vadémécum purgé (aucune fiche fictive ou hardcodée).")
         
         # 8. S'assurer de l'initialisation du compte bancaire Swan France via Enable Banking
         bank_acc = conn.execute(text("SELECT id FROM bank_accounts WHERE account_id = 'f7af9598-108e-4c33-846d-b829a015c149'")).fetchone()
