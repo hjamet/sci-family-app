@@ -187,7 +187,9 @@ export default function TaskDetailModal({
   const [editOnsitePresence, setEditOnsitePresence] = useState(true);
   const [savingEdit, setSavingEdit] = useState(false);
 
-  // Document Upload & Drag-and-drop State
+  // Document Upload & Drag-and-drop State (Universal Upload Modal)
+  const [isUploadDocModalOpen, setIsUploadDocModalOpen] = useState(false);
+  const [droppedFileForUpload, setDroppedFileForUpload] = useState(null);
   const [uploadingDoc, setUploadingDoc] = useState(false);
   const [dragOver, setDragOver] = useState(false);
 
@@ -199,6 +201,58 @@ export default function TaskDetailModal({
   const fileUploadRef = useRef(null);
   const fileUploadEditRef = useRef(null);
   const validationSectionRef = useRef(null);
+
+  // Handler universel d'upload de document conforme à l'onglet administratif (Annotation 10 & 11)
+  const handleUniversalUploadSuccess = async (newDoc) => {
+    const docItem = {
+      id: newDoc.id,
+      name: newDoc.title || newDoc.name,
+      title: newDoc.title || newDoc.name,
+      filename: newDoc.filename || newDoc.file_name,
+      file_url: newDoc.file_url || newDoc.url,
+      url: newDoc.file_url || newDoc.url,
+      type: newDoc.type || (newDoc.filename?.toLowerCase().endsWith('.pdf') ? 'PDF' : (newDoc.filename?.match(/\.(png|jpe?g|webp|gif|svg)$/i) ? 'Image' : 'Document')),
+      size: newDoc.size || '',
+      category: newDoc.category,
+      uploaded_at: new Date().toISOString()
+    };
+
+    // Mettre à jour editDocuments
+    setEditDocuments((prev) => [...prev, docItem]);
+
+    // Mettre à jour l'objet task
+    const currentTaskDocs = parseTaskDocuments(task?.documents || task?.completion_docs);
+    const mergedTaskDocs = [...currentTaskDocs, docItem];
+    setTask((prev) => ({ ...prev, documents: mergedTaskDocs }));
+
+    if (onTaskUpdated) onTaskUpdated();
+
+    // Poster automatiquement dans le fil de discussion de la tâche (Annotation 10)
+    if (task?.id) {
+      try {
+        const linkMsg = `📎 [${newDoc.title || newDoc.name} - ${newDoc.filename || newDoc.name}](${newDoc.file_url || newDoc.url})`;
+        const currentSender = typeof currentUser === 'string'
+          ? currentUser
+          : (currentUser?.name || currentUser?.prenom || 'Henri Jamet');
+        await addTaskComment(task.id, {
+          content: linkMsg,
+          author_name: currentSender,
+          author_role: 'Associé'
+        });
+        if (typeof loadComments === 'function') {
+          loadComments();
+        } else {
+          // Recharger les commentaires si loadComments a un autre nom
+          const updatedComments = await fetchTaskComments(task.id);
+          if (Array.isArray(updatedComments)) {
+            setComments(updatedComments);
+          }
+        }
+      } catch (chatErr) {
+        console.warn('Erreur post automatique dans le chat:', chatErr);
+      }
+    }
+  };
 
   const handleUploadFiles = async (files) => {
     if (!files || files.length === 0) return;
@@ -961,17 +1015,17 @@ export default function TaskDetailModal({
                       </p>
                     </div>
 
-                    <label className="inline-flex items-center gap-2 h-10 px-4 rounded-full bg-white border-2 border-emerald-600 text-emerald-800 font-label-lg text-xs font-semibold shadow-sm hover:bg-emerald-50 transition-colors cursor-pointer">
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setDroppedFileForUpload(null);
+                        setIsUploadDocModalOpen(true);
+                      }}
+                      className="inline-flex items-center gap-2 h-10 px-4 rounded-full bg-white border-2 border-emerald-600 text-emerald-800 font-label-lg text-xs font-semibold shadow-sm hover:bg-emerald-50 transition-colors cursor-pointer"
+                    >
                       <span className="material-symbols-outlined text-[18px]">add_circle</span>
-                      <span>{uploadingDoc ? 'Envoi en cours...' : '+ Ajouter un document'}</span>
-                      <input
-                        type="file"
-                        multiple
-                        className="hidden"
-                        ref={fileUploadRef}
-                        onChange={(e) => handleUploadFiles(e.target.files)}
-                      />
-                    </label>
+                      <span>+ Ajouter un document</span>
+                    </button>
                   </div>
 
                   <div className="flex flex-col gap-2">
@@ -1444,49 +1498,34 @@ export default function TaskDetailModal({
                     </span>
                   </div>
 
-                  {/* Zone de téléversement Drag & Drop */}
+                  {/* Zone de téléversement Drag & Drop unifiée avec UploadDocumentModal */}
                   <div
                     onDragOver={(e) => { e.preventDefault(); setDragOver(true); }}
                     onDragLeave={() => setDragOver(false)}
                     onDrop={(e) => {
                       e.preventDefault();
                       setDragOver(false);
-                      if (e.dataTransfer.files && e.dataTransfer.files.length > 0) {
-                        handleUploadFiles(e.dataTransfer.files);
+                      if (e.dataTransfer.files && e.dataTransfer.files[0]) {
+                        setDroppedFileForUpload(e.dataTransfer.files[0]);
+                        setIsUploadDocModalOpen(true);
                       }
                     }}
-                    className={`border-2 border-dashed rounded-xl p-4 text-center transition-all bg-canvas-slate/50 ${
+                    onClick={() => {
+                      setDroppedFileForUpload(null);
+                      setIsUploadDocModalOpen(true);
+                    }}
+                    className={`border-2 border-dashed rounded-xl p-4 text-center transition-all bg-canvas-slate/50 cursor-pointer ${
                       dragOver ? 'border-primary bg-sage-soft/30' : 'border-slate-300 hover:border-primary/60'
                     }`}
                   >
-                    <input
-                      type="file"
-                      multiple
-                      ref={fileUploadEditRef}
-                      className="hidden"
-                      onChange={(e) => handleUploadFiles(e.target.files)}
-                      disabled={uploadingDoc}
-                    />
-                    <div
-                      onClick={() => fileUploadEditRef.current?.click()}
-                      className="cursor-pointer flex flex-col items-center justify-center gap-1.5 py-1 select-none"
-                    >
-                      {uploadingDoc ? (
-                        <div className="flex items-center gap-2 text-xs font-bold text-primary">
-                          <span className="material-symbols-outlined animate-spin text-[20px]">progress_activity</span>
-                          <span>Téléversement des documents en cours...</span>
-                        </div>
-                      ) : (
-                        <>
-                          <span className="material-symbols-outlined text-[26px] text-primary">cloud_upload</span>
-                          <p className="text-xs font-bold text-on-surface">
-                            Glissez-déposez vos fichiers ici ou <span className="text-primary underline">parcourez</span>
-                          </p>
-                          <p className="text-[11px] text-outline">
-                            Supports acceptés : PDF, PNG, JPG, WEBP
-                          </p>
-                        </>
-                      )}
+                    <div className="flex flex-col items-center justify-center gap-1.5 py-1 select-none">
+                      <span className="material-symbols-outlined text-[26px] text-primary">cloud_upload</span>
+                      <p className="text-xs font-bold text-on-surface">
+                        Glissez-déposez vos fichiers ici ou <span className="text-primary underline">parcourez</span>
+                      </p>
+                      <p className="text-[11px] text-outline">
+                        Supports acceptés : PDF, PNG, JPG, WEBP (indexation administrative officielle)
+                      </p>
                     </div>
                   </div>
 
@@ -1597,7 +1636,10 @@ export default function TaskDetailModal({
               title="Fil de discussion familial"
               placeholder="Votre message à la famille..."
               onRetryMessage={handleRetryComment}
-              onAttachClick={() => (fileUploadEditRef.current || fileUploadRef.current)?.click()}
+              onAttachClick={() => {
+                setDroppedFileForUpload(null);
+                setIsUploadDocModalOpen(true);
+              }}
               className="h-full"
             />
           </section>
@@ -1674,6 +1716,20 @@ export default function TaskDetailModal({
         }}
         document={viewerDoc}
         onDownload={handleDownloadDoc}
+      />
+
+      {/* Modale universelle d'upload administratif pour tâches (Annotation 10 & 11) */}
+      <UploadDocumentModal
+        isOpen={isUploadDocModalOpen}
+        onClose={() => {
+          setIsUploadDocModalOpen(false);
+          setDroppedFileForUpload(null);
+        }}
+        targetTaskId={task?.id}
+        defaultCategory="Travaux & Chantiers"
+        currentUser={currentUser}
+        initialFile={droppedFileForUpload}
+        onUploadSuccess={handleUniversalUploadSuccess}
       />
 
     </div>

@@ -1,4 +1,6 @@
 import React, { useState, useRef, useEffect } from 'react';
+import DocumentViewerModal from '../DocumentViewerModal';
+import UploadDocumentModal from '../UploadDocumentModal';
 
 export const CHAT_ALLOWED_EMOJIS = ['👍', '❤️', '👏', '🎉', '👀', '✅', '🔥', '🙏'];
 
@@ -60,32 +62,103 @@ export const DEFAULT_FAMILY_MEMBERS = [
 ];
 
 /**
- * Rendu visuel soigné des mentions @Prénom ou @Nom dans les bulles de discussion.
- * Remplace chaque mention par un badge surligné raffiné tout en préservant le texte et les sauts de ligne.
+ * Rendu visuel soigné des messages :
+ * - Détecte les liens/badges de documents administratifs : 📎 [Titre](URL), [Titre](URL), ou 📎 [Titre]
+ *   et les rend cliquables pour ouvrir directement DocumentViewerModal sans téléchargement forcé (Annotation 10).
+ * - Remplace chaque mention @Prénom par un badge surligné raffiné tout en préservant le texte et les sauts de ligne.
  */
-export function renderMessageContent(content) {
+export function renderMessageContent(content, onOpenDocument = null) {
   if (!content) return null;
   const text = String(content);
-  const mentionRegex = /@([A-Za-zÀ-ÖØ-öø-ÿ]+)/g;
+
+  // Regex combinée pour capturer :
+  // 1. Documents avec lien markdown : 📎? [Titre](URL)
+  // 2. Documents avec badge simple : 📎 [Titre]
+  // 3. Mentions : @Prénom
+  const combinedRegex = /(?:📎\s*)?\[([^\]]+)\]\(([^)]+)\)|📎\s*\[([^\]]+)\]|@([A-Za-zÀ-ÖØ-öø-ÿ]+)/g;
 
   const elements = [];
   let lastIndex = 0;
   let match;
 
-  while ((match = mentionRegex.exec(text)) !== null) {
+  while ((match = combinedRegex.exec(text)) !== null) {
     if (match.index > lastIndex) {
       elements.push(text.substring(lastIndex, match.index));
     }
-    const name = match[1];
-    elements.push(
-      <span
-        key={`mention-${match.index}-${name}`}
-        className="inline-flex items-center px-1.5 py-0.5 mx-0.5 rounded-md text-xs font-semibold bg-sky-50 dark:bg-sky-950/50 text-sky-800 dark:text-sky-200 border border-sky-200 dark:border-sky-800 shadow-xs"
-      >
-        @{name}
-      </span>
-    );
-    lastIndex = mentionRegex.lastIndex;
+
+    if (match[1] && match[2]) {
+      // Cas 1 : [Titre](URL) ou 📎 [Titre](URL)
+      const docTitle = match[1];
+      const docUrl = match[2];
+      elements.push(
+        <button
+          key={`doc-link-${match.index}`}
+          type="button"
+          onClick={(e) => {
+            e.preventDefault();
+            e.stopPropagation();
+            if (onOpenDocument) {
+              onOpenDocument({
+                url: docUrl,
+                file_url: docUrl,
+                filename: docTitle,
+                title: docTitle,
+                name: docTitle
+              });
+            }
+          }}
+          className="inline-flex items-center gap-1.5 px-2.5 py-1 mx-1 my-0.5 rounded-lg text-xs font-semibold bg-emerald-50 text-emerald-800 border border-emerald-300 shadow-xs hover:bg-emerald-100 hover:border-emerald-400 transition-colors cursor-pointer text-left align-middle"
+          title={`Consulter « ${docTitle} » sans téléchargement`}
+        >
+          <span className="material-symbols-outlined text-[16px] text-emerald-700">description</span>
+          <span className="truncate max-w-[200px] sm:max-w-[320px]">{docTitle}</span>
+          <span className="text-[10px] uppercase font-bold text-emerald-700 bg-white/80 px-1 py-0.5 rounded border border-emerald-200">
+            Consulter
+          </span>
+        </button>
+      );
+    } else if (match[3]) {
+      // Cas 2 : 📎 [Titre]
+      const docTitle = match[3];
+      elements.push(
+        <button
+          key={`doc-badge-${match.index}`}
+          type="button"
+          onClick={(e) => {
+            e.preventDefault();
+            e.stopPropagation();
+            if (onOpenDocument) {
+              onOpenDocument({
+                filename: docTitle,
+                title: docTitle,
+                name: docTitle
+              });
+            }
+          }}
+          className="inline-flex items-center gap-1.5 px-2.5 py-1 mx-1 my-0.5 rounded-lg text-xs font-semibold bg-emerald-50 text-emerald-800 border border-emerald-300 shadow-xs hover:bg-emerald-100 hover:border-emerald-400 transition-colors cursor-pointer text-left align-middle"
+          title={`Consulter « ${docTitle} » sans téléchargement`}
+        >
+          <span className="material-symbols-outlined text-[16px] text-emerald-700">description</span>
+          <span className="truncate max-w-[200px] sm:max-w-[320px]">{docTitle}</span>
+          <span className="text-[10px] uppercase font-bold text-emerald-700 bg-white/80 px-1 py-0.5 rounded border border-emerald-200">
+            Consulter
+          </span>
+        </button>
+      );
+    } else if (match[4]) {
+      // Cas 3 : @Prénom
+      const name = match[4];
+      elements.push(
+        <span
+          key={`mention-${match.index}-${name}`}
+          className="inline-flex items-center px-1.5 py-0.5 mx-0.5 rounded-md text-xs font-semibold bg-sky-50 dark:bg-sky-950/50 text-sky-800 dark:text-sky-200 border border-sky-200 dark:border-sky-800 shadow-xs align-middle"
+        >
+          @{name}
+        </span>
+      );
+    }
+
+    lastIndex = combinedRegex.lastIndex;
   }
 
   if (lastIndex < text.length) {
@@ -110,11 +183,39 @@ export default function FamilyChat({
   disabled = false,
   onRetryMessage = null,
   onAttachClick = null,
+  taskId = null,
+  defaultCategory = 'Travaux & Chantiers',
+  onOpenDocument = null,
+  onUploadDocumentSuccess = null,
   members = null,
   className = '',
 }) {
   const [inputText, setInputText] = useState('');
   const [activeEmojiPickerMsgId, setActiveEmojiPickerMsgId] = useState(null);
+
+  // Visionneuse universelle et upload intégrés (Annotation 10 & 11)
+  const [isChatUploadModalOpen, setIsChatUploadModalOpen] = useState(false);
+  const [viewerDoc, setViewerDoc] = useState(null);
+  const [isViewerOpen, setIsViewerOpen] = useState(false);
+
+  const handleOpenDoc = (doc) => {
+    if (onOpenDocument) {
+      onOpenDocument(doc);
+    } else {
+      setViewerDoc(doc);
+      setIsViewerOpen(true);
+    }
+  };
+
+  const handleChatUploadSuccess = async (newDoc) => {
+    const docLinkMsg = `📎 [${newDoc.title || newDoc.name} - ${newDoc.filename || newDoc.name}](${newDoc.file_url || newDoc.url})`;
+    if (onSendMessage) {
+      await onSendMessage(docLinkMsg);
+    }
+    if (onUploadDocumentSuccess) {
+      onUploadDocumentSuccess(newDoc);
+    }
+  };
 
   // États pour l'autocomplétion des mentions @
   const [isMentionMenuOpen, setIsMentionMenuOpen] = useState(false);
@@ -400,7 +501,7 @@ export default function FamilyChat({
                         : 'border-slate-200 bg-white text-on-surface'
                     }`}
                   >
-                    <p className="whitespace-pre-wrap leading-relaxed">{renderMessageContent(msg.content || msg.text)}</p>
+                    <p className="whitespace-pre-wrap leading-relaxed">{renderMessageContent(msg.content || msg.text, handleOpenDoc)}</p>
 
                     {/* Fail-Fast Erreur & Bouton Réessayer */}
                     {msg.isError && (
@@ -567,16 +668,20 @@ export default function FamilyChat({
 
         <div className="flex items-center justify-between pt-0.5">
           <div className="flex items-center gap-1.5">
-            {onAttachClick && (
-              <button
-                type="button"
-                onClick={onAttachClick}
-                className="w-8 h-8 flex items-center justify-center rounded-lg bg-white text-slate-500 hover:text-emerald-800 hover:bg-sage-soft transition-colors border border-slate-200 cursor-pointer"
-                title="Joindre un document"
-              >
-                <span className="material-symbols-outlined text-[18px]">attach_file</span>
-              </button>
-            )}
+            <button
+              type="button"
+              onClick={() => {
+                if (onAttachClick) {
+                  onAttachClick();
+                } else {
+                  setIsChatUploadModalOpen(true);
+                }
+              }}
+              className="w-8 h-8 flex items-center justify-center rounded-lg bg-white text-slate-500 hover:text-emerald-800 hover:bg-sage-soft transition-colors border border-slate-200 cursor-pointer"
+              title="Joindre un document administratif"
+            >
+              <span className="material-symbols-outlined text-[18px]">attach_file</span>
+            </button>
 
             <button
               type="button"
@@ -618,6 +723,28 @@ export default function FamilyChat({
           </button>
         </div>
       </form>
+
+      {/* Visionneuse universelle intégrée pour les documents du chat (Annotation 10) */}
+      <DocumentViewerModal
+        isOpen={isViewerOpen}
+        onClose={() => {
+          setIsViewerOpen(false);
+          setViewerDoc(null);
+        }}
+        document={viewerDoc}
+      />
+
+      {/* Modale d'upload universelle autonome (Annotation 10 & 11) */}
+      {!onAttachClick && (
+        <UploadDocumentModal
+          isOpen={isChatUploadModalOpen}
+          onClose={() => setIsChatUploadModalOpen(false)}
+          targetTaskId={taskId}
+          defaultCategory={defaultCategory}
+          currentUser={currentUser}
+          onUploadSuccess={handleChatUploadSuccess}
+        />
+      )}
     </div>
   );
 }

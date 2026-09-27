@@ -61,6 +61,7 @@ class AdminDocument(Base):
     drive_file_id = Column(String(255), nullable=True, index=True)
     source_type = Column(String, nullable=True)  # TASK, ISSUE, PROJECT, MANUAL
     source_id = Column(Integer, nullable=True)
+    task_id = Column(Integer, ForeignKey("tasks.id", ondelete="SET NULL"), nullable=True, index=True)
     uploaded_by = Column(String, nullable=True)
     notes = Column(Text, nullable=True)
     created_at = Column(DateTime, default=datetime.utcnow)
@@ -307,6 +308,7 @@ class Task(Base):
 
     assignee = relationship("Member", back_populates="tasks", foreign_keys=[assignee_id])
     comments = relationship("TaskComment", back_populates="task", cascade="all, delete-orphan", order_by="TaskComment.created_at.asc()")
+    admin_documents = relationship("AdminDocument", backref="task", foreign_keys="[AdminDocument.task_id]")
 
 
 class TaskComment(Base):

@@ -585,10 +585,21 @@ export async function toggleStayTask(reservationId, assignmentId) {
   return res.json();
 }
 
-export async function uploadTaskDocuments(files) {
+export async function fetchTaskDocuments(taskId) {
+  const res = await fetch(`${API_BASE}/tasks/${taskId}/documents`, {
+    headers: getAuthHeaders(),
+  });
+  if (!res.ok) throw new Error('Erreur lors de la récupération des documents de la tâche');
+  return res.json();
+}
+
+export async function uploadTaskDocuments(files, taskId = null) {
   const formData = new FormData();
   for (let i = 0; i < files.length; i++) {
     formData.append('files', files[i]);
+  }
+  if (taskId) {
+    formData.append('task_id', String(taskId));
   }
   const res = await fetch(`${API_BASE}/tasks/upload-documents`, {
     method: 'POST',

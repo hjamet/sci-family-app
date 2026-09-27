@@ -1012,7 +1012,6 @@ function VoteRoofModalInner({
               currentUser={currentUserName}
               title="Fil de discussion familial"
               placeholder="Votre message à la famille..."
-              onAttachClick={() => alert("Ajout de pièce jointe réservé aux administrateurs.")}
               className="h-full"
             />
           </aside>

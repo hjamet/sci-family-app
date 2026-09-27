@@ -14,7 +14,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 from fastapi.responses import FileResponse, Response, RedirectResponse
 from sqlalchemy.orm import Session, selectinload, joinedload
-from sqlalchemy import func, or_
+from sqlalchemy import func, or_, and_
 
 from .database import engine, Base, get_db
 from .models import (
@@ -228,10 +228,13 @@ def run_document_migrations():
                         conn.execute(text("ALTER TABLE admin_documents ADD COLUMN drive_file_id VARCHAR(255)"))
                     if "file_data" not in column_names:
                         conn.execute(text("ALTER TABLE admin_documents ADD COLUMN file_data BLOB"))
+                    if "task_id" not in column_names:
+                        conn.execute(text("ALTER TABLE admin_documents ADD COLUMN task_id INTEGER"))
                     conn.commit()
             else:
                 conn.execute(text("ALTER TABLE admin_documents ADD COLUMN IF NOT EXISTS drive_file_id VARCHAR(255);"))
                 conn.execute(text("ALTER TABLE admin_documents ADD COLUMN IF NOT EXISTS file_data BYTEA;"))
+                conn.execute(text("ALTER TABLE admin_documents ADD COLUMN IF NOT EXISTS task_id INTEGER;"))
                 conn.commit()
     except Exception as e:
         logger.warning(f"Notice: run_document_migrations: {e}")
@@ -2483,6 +2486,31 @@ def format_task_response(task: Task, include_comments: bool = False) -> dict:
             documents = json.loads(task.documents) if isinstance(task.documents, str) else task.documents
         except Exception:
             documents = []
+    if not isinstance(documents, list):
+        documents = []
+
+    # Fusion avec les documents certifiés rattachés via admin_documents (Annotation 10 & 11)
+    admin_docs = getattr(task, "admin_documents", None)
+    if admin_docs:
+        seen_ids = {d.get("id") for d in documents if isinstance(d, dict) and "id" in d}
+        seen_urls = {d.get("url") or d.get("file_url") for d in documents if isinstance(d, dict)}
+        for ad in admin_docs:
+            doc_url = ad.file_url or f"/api/documents/{ad.id}/download"
+            if ad.id not in seen_ids and doc_url not in seen_urls:
+                documents.append({
+                    "id": ad.id,
+                    "name": ad.title,
+                    "title": ad.title,
+                    "filename": ad.file_name or ad.title,
+                    "file_url": doc_url,
+                    "url": doc_url,
+                    "type": "PDF" if (ad.file_name or "").lower().endswith(".pdf") else "Image" if (ad.file_type or "").startswith("image/") else "Document",
+                    "file_type": ad.file_type,
+                    "size": f"{round((ad.file_size or 0) / 1024, 1)} Ko" if ad.file_size else "",
+                    "category": ad.category,
+                    "uploaded_by": ad.uploaded_by,
+                    "created_at": ad.created_at.isoformat() if hasattr(ad.created_at, "isoformat") else str(ad.created_at)
+                })
 
     completion_docs = []
     if task.completion_docs:
@@ -2697,8 +2725,13 @@ def create_task(
 
     ref = payload.get("ref")
     if not ref:
-        count = db.query(Task).count()
-        ref = f"T-2026-{100 + count:03d}"
+        last_task = db.query(Task).order_by(Task.id.desc()).first()
+        next_num = (last_task.id + 100) if (last_task and last_task.id) else (db.query(Task).count() + 101)
+        candidate = f"T-2026-{next_num:03d}"
+        while db.query(Task).filter(Task.ref == candidate).first():
+            next_num += 1
+            candidate = f"T-2026-{next_num:03d}"
+        ref = candidate
 
     db_task = Task(
         ref=ref,
@@ -3324,20 +3357,101 @@ def toggle_stay_task(reservation_id: int, assignment_id: int, db: Session = Depe
     db.refresh(task)
     return task
 
-@app.post("/api/tasks/upload-documents")
-async def upload_task_documents(files: List[UploadFile] = File(...)):
+@app.post("/api/tasks/upload-documents", tags=["Tasks"])
+async def upload_task_documents(
+    files: List[UploadFile] = File(...),
+    task_id: Optional[int] = Form(None),
+    db: Session = Depends(get_db)
+):
+    """
+    Endpoint de téléversement pour tâches : indexe également chaque fichier dans AdminDocument
+    pour unifier le système documentaire administratif de la SCI sans crasher en HTTP 500.
+    """
+    os.makedirs(DOCUMENTS_DIR, exist_ok=True)
     uploaded_urls = []
+    created_docs = []
+
+    now = datetime.utcnow()
+    mmaaaa = now.strftime("%m%Y")
+
     for file in files:
-        clean_name = os.path.basename(file.filename) if file.filename else "document"
-        filename = f"{uuid.uuid4().hex}_{clean_name}"
-        filepath = os.path.join(DOCUMENTS_DIR, filename)
+        original_name = file.filename or "document.pdf"
+        clean_name = os.path.basename(original_name)
+        _, ext = os.path.splitext(clean_name)
+        if not ext:
+            ext = ".pdf"
+        base_title = os.path.splitext(clean_name)[0]
+        canonical_filename = f"SCI {mmaaaa} {base_title}{ext}"
 
-        with open(filepath, "wb") as buffer:
-            shutil.copyfileobj(file.file, buffer)
+        file_bytes = await file.read()
+        file_size = len(file_bytes)
+        mimetype = file.content_type or "application/pdf"
 
-        uploaded_urls.append(f"/uploads/documents/{filename}")
+        # Sauvegarde locale
+        filepath = os.path.join(DOCUMENTS_DIR, canonical_filename)
+        try:
+            with open(filepath, "wb") as buffer:
+                buffer.write(file_bytes)
+        except Exception as e:
+            logger.warning(f"Erreur écriture fichier {filepath}: {e}")
 
-    return {"document_urls": uploaded_urls}
+        # Enregistrement dans AdminDocument pour indexation automatique dans l'onglet administratif
+        db_doc = AdminDocument(
+            title=base_title,
+            category="Travaux & Chantiers",
+            file_url=f"/api/documents/temp",
+            file_name=canonical_filename,
+            file_type=mimetype,
+            file_size=file_size,
+            file_data=file_bytes,
+            source_type="TASK",
+            source_id=task_id,
+            task_id=task_id,
+            uploaded_by="Henri Jamet",
+            notes="Tâche"
+        )
+        db.add(db_doc)
+        db.commit()
+        db.refresh(db_doc)
+
+        download_url = f"/api/documents/{db_doc.id}/download"
+        db_doc.file_url = download_url
+        db.commit()
+        db.refresh(db_doc)
+
+        uploaded_urls.append(download_url)
+        created_docs.append({
+            "id": db_doc.id,
+            "title": db_doc.title,
+            "name": db_doc.title,
+            "filename": db_doc.file_name,
+            "file_url": download_url,
+            "url": download_url,
+            "type": "PDF" if canonical_filename.lower().endswith(".pdf") else "Document",
+            "size": f"{round(file_size / 1024, 1)} Ko",
+            "category": db_doc.category
+        })
+
+    # Si task_id est fourni, synchroniser la tâche
+    if task_id:
+        target_task = db.query(Task).filter(Task.id == task_id).first()
+        if target_task:
+            existing_docs = []
+            if target_task.documents:
+                try:
+                    existing_docs = json.loads(target_task.documents) if isinstance(target_task.documents, str) else target_task.documents
+                except Exception:
+                    existing_docs = []
+            if not isinstance(existing_docs, list):
+                existing_docs = []
+            existing_docs.extend(created_docs)
+            target_task.documents = json.dumps(existing_docs)
+            db.commit()
+
+    return {
+        "document_urls": uploaded_urls,
+        "documents": created_docs
+    }
 
 @app.post("/api/tasks/{assignment_id}/complete", response_model=StayTaskAssignmentResponse)
 @app.post("/api/reservations/{reservation_id}/tasks/{assignment_id}/complete", response_model=StayTaskAssignmentResponse)
@@ -3783,6 +3897,7 @@ async def upload_document_canonical(
     organisme: str = Form(...),
     title: str = Form(...),
     category: str = Form(...),
+    task_id: Optional[int] = Form(None),
     uploaded_by: Optional[str] = Form("Henri Jamet"),
     db: Session = Depends(get_db)
 ):
@@ -3790,6 +3905,7 @@ async def upload_document_canonical(
     Téléversement d'un document selon la convention de nommage canonique officielle :
     [ORGANISME] [MMAAAA actuel] [Titre du document].[ext]
     Téléversement DIRECT dans Google Drive (dossier Hellenvilliers SCI 14RcQbUF7WQb5kmVlfhdHmieV1OA0Pk-J).
+    Support de l'association universelle à une tâche via task_id (Annotation 10 & 11).
     """
     clean_org = organisme.strip()
     clean_title = title.strip()
@@ -3853,7 +3969,9 @@ async def upload_document_canonical(
         file_size=file_size,
         file_data=file_bytes,
         drive_file_id=drive_file_id,
-        source_type="MANUAL",
+        source_type="TASK" if task_id else "MANUAL",
+        source_id=task_id,
+        task_id=task_id,
         uploaded_by=uploaded_by or "Henri Jamet",
         notes=clean_org
     )
@@ -3867,6 +3985,42 @@ async def upload_document_canonical(
     db.commit()
     db.refresh(db_doc)
 
+    # Si rattaché à une tâche, synchroniser le champ JSON task.documents
+    if task_id:
+        try:
+            target_task = db.query(Task).filter(Task.id == task_id).first()
+            if target_task:
+                existing_docs = []
+                if target_task.documents:
+                    try:
+                        existing_docs = json.loads(target_task.documents) if isinstance(target_task.documents, str) else target_task.documents
+                    except Exception:
+                        existing_docs = []
+                if not isinstance(existing_docs, list):
+                    existing_docs = []
+
+                doc_entry = {
+                    "id": db_doc.id,
+                    "name": db_doc.title,
+                    "title": db_doc.title,
+                    "filename": db_doc.file_name,
+                    "file_url": download_url,
+                    "url": download_url,
+                    "type": "PDF" if (db_doc.file_name or "").lower().endswith(".pdf") else "Image" if (db_doc.file_type or "").startswith("image/") else "Document",
+                    "file_type": db_doc.file_type,
+                    "size": f"{round(file_size / 1024, 1)} Ko",
+                    "category": category,
+                    "uploaded_by": db_doc.uploaded_by,
+                    "created_at": db_doc.created_at.isoformat() if hasattr(db_doc.created_at, "isoformat") else str(db_doc.created_at)
+                }
+
+                if not any(d.get("id") == db_doc.id or d.get("url") == download_url for d in existing_docs if isinstance(d, dict)):
+                    existing_docs.append(doc_entry)
+                    target_task.documents = json.dumps(existing_docs)
+                    db.commit()
+        except Exception as sync_err:
+            logger.warning(f"Notice: Erreur synchronisation task.documents: {sync_err}")
+
     return {
         "id": db_doc.id,
         "title": db_doc.title,
@@ -3877,6 +4031,8 @@ async def upload_document_canonical(
         "file_size": db_doc.file_size,
         "drive_file_id": db_doc.drive_file_id,
         "source_type": db_doc.source_type,
+        "source_id": db_doc.source_id,
+        "task_id": db_doc.task_id,
         "uploaded_by": db_doc.uploaded_by,
         "notes": db_doc.notes,
         "created_at": db_doc.created_at,
@@ -3888,6 +4044,75 @@ async def upload_document_canonical(
         "size": f"{round(file_size / 1024, 1)} Ko",
         "upload_date": db_doc.created_at.strftime("%d/%m/%Y")
     }
+
+@app.get("/api/tasks/{task_id}/documents", tags=["Tasks"])
+def get_task_documents(task_id: str, db: Session = Depends(get_db)):
+    """
+    Récupère l'ensemble des documents rattachés à une tâche, tant depuis les documents administratifs certifiés
+    que depuis le champ documents de la tâche (Annotation 10 & 11).
+    """
+    task = resolve_task_by_id_or_ref(task_id, db)
+    
+    admin_docs = db.query(AdminDocument).filter(
+        or_(
+            AdminDocument.task_id == task.id,
+            and_(AdminDocument.source_type == "TASK", AdminDocument.source_id == task.id)
+        )
+    ).order_by(AdminDocument.created_at.desc()).all()
+    
+    task_docs = []
+    if task.documents:
+        try:
+            task_docs = json.loads(task.documents) if isinstance(task.documents, str) else task.documents
+        except Exception:
+            task_docs = []
+    if not isinstance(task_docs, list):
+        task_docs = []
+        
+    formatted_docs = []
+    seen_ids = set()
+    seen_urls = set()
+
+    for ad in admin_docs:
+        doc_url = ad.file_url or f"/api/documents/{ad.id}/download"
+        seen_ids.add(ad.id)
+        seen_urls.add(doc_url)
+        formatted_docs.append({
+            "id": ad.id,
+            "title": ad.title,
+            "name": ad.title,
+            "filename": ad.file_name or ad.title,
+            "file_url": doc_url,
+            "url": doc_url,
+            "type": "PDF" if (ad.file_name or "").lower().endswith(".pdf") else "Image" if (ad.file_type or "").startswith("image/") else "Document",
+            "file_type": ad.file_type,
+            "size": f"{round((ad.file_size or 0) / 1024, 1)} Ko" if ad.file_size else "",
+            "category": ad.category,
+            "uploaded_by": ad.uploaded_by,
+            "created_at": ad.created_at.isoformat() if hasattr(ad.created_at, "isoformat") else str(ad.created_at)
+        })
+
+    for td in task_docs:
+        if isinstance(td, dict):
+            td_id = td.get("id")
+            td_url = td.get("file_url") or td.get("url")
+            if td_id and td_id in seen_ids:
+                continue
+            if td_url and td_url in seen_urls:
+                continue
+            formatted_docs.append(td)
+        elif isinstance(td, str):
+            if td not in seen_urls:
+                formatted_docs.append({
+                    "id": td,
+                    "name": td.split("/")[-1],
+                    "filename": td.split("/")[-1],
+                    "url": td,
+                    "file_url": td,
+                    "type": "PDF" if td.lower().endswith(".pdf") else "Document"
+                })
+
+    return formatted_docs
 
 @app.get("/api/documents/{doc_id}/download", tags=["Documents"])
 @app.get("/api/admin-documents/{doc_id}/download", tags=["Documents"])
