@@ -1,51 +1,98 @@
-import React, { useState, useEffect } from 'react';
-import { Gauge, RefreshCw, AlertTriangle, CheckCircle2 } from 'lucide-react';
+import React, { useState, useEffect, useMemo } from 'react';
+import {
+  Gauge,
+  RefreshCw,
+  AlertTriangle,
+  CheckCircle2,
+  Trophy,
+  TrendingUp,
+  Calendar,
+  Sparkles,
+  Info,
+  Award,
+  CheckSquare
+} from 'lucide-react';
 import TaskDetailModal from './TaskDetailModal';
-import { fetchTasks } from '../api';
+import { fetchTasks, fetchStayBalance, fetchReservations } from '../api';
+import { resolveUserMeta, isTaskAssignedToUser } from '../utils/taskAssignment';
 
 const ALL_7_MEMBERS = [
-  { prenom: 'Henri', color: 'from-cyan-500 to-blue-600', border: 'border-cyan-500' },
-  { prenom: 'Hortense', color: 'from-rose-500 to-pink-600', border: 'border-rose-500' },
-  { prenom: 'Marguerite', color: 'from-purple-500 to-indigo-600', border: 'border-purple-500' },
-  { prenom: 'Eugénie', color: 'from-amber-500 to-orange-600', border: 'border-amber-500' },
-  { prenom: 'Joséphine', color: 'from-emerald-500 to-teal-600', border: 'border-emerald-500' },
-  { prenom: 'Élisabeth', color: 'from-teal-500 to-emerald-600', border: 'border-teal-500' },
-  { prenom: 'Frédéric', color: 'from-blue-500 to-indigo-600', border: 'border-blue-500' },
+  { id: 1, prenom: 'Henri', fullName: 'Henri Jamet', role: 'Coordinateur Général (Chauffage, CCA)', color: 'from-cyan-500 to-blue-600', badgeColor: 'bg-cyan-50 text-cyan-700 border-cyan-200' },
+  { id: 2, prenom: 'Hortense', fullName: 'Hortense Jamet', role: 'Responsable Espaces Verts (Jardin, Starlink)', color: 'from-rose-500 to-pink-600', badgeColor: 'bg-rose-50 text-rose-700 border-rose-200' },
+  { id: 3, prenom: 'Marguerite', fullName: 'Marguerite Jamet', role: 'Responsable Équipements (Buanderie)', color: 'from-purple-500 to-indigo-600', badgeColor: 'bg-purple-50 text-purple-700 border-purple-200' },
+  { id: 4, prenom: 'Eugénie', fullName: 'Eugénie Jamet', role: 'Responsable Peintures & Tri Sélectif', color: 'from-amber-500 to-orange-600', badgeColor: 'bg-amber-50 text-amber-700 border-amber-200' },
+  { id: 5, prenom: 'Joséphine', fullName: 'Joséphine Jamet', role: 'Coordinatrice Adjointe (Clés, Boîtier)', color: 'from-emerald-500 to-teal-600', badgeColor: 'bg-emerald-50 text-emerald-700 border-emerald-200' },
+  { id: 6, prenom: 'Élisabeth', aliases: ['Maman', 'Elisabeth'], fullName: 'Maman (Élisabeth) Jamet', role: 'Membre Associé', color: 'from-teal-500 to-emerald-600', badgeColor: 'bg-teal-50 text-teal-700 border-teal-200' },
+  { id: 7, prenom: 'Frédéric', fullName: 'Frédéric Jamet', role: 'Responsable Électricité & Linky Tempo', color: 'from-blue-500 to-indigo-600', badgeColor: 'bg-blue-50 text-blue-700 border-blue-200' },
 ];
 
-export default function WorkloadDashboard({ currentUser }) {
-  const [workloadData, setWorkloadData] = useState(null);
+function isTaskCompleted(task) {
+  if (!task) return false;
+  const raw = (task.status || '').trim().toUpperCase();
+  const normalized = raw.normalize('NFD').replace(/[\u0300-\u036f]/g, '').replace(/[_\s-]+/g, '_');
+  const completedStatuses = [
+    'TERMINE',
+    'TERMINEE',
+    'VALIDE',
+    'VALIDEE',
+    'CLOS',
+    'CLOTURE',
+    'CLOTUREE',
+    'COMPLETED',
+    'ARCHIVEE',
+    'ARCHIVE',
+  ];
+  return completedStatuses.includes(normalized);
+}
+
+export default function WorkloadDashboard({ currentUser, year = 2026 }) {
+  const [stayBalance, setStayBalance] = useState(null);
   const [realTasks, setRealTasks] = useState([]);
+  const [reservations, setReservations] = useState([]);
   const [loading, setLoading] = useState(true);
   const [errorMsg, setErrorMsg] = useState(null);
-  const [totalChargePoints, setTotalChargePoints] = useState(100);
   const [selectedTask, setSelectedTask] = useState(null);
+  const [selectedYear, setSelectedYear] = useState(year);
+
+  // Synchronisation avec la prop year si elle change
+  useEffect(() => {
+    if (year) {
+      setSelectedYear(year);
+    }
+  }, [year]);
 
   const loadData = async () => {
     try {
       setLoading(true);
       setErrorMsg(null);
-      const [workloadRes, tasksRes] = await Promise.allSettled([
-        fetch(`/api/workload/summary?total_charge_points=${totalChargePoints}`),
+
+      const [stayBalanceRes, tasksRes, resDataRes] = await Promise.allSettled([
+        fetchStayBalance(selectedYear),
         fetchTasks(),
+        fetchReservations({ year: selectedYear }),
       ]);
 
-      if (workloadRes.status === 'fulfilled' && workloadRes.value.ok) {
-        const data = await workloadRes.value.json();
-        setWorkloadData(data);
-      } else if (workloadRes.status === 'fulfilled') {
-        throw new Error(`HTTP ${workloadRes.value.status}: ${workloadRes.value.statusText || 'Échec de réponse serveur'}`);
+      if (stayBalanceRes.status === 'fulfilled') {
+        setStayBalance(stayBalanceRes.value);
       } else {
-        throw workloadRes.reason || new Error('Erreur de chargement de la charge');
+        throw stayBalanceRes.reason || new Error("Erreur de chargement de l'équilibre des séjours");
       }
 
       if (tasksRes.status === 'fulfilled' && Array.isArray(tasksRes.value)) {
         setRealTasks(tasksRes.value);
+      } else if (tasksRes.status === 'rejected') {
+        throw tasksRes.reason || new Error('Erreur de chargement des tâches');
+      }
+
+      if (resDataRes.status === 'fulfilled' && Array.isArray(resDataRes.value)) {
+        setReservations(resDataRes.value);
       }
     } catch (err) {
       console.error('Workload API error:', err);
-      setErrorMsg(err.message || String(err) || 'Impossible de charger la jauge de charge');
-      setWorkloadData(null);
+      setErrorMsg(err.message || String(err) || 'Impossible de charger les données statistiques');
+      setStayBalance(null);
+      setRealTasks([]);
+      setReservations([]);
     } finally {
       setLoading(false);
     }
@@ -53,40 +100,107 @@ export default function WorkloadDashboard({ currentUser }) {
 
   useEffect(() => {
     loadData();
-  }, [totalChargePoints]);
+  }, [selectedYear]);
 
-  const statsMap = {};
-  if (workloadData && workloadData.user_stats) {
-    workloadData.user_stats.forEach((st) => {
-      statsMap[st.user_name] = st;
+  // Calcul dynamique 100% réel des scores et du ratio gamifié d'implication (Annotation 10)
+  const processedMembers = useMemo(() => {
+    const daysByMember = {};
+    ALL_7_MEMBERS.forEach((m) => {
+      daysByMember[m.prenom] = 0;
     });
-  }
 
-  const getMemberTasks = (prenom) => {
-    const pLower = prenom.toLowerCase();
-    return realTasks.filter((t) => {
-      if (!t) return false;
-      const members = Array.isArray(t.assigned_members)
-        ? t.assigned_members
-        : (typeof t.assigned_members === 'string' && t.assigned_members.trim()
-          ? (() => {
-              try {
-                const parsed = JSON.parse(t.assigned_members);
-                return Array.isArray(parsed) ? parsed : [t.assigned_members];
-              } catch (_) {
-                return [t.assigned_members];
-              }
-            })()
-          : []);
+    if (stayBalance && Array.isArray(stayBalance.members)) {
+      stayBalance.members.forEach((sm) => {
+        const match = ALL_7_MEMBERS.find((m) => {
+          const pNorm = m.prenom.toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '');
+          const smNorm = (sm.prenom || sm.name || '').toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '');
+          if (pNorm === smNorm || smNorm.includes(pNorm) || pNorm.includes(smNorm)) return true;
+          if (m.aliases && m.aliases.some((al) => smNorm.includes(al.toLowerCase()))) return true;
+          return false;
+        });
+        if (match) {
+          daysByMember[match.prenom] = sm.days || 0;
+        }
+      });
+    } else if (reservations && reservations.length > 0) {
+      reservations.forEach((r) => {
+        if (r.status === 'Confirmée' || r.status === 'Demande en attente') {
+          const d1 = new Date(r.start_date);
+          const d2 = new Date(r.end_date);
+          const diffDays = Math.max(1, Math.round((d2 - d1) / (1000 * 60 * 60 * 24)) + 1);
+          const rUser = (r.user_name || '').toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '');
+          ALL_7_MEMBERS.forEach((m) => {
+            const pNorm = m.prenom.toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '');
+            if (rUser.includes(pNorm) || (m.aliases && m.aliases.some((al) => rUser.includes(al.toLowerCase())))) {
+              daysByMember[m.prenom] += diffDays;
+            }
+          });
+        }
+      });
+    }
 
-      const inAssigned = members.some((m) => String(m).toLowerCase().includes(pLower));
-      const inResp = String(t.responsible || '').toLowerCase().includes(pLower);
-      const inAssignedTo = String(t.assigned_to || '').toLowerCase().includes(pLower);
-      const inCreatedBy = String(t.created_by || '').toLowerCase().includes(pLower);
+    const list = ALL_7_MEMBERS.map((member) => {
+      const userMeta = resolveUserMeta({
+        id: member.id,
+        prenom: member.prenom,
+        name: member.fullName,
+      });
 
-      return inAssigned || inResp || inAssignedTo || inCreatedBy;
+      // Tâches réelles associées
+      const memberTasks = realTasks.filter((t) => isTaskAssignedToUser(t, userMeta));
+
+      // Tâches réelles complétées / validées
+      const completedTasks = memberTasks.filter((t) => isTaskCompleted(t));
+
+      // 1. Score d'utilisation / occupation (jours réels passés au domaine)
+      const score_usage = daysByMember[member.prenom] || 0;
+
+      // 2. Score de corvées / tâches accomplies (tâches validées)
+      const score_taches = completedTasks.length;
+
+      // 3. Algorithme de tri d'équité gamifié (Annotation 10) :
+      // ratio = (score_taches + 0.5) / (score_usage + 0.5)
+      // Robustesse sans division par zéro. Si tâches > 0 et usage == 0 -> ratio maximal !
+      const ratio = (score_taches + 0.5) / (score_usage + 0.5);
+
+      return {
+        ...member,
+        score_usage,
+        score_taches,
+        ratio,
+        memberTasks,
+        completedTasks,
+      };
     });
-  };
+
+    // Tri DÉCROISSANT selon le ratio d'implication :
+    // Le premier de la liste est celui qui fait le plus et vient le moins !
+    list.sort((a, b) => {
+      if (b.ratio !== a.ratio) {
+        return b.ratio - a.ratio;
+      }
+      if (b.score_taches !== a.score_taches) {
+        return b.score_taches - a.score_taches;
+      }
+      if (a.score_usage !== b.score_usage) {
+        return a.score_usage - b.score_usage;
+      }
+      return a.prenom.localeCompare(b.prenom);
+    });
+
+    return list;
+  }, [stayBalance, reservations, realTasks]);
+
+  // Échelles max pour les barres de progression
+  const maxUsage = useMemo(() => {
+    const max = Math.max(...processedMembers.map((m) => m.score_usage), 0);
+    return max > 0 ? max : 14;
+  }, [processedMembers]);
+
+  const maxTasks = useMemo(() => {
+    const max = Math.max(...processedMembers.map((m) => m.score_taches), 0);
+    return max > 0 ? max : 5;
+  }, [processedMembers]);
 
   return (
     <div className="bg-white border border-slate-200 rounded-3xl p-6 sm:p-8 shadow-sm space-y-6">
@@ -94,21 +208,64 @@ export default function WorkloadDashboard({ currentUser }) {
       <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 border-b border-slate-100 pb-4">
         <div className="flex items-center space-x-3">
           <div className="p-3 rounded-2xl bg-indigo-50 text-indigo-600 border border-indigo-200">
-            <Gauge className="h-6 w-6" />
+            <Trophy className="h-6 w-6 text-amber-500" />
           </div>
           <div>
-            <h2 className="text-lg font-extrabold text-slate-900">Jauge de Répartition des Charges (7 Associés)</h2>
-            <p className="text-xs text-slate-500">Usage Proportionnel &amp; Répartition SCI • Missions réelles issues de la base</p>
+            <div className="flex items-center gap-2">
+              <h2 className="text-lg font-extrabold text-slate-900">
+                Équilibre d'Implication &amp; Double Jauge (7 Associés)
+              </h2>
+              <span className="text-[10px] font-bold uppercase tracking-wider bg-amber-100 text-amber-900 px-2 py-0.5 rounded-full border border-amber-300">
+                Annotation 10
+              </span>
+            </div>
+            <p className="text-xs text-slate-500">
+              Classement gamifié par ratio d'implication : <em>« Celui qui fait le plus et vient le moins »</em>
+            </p>
           </div>
         </div>
 
-        <button
-          onClick={loadData}
-          className="flex items-center space-x-1.5 px-3.5 py-2 rounded-xl text-xs font-semibold bg-slate-100 hover:bg-slate-200 text-slate-700 transition shrink-0 cursor-pointer"
-        >
-          <RefreshCw className={`h-3.5 w-3.5 ${loading ? 'animate-spin' : ''}`} />
-          <span>Actualiser les jauges</span>
-        </button>
+        <div className="flex items-center gap-2 self-start sm:self-auto">
+          {/* Année */}
+          <div className="flex items-center bg-slate-100 p-1 rounded-xl border border-slate-200 text-xs font-semibold text-slate-700">
+            {[2025, 2026, 2027].map((y) => (
+              <button
+                key={y}
+                type="button"
+                onClick={() => setSelectedYear(y)}
+                className={`px-2.5 py-1 rounded-lg transition-all cursor-pointer ${
+                  selectedYear === y
+                    ? 'bg-white text-indigo-700 font-black shadow-xs'
+                    : 'text-slate-500 hover:text-slate-900'
+                }`}
+              >
+                {y}
+              </button>
+            ))}
+          </div>
+
+          <button
+            onClick={loadData}
+            className="flex items-center space-x-1.5 px-3.5 py-2 rounded-xl text-xs font-semibold bg-slate-100 hover:bg-slate-200 text-slate-700 transition shrink-0 cursor-pointer"
+            title="Rafraîchir les jauges et le classement"
+          >
+            <RefreshCw className={`h-3.5 w-3.5 ${loading ? 'animate-spin' : ''}`} />
+            <span className="hidden sm:inline">Actualiser</span>
+          </button>
+        </div>
+      </div>
+
+      {/* Explanatory Rule Banner */}
+      <div className="p-3.5 sm:p-4 rounded-2xl bg-gradient-to-r from-amber-50/80 via-indigo-50/50 to-emerald-50/80 border border-amber-200/70 text-slate-700 text-xs flex items-start gap-3 shadow-2xs">
+        <Sparkles className="w-5 h-5 text-amber-600 shrink-0 mt-0.5" />
+        <div className="leading-relaxed">
+          <strong className="text-slate-900 font-bold">Règle de justice contributive :</strong>{' '}
+          Le classement d'équité calcule le ratio{' '}
+          <code className="px-1.5 py-0.5 bg-white/90 border border-slate-200 rounded font-mono font-bold text-indigo-700">
+            (tâches validées + 0.5) / (séjours + 0.5)
+          </code>
+          . Un associé qui accomplit des corvées utiles tout en occupant peu le domaine est propulsé en tête de podium !
+        </div>
       </div>
 
       {/* Prominent Red Alert Card on API Failure */}
@@ -120,10 +277,10 @@ export default function WorkloadDashboard({ currentUser }) {
             </div>
             <div className="flex-1">
               <h3 className="text-lg font-black text-rose-950 flex items-center gap-2">
-                <span>⚠️ Erreur de lecture capteur / API</span>
+                <span>⚠️ Erreur de lecture des statistiques en base</span>
               </h3>
               <p className="text-xs text-rose-700 font-bold mt-1">
-                Échec de connexion à l'API de charge d'occupation. Aucun masquage silencieux.
+                Échec de connexion ou de calcul des réservations / tâches réelles. Zéro donnée factice inventée.
               </p>
               <div className="mt-3 p-3 bg-rose-100/90 border border-rose-300 rounded-xl font-mono text-xs text-rose-950 break-all">
                 <strong>Raw error trace :</strong> {errorMsg}
@@ -135,7 +292,7 @@ export default function WorkloadDashboard({ currentUser }) {
                   className="px-5 py-2.5 bg-rose-600 hover:bg-rose-700 text-white font-extrabold text-xs rounded-xl shadow transition flex items-center space-x-2 cursor-pointer"
                 >
                   <RefreshCw className={`h-4 w-4 ${loading ? 'animate-spin' : ''}`} />
-                  <span>Enquêter / Réessayer</span>
+                  <span>Réessayer la synchronisation</span>
                 </button>
               </div>
             </div>
@@ -143,87 +300,211 @@ export default function WorkloadDashboard({ currentUser }) {
         </div>
       ) : (
         <>
-          {/* Gauges & Clickable Task Badges for the 7 Members */}
-          <div className="space-y-4 pt-2">
-            {ALL_7_MEMBERS.map((member) => {
-              const st = statsMap[member.prenom] || { total_days: 0, occupation_score: 0, target_charge_points: 0, charge_percentage: 0 };
-              const pct = Math.min(100, Math.max(0, st.charge_percentage || 0));
-              const memberTasks = getMemberTasks(member.prenom);
+          {/* Members List sorted descending by implication ratio */}
+          <div className="space-y-4 pt-1">
+            {processedMembers.map((member, index) => {
+              const isFirst = index === 0;
+              const isSecond = index === 1;
+              const isThird = index === 2;
+
+              const medal = isFirst ? '🥇' : isSecond ? '🥈' : isThird ? '🥉' : null;
+              const rankLabel = isFirst
+                ? '#1 Champion d\'implication'
+                : isSecond
+                ? '#2'
+                : isThird
+                ? '#3'
+                : `#${index + 1}`;
+
+              const pctUsage = member.score_usage > 0
+                ? Math.min(100, Math.round((member.score_usage / maxUsage) * 100))
+                : 0;
+
+              const pctTasks = member.score_taches > 0
+                ? Math.min(100, Math.round((member.score_taches / maxTasks) * 100))
+                : 0;
 
               return (
                 <div
                   key={member.prenom}
-                  className="p-4 sm:p-5 rounded-2xl bg-slate-50 border border-slate-200/80 space-y-3 transition hover:border-indigo-300 shadow-xs"
+                  className={`p-4 sm:p-5 rounded-2xl border transition-all shadow-xs ${
+                    isFirst
+                      ? 'bg-gradient-to-r from-amber-50/70 via-white to-amber-50/30 border-amber-300 ring-2 ring-amber-400/20 shadow-sm'
+                      : 'bg-slate-50/80 border-slate-200/80 hover:border-indigo-300'
+                  }`}
                 >
-                  <div className="flex items-center justify-between">
+                  {/* Member Card Header */}
+                  <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 pb-3 border-b border-slate-200/60">
                     <div className="flex items-center space-x-3">
-                      <div className={`w-10 h-10 rounded-2xl bg-gradient-to-br ${member.color} text-white flex items-center justify-center font-black text-sm shadow-sm shrink-0`}>
-                        {member.prenom[0]}
-                      </div>
-                      <div>
-                        <div className="flex items-center space-x-2">
-                          <h4 className="text-sm font-extrabold text-slate-900">{member.prenom}</h4>
+                      <div className="relative shrink-0">
+                        <div
+                          className={`w-11 h-11 rounded-2xl bg-gradient-to-br ${member.color} text-white flex items-center justify-center font-black text-sm shadow-sm`}
+                        >
+                          {member.prenom[0]}
                         </div>
-                        <span className="text-[11px] text-slate-500">
-                          {st.total_days} jour(s) d'occupation • Score d'usage : <strong className="text-slate-800">{st.occupation_score} pts</strong>
-                        </span>
+                        {medal && (
+                          <span
+                            className="absolute -top-1.5 -right-1.5 text-base drop-shadow-xs"
+                            title={`Podium ${rankLabel}`}
+                          >
+                            {medal}
+                          </span>
+                        )}
+                      </div>
+
+                      <div>
+                        <div className="flex items-center gap-2">
+                          <h4 className="text-sm font-extrabold text-slate-900">{member.fullName}</h4>
+                          <span
+                            className={`text-[10px] font-black px-2 py-0.5 rounded-full border ${
+                              isFirst
+                                ? 'bg-amber-100 text-amber-900 border-amber-300'
+                                : 'bg-slate-200 text-slate-700 border-slate-300'
+                            }`}
+                          >
+                            {rankLabel}
+                          </span>
+                        </div>
+                        <p className="text-[11px] text-slate-500 font-medium">
+                          {member.role}
+                        </p>
                       </div>
                     </div>
 
-                    <div className="text-right">
-                      <span className="text-xs font-black text-indigo-600 block">
-                        {st.target_charge_points} pts / 100
-                      </span>
-                      <span className="text-[10px] font-bold text-slate-500">
-                        {pct}% de la charge SCI
-                      </span>
+                    {/* Implication Ratio Badge */}
+                    <div className="flex items-center gap-2 self-start sm:self-auto">
+                      <div className="text-right">
+                        <div className="flex items-center gap-1.5 justify-end">
+                          <span className="text-[11px] font-bold text-slate-500 uppercase tracking-wider">
+                            Ratio d'implication :
+                          </span>
+                          <span
+                            className={`text-sm sm:text-base font-black px-2 py-0.5 rounded-xl border ${
+                              member.ratio >= 2.0
+                                ? 'bg-emerald-100 text-emerald-900 border-emerald-300'
+                                : member.ratio >= 1.0
+                                ? 'bg-indigo-100 text-indigo-900 border-indigo-300'
+                                : 'bg-slate-100 text-slate-800 border-slate-200'
+                            }`}
+                            title={`Formule: (${member.score_taches} + 0.5) / (${member.score_usage} + 0.5)`}
+                          >
+                            {member.ratio.toFixed(2)}
+                          </span>
+                        </div>
+                        {isFirst && (
+                          <span className="text-[10px] font-extrabold text-amber-700 block">
+                            ✨ Fait le plus &amp; vient le moins !
+                          </span>
+                        )}
+                      </div>
                     </div>
                   </div>
 
-                  {/* Progress Bar / Gauge */}
-                  <div className="w-full h-3 rounded-full bg-slate-200 overflow-hidden flex shadow-inner">
-                    <div
-                      style={{ width: `${pct}%` }}
-                      className={`h-full bg-gradient-to-r ${member.color} transition-all duration-500 rounded-full`}
-                    ></div>
+                  {/* DOUBLE BARRES DISTINCTES ET ÉLÉGANTES (Annotation 10) */}
+                  <div className="grid grid-cols-1 md:grid-cols-2 gap-4 pt-3">
+                    {/* BARRE 1 : SCORE D'UTILISATION / OCCUPATION */}
+                    <div className="p-3 bg-white rounded-xl border border-slate-200/80 space-y-1.5 shadow-2xs">
+                      <div className="flex items-center justify-between text-xs">
+                        <span className="font-bold text-slate-600 flex items-center gap-1.5">
+                          <Calendar className="w-3.5 h-3.5 text-indigo-500" />
+                          <span>1. Score d'occupation :</span>
+                        </span>
+                        <span className="font-black text-indigo-950 font-mono">
+                          {member.score_usage} {member.score_usage > 1 ? 'jours' : 'jour'}
+                        </span>
+                      </div>
+
+                      <div className="w-full h-2.5 rounded-full bg-slate-100 overflow-hidden shadow-inner">
+                        <div
+                          style={{ width: `${pctUsage}%` }}
+                          className="h-full bg-gradient-to-r from-indigo-500 to-blue-600 transition-all duration-500 rounded-full"
+                          title={`${member.score_usage} jours d'occupation (${pctUsage}% du max)`}
+                        ></div>
+                      </div>
+
+                      <div className="flex justify-between items-center text-[10px] text-slate-400">
+                        <span>Présence au domaine ({selectedYear})</span>
+                        <span>{pctUsage}% relative</span>
+                      </div>
+                    </div>
+
+                    {/* BARRE 2 : SCORE DE CORVÉES / TÂCHES ACCOMPLIES */}
+                    <div className="p-3 bg-white rounded-xl border border-slate-200/80 space-y-1.5 shadow-2xs">
+                      <div className="flex items-center justify-between text-xs">
+                        <span className="font-bold text-slate-600 flex items-center gap-1.5">
+                          <CheckCircle2 className="w-3.5 h-3.5 text-emerald-600" />
+                          <span>2. Score de tâches accomplies :</span>
+                        </span>
+                        <span className="font-black text-emerald-900 font-mono">
+                          {member.score_taches} {member.score_taches > 1 ? 'tâches validées' : 'tâche validée'}
+                        </span>
+                      </div>
+
+                      <div className="w-full h-2.5 rounded-full bg-slate-100 overflow-hidden shadow-inner">
+                        <div
+                          style={{ width: `${pctTasks}%` }}
+                          className="h-full bg-gradient-to-r from-emerald-500 to-teal-500 transition-all duration-500 rounded-full"
+                          title={`${member.score_taches} tâches validées (${pctTasks}% du max)`}
+                        ></div>
+                      </div>
+
+                      <div className="flex justify-between items-center text-[10px] text-slate-400">
+                        <span>Corvées validées &amp; clôturées</span>
+                        <span>{pctTasks}% relative</span>
+                      </div>
+                    </div>
                   </div>
 
                   {/* Clickable Real Task Badges per Member */}
-                  <div className="pt-2 border-t border-slate-200/60 flex flex-wrap items-center gap-2">
+                  <div className="pt-3 mt-1 border-t border-slate-200/60 flex flex-wrap items-center gap-2">
                     <span className="text-[10px] font-bold text-slate-500 uppercase tracking-wider flex items-center gap-1 mr-1 shrink-0">
-                      <CheckCircle2 className="w-3 h-3 text-indigo-600" />
-                      Missions ({memberTasks.length}) :
+                      <CheckSquare className="w-3 h-3 text-indigo-600" />
+                      Missions assignées ({member.memberTasks.length}) :
                     </span>
-                    {memberTasks.length === 0 ? (
+                    {member.memberTasks.length === 0 ? (
                       <span className="text-[11px] text-slate-400 italic">
                         Aucune mission active assignée
                       </span>
                     ) : (
-                      memberTasks.map((task) => (
-                        <button
-                          key={task.id}
-                          type="button"
-                          onClick={() => setSelectedTask(task)}
-                          className="inline-flex items-center space-x-1.5 px-2.5 py-1 rounded-xl text-[11px] font-bold bg-white hover:bg-indigo-50 text-indigo-950 border border-slate-200 hover:border-indigo-300 transition-all shadow-xs cursor-pointer hover:scale-[1.02]"
-                          title="Cliquer pour afficher la fiche détaillée"
-                        >
-                          <span
-                            className={`w-2 h-2 rounded-full ${
-                              task.status === 'EN_VOTE'
-                                ? 'bg-amber-500 animate-pulse'
-                                : ['VALIDE', 'CLOS', 'TERMINE'].includes(task.status)
-                                ? 'bg-emerald-500'
-                                : 'bg-indigo-500'
+                      member.memberTasks.map((task) => {
+                        const completed = isTaskCompleted(task);
+                        return (
+                          <button
+                            key={task.id}
+                            type="button"
+                            onClick={() => setSelectedTask(task)}
+                            className={`inline-flex items-center space-x-1.5 px-2.5 py-1 rounded-xl text-[11px] font-bold border transition-all shadow-2xs cursor-pointer hover:scale-[1.02] ${
+                              completed
+                                ? 'bg-emerald-50/80 text-emerald-950 border-emerald-200 hover:border-emerald-400'
+                                : task.status === 'EN_VOTE'
+                                ? 'bg-amber-50 text-amber-950 border-amber-200 hover:border-amber-400'
+                                : 'bg-white text-indigo-950 border-slate-200 hover:border-indigo-300'
                             }`}
-                          ></span>
-                          <span className="truncate max-w-[220px]">📋 {task.title}</span>
-                          {task.budget > 0 && (
-                            <span className="text-[9px] font-mono font-bold bg-indigo-100 text-indigo-800 px-1.5 py-0.2 rounded-md">
-                              {task.budget}€
-                            </span>
-                          )}
-                        </button>
-                      ))
+                            title={`Cliquer pour afficher la fiche détaillée (${task.status})`}
+                          >
+                            <span
+                              className={`w-2 h-2 rounded-full ${
+                                completed
+                                  ? 'bg-emerald-500'
+                                  : task.status === 'EN_VOTE'
+                                  ? 'bg-amber-500 animate-pulse'
+                                  : 'bg-indigo-500'
+                              }`}
+                            ></span>
+                            <span className="truncate max-w-[220px]">📋 {task.title}</span>
+                            {completed && (
+                              <span className="text-[9px] bg-emerald-100 text-emerald-800 font-bold px-1.5 py-0.2 rounded">
+                                Validée
+                              </span>
+                            )}
+                            {task.budget > 0 && (
+                              <span className="text-[9px] font-mono font-bold bg-indigo-100 text-indigo-800 px-1.5 py-0.2 rounded-md">
+                                {task.budget}€
+                              </span>
+                            )}
+                          </button>
+                        );
+                      })
                     )}
                   </div>
                 </div>

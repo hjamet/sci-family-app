@@ -11,11 +11,14 @@ const DEFAULT_MEMBERS = [
   { name: 'Eugénie Jamet', days: 0, stays: 0, max_days: 35, color: '#b45309', bg: 'bg-amber-50 text-amber-900 border-amber-300' },
 ];
 
-export default function StayBalanceWidget({ year = 2026, selectedMember, onSelectMember }) {
-  const [balance, setBalance] = useState(DEFAULT_MEMBERS);
+export default function StayBalanceWidget({ year = 2026, members: propsMembers, selectedMember, onSelectMember }) {
+  const [internalBalance, setInternalBalance] = useState(DEFAULT_MEMBERS);
   const [loading, setLoading] = useState(false);
 
+  const balance = propsMembers && propsMembers.length > 0 ? propsMembers : internalBalance;
+
   useEffect(() => {
+    if (propsMembers && propsMembers.length > 0) return;
     let isMounted = true;
     async function loadBalance() {
       try {
@@ -35,7 +38,7 @@ export default function StayBalanceWidget({ year = 2026, selectedMember, onSelec
             }
             return dm;
           });
-          setBalance(merged);
+          setInternalBalance(merged);
         }
       } catch (err) {
         console.warn('StayBalance API notice:', err.message);
@@ -53,16 +56,9 @@ export default function StayBalanceWidget({ year = 2026, selectedMember, onSelec
         <div>
           <h2 className="font-headline-md text-lg sm:text-xl font-bold text-forest-deep flex items-center gap-2">
             <span className="material-symbols-outlined text-primary text-[22px]">balance</span>
-            Équilibre des Séjours & Présence ({year})
+            Équilibre des Séjours & Présence
           </h2>
-          <p className="font-body-md text-xs sm:text-sm text-on-surface-variant mt-0.5">
-            Répartition des nuitées et séjours cumulés par associé selon les statuts de la SCI.
-          </p>
         </div>
-        <span className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full bg-sage-soft text-primary font-label-sm text-xs font-semibold self-start sm:self-auto">
-          <span className="w-2 h-2 rounded-full bg-primary animate-pulse"></span>
-          Règle des 2 semaines estivales
-        </span>
       </div>
 
       {/* Grid of 7 Associates */}
@@ -75,7 +71,7 @@ export default function StayBalanceWidget({ year = 2026, selectedMember, onSelec
             <div
               key={m.name}
               onClick={() => onSelectMember && onSelectMember(m.name)}
-              className={`p-3.5 rounded-xl border transition-all cursor-pointer flex flex-col justify-between gap-3 ${
+              className={`p-3.5 rounded-[14px] border transition-all cursor-pointer flex flex-col justify-between gap-3 ${
                 isSelected
                   ? 'bg-sage-soft border-primary ring-2 ring-primary/20 shadow-md'
                   : 'bg-canvas-slate/80 hover:bg-white border-border-subtle hover:border-outline-variant/80 hover:shadow-sm'

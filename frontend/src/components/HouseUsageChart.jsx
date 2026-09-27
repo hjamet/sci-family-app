@@ -197,9 +197,9 @@ export default function HouseUsageChart({ reservations = [] }) {
         </svg>
       </div>
 
-      {/* Active Hover Detail Info Card */}
-      <div className="mt-4 p-4 rounded-2xl bg-slate-50 dark:bg-slate-950 border border-slate-200/80 dark:border-slate-800 flex items-center justify-between text-xs">
-        {activeMonthIndex !== null ? (
+      {/* Active Hover Detail Info Card (uniquement au survol actif) */}
+      {activeMonthIndex !== null && (
+        <div className="mt-4 p-4 rounded-2xl bg-slate-50 dark:bg-slate-950 border border-slate-200/80 dark:border-slate-800 flex items-center justify-between text-xs animate-in fade-in duration-150">
           <div className="flex items-center space-x-3">
             <div className="w-8 h-8 rounded-full bg-indigo-600 text-white flex items-center justify-center font-bold text-xs">
               {MONTH_LABELS[activeMonthIndex]}
@@ -213,13 +213,8 @@ export default function HouseUsageChart({ reservations = [] }) {
               </p>
             </div>
           </div>
-        ) : (
-          <div className="flex items-center space-x-2 text-slate-500 dark:text-slate-400">
-            <Info className="h-4 w-4 text-indigo-500 shrink-0" />
-            <span>Survolez une barre mensuelle pour consulter les détails d'occupation des 7 chambres du domaine.</span>
-          </div>
-        )}
-      </div>
+        </div>
+      )}
 
     </div>
   );

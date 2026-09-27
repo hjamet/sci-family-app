@@ -260,8 +260,8 @@ export default function StatistiquesPage({ currentUser }) {
       {/* Projection d'Occupation sur 12 Mois */}
       <HouseUsageChart reservations={reservations} />
 
-      {/* Jauge de Répartition des Charges & Responsabilités */}
-      <WorkloadDashboard currentUser={currentUser} />
+      {/* Jauge de Répartition des Charges & Responsabilités (Annotation 10) */}
+      <WorkloadDashboard currentUser={currentUser} year={year} />
     </div>
   );
 }
