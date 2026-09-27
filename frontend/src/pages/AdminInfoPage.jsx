@@ -70,7 +70,7 @@ const INITIAL_INVOICES = [];
 
 export default function AdminInfoPage({ currentUser }) {
   const activeUser = currentUser || localStorage.getItem('sci_user') || 'Henri Jamet';
-  const isCoordinator = activeUser === 'Henri' || activeUser === 'Henri Jamet' || (typeof activeUser === 'object' && activeUser?.prenom === 'Henri');
+  const isCoordinator = Boolean(currentUser?.is_coordinator);
 
   // KPI Financial Totals (Zéro valeur inventée - initialisé à null)
   const [financialTotals, setFinancialTotals] = useState({

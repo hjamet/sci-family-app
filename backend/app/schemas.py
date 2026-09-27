@@ -40,6 +40,7 @@ class MemberBase(BaseModel):
     name: str
     email: Optional[str] = None
     role: str = "Membre Associé"
+    is_coordinator: bool = False
     avatar_color: str = "cyan"
     notif_task_assigned: bool = True
     notif_vote_needed: bool = True
@@ -56,6 +57,7 @@ class MemberUpdate(BaseModel):
     name: Optional[str] = None
     email: Optional[str] = None
     role: Optional[str] = None
+    is_coordinator: Optional[bool] = None
     avatar_color: Optional[str] = None
     password: Optional[str] = None
     notif_task_assigned: Optional[bool] = None
@@ -112,6 +114,7 @@ class TokenResponse(BaseModel):
     name: Optional[str] = None
     email: Optional[str] = None
     role: Optional[str] = None
+    is_coordinator: Optional[bool] = False
     avatar_color: Optional[str] = None
     notif_task_assigned: Optional[bool] = None
     notif_vote_needed: Optional[bool] = None
@@ -730,6 +733,8 @@ class TaskBase(BaseModel):
     category: Optional[str] = None
     priority: Optional[str] = "Normale"
     status: Optional[str] = "EN_COURS"
+    is_recurring: Optional[bool] = False
+    last_completed_at: Optional[datetime] = None
     complexity: Optional[str] = "Modérée"
     budget: Optional[float] = 0.0
     budget_notes: Optional[str] = None
@@ -754,6 +759,8 @@ class TaskUpdate(BaseModel):
     category: Optional[str] = None
     priority: Optional[str] = None
     status: Optional[str] = None
+    is_recurring: Optional[bool] = None
+    last_completed_at: Optional[datetime] = None
     complexity: Optional[str] = None
     budget: Optional[float] = None
     budget_notes: Optional[str] = None
@@ -769,6 +776,11 @@ class TaskUpdate(BaseModel):
 class TaskCloseRequest(BaseModel):
     completion_notes: str
     completion_docs: Optional[List[str]] = []
+
+
+class TaskInvalidateRequest(BaseModel):
+    explanation: Optional[str] = None
+    message: Optional[str] = None
 
 
 class TaskCommentBase(BaseModel):

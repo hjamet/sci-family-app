@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useMemo } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { fetchTasks, createTask, fetchProjects } from '../api';
+import { fetchTasks, createTask, fetchProjects, validateTask, invalidateTask } from '../api';
 import TaskDetailModal from './TaskDetailModal';
 import VoteRoofModal from './VoteRoofModal';
 import { CardSkeleton, TasksContainerSkeleton, VoteCardSkeleton } from './SkeletonLoaders';
@@ -89,6 +89,12 @@ export function isTaskOpen(task) {
     'ANNULEE',
   ];
   return !closedStatuses.includes(st);
+}
+
+export function isTaskPendingValidation(task) {
+  if (!task) return false;
+  const st = (task.status || '').toUpperCase().trim();
+  return st === 'PENDING_VALIDATION' || st === 'EN_ATTENTE_VALIDATION';
 }
 
 export function isTaskAssignedToUser(task, userMeta) {
@@ -359,6 +365,30 @@ export default function TasksPage({ currentUser = 'Henri Jamet' }) {
     }
   };
 
+  const isCoordinator = Boolean(currentUser?.is_coordinator);
+
+  const handleValidateTask = async (taskId) => {
+    try {
+      await validateTask(taskId);
+      await loadTasks();
+    } catch (err) {
+      console.error('Erreur validation tâche:', err);
+      alert(err.message || 'Erreur lors de la validation');
+    }
+  };
+
+  const handleInvalidateTask = async (taskId) => {
+    const reason = window.prompt("Motif de l'invalidation / demande de révision (optionnel) :", "");
+    if (reason === null) return;
+    try {
+      await invalidateTask(taskId, reason);
+      await loadTasks();
+    } catch (err) {
+      console.error('Erreur invalidation tâche:', err);
+      alert(err.message || "Erreur lors de l'invalidation");
+    }
+  };
+
   // Filtrage des tâches
   const filteredTasks = tasks.filter((t) => {
     // Recherche textuelle
@@ -383,7 +413,18 @@ export default function TasksPage({ currentUser = 'Henri Jamet' }) {
     if (selectedAssignee !== 'all') {
       const assoc = AUTHENTIC_ASSOCIATES.find(a => a.id === selectedAssignee);
       const targetMeta = resolveUserMeta(assoc ? { prenom: assoc.shortName, name: assoc.name, id: assoc.id } : selectedAssignee);
-      if (!isTaskAssignedToUser(t, targetMeta)) return false;
+      
+      const isTargetCurrentUser = targetMeta && userMeta && (
+        (targetMeta.id && userMeta.id && Number(targetMeta.id) === Number(userMeta.id)) ||
+        (targetMeta.lowerPrenom && userMeta.lowerPrenom && targetMeta.lowerPrenom === userMeta.lowerPrenom)
+      );
+
+      const isPendingVal = isTaskPendingValidation(t);
+      if (isCoordinator && isTargetCurrentUser && isPendingVal) {
+        // Tâche à valider incluse dans "Mes tâches" pour le coordinateur
+      } else if (!isTaskAssignedToUser(t, targetMeta)) {
+        return false;
+      }
     }
 
     // Filtre Sujet
@@ -432,10 +473,14 @@ export default function TasksPage({ currentUser = 'Henri Jamet' }) {
   const totalTasks = tasks.length;
   const totalOpenTasksCount = Math.max(0, totalTasks - completedTasksCount);
 
-  // Mes tâches parmi les tâches ouvertes (Annotation 9 : synchronisation parfaite /sejour et /taches)
+  // Mes tâches parmi les tâches ouvertes (inclus les tâches à valider pour le coordinateur)
   const myOpenTasksCount = useMemo(() => {
-    return tasks.filter(t => isTaskOpen(t) && isTaskAssignedToUser(t, userMeta)).length;
-  }, [tasks, userMeta]);
+    return tasks.filter(t => {
+      if (!isTaskOpen(t)) return false;
+      if (isCoordinator && isTaskPendingValidation(t)) return true;
+      return isTaskAssignedToUser(t, userMeta);
+    }).length;
+  }, [tasks, userMeta, isCoordinator]);
 
   // Avancement global
   const avgProgress = totalTasks === 0 || totalOpenTasksCount === 0
@@ -1027,6 +1072,8 @@ export default function TasksPage({ currentUser = 'Henri Jamet' }) {
           </div>
         ) : (
           sortedTasks.map((t) => {
+            const isPendingVal = isTaskPendingValidation(t);
+            const isValidationTask = isCoordinator && isPendingVal;
             const isCritical = t.priority === 'Critique';
             const isHigh = t.priority === 'Haute';
             const isNormal = t.priority === 'Normale';
@@ -1034,14 +1081,26 @@ export default function TasksPage({ currentUser = 'Henri Jamet' }) {
             return (
               <article
                 key={t.id}
-                className="bg-surface-container-lowest rounded-xl p-space-md lg:p-space-lg shadow-sm hover:shadow-md transition-all flex flex-col justify-between group border border-border-subtle"
+                className={`rounded-xl p-space-md lg:p-space-lg shadow-sm hover:shadow-md transition-all flex flex-col justify-between group ${
+                  isValidationTask
+                    ? 'bg-purple-50/80 dark:bg-purple-950/40 border-2 border-purple-300 dark:border-purple-700/60 shadow-sm'
+                    : 'bg-surface-container-lowest border border-border-subtle'
+                }`}
               >
                 <div>
                   {/* Badges row */}
                   <div className="flex flex-wrap items-center gap-space-xs mb-3">
+                    {isValidationTask && (
+                      <span className="px-2 py-0.5 rounded-full text-xs font-bold bg-purple-100 text-purple-800 dark:bg-purple-900/60 dark:text-purple-200 border border-purple-300 flex items-center gap-1">
+                        <span className="material-symbols-outlined text-xs">verified</span> À valider
+                      </span>
+                    )}
+
                     <span
                       className={`inline-flex items-center gap-1.5 px-3 py-1 rounded-full font-label-sm text-label-sm font-semibold ${
-                        isCritical
+                        isValidationTask
+                          ? 'bg-purple-200/80 text-purple-900 dark:bg-purple-800 dark:text-purple-100'
+                          : isCritical
                           ? 'bg-error-container/60 text-error'
                           : isHigh
                           ? 'bg-amber-soft text-amber-rich'
@@ -1052,7 +1111,9 @@ export default function TasksPage({ currentUser = 'Henri Jamet' }) {
                     >
                       <span
                         className={`w-2 h-2 rounded-full ${
-                          isCritical
+                          isValidationTask
+                            ? 'bg-purple-600'
+                            : isCritical
                             ? 'bg-error'
                             : isHigh
                             ? 'bg-amber-rich'
@@ -1061,7 +1122,7 @@ export default function TasksPage({ currentUser = 'Henri Jamet' }) {
                             : 'bg-outline'
                         }`}
                       ></span>
-                      {t.priority}
+                      {isValidationTask ? `À valider • ${t.priority}` : t.priority}
                     </span>
 
                     {/* Domaine / Catégorie */}
@@ -1106,7 +1167,9 @@ export default function TasksPage({ currentUser = 'Henri Jamet' }) {
 
                   {/* Title */}
                   <div className="mb-2">
-                    <h3 className="font-headline-sm text-headline-sm text-forest-deep group-hover:text-primary transition-colors font-bold">
+                    <h3 className={`font-headline-sm text-headline-sm font-bold transition-colors ${
+                      isValidationTask ? 'text-purple-950 dark:text-purple-100' : 'text-forest-deep group-hover:text-primary'
+                    }`}>
                       {t.title}
                     </h3>
                   </div>
@@ -1127,27 +1190,31 @@ export default function TasksPage({ currentUser = 'Henri Jamet' }) {
                       </div>
                       <span
                         className={`font-label-sm font-bold px-2 py-0.5 rounded-full text-xs ${
-                          isCritical
+                          isValidationTask
+                            ? 'text-purple-800 bg-purple-100'
+                            : isCritical
                             ? 'text-error bg-error-container/40'
                             : isHigh
                             ? 'text-amber-rich bg-amber-soft'
                             : 'text-primary bg-sage-soft'
                         }`}
                       >
-                        {t.progress || 50}%
+                        {isValidationTask ? 'En attente de validation' : `${t.progress || 50}%`}
                       </span>
                     </div>
 
                     <div className="w-full h-2 bg-surface-container-high rounded-full overflow-hidden">
                       <div
                         className={`h-full rounded-full transition-all duration-300 progress-shimmer ${
-                          isCritical
+                          isValidationTask
+                            ? 'bg-gradient-to-r from-purple-500 to-indigo-600'
+                            : isCritical
                             ? 'bg-gradient-to-r from-red-500 to-rose-600'
                             : isHigh
                             ? 'bg-gradient-to-r from-amber-500 to-emerald-600'
                             : 'bg-gradient-to-r from-teal-500 to-emerald-600'
                         }`}
-                        style={{ width: `${t.progress || 50}%` }}
+                        style={{ width: `${isValidationTask ? 100 : (t.progress || 50)}%` }}
                       ></div>
                     </div>
                   </div>
@@ -1155,43 +1222,82 @@ export default function TasksPage({ currentUser = 'Henri Jamet' }) {
                 </div>
 
                 {/* Card Footer: Assignee & Action */}
-                <div className="pt-space-sm flex flex-col sm:flex-row sm:items-center justify-between gap-space-sm border-t border-slate-100">
+                <div className={`pt-space-sm flex flex-col sm:flex-row sm:items-center justify-between gap-space-sm border-t ${
+                  isValidationTask ? 'border-purple-200 dark:border-purple-800' : 'border-slate-100'
+                }`}>
                   <div className="flex items-center gap-2">
                     <div className="flex -space-x-2 overflow-hidden">
                       {t.avatars && t.avatars.length > 0 ? (
                         t.avatars.map((av, idx) => (
                           <div
                             key={idx}
-                            className={`w-8 h-8 rounded-full ${av.bg || 'bg-primary text-on-primary'} font-bold text-xs flex items-center justify-center ring-2 ring-surface-container-lowest`}
+                            className={`w-8 h-8 rounded-full ${isValidationTask ? 'bg-purple-700 text-white' : (av.bg || 'bg-primary text-on-primary')} font-bold text-xs flex items-center justify-center ring-2 ring-surface-container-lowest`}
                             title={av.name}
                           >
                             {av.initials}
                           </div>
                         ))
                       ) : (
-                        <div className="w-8 h-8 rounded-full bg-primary text-on-primary font-bold text-xs flex items-center justify-center ring-2 ring-surface-container-lowest">
+                        <div className={`w-8 h-8 rounded-full ${isValidationTask ? 'bg-purple-700 text-white' : 'bg-primary text-on-primary'} font-bold text-xs flex items-center justify-center ring-2 ring-surface-container-lowest`}>
                           HJ
                         </div>
                       )}
                     </div>
                     <div className="flex flex-col">
                       <span className="font-label-sm text-label-sm text-on-surface font-semibold leading-tight">
-                        {t.assignee || 'Henri Jamet'}
+                        {isValidationTask ? `Soumis par : ${t.created_by || t.assignee || 'Associé'}` : (t.assignee || 'Henri Jamet')}
                       </span>
                       <span className="text-[12px] text-on-surface-variant leading-tight">
-                        {t.role_label || 'Responsable de mission'}
+                        {isValidationTask ? 'Validation coordinateur requise' : (t.role_label || 'Responsable de mission')}
                       </span>
                     </div>
                   </div>
 
-                  <button
-                    type="button"
-                    onClick={() => handleOpenInspectTask(t)}
-                    className="h-[46px] px-5 bg-surface-container-lowest border-2 border-primary-container text-primary-container font-label-md text-label-md rounded-DEFAULT hover:bg-sage-soft hover:border-primary transition-all flex items-center justify-center gap-2 shrink-0 font-semibold cursor-pointer"
-                  >
-                    <span className="material-symbols-outlined text-[18px] text-primary-container">visibility</span>
-                    <span>Consulter la tâche</span>
-                  </button>
+                  {isValidationTask ? (
+                    <div className="flex items-center gap-2 flex-wrap">
+                      <button
+                        type="button"
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          handleValidateTask(t.id);
+                        }}
+                        className="px-3 py-1.5 rounded-lg bg-emerald-600 hover:bg-emerald-700 text-white text-xs font-semibold flex items-center gap-1 shadow-xs transition-colors cursor-pointer"
+                        title="Valider la tâche"
+                      >
+                        <span className="material-symbols-outlined text-xs">check</span>
+                        <span>Valider</span>
+                      </button>
+                      <button
+                        type="button"
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          handleInvalidateTask(t.id);
+                        }}
+                        className="px-3 py-1.5 rounded-lg bg-rose-50 hover:bg-rose-100 text-rose-700 border border-rose-200 text-xs font-semibold flex items-center gap-1 shadow-xs transition-colors cursor-pointer"
+                        title="Invalider la tâche"
+                      >
+                        <span className="material-symbols-outlined text-xs">close</span>
+                        <span>Invalider</span>
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => handleOpenInspectTask(t)}
+                        className="h-[36px] px-3 bg-white border border-purple-300 text-purple-900 hover:bg-purple-100 font-label-md text-xs rounded-lg transition-all flex items-center justify-center gap-1.5 font-semibold cursor-pointer shadow-2xs"
+                      >
+                        <span className="material-symbols-outlined text-[16px]">visibility</span>
+                        <span>Détail</span>
+                      </button>
+                    </div>
+                  ) : (
+                    <button
+                      type="button"
+                      onClick={() => handleOpenInspectTask(t)}
+                      className="h-[46px] px-5 bg-surface-container-lowest border-2 border-primary-container text-primary-container font-label-md text-label-md rounded-DEFAULT hover:bg-sage-soft hover:border-primary transition-all flex items-center justify-center gap-2 shrink-0 font-semibold cursor-pointer"
+                    >
+                      <span className="material-symbols-outlined text-[18px] text-primary-container">visibility</span>
+                      <span>Consulter la tâche</span>
+                    </button>
+                  )}
                 </div>
 
               </article>

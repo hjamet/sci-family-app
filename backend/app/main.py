@@ -24,7 +24,7 @@ from .models import (
     BankAccount, BankTransaction, BankAuthSession, MemberSettings, ThermalSettings
 )
 from .schemas import (
-    LoginRequest, PropertyResponse, UserResponse, TokenResponse,
+    LoginRequest, PropertyResponse, UserResponse, MemberResponse, TokenResponse,
     IssueCreate, IssueUpdate, IssueResponse,
     CommentCreate, CommentResponse, IssueCommentCreate, IssueCommentResponse,
     ReservationCreate, ReservationUpdate, ReservationResponse,
@@ -168,10 +168,23 @@ def run_task_migrations():
                     if "completion_docs" not in column_names:
                         conn.execute(text("ALTER TABLE stay_task_assignments ADD COLUMN completion_docs TEXT"))
                     conn.commit()
+
+                # Migration pour la table unifiée tasks
+                tasks_query = text("PRAGMA table_info(tasks)")
+                t_result = conn.execute(tasks_query).fetchall()
+                t_columns = [row[1] for row in t_result]
+                if t_columns:
+                    if "is_recurring" not in t_columns:
+                        conn.execute(text("ALTER TABLE tasks ADD COLUMN is_recurring BOOLEAN DEFAULT 0"))
+                    if "last_completed_at" not in t_columns:
+                        conn.execute(text("ALTER TABLE tasks ADD COLUMN last_completed_at DATETIME"))
+                    conn.commit()
             else:
                 conn.execute(text("ALTER TABLE stay_task_assignments ADD COLUMN IF NOT EXISTS status VARCHAR DEFAULT 'A_FAIRE';"))
                 conn.execute(text("ALTER TABLE stay_task_assignments ADD COLUMN IF NOT EXISTS completion_notes TEXT;"))
                 conn.execute(text("ALTER TABLE stay_task_assignments ADD COLUMN IF NOT EXISTS completion_docs TEXT;"))
+                conn.execute(text("ALTER TABLE tasks ADD COLUMN IF NOT EXISTS is_recurring BOOLEAN DEFAULT FALSE;"))
+                conn.execute(text("ALTER TABLE tasks ADD COLUMN IF NOT EXISTS last_completed_at TIMESTAMP;"))
                 conn.commit()
     except Exception as e:
         logger.warning(f"Notice: run_task_migrations: {e}")
@@ -208,11 +221,51 @@ def run_member_migrations():
                 if column_names:
                     if "notify_mentions" not in column_names:
                         conn.execute(text("ALTER TABLE members ADD COLUMN notify_mentions BOOLEAN DEFAULT 1"))
+                    if "is_coordinator" not in column_names:
+                        conn.execute(text("ALTER TABLE members ADD COLUMN is_coordinator BOOLEAN DEFAULT 0"))
                     conn.execute(text("UPDATE members SET notify_mentions = 1 WHERE notify_mentions IS NULL"))
+                    # Migration automatique : Henri Jamet et Joséphine Jamet = is_coordinator True, les autres False
+                    conn.execute(text("""
+                        UPDATE members 
+                        SET is_coordinator = 1 
+                        WHERE prenom IN ('Henri', 'Joséphine', 'Josephine') 
+                           OR name LIKE '%Henri Jamet%' 
+                           OR name LIKE '%Joséphine Jamet%' 
+                           OR name LIKE '%Josephine Jamet%'
+                           OR (id = 1 AND prenom = 'Henri')
+                           OR (id = 2 AND prenom IN ('Joséphine', 'Josephine'))
+                    """))
+                    conn.execute(text("""
+                        UPDATE members 
+                        SET is_coordinator = 0 
+                        WHERE prenom NOT IN ('Henri', 'Joséphine', 'Josephine') 
+                          AND name NOT LIKE '%Henri Jamet%' 
+                          AND name NOT LIKE '%Joséphine Jamet%' 
+                          AND name NOT LIKE '%Josephine Jamet%'
+                    """))
                     conn.commit()
             else:
                 conn.execute(text("ALTER TABLE members ADD COLUMN IF NOT EXISTS notify_mentions BOOLEAN DEFAULT TRUE;"))
+                conn.execute(text("ALTER TABLE members ADD COLUMN IF NOT EXISTS is_coordinator BOOLEAN DEFAULT FALSE;"))
                 conn.execute(text("UPDATE members SET notify_mentions = TRUE WHERE notify_mentions IS NULL;"))
+                conn.execute(text("""
+                    UPDATE members 
+                    SET is_coordinator = TRUE 
+                    WHERE prenom IN ('Henri', 'Joséphine', 'Josephine') 
+                       OR name ILIKE '%Henri Jamet%' 
+                       OR name ILIKE '%Joséphine Jamet%' 
+                       OR name ILIKE '%Josephine Jamet%'
+                       OR (id = 1 AND prenom = 'Henri')
+                       OR (id = 2 AND prenom IN ('Joséphine', 'Josephine'));
+                """))
+                conn.execute(text("""
+                    UPDATE members 
+                    SET is_coordinator = FALSE 
+                    WHERE prenom NOT IN ('Henri', 'Joséphine', 'Josephine') 
+                      AND name NOT ILIKE '%Henri Jamet%' 
+                      AND name NOT ILIKE '%Joséphine Jamet%' 
+                      AND name NOT ILIKE '%Josephine Jamet%';
+                """))
                 conn.commit()
     except Exception as e:
         logger.warning(f"Notice: run_member_migrations: {e}")
@@ -523,6 +576,7 @@ def login(req: LoginRequest, request: Request, db: Session = Depends(get_db)):
         "name": user.name,
         "email": user.email,
         "role": user.role,
+        "is_coordinator": bool(getattr(user, "is_coordinator", False)),
         "avatar_color": user.avatar_color,
         "notif_task_assigned": getattr(user, "notif_task_assigned", True),
         "notif_vote_needed": getattr(user, "notif_vote_needed", True),
@@ -938,9 +992,10 @@ def update_settings_notifications(
     member_id = current_user.id if current_user else 1
     return update_member_settings(member_id, data, db)
 
+@app.get("/api/members", response_model=List[MemberResponse])
 @app.get("/api/users", response_model=List[UserResponse])
 def get_users(db: Session = Depends(get_db)):
-    return db.query(User).all()
+    return db.query(Member).order_by(Member.id.asc()).all()
 
 ALL_SCI_ROOMS = [
     # Le Presbytère (5 chambres)
@@ -2316,6 +2371,8 @@ def format_task_response(task: Task, include_comments: bool = False) -> dict:
         "category": task.category,
         "priority": task.priority,
         "status": task.status,
+        "is_recurring": bool(getattr(task, "is_recurring", False)),
+        "last_completed_at": task.last_completed_at,
         "complexity": task.complexity,
         "budget": task.budget,
         "budget_notes": task.budget_notes,
@@ -2411,6 +2468,7 @@ def create_task(payload: dict, db: Session = Depends(get_db)):
     category = payload.get("category", "Général")
     priority = payload.get("priority", "Normale")
     task_status = payload.get("status", "EN_COURS")
+    is_recurring = bool(payload.get("is_recurring", False))
     complexity = payload.get("complexity", "Modérée")
     budget = float(payload.get("budget", 0.0) or 0.0)
     budget_notes = payload.get("budget_notes")
@@ -2449,6 +2507,7 @@ def create_task(payload: dict, db: Session = Depends(get_db)):
         category=category,
         priority=priority,
         status=task_status,
+        is_recurring=is_recurring,
         complexity=complexity,
         budget=budget,
         budget_notes=budget_notes,
@@ -2519,6 +2578,10 @@ def update_task(task_id: str, payload: dict, db: Session = Depends(get_db)):
         task.priority = payload["priority"]
     if "status" in payload and payload["status"] is not None:
         task.status = payload["status"]
+    if "is_recurring" in payload and payload["is_recurring"] is not None:
+        task.is_recurring = bool(payload["is_recurring"])
+    if "last_completed_at" in payload and payload["last_completed_at"] is not None:
+        task.last_completed_at = payload["last_completed_at"]
     if "complexity" in payload and payload["complexity"] is not None:
         task.complexity = payload["complexity"]
     if "budget" in payload and payload["budget"] is not None:
@@ -2588,6 +2651,85 @@ def close_task(task_id: str, req: TaskCloseRequest, db: Session = Depends(get_db
     if req.completion_docs:
         task.completion_docs = json.dumps(req.completion_docs)
     task.updated_at = datetime.utcnow()
+    db.commit()
+    db.refresh(task)
+    return format_task_response(task, include_comments=True)
+
+
+@app.post("/api/tasks/{task_id}/validate")
+def validate_task_unified(
+    task_id: str,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db)
+):
+    if not getattr(current_user, "is_coordinator", False):
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Action réservée aux coordinateurs (is_coordinator requis)."
+        )
+    task = resolve_task_by_id_or_ref(task_id, db)
+    if getattr(task, "is_recurring", False):
+        task.last_completed_at = datetime.utcnow()
+        task.status = "A_FAIRE"
+    else:
+        task.status = "TERMINEE"
+    task.updated_at = datetime.utcnow()
+    db.commit()
+    db.refresh(task)
+    return format_task_response(task, include_comments=True)
+
+
+@app.post("/api/tasks/{task_id}/invalidate")
+def invalidate_task_unified(
+    task_id: str,
+    payload: Optional[dict] = None,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db)
+):
+    if not getattr(current_user, "is_coordinator", False):
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Action réservée aux coordinateurs (is_coordinator requis)."
+        )
+    task = resolve_task_by_id_or_ref(task_id, db)
+    task.status = "A_FAIRE"
+    task.updated_at = datetime.utcnow()
+
+    # Si message explicatif fourni, ajout au chat FamilyChat via TaskComment
+    explanation = None
+    if payload:
+        explanation = payload.get("explanation") or payload.get("message") or payload.get("comment")
+    if explanation and str(explanation).strip():
+        comment = TaskComment(
+            task_id=task.id,
+            author_id=current_user.id,
+            author_name=f"{current_user.prenom} (Coordination)",
+            author_role="Coordinateur",
+            content=f"[Demande de révision] {str(explanation).strip()}",
+            reactions="{}"
+        )
+        db.add(comment)
+
+    db.commit()
+    db.refresh(task)
+    return format_task_response(task, include_comments=True)
+
+
+@app.post("/api/tasks/{task_id}/submit-completion")
+def submit_task_done(
+    task_id: str,
+    payload: Optional[dict] = None,
+    current_user: Optional[User] = Depends(get_optional_current_user),
+    db: Session = Depends(get_db)
+):
+    task = resolve_task_by_id_or_ref(task_id, db)
+    task.status = "PENDING_VALIDATION"
+    task.updated_at = datetime.utcnow()
+    if payload and payload.get("completion_notes"):
+        task.completion_notes = payload["completion_notes"]
+    if payload and payload.get("completion_docs"):
+        val = payload["completion_docs"]
+        task.completion_docs = json.dumps(val) if isinstance(val, list) else str(val)
     db.commit()
     db.refresh(task)
     return format_task_response(task, include_comments=True)

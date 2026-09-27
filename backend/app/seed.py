@@ -68,6 +68,7 @@ def seed_database(db: Session = None, force: bool = False):
             email="hellenvillierssci@gmail.com",
             password=hash_password(os.getenv("USER_HENRI_PASS") or os.getenv("MEMBER_PASSWORD_HENRI", "N8xK9mP2vQ5rT7wY")),
             role="Coordinateur Général (Fioul, Chauffage ViCare, CCA)",
+            is_coordinator=True,
             avatar_color="cyan"
         ),
         Member(
@@ -76,6 +77,7 @@ def seed_database(db: Session = None, force: bool = False):
             email="hortense_jamet@yahoo.fr",
             password=hash_password(os.getenv("USER_HORTENSE_PASS") or os.getenv("MEMBER_PASSWORD_HORTENSE", "Q2mK9vL5nR1wT7pY")),
             role="Responsable Espaces Verts (Jardinier Perrot, Starlink)",
+            is_coordinator=False,
             avatar_color="rose"
         ),
         Member(
@@ -84,6 +86,7 @@ def seed_database(db: Session = None, force: bool = False):
             email="marguerite_jamet@yahoo.fr",
             password=hash_password(os.getenv("USER_MARGUERITE_PASS") or os.getenv("MEMBER_PASSWORD_MARGUERITE", "B4vL7nP1wR9tY2mK")),
             role="Responsable Équipements (Frigo Schtroudel, Buanderie)",
+            is_coordinator=False,
             avatar_color="purple"
         ),
         Member(
@@ -92,6 +95,7 @@ def seed_database(db: Session = None, force: bool = False):
             email="eugenie_jamet@yahoo.fr",
             password=hash_password(os.getenv("USER_EUGENIE_PASS") or os.getenv("MEMBER_PASSWORD_EUGENIE", "R9tY2mK9vL5nR1wP")),
             role="Responsable Peintures SdB & Tri Sélectif",
+            is_coordinator=False,
             avatar_color="amber"
         ),
         Member(
@@ -100,6 +104,7 @@ def seed_database(db: Session = None, force: bool = False):
             email="josephine_jamet@yahoo.fr",
             password=hash_password(os.getenv("USER_JOSEPHINE_PASS") or os.getenv("MEMBER_PASSWORD_JOSEPHINE", "T7pY2mK9vL5nR1wQ")),
             role="Coordinatrice Adjointe (Clés, Boîtier Sud, Vêtements)",
+            is_coordinator=True,
             avatar_color="emerald"
         ),
         Member(
@@ -108,6 +113,7 @@ def seed_database(db: Session = None, force: bool = False):
             email="elizabeth_jamet@yahoo.fr",
             password=hash_password(os.getenv("USER_MAMAN_PASS") or os.getenv("MEMBER_PASSWORD_MAMAN", "W1tY2mK9vL5nR1pT")),
             role="Membre Associé",
+            is_coordinator=False,
             avatar_color="teal"
         ),
         Member(
@@ -116,6 +122,7 @@ def seed_database(db: Session = None, force: bool = False):
             email="frdjamet@gmail.com",
             password=hash_password(os.getenv("USER_FREDERIC_PASS") or os.getenv("MEMBER_PASSWORD_FREDERIC", "L5nR1wT7pY2mK9vQ")),
             role="Responsable Électricité & Linky Tempo (Contacteur 0/HC)",
+            is_coordinator=False,
             avatar_color="blue"
         ),
     ]

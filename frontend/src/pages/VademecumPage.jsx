@@ -9,7 +9,9 @@ import {
   fetchTasks,
   fetchReservations,
   setHeatingTemperature,
-  setHeatingMode as apiSetHeatingMode
+  setHeatingMode as apiSetHeatingMode,
+  validateTask,
+  invalidateTask
 } from '../api';
 import SejourCutoffMapModal from '../components/sejour/SejourCutoffMapModal';
 import SejourDepartureChecklistModal from '../components/sejour/SejourDepartureChecklistModal';
@@ -306,6 +308,109 @@ export default function VademecumPage({ properties, currentUser }) {
     setSelectedTask(task);
     setIsTaskModalOpen(true);
   };
+
+  const isCoordinator = Boolean(currentUser?.is_coordinator);
+  const currentUserName = resolveCurrentUserFullName(currentUser);
+  const currentUserFirst = currentUserName.trim().split(' ')[0].toLowerCase();
+
+  const isTaskPendingValidation = (t) => {
+    const st = (t?.status || '').toUpperCase();
+    return st === 'PENDING_VALIDATION' || st === 'EN_ATTENTE_VALIDATION';
+  };
+
+  const isTaskAssignedToMe = (t) => {
+    if (!t) return false;
+    const cName = currentUserName.toLowerCase();
+    const cFirst = currentUserFirst;
+    const cId = currentUser?.id;
+
+    // 1. Direct ID check
+    const taskMemberId = t.assigned_member_id ?? t.assignee_id ?? t.member_id ?? t.user_id;
+    if (cId != null && taskMemberId != null && Number(taskMemberId) === Number(cId)) {
+      return true;
+    }
+
+    // 2. Assignee string check
+    const assigneeStr = (t.assignee || t.assignee_name || '').toLowerCase();
+    if (assigneeStr && (assigneeStr.includes(cName) || (cFirst.length >= 3 && assigneeStr.includes(cFirst)))) {
+      return true;
+    }
+
+    // 3. Assigned members array or JSON
+    let members = [];
+    if (Array.isArray(t.assigned_members)) {
+      members = t.assigned_members;
+    } else if (typeof t.assigned_members === 'string' && t.assigned_members.trim()) {
+      try {
+        const parsed = JSON.parse(t.assigned_members);
+        if (Array.isArray(parsed)) members = parsed;
+        else members = [t.assigned_members];
+      } catch (_) {
+        members = [t.assigned_members];
+      }
+    }
+
+    for (const m of members) {
+      if (typeof m === 'object' && m !== null) {
+        if (cId != null && m.id != null && Number(m.id) === Number(cId)) return true;
+        const mName = (m.name || m.prenom || '').toLowerCase();
+        if (mName.includes(cName) || (cFirst.length >= 3 && mName.includes(cFirst))) return true;
+      } else if (typeof m === 'string') {
+        const mStr = m.toLowerCase();
+        if (mStr.includes(cName) || (cFirst.length >= 3 && mStr.includes(cFirst))) return true;
+      }
+    }
+
+    // 4. Mention in title or description
+    const fullText = `${t.title || ''} ${t.description || ''}`.toLowerCase();
+    if (cFirst.length >= 3 && (
+      fullText.includes(`[référent: ${cFirst}`) ||
+      fullText.includes(`[référente: ${cFirst}`) ||
+      fullText.includes(`[référent : ${cFirst}`) ||
+      fullText.includes(`[référente : ${cFirst}`)
+    )) {
+      return true;
+    }
+
+    // 5. Fallback created_by if no assignee
+    if (!assigneeStr && members.length === 0 && !taskMemberId && t.created_by) {
+      const creatorStr = String(t.created_by).toLowerCase();
+      if (cFirst.length >= 3 && creatorStr.includes(cFirst)) return true;
+    }
+
+    return false;
+  };
+
+  const handleValidateTask = async (taskId) => {
+    try {
+      await validateTask(taskId);
+      showToast('Tâche validée avec succès ✅');
+      await loadInitialData();
+    } catch (err) {
+      console.error('Erreur validation tâche:', err);
+      showToast(err.message || 'Erreur lors de la validation');
+    }
+  };
+
+  const handleInvalidateTask = async (taskId) => {
+    const reason = window.prompt("Motif de l'invalidation / demande de révision (optionnel) :", "");
+    if (reason === null) return;
+    try {
+      await invalidateTask(taskId, reason);
+      showToast('Tâche retournée à corriger ↩️');
+      await loadInitialData();
+    } catch (err) {
+      console.error('Erreur invalidation tâche:', err);
+      showToast(err.message || "Erreur lors de l'invalidation");
+    }
+  };
+
+  // Tâches filtrées sous la responsabilité de l'utilisateur + (si coordinateur) tâches en attente de validation
+  const displayedTasks = tasks.filter((t) => {
+    const isPendingVal = isTaskPendingValidation(t);
+    if (isCoordinator && isPendingVal) return true;
+    return isTaskAssignedToMe(t);
+  });
 
   // WiFi password copy
   const [wifiCopied, setWifiCopied] = useState(false);
@@ -1190,10 +1295,16 @@ export default function VademecumPage({ properties, currentUser }) {
           <div className="space-y-1">
             <div className="flex items-center gap-2 flex-wrap">
               <span className="text-xs text-on-surface-variant font-medium">{resolveCurrentUserFullName(currentUser)}</span>
-              {tasks.length > 0 && (
+              {displayedTasks.length > 0 && (
                 <span className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full bg-sage-soft text-primary font-label-sm text-xs font-semibold">
                   <span className="w-1.5 h-1.5 rounded-full bg-primary"></span>
-                  {tasks.filter(t => t.status === 'active' || t.status === 'EN_COURS').length} Tâches actives sur place
+                  {displayedTasks.filter(t => t.status === 'active' || t.status === 'EN_COURS' || isTaskPendingValidation(t)).length} Tâches actives sur place
+                </span>
+              )}
+              {isCoordinator && displayedTasks.some(isTaskPendingValidation) && (
+                <span className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full bg-purple-100 text-purple-800 dark:bg-purple-900/60 dark:text-purple-200 border border-purple-300 font-label-sm text-xs font-bold">
+                  <span className="material-symbols-outlined text-[14px]">verified</span>
+                  {displayedTasks.filter(isTaskPendingValidation).length} à valider
                 </span>
               )}
             </div>
@@ -1205,13 +1316,15 @@ export default function VademecumPage({ properties, currentUser }) {
 
         {/* Tasks Cards Grid */}
         <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-5">
-          {tasks.length === 0 ? (
+          {displayedTasks.length === 0 ? (
             <div className="col-span-full py-8 px-4 rounded-xl bg-canvas-slate border border-dashed border-outline-variant/40 flex flex-col items-center justify-center text-center">
               <span className="material-symbols-outlined text-[32px] text-on-surface-variant/60 mb-2">assignment_turned_in</span>
               <p className="text-sm font-semibold text-forest-deep">Aucune tâche assignée pour ce séjour</p>
             </div>
           ) : (
-            tasks.map((task, idx) => {
+            displayedTasks.map((task, idx) => {
+              const isPendingVal = isTaskPendingValidation(task);
+              const isValidationTask = isCoordinator && isPendingVal;
               const isCompleted =
                 task.status === 'completed' ||
                 task.status === 'TERMINE' ||
@@ -1233,35 +1346,56 @@ export default function VademecumPage({ properties, currentUser }) {
                 <article
                   key={task.id || idx}
                   onClick={() => handleOpenTaskDetail(task)}
-                  className={`rounded-xl p-5 border shadow-sm flex flex-col justify-between gap-4 transition-all hover:shadow-md cursor-pointer group ${
-                    isCompleted
-                      ? 'bg-sage-soft/30 border-sage-border'
+                  className={`rounded-xl p-5 shadow-sm flex flex-col justify-between gap-4 transition-all hover:shadow-md cursor-pointer group ${
+                    isValidationTask
+                      ? 'bg-purple-50/80 dark:bg-purple-950/40 border-2 border-purple-300 dark:border-purple-700/60 shadow-sm'
+                      : isCompleted
+                      ? 'bg-sage-soft/30 border border-sage-border'
                       : isHigh
                       ? 'bg-amber-soft/30 border-2 border-amber-rich/40'
-                      : 'bg-white border-outline-variant/40'
+                      : 'bg-white border border-outline-variant/40'
                   }`}
                 >
                   <div className="flex flex-col gap-3">
                     <div className="flex items-center justify-between gap-2 flex-wrap">
                       <div className="flex items-center gap-2 flex-wrap">
+                        {isValidationTask && (
+                          <span className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full text-xs font-semibold bg-purple-100 text-purple-800 dark:bg-purple-900/60 dark:text-purple-200 border border-purple-200 dark:border-purple-800">
+                            <span className="material-symbols-outlined text-xs">verified</span> À valider
+                          </span>
+                        )}
                         <span className={`inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full text-[11px] font-bold uppercase tracking-wider ${
-                          isCompleted ? 'bg-primary text-white' : isHigh ? 'bg-amber-rich text-white' : 'bg-sage-soft text-primary'
+                          isValidationTask
+                            ? 'bg-purple-200/80 text-purple-900 dark:bg-purple-800 dark:text-purple-100'
+                            : isCompleted
+                            ? 'bg-primary text-white'
+                            : isHigh
+                            ? 'bg-amber-rich text-white'
+                            : 'bg-sage-soft text-primary'
                         }`}>
                           <span className="material-symbols-outlined text-[14px]">
-                            {isCompleted ? 'check' : isHigh ? 'warning' : 'construction'}
+                            {isValidationTask ? 'fact_check' : isCompleted ? 'check' : isHigh ? 'warning' : 'construction'}
                           </span>
-                          {isCompleted ? 'Validée' : (task.priority || 'Priorité Normale')}
+                          {isValidationTask ? 'À valider' : isCompleted ? 'Validée' : (task.priority || 'Priorité Normale')}
                         </span>
-                        <span className="text-xs text-secondary font-semibold">{task.date || task.deadline || 'Sous 10 jours'}</span>
+                        <span className={`text-xs font-semibold ${isValidationTask ? 'text-purple-700 dark:text-purple-300' : 'text-secondary'}`}>
+                          {task.date || task.deadline || 'Sous 10 jours'}
+                        </span>
                       </div>
                       <div className="text-right">
                         <span className="text-xs text-on-surface-variant font-medium block">{task.budgetType || 'Budget prévisionnel'}</span>
-                        <span className="font-headline-sm text-forest-deep font-bold text-sm">{budgetText}</span>
+                        <span className={`font-headline-sm font-bold text-sm ${isValidationTask ? 'text-purple-900 dark:text-purple-200' : 'text-forest-deep'}`}>
+                          {budgetText}
+                        </span>
                       </div>
                     </div>
 
                     <div>
-                      <h3 className="font-headline-sm text-headline-sm text-forest-deep font-bold group-hover:text-primary transition-colors">
+                      <h3 className={`font-headline-sm text-headline-sm font-bold transition-colors ${
+                        isValidationTask
+                          ? 'text-purple-950 dark:text-purple-100 group-hover:text-purple-700'
+                          : 'text-forest-deep group-hover:text-primary'
+                      }`}>
                         {task.title}
                       </h3>
                       <p className="font-body-md text-on-surface-variant text-xs leading-relaxed mt-1">
@@ -1270,49 +1404,99 @@ export default function VademecumPage({ properties, currentUser }) {
                     </div>
                   </div>
 
-                  <div className="pt-3 border-t border-outline-variant/20 flex items-center justify-between gap-3 flex-wrap">
+                  <div className={`pt-3 border-t flex items-center justify-between gap-3 flex-wrap ${
+                    isValidationTask ? 'border-purple-200 dark:border-purple-800' : 'border-outline-variant/20'
+                  }`}>
                     <div className="flex items-center gap-2">
-                      <div className="w-7 h-7 rounded-full bg-primary text-white flex items-center justify-center font-bold text-xs">
+                      <div className={`w-7 h-7 rounded-full flex items-center justify-center font-bold text-xs text-white ${
+                        isValidationTask ? 'bg-purple-700' : 'bg-primary'
+                      }`}>
                         {initials}
                       </div>
                       <div className="flex flex-col leading-tight">
-                        <span className="text-xs font-semibold text-on-surface">En charge : {assigneeName}</span>
+                        <span className="text-xs font-semibold text-on-surface">
+                          {isValidationTask ? `Soumis par : ${task.created_by || assigneeName}` : `En charge : ${assigneeName}`}
+                        </span>
                         {partner && (
                           <span className="text-[11px] text-on-surface-variant">{partner}</span>
                         )}
                       </div>
                     </div>
-                    <div className="flex items-center gap-2">
-                      <button
-                        type="button"
-                        onClick={(e) => {
-                          e.stopPropagation();
-                          handleOpenTaskDetail(task);
-                        }}
-                        className="inline-flex items-center gap-1.5 px-3 py-2 rounded-xl bg-canvas-slate hover:bg-surface-container border border-border-subtle text-on-surface font-label-sm text-xs font-semibold transition-colors shadow-2xs cursor-pointer"
-                        title="Consulter le détail de la tâche"
-                      >
-                        <span className="material-symbols-outlined text-[16px] text-primary">visibility</span>
-                        <span>Consulter</span>
-                      </button>
 
-                      <button
-                        onClick={(e) => {
-                          e.stopPropagation();
-                          handleToggleTaskComplete(task.id);
-                        }}
-                        className={`inline-flex items-center gap-1.5 px-3.5 py-2 rounded-xl border-2 font-label-sm text-xs font-bold transition-colors shadow-sm cursor-pointer ${
-                          isCompleted
-                            ? 'bg-sage-soft border-primary text-primary hover:bg-emerald-100'
-                            : 'bg-white border-primary text-primary hover:bg-sage-soft'
-                        }`}
-                        type="button"
-                      >
-                        <span className="material-symbols-outlined text-[16px]">
-                          {isCompleted ? 'verified' : 'check_circle'}
-                        </span>
-                        <span>{isCompleted ? 'Validée ✅' : 'Valider'}</span>
-                      </button>
+                    <div className="flex items-center gap-2 flex-wrap">
+                      {isValidationTask ? (
+                        <>
+                          <button
+                            type="button"
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              handleValidateTask(task.id);
+                            }}
+                            className="px-3 py-1.5 rounded-lg bg-emerald-600 hover:bg-emerald-700 text-white text-xs font-semibold flex items-center gap-1 shadow-xs transition-colors cursor-pointer"
+                            title="Valider la tâche"
+                          >
+                            <span className="material-symbols-outlined text-xs">check</span>
+                            <span>Valider</span>
+                          </button>
+                          <button
+                            type="button"
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              handleInvalidateTask(task.id);
+                            }}
+                            className="px-3 py-1.5 rounded-lg bg-rose-50 hover:bg-rose-100 text-rose-700 border border-rose-200 text-xs font-semibold flex items-center gap-1 shadow-xs transition-colors cursor-pointer"
+                            title="Invalider la tâche"
+                          >
+                            <span className="material-symbols-outlined text-xs">close</span>
+                            <span>Invalider</span>
+                          </button>
+                          <button
+                            type="button"
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              handleOpenTaskDetail(task);
+                            }}
+                            className="inline-flex items-center gap-1 px-2.5 py-1.5 rounded-lg bg-white border border-purple-200 text-purple-900 hover:bg-purple-100 text-xs font-semibold transition-colors cursor-pointer shadow-2xs"
+                            title="Consulter le détail"
+                          >
+                            <span className="material-symbols-outlined text-[15px]">visibility</span>
+                            <span>Détail</span>
+                          </button>
+                        </>
+                      ) : (
+                        <>
+                          <button
+                            type="button"
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              handleOpenTaskDetail(task);
+                            }}
+                            className="inline-flex items-center gap-1.5 px-3 py-2 rounded-xl bg-canvas-slate hover:bg-surface-container border border-border-subtle text-on-surface font-label-sm text-xs font-semibold transition-colors shadow-2xs cursor-pointer"
+                            title="Consulter le détail de la tâche"
+                          >
+                            <span className="material-symbols-outlined text-[16px] text-primary">visibility</span>
+                            <span>Consulter</span>
+                          </button>
+
+                          <button
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              handleToggleTaskComplete(task.id);
+                            }}
+                            className={`inline-flex items-center gap-1.5 px-3.5 py-2 rounded-xl border-2 font-label-sm text-xs font-bold transition-colors shadow-sm cursor-pointer ${
+                              isCompleted
+                                ? 'bg-sage-soft border-primary text-primary hover:bg-emerald-100'
+                                : 'bg-white border-primary text-primary hover:bg-sage-soft'
+                            }`}
+                            type="button"
+                          >
+                            <span className="material-symbols-outlined text-[16px]">
+                              {isCompleted ? 'verified' : 'check_circle'}
+                            </span>
+                            <span>{isCompleted ? 'Validée ✅' : 'Valider'}</span>
+                          </button>
+                        </>
+                      )}
                     </div>
                   </div>
                 </article>

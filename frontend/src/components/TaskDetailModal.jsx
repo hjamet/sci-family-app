@@ -160,18 +160,10 @@ export default function TaskDetailModal({
     }
   };
 
-  // Check if current user is coordinator (Henri or Joséphine)
-  const COORDINATOR_NAMES = ['Henri Jamet', 'Joséphine Jamet', 'Henri', 'Joséphine'];
   const currentUserName = typeof currentUser === 'object'
     ? (currentUser?.name || currentUser?.prenom || '')
     : (currentUser || '');
-  const isCoordinator = (
-    COORDINATOR_NAMES.some((name) => name.toLowerCase() === currentUserName.toLowerCase()) ||
-    currentUserName.toLowerCase().includes('henri') ||
-    currentUserName.toLowerCase().includes('joséphine') ||
-    currentUserName.toLowerCase().includes('josephine') ||
-    (typeof currentUser === 'object' && currentUser?.is_coordinator)
-  );
+  const isCoordinator = Boolean(currentUser?.is_coordinator);
 
   // Load latest task details and comments when opened
   useEffect(() => {

@@ -13,6 +13,7 @@ class Member(Base):
     email = Column(String(255), unique=True, index=True, nullable=True)
     password = Column(String(255), nullable=False, default="pass123")
     role = Column(String(150), default="Membre Associé")  # e.g., "Coordinateur", "Membre Associé", "Artisan"
+    is_coordinator = Column(Boolean, default=False, nullable=False, server_default="0")
     avatar_color = Column(String(50), default="cyan")
     created_at = Column(DateTime, default=datetime.utcnow)
 
@@ -285,7 +286,9 @@ class Task(Base):
     subject = Column(String(100), nullable=False, default="SCI")  # Rosing, Presbytère, Piscine, Jardin, SCI
     category = Column(String(100), nullable=True)
     priority = Column(String(50), nullable=False, default="Normale")  # Critique, Haute, Normale, Planifié
-    status = Column(String(50), nullable=False, default="EN_COURS")  # A_FAIRE, EN_COURS, TERMINE, ARCHIVEE, SOUMIS
+    status = Column(String(50), nullable=False, default="EN_COURS")  # A_FAIRE, EN_COURS, TERMINE, ARCHIVEE, SOUMIS, PENDING_VALIDATION
+    is_recurring = Column(Boolean, default=False, nullable=False, server_default="0")
+    last_completed_at = Column(DateTime, nullable=True)
     complexity = Column(String(50), default="Modérée")  # Faible, Modérée, Élevée, Expertise requise
     budget = Column(Float, default=0.0)
     budget_notes = Column(String(255), nullable=True)

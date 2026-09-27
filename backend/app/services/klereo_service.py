@@ -281,11 +281,23 @@ class KlereoService:
             podinfo = pool_detail.get("podinfo", {})
             ping_fail = podinfo.get("pingFail", 0)
             ping_sent = podinfo.get("pingSent", 0)
-            last_ping_s = sys_0.get("lastPing", 0)
+            last_ping_s = sys_0.get("lastPing")
+            if last_ping_s is None:
+                last_ping_s = pool_detail.get("lastPing", 0)
 
-            radio_ok = (ping_fail == 0 and last_ping_s < 300)
-            radio_status = f"Liaison radio K-Link active (0 échec, ping {last_ping_s}s)" if radio_ok else "Liaison radio K-Link dégradée ou interrompue"
-            radio_alert_msg = None if radio_ok else f"Liaison radio K-Link interrompue ({ping_fail} échec(s), dernier ping {last_ping_s}s)"
+            # Règle de résilience radio (Annotation 7) :
+            # Si le dernier contact radio est récent (< 120s), la liaison est pleinement active.
+            # pingFail est un compteur cumulé historique du boîtier Klereo qui ne caractérise pas une panne actuelle.
+            radio_ok = (last_ping_s is not None and last_ping_s < 120)
+            if radio_ok:
+                if ping_fail == 0:
+                    radio_status = f"Liaison radio K-Link active (0 échec, ping {last_ping_s}s)"
+                else:
+                    radio_status = f"Liaison radio K-Link active (ping {last_ping_s}s, {ping_fail} échec(s) historiques)"
+                radio_alert_msg = None
+            else:
+                radio_status = "Liaison radio K-Link dégradée ou interrompue"
+                radio_alert_msg = f"Liaison radio K-Link interrompue ({ping_fail} échec(s), dernier ping {last_ping_s}s)"
 
             # Alertes dynamiques (Zero-Trust : extraction et décodage dynamique)
             raw_alerts = pool_detail.get("alerts")

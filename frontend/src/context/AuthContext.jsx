@@ -18,10 +18,14 @@ export function AuthProvider({ children }) {
         try {
           const profile = await fetchCurrentUser();
           if (isMounted) {
-            setUser(profile);
-            const prenom = profile?.prenom || profile?.name || currentUser || 'Membre';
-            setCurrentUser(prenom);
-            localStorage.setItem('sci_user', prenom);
+            const unified = {
+              ...profile,
+              is_coordinator: Boolean(profile?.is_coordinator),
+              toString: () => profile?.prenom || profile?.name || 'Membre'
+            };
+            setUser(unified);
+            setCurrentUser(unified);
+            localStorage.setItem('sci_user', profile?.prenom || 'Membre');
           }
         } catch (err) {
           console.warn('Session expiré ou invalide:', err);
@@ -46,7 +50,6 @@ export function AuthProvider({ children }) {
   const login = async (userOrPrenom, tokenOrPassword) => {
     let newToken;
     let resolvedUser;
-    let userPrenom;
 
     // Check if called directly with (userData, token)
     if (
@@ -55,18 +58,20 @@ export function AuthProvider({ children }) {
     ) {
       newToken = tokenOrPassword;
       resolvedUser = userOrPrenom;
-      userPrenom = typeof resolvedUser === 'string'
-        ? resolvedUser
-        : (resolvedUser?.prenom || resolvedUser?.name || 'Membre');
     } else {
       // Called with credentials (prenom, password)
       const data = await loginUser(userOrPrenom, tokenOrPassword);
       newToken = data.access_token || data.token;
-      resolvedUser = data.user || data.member || { prenom: userOrPrenom };
-      userPrenom = typeof resolvedUser === 'string'
-        ? resolvedUser
-        : (resolvedUser?.prenom || resolvedUser?.name || userOrPrenom);
+      resolvedUser = data.user || data.member || { prenom: userOrPrenom, is_coordinator: data.is_coordinator };
     }
+
+    const unified = {
+      ...(typeof resolvedUser === 'object' ? resolvedUser : { prenom: resolvedUser }),
+      is_coordinator: Boolean(resolvedUser?.is_coordinator),
+      toString: () => (typeof resolvedUser === 'object' ? resolvedUser?.prenom || resolvedUser?.name : resolvedUser) || 'Membre'
+    };
+
+    const userPrenom = unified.prenom || unified.name || 'Membre';
 
     if (newToken) {
       localStorage.setItem('sci_token', newToken);
@@ -76,10 +81,10 @@ export function AuthProvider({ children }) {
     }
 
     setToken(newToken);
-    setUser(resolvedUser);
-    setCurrentUser(userPrenom);
+    setUser(unified);
+    setCurrentUser(unified);
 
-    return { access_token: newToken, user: resolvedUser, member: resolvedUser };
+    return { access_token: newToken, user: unified, member: unified };
   };
 
   const logout = () => {
@@ -90,11 +95,8 @@ export function AuthProvider({ children }) {
     setCurrentUser(null);
   };
 
-  // Henri and Joséphine are coordinators
-  const isCoordinator = () => {
-    const name = (currentUser || user?.prenom || '').toLowerCase();
-    return name.includes('henri') || name.includes('joséphine') || name.includes('josephine');
-  };
+  // Unification du rôle coordinateur / coordinatrice adjointe
+  const isCoordinator = Boolean(user?.is_coordinator || currentUser?.is_coordinator);
 
   const value = {
     token,
@@ -102,7 +104,7 @@ export function AuthProvider({ children }) {
     currentUser,
     isAuthenticated: Boolean(token),
     isLoading,
-    isCoordinator: isCoordinator(),
+    isCoordinator,
     login,
     logout,
   };

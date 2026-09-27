@@ -822,6 +822,31 @@ export async function closeTask(taskId, completionData) {
   return res.json();
 }
 
+export async function validateTask(taskId) {
+  const res = await fetch(`${API_BASE}/tasks/${taskId}/validate`, {
+    method: 'POST',
+    headers: getAuthHeaders(),
+  });
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({}));
+    throw new Error(err.detail || 'Erreur lors de la validation de la tâche');
+  }
+  return res.json();
+}
+
+export async function invalidateTask(taskId, explanation = '') {
+  const res = await fetch(`${API_BASE}/tasks/${taskId}/invalidate`, {
+    method: 'POST',
+    headers: getAuthJsonHeaders(),
+    body: JSON.stringify({ explanation })
+  });
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({}));
+    throw new Error(err.detail || 'Erreur lors de l\'invalidation de la tâche');
+  }
+  return res.json();
+}
+
 export async function deleteTask(taskId) {
   const res = await fetch(`${API_BASE}/tasks/${taskId}`, {
     method: 'DELETE',

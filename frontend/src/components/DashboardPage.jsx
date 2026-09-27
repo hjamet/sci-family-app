@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useCallback } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { fetchProjects, fetchReservations, fetchTasks } from '../api';
+import { fetchProjects, fetchReservations, fetchTasks, validateTask, invalidateTask } from '../api';
 import TaskDetailModal from './TaskDetailModal';
 import VoteRoofModal from './VoteRoofModal';
 import { extractParticipants } from '../pages/CalendarPage';
@@ -196,8 +196,63 @@ export default function DashboardPage({
     ? reservations.slice(0, 5)
     : [];
 
-  const displayedTasks = tasks && tasks.length > 0
-    ? tasks.slice(0, 4)
+  const isCoordinator = Boolean(currentUser?.is_coordinator);
+  const currentUserName = typeof currentUser === 'object'
+    ? (currentUser?.name || currentUser?.prenom || 'Henri Jamet')
+    : (currentUser || 'Henri Jamet');
+  const currentUserFirst = currentUserName.trim().split(' ')[0].toLowerCase();
+
+  const handleValidateTask = async (taskId) => {
+    try {
+      await validateTask(taskId);
+      await loadDashboardData();
+    } catch (err) {
+      console.error('Erreur validation tâche:', err);
+      alert(err.message || 'Erreur lors de la validation');
+    }
+  };
+
+  const handleInvalidateTask = async (taskId) => {
+    const reason = window.prompt("Motif de l'invalidation / demande de révision (optionnel) :", "");
+    if (reason === null) return;
+    try {
+      await invalidateTask(taskId, reason);
+      await loadDashboardData();
+    } catch (err) {
+      console.error('Erreur invalidation tâche:', err);
+      alert(err.message || "Erreur lors de l'invalidation");
+    }
+  };
+
+  const isTaskPendingValidation = (t) => {
+    const st = (t.status || '').toUpperCase();
+    return st === 'PENDING_VALIDATION' || st === 'EN_ATTENTE_VALIDATION';
+  };
+
+  const isTaskAssignedToMe = (t) => {
+    const assignee = (t.assignee || t.assignee_name || '').toLowerCase();
+    const members = Array.isArray(t.assigned_members)
+      ? t.assigned_members.map((m) => (typeof m === 'string' ? m : m?.name || '').toLowerCase())
+      : [];
+    const isMatch = (str) => {
+      const s = String(str).toLowerCase();
+      return s.includes(currentUserName.toLowerCase()) || (currentUserFirst.length >= 3 && s.includes(currentUserFirst));
+    };
+    return isMatch(assignee) || members.some(isMatch);
+  };
+
+  // Filtrage : Tâches assignées à l'utilisateur + (si coordinateur) toutes les tâches en attente de validation
+  const myTasks = tasks.filter((t) => {
+    const st = (t.status || '').toUpperCase();
+    const isCompleted = st === 'TERMINÉE' || st === 'TERMINEE' || st === 'ARCHIVÉE' || st === 'ARCHIVEE' || st === 'COMPLETED';
+    if (isCompleted) return false;
+
+    if (isCoordinator && isTaskPendingValidation(t)) return true;
+    return isTaskAssignedToMe(t);
+  });
+
+  const displayedTasks = myTasks && myTasks.length > 0
+    ? myTasks.slice(0, 6)
     : [];
 
   return (
@@ -709,14 +764,14 @@ export default function DashboardPage({
           <div className="space-y-space-xs border-b border-outline-variant/20 pb-space-sm">
             <div className="flex items-center justify-between gap-2 flex-wrap">
               <div className="flex items-center gap-2">
-                <span className="text-xs text-on-surface-variant font-medium">Henri Jamet</span>
+                <span className="text-xs text-on-surface-variant font-medium">{currentUserName}</span>
               </div>
               <span className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full bg-sage-soft text-primary font-label-sm text-xs font-semibold">
                 <span className="w-1.5 h-1.5 rounded-full bg-primary animate-pulse"></span>
                 {loading ? (
                   <span className="w-16 h-3 bg-primary/20 rounded animate-pulse inline-block"></span>
                 ) : (
-                  `${tasks.length} Tâche${tasks.length > 1 ? 's' : ''} active${tasks.length > 1 ? 's' : ''}`
+                  `${myTasks.length} Tâche${myTasks.length > 1 ? 's' : ''} active${myTasks.length > 1 ? 's' : ''}`
                 )}
               </span>
             </div>
@@ -736,6 +791,8 @@ export default function DashboardPage({
           ) : displayedTasks.length > 0 ? (
             <div className="flex flex-col space-y-space-sm">
               {displayedTasks.map((t, idx) => {
+                const isPendingVal = isTaskPendingValidation(t);
+                const isValidationTask = isCoordinator && isPendingVal;
                 const isHigh = t.priority === 'Critique' || t.priority === 'Haute';
                 const category = t.category || 'Domaine';
                 const deadline = t.deadline || t.timeline || 'Sous 10 jours';
@@ -752,29 +809,40 @@ export default function DashboardPage({
                   <article
                     key={t.id || idx}
                     className={`rounded-xl p-space-md shadow-sm flex flex-col gap-3 transition-all hover:shadow-md ${
-                      isHigh
+                      isValidationTask
+                        ? 'bg-purple-50/80 dark:bg-purple-950/40 border-2 border-purple-300 dark:border-purple-700/60 shadow-sm'
+                        : isHigh
                         ? 'bg-amber-soft/30 border-2 border-amber-rich/40'
                         : 'bg-white border border-outline-variant/30'
                     }`}
                   >
                     <div className="flex items-center justify-between gap-2 flex-wrap">
                       <div className="flex items-center gap-2 flex-wrap">
+                        {isValidationTask && (
+                          <span className="px-2 py-0.5 rounded-full text-xs font-bold bg-purple-100 text-purple-800 dark:bg-purple-900/60 dark:text-purple-200 border border-purple-300 flex items-center gap-1">
+                            <span className="material-symbols-outlined text-xs">verified</span> À valider
+                          </span>
+                        )}
                         <span className={`inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full text-[11px] font-bold uppercase tracking-wider ${
-                          isHigh ? 'bg-amber-rich text-white' : 'bg-emerald-100 text-emerald-900'
+                          isValidationTask
+                            ? 'bg-purple-200/80 text-purple-900 dark:bg-purple-800 dark:text-purple-100'
+                            : isHigh
+                            ? 'bg-amber-rich text-white'
+                            : 'bg-emerald-100 text-emerald-900'
                         }`}>
                           <span className="material-symbols-outlined text-[14px]">
-                            {isHigh ? 'warning' : 'assignment'}
+                            {isValidationTask ? 'fact_check' : isHigh ? 'warning' : 'assignment'}
                           </span>
                           {isHigh ? `Priorité ${t.priority} • ${category}` : `Normal • ${category}`}
                         </span>
-                        <span className={`text-xs font-semibold ${isHigh ? 'text-amber-rich' : 'text-on-surface-variant'}`}>
+                        <span className={`text-xs font-semibold ${isValidationTask ? 'text-purple-700 dark:text-purple-300' : isHigh ? 'text-amber-rich' : 'text-on-surface-variant'}`}>
                           {deadline}
                         </span>
                       </div>
                       {t.budget ? (
                         <div className="text-right">
                           <span className="text-xs text-on-surface-variant font-medium block">Budget devis</span>
-                          <span className={`font-headline-sm font-bold text-sm ${isHigh ? 'text-amber-rich' : 'text-forest-deep'}`}>
+                          <span className={`font-headline-sm font-bold text-sm ${isValidationTask ? 'text-purple-900 dark:text-purple-200' : isHigh ? 'text-amber-rich' : 'text-forest-deep'}`}>
                             ~{t.budget} €
                           </span>
                         </div>
@@ -782,7 +850,7 @@ export default function DashboardPage({
                     </div>
 
                     <div>
-                      <h3 className="font-headline-sm text-headline-sm text-forest-deep font-bold">
+                      <h3 className={`font-headline-sm text-headline-sm font-bold ${isValidationTask ? 'text-purple-950 dark:text-purple-100' : 'text-forest-deep'}`}>
                         {t.title}
                       </h3>
                       <p className="font-body-md text-on-surface-variant text-xs leading-relaxed mt-1 line-clamp-2">
@@ -790,40 +858,88 @@ export default function DashboardPage({
                       </p>
                     </div>
 
-                    <div className="pt-2 border-t border-amber-rich/20 flex items-center justify-between gap-3 flex-wrap">
+                    <div className={`pt-2 border-t flex items-center justify-between gap-3 flex-wrap ${
+                      isValidationTask ? 'border-purple-200 dark:border-purple-800' : 'border-amber-rich/20'
+                    }`}>
                       <div className="flex items-center gap-2">
                         <div className={`w-7 h-7 rounded-full text-white flex items-center justify-center font-bold text-xs ${
-                          isHigh ? 'bg-amber-rich' : 'bg-[#065f46]'
+                          isValidationTask ? 'bg-purple-700' : isHigh ? 'bg-amber-rich' : 'bg-[#065f46]'
                         }`}>
                           {initials}
                         </div>
                         <div className="flex flex-col leading-tight">
-                          <span className="text-xs font-semibold text-on-surface">En charge : {assignee}</span>
+                          <span className="text-xs font-semibold text-on-surface">
+                            {isValidationTask ? `Soumis par : ${t.created_by || assignee}` : `En charge : ${assignee}`}
+                          </span>
                           <span className="text-[11px] text-on-surface-variant">{secondaries}</span>
                         </div>
                       </div>
 
-                      <button
-                        type="button"
-                        onClick={() => {
-                          if (t.link) navigateTo(t.link);
-                          else if (t.category?.toLowerCase().includes('énergie') || t.category?.toLowerCase().includes('energie') || t.title?.toLowerCase().includes('pompe à chaleur')) {
-                            navigateTo('/energie');
-                          } else {
-                            navigateTo('/taches');
-                          }
-                        }}
-                        className={`inline-flex items-center gap-2 px-4 py-2 rounded-DEFAULT bg-white border-2 font-label-sm text-xs font-bold transition-colors shadow-sm cursor-pointer ${
-                          isHigh
-                            ? 'border-amber-rich text-amber-rich hover:bg-amber-soft'
-                            : 'border-primary text-primary hover:bg-sage-soft'
-                        }`}
-                      >
-                        <span className="material-symbols-outlined text-[16px]">
-                          {isHigh ? 'construction' : 'visibility'}
-                        </span>
-                        Consulter la tâche
-                      </button>
+                      {isValidationTask ? (
+                        <div className="flex items-center gap-2 flex-wrap">
+                          <button
+                            type="button"
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              handleValidateTask(t.id);
+                            }}
+                            className="px-3 py-1.5 rounded-lg bg-emerald-600 hover:bg-emerald-700 text-white text-xs font-semibold flex items-center gap-1 shadow-xs transition-colors cursor-pointer"
+                            title="Valider la tâche"
+                          >
+                            <span className="material-symbols-outlined text-xs">check</span>
+                            <span>Valider</span>
+                          </button>
+                          <button
+                            type="button"
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              handleInvalidateTask(t.id);
+                            }}
+                            className="px-3 py-1.5 rounded-lg bg-rose-50 hover:bg-rose-100 text-rose-700 border border-rose-200 text-xs font-semibold flex items-center gap-1 shadow-xs transition-colors cursor-pointer"
+                            title="Invalider la tâche"
+                          >
+                            <span className="material-symbols-outlined text-xs">close</span>
+                            <span>Invalider</span>
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() => {
+                              if (t.link) navigateTo(t.link);
+                              else if (t.category?.toLowerCase().includes('énergie') || t.category?.toLowerCase().includes('energie') || t.title?.toLowerCase().includes('pompe à chaleur')) {
+                                navigateTo('/energie');
+                              } else {
+                                navigateTo('/taches');
+                              }
+                            }}
+                            className="inline-flex items-center gap-1 px-2.5 py-1.5 rounded-lg bg-white border border-purple-200 text-purple-900 hover:bg-purple-100 text-xs font-semibold transition-colors cursor-pointer shadow-2xs"
+                          >
+                            <span className="material-symbols-outlined text-[15px]">visibility</span>
+                            <span>Détail</span>
+                          </button>
+                        </div>
+                      ) : (
+                        <button
+                          type="button"
+                          onClick={() => {
+                            if (t.link) navigateTo(t.link);
+                            else if (t.category?.toLowerCase().includes('énergie') || t.category?.toLowerCase().includes('energie') || t.title?.toLowerCase().includes('pompe à chaleur')) {
+                              navigateTo('/energie');
+                            } else {
+                              navigateTo('/taches');
+                            }
+                          }}
+                          className={`inline-flex items-center gap-2 px-4 py-2 rounded-DEFAULT bg-white border-2 font-label-sm text-xs font-bold transition-colors shadow-sm cursor-pointer ${
+                            isHigh
+                              ? 'border-amber-rich text-amber-rich hover:bg-amber-soft'
+                              : 'border-primary text-primary hover:bg-sage-soft'
+                          }`}
+                        >
+                          <span className="material-symbols-outlined text-[16px]">
+                            {isHigh ? 'construction' : 'visibility'}
+                          </span>
+                          Consulter la tâche
+                        </button>
+                      )}
                     </div>
                   </article>
                 );

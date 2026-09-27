@@ -18,9 +18,9 @@ export default function HeatingPage({ currentUser }) {
   const [errorMsg, setErrorMsg] = useState(null);
   const [updating, setUpdating] = useState(false);
 
-  // Determine RBAC permissions strictly for Coordinator (Henri)
+  // Determine RBAC permissions strictly for Coordinator
   const activeUser = currentUser || localStorage.getItem('sci_user') || 'Membre';
-  const isCoordinator = activeUser === 'Henri' || (typeof activeUser === 'object' && activeUser?.prenom === 'Henri');
+  const isCoordinator = Boolean(currentUser?.is_coordinator);
 
   // Target temperature slider/stepper state (12°C - 24°C)
   const [sliderTemp, setSliderTemp] = useState(19.0);
