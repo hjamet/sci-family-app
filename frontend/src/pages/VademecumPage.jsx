@@ -13,10 +13,11 @@ import {
   setHeatingMode as apiSetHeatingMode,
   validateTask,
   invalidateTask,
-  getCachedData
+  getCachedData,
+  fetchDocumentCategories,
+  createDocumentCategory
 } from '../api';
-import SejourCutoffMapModal from '../components/sejour/SejourCutoffMapModal';
-import SejourDepartureChecklistModal from '../components/sejour/SejourDepartureChecklistModal';
+import CategoryManageModal, { COLOR_OPTIONS, EMOJI_PRESETS } from '../components/common/CategoryManageModal';
 import TaskDetailModal from '../components/TaskDetailModal';
 import TaskCard from '../components/common/TaskCard';
 import BookingModal from '../components/BookingModal';
@@ -101,7 +102,7 @@ function formatPureRoomName(raw) {
   return name.replace(/\s*\([^)]*(couchage|personne)[^)]*\)/gi, '').trim();
 }
 
-export default function VademecumPage({ properties, currentUser, reservations = [] }) {
+export default function VademecumPage({ properties, currentUser, reservations = [], onOpenBooking }) {
   const location = useLocation();
 
   // Multi-page stay state (Annotation 2 : Navigation multi-pages avec Page 0 Domaine seul)
@@ -133,8 +134,6 @@ export default function VademecumPage({ properties, currentUser, reservations = 
 
   // Modals state
   const [isEditStayOpen, setIsEditStayOpen] = useState(false);
-  const [isCutoffModalOpen, setIsCutoffModalOpen] = useState(false);
-  const [isChecklistModalOpen, setIsChecklistModalOpen] = useState(false);
   const [selectedTask, setSelectedTask] = useState(null);
   const [isTaskModalOpen, setIsTaskModalOpen] = useState(false);
 
@@ -473,25 +472,101 @@ export default function VademecumPage({ properties, currentUser, reservations = 
   const [dbError, setDbError] = useState(null);
   const [copiedDbId, setCopiedDbId] = useState(null);
 
-  // New Item modal state
+  // Dynamic Categories state (Annotation 3 : zéro badge hardcodé, synchronisation en base)
+  const [categoriesList, setCategoriesList] = useState([]);
+  const [isNewCategoryOpen, setIsNewCategoryOpen] = useState(false);
+  const [newCatName, setNewCatName] = useState('');
+  const [newCatEmoji, setNewCatEmoji] = useState('📁');
+  const [newCatColor, setNewCatColor] = useState('slate');
+  const [isCreatingCat, setIsCreatingCat] = useState(false);
+  const [isEditCategoryModalOpen, setIsEditCategoryModalOpen] = useState(false);
+  const [selectedEditingCat, setSelectedEditingCat] = useState(null);
+
+  // New Item modal state (Annotation 4 : code_to_copy et importance supprimés)
   const [isNewItemModalOpen, setIsNewItemModalOpen] = useState(false);
-  const [newCategory, setNewCategory] = useState('Wi-Fi & Réseau');
+  const [newCategory, setNewCategory] = useState('');
   const [newTitle, setNewTitle] = useState('');
   const [newContent, setNewContent] = useState('');
-  const [newCodeToCopy, setNewCodeToCopy] = useState('');
-  const [newImportance, setNewImportance] = useState('INFO');
   const [submittingItem, setSubmittingItem] = useState(false);
 
-  const categories = [
-    'Toutes',
-    'Wi-Fi & Réseau',
-    'Accès & Clés',
-    'Eau & Électricité',
-    'Chauffage & Fioul',
-    'Déchets & Recyclage',
-    'Équipements & Notice',
-    'Urgence'
-  ];
+  const loadCategories = async () => {
+    try {
+      const cats = await fetchDocumentCategories();
+      if (Array.isArray(cats)) {
+        setCategoriesList(cats);
+        if (cats.length > 0) {
+          setNewCategory((prev) => prev || cats[0].name);
+        }
+      }
+    } catch (err) {
+      console.warn('Erreur chargement catégories vademecum:', err.message);
+    }
+  };
+
+  useEffect(() => {
+    loadCategories();
+  }, []);
+
+  const handleCreateCategorySubmit = async (e) => {
+    e.preventDefault();
+    if (!newCatName.trim()) return;
+    setIsCreatingCat(true);
+    try {
+      const created = await createDocumentCategory({
+        name: newCatName.trim(),
+        emoji: newCatEmoji || '📁',
+        color: newCatColor || 'slate'
+      });
+      setCategoriesList((prev) => {
+        const exists = prev.find((c) => c.name.toLowerCase() === created.name.toLowerCase());
+        if (exists) return prev;
+        return [...prev, created];
+      });
+      setNewCategory(created.name);
+      setNewCatName('');
+      setIsNewCategoryOpen(false);
+      showToast(`Catégorie « ${created.name} » créée`);
+    } catch (err) {
+      showToast(`Erreur : ${err.message}`);
+    } finally {
+      setIsCreatingCat(false);
+    }
+  };
+
+  const handleOpenEditCategory = () => {
+    const current = categoriesList.find((c) => c.name === newCategory) || categoriesList[0];
+    if (!current) {
+      showToast('Veuillez d\'abord créer ou sélectionner une catégorie.');
+      return;
+    }
+    setSelectedEditingCat(current);
+    setIsEditCategoryModalOpen(true);
+  };
+
+  const handleCategoryUpdated = (updated) => {
+    setCategoriesList((prev) => prev.map((c) => (c.id === updated.id ? updated : c)));
+    if (newCategory === selectedEditingCat?.name) {
+      setNewCategory(updated.name);
+    }
+    if (selectedCategory === selectedEditingCat?.name) {
+      setSelectedCategory(updated.name);
+    }
+    showToast(`Catégorie « ${updated.name} » mise à jour`);
+    loadVademecumDb();
+  };
+
+  const handleCategoryDeleted = (deletedId, deletedCat) => {
+    const remaining = categoriesList.filter((c) => c.id !== deletedId);
+    setCategoriesList(remaining);
+    if (newCategory === deletedCat?.name) {
+      setNewCategory(remaining.length > 0 ? remaining[0].name : '');
+    }
+    if (selectedCategory === deletedCat?.name) {
+      setSelectedCategory('Toutes');
+    }
+    showToast(`Catégorie « ${deletedCat?.name} » supprimée`);
+    loadVademecumDb();
+  };
 
   const loadVademecumDb = async () => {
     try {
@@ -522,15 +597,12 @@ export default function VademecumPage({ properties, currentUser, reservations = 
       setSubmittingItem(true);
       await createVademecumItem({
         property_id: properties?.[0]?.id || 1,
-        category: newCategory,
+        category: newCategory || (categoriesList[0]?.name || 'Général'),
         title: newTitle.trim(),
         content: newContent.trim(),
-        code_to_copy: newCodeToCopy.trim() || null,
-        importance: newImportance
       });
       setNewTitle('');
       setNewContent('');
-      setNewCodeToCopy('');
       setIsNewItemModalOpen(false);
       showToast('Fiche Vademecum enregistrée !');
       await loadVademecumDb();
@@ -639,7 +711,13 @@ export default function VademecumPage({ properties, currentUser, reservations = 
               </button>
             ) : (
               <button
-                onClick={() => setIsEditStayOpen(true)}
+                onClick={() => {
+                  if (typeof onOpenBooking === 'function') {
+                    onOpenBooking();
+                  } else {
+                    setIsEditStayOpen(true);
+                  }
+                }}
                 className="group flex items-center justify-center gap-2 px-5 py-3.5 rounded-DEFAULT bg-white dark:bg-slate-900 border-2 border-outline-variant text-on-surface hover:bg-canvas-slate hover:border-outline font-label-lg text-sm sm:text-base font-semibold transition-all duration-200 shadow-sm cursor-pointer whitespace-nowrap"
                 type="button"
               >
@@ -929,14 +1007,6 @@ export default function VademecumPage({ properties, currentUser, reservations = 
               >
                 <span className="material-symbols-outlined text-[20px] text-primary">edit_calendar</span>
                 <span>Modifier le séjour</span>
-              </button>
-              <button
-                onClick={() => setIsChecklistModalOpen(true)}
-                className="w-full py-3 px-4 rounded-xl bg-white border border-border-subtle hover:bg-canvas-slate text-on-surface font-label-md text-sm font-semibold transition-all shadow-sm flex items-center justify-center gap-2 cursor-pointer"
-                type="button"
-              >
-                <span className="material-symbols-outlined text-[20px] text-primary">checklist</span>
-                <span>Checklist départ</span>
               </button>
             </div>
 
@@ -1516,24 +1586,6 @@ export default function VademecumPage({ properties, currentUser, reservations = 
 
           <div className="flex flex-wrap items-center gap-2">
             <button
-              onClick={() => setIsCutoffModalOpen(true)}
-              className="h-10 px-3.5 rounded-xl bg-surface-container-low border border-border-subtle hover:border-primary text-on-surface font-label-sm text-xs font-semibold flex items-center gap-1.5 transition cursor-pointer"
-              type="button"
-            >
-              <span className="material-symbols-outlined text-[18px]">map</span>
-              <span>Plan des coupures</span>
-            </button>
-
-            <button
-              onClick={() => setIsChecklistModalOpen(true)}
-              className="h-10 px-3.5 rounded-xl bg-surface-container-low border border-border-subtle hover:border-primary text-on-surface font-label-sm text-xs font-semibold flex items-center gap-1.5 transition cursor-pointer"
-              type="button"
-            >
-              <span className="material-symbols-outlined text-[18px]">verified</span>
-              <span>Check-list départ</span>
-            </button>
-
-            <button
               onClick={() => setIsNewItemModalOpen(true)}
               className="h-10 px-4 bg-primary hover:bg-forest-deep text-white rounded-xl text-xs font-bold shadow-sm transition flex items-center justify-center gap-1.5 shrink-0 cursor-pointer"
               type="button"
@@ -1547,18 +1599,30 @@ export default function VademecumPage({ properties, currentUser, reservations = 
         {/* Filter & Search Bar */}
         <div className="flex flex-col sm:flex-row items-center justify-between gap-3 bg-canvas-slate p-3 rounded-2xl border border-border-subtle mb-6">
           <div className="flex overflow-x-auto space-x-1.5 py-1 w-full sm:w-auto">
-            {categories.map((cat) => (
+            <button
+              onClick={() => setSelectedCategory('Toutes')}
+              className={`px-3 py-1.5 rounded-xl text-xs font-bold whitespace-nowrap transition cursor-pointer ${
+                selectedCategory === 'Toutes'
+                  ? 'bg-primary text-white shadow-sm'
+                  : 'bg-white text-on-surface-variant hover:text-on-surface border border-border-subtle'
+              }`}
+              type="button"
+            >
+              Toutes
+            </button>
+            {categoriesList.map((cat) => (
               <button
-                key={cat}
-                onClick={() => setSelectedCategory(cat)}
-                className={`px-3 py-1.5 rounded-xl text-xs font-bold whitespace-nowrap transition cursor-pointer ${
-                  selectedCategory === cat
+                key={cat.id || cat.name}
+                onClick={() => setSelectedCategory(cat.name)}
+                className={`px-3 py-1.5 rounded-xl text-xs font-bold whitespace-nowrap transition cursor-pointer flex items-center gap-1.5 ${
+                  selectedCategory === cat.name
                     ? 'bg-primary text-white shadow-sm'
                     : 'bg-white text-on-surface-variant hover:text-on-surface border border-border-subtle'
                 }`}
                 type="button"
               >
-                {cat}
+                <span>{cat.emoji || '📁'}</span>
+                <span>{cat.name}</span>
               </button>
             ))}
           </div>
@@ -1655,16 +1719,13 @@ export default function VademecumPage({ properties, currentUser, reservations = 
       {/* MODALS                                                                */}
       {/* ===================================================================== */}
 
-      {/* Modal 1: Cutoff Map */}
-      <SejourCutoffMapModal
-        isOpen={isCutoffModalOpen}
-        onClose={() => setIsCutoffModalOpen(false)}
-      />
-
-      {/* Modal 2: Departure Checklist */}
-      <SejourDepartureChecklistModal
-        isOpen={isChecklistModalOpen}
-        onClose={() => setIsChecklistModalOpen(false)}
+      {/* Category Manage Modal (Annotation 3) */}
+      <CategoryManageModal
+        isOpen={isEditCategoryModalOpen}
+        onClose={() => setIsEditCategoryModalOpen(false)}
+        category={selectedEditingCat}
+        onUpdated={handleCategoryUpdated}
+        onDeleted={handleCategoryDeleted}
       />
 
       {/* Modal 3: Task Detail (Annotation 9 : Modale unifiée TaskDetailModal) */}
@@ -1701,13 +1762,133 @@ export default function VademecumPage({ properties, currentUser, reservations = 
             
             <form onSubmit={handleCreateDbItem} className="space-y-4">
               <div>
-                <label className="block text-xs font-bold text-on-surface mb-1">Catégorie</label>
-                <CustomSelect
-                  value={newCategory}
-                  onChange={(e) => setNewCategory(e.target.value)}
-                  options={categories.filter((c) => c !== 'Toutes')}
-                  className="h-10 text-xs"
-                />
+                <div className="flex items-center justify-between mb-1.5">
+                  <label className="block text-xs font-bold text-on-surface">Catégorie *</label>
+                  <button
+                    type="button"
+                    onClick={() => setIsNewCategoryOpen(!isNewCategoryOpen)}
+                    className="text-xs font-semibold text-primary hover:text-forest-deep flex items-center gap-1 transition-colors cursor-pointer"
+                  >
+                    <span className="material-symbols-outlined text-[16px]">
+                      {isNewCategoryOpen ? 'remove_circle' : 'add_circle'}
+                    </span>
+                    <span>{isNewCategoryOpen ? 'Masquer' : '+ Nouvelle catégorie'}</span>
+                  </button>
+                </div>
+
+                {/* Sous-formulaire de création inline */}
+                {isNewCategoryOpen && (
+                  <div className="p-3.5 mb-3 bg-canvas-slate rounded-2xl border border-primary/30 space-y-3 animate-in fade-in duration-150">
+                    <div className="flex items-center justify-between">
+                      <span className="text-xs font-bold text-forest-deep flex items-center gap-1">
+                        <span className="material-symbols-outlined text-[16px] text-primary">palette</span>
+                        Créer une catégorie
+                      </span>
+                    </div>
+
+                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+                      <div>
+                        <label className="block text-[11px] font-semibold text-slate-700 mb-1">Nom *</label>
+                        <input
+                          type="text"
+                          placeholder="Ex: Wi-Fi & Réseau"
+                          value={newCatName}
+                          onChange={(e) => setNewCatName(e.target.value)}
+                          className="w-full h-9 px-2.5 bg-white border border-border-subtle rounded-lg text-xs focus:outline-none focus:border-primary"
+                        />
+                      </div>
+                      <div>
+                        <label className="block text-[11px] font-semibold text-slate-700 mb-1">Émoji</label>
+                        <div className="flex items-center gap-1">
+                          <input
+                            type="text"
+                            value={newCatEmoji}
+                            onChange={(e) => setNewCatEmoji(e.target.value)}
+                            className="w-12 h-9 text-center bg-white border border-border-subtle rounded-lg text-sm focus:outline-none focus:border-primary"
+                            maxLength={3}
+                          />
+                          <div className="flex items-center gap-0.5 overflow-x-auto py-0.5">
+                            {EMOJI_PRESETS.slice(0, 6).map((em) => (
+                              <button
+                                key={em}
+                                type="button"
+                                onClick={() => setNewCatEmoji(em)}
+                                className={`w-7 h-7 text-xs rounded hover:bg-white cursor-pointer ${newCatEmoji === em ? 'ring-2 ring-primary bg-white' : ''}`}
+                              >
+                                {em}
+                              </button>
+                            ))}
+                          </div>
+                        </div>
+                      </div>
+                    </div>
+
+                    <div>
+                      <label className="block text-[11px] font-semibold text-slate-700 mb-1.5">Couleur associée</label>
+                      <div className="flex items-center gap-1.5 flex-wrap">
+                        {COLOR_OPTIONS.map((c) => (
+                          <button
+                            key={c.id}
+                            type="button"
+                            onClick={() => setNewCatColor(c.id)}
+                            className={`flex items-center gap-1 px-2.5 py-1 rounded-full text-xs font-medium border cursor-pointer transition-all ${
+                              newCatColor === c.id
+                                ? 'ring-2 ring-primary ring-offset-1 font-bold shadow-xs'
+                                : 'opacity-80 hover:opacity-100'
+                            } ${c.badgeBg}`}
+                          >
+                            <span className={`w-2.5 h-2.5 rounded-full ${c.bg}`}></span>
+                            <span>{c.name}</span>
+                          </button>
+                        ))}
+                      </div>
+                    </div>
+
+                    <div className="flex items-center justify-end gap-2 pt-1 border-t border-border-subtle">
+                      <button
+                        type="button"
+                        onClick={() => setIsNewCategoryOpen(false)}
+                        className="px-3 py-1.5 rounded-lg text-xs text-slate-600 hover:bg-white"
+                      >
+                        Annuler
+                      </button>
+                      <button
+                        type="button"
+                        onClick={handleCreateCategorySubmit}
+                        disabled={isCreatingCat || !newCatName.trim()}
+                        className="px-3 py-1.5 rounded-lg bg-primary text-white text-xs font-bold hover:bg-forest-deep disabled:opacity-50 flex items-center gap-1 cursor-pointer"
+                      >
+                        {isCreatingCat ? 'Création...' : 'Valider la catégorie'}
+                      </button>
+                    </div>
+                  </div>
+                )}
+
+                {/* Sélecteur + Bouton Éditer */}
+                <div className="flex items-center gap-2">
+                  <div className="flex-1">
+                    <CustomSelect
+                      value={newCategory}
+                      onChange={(e) => setNewCategory(e.target.value)}
+                      options={categoriesList.map((cat) => ({
+                        value: cat.name,
+                        label: `${cat.emoji || '📁'} ${cat.name}`,
+                      }))}
+                      className="h-10 text-xs"
+                    />
+                  </div>
+                  {categoriesList.length > 0 && (
+                    <button
+                      type="button"
+                      onClick={handleOpenEditCategory}
+                      title="Éditer la catégorie sélectionnée"
+                      className="h-10 px-3 bg-white border border-border-subtle rounded-xl text-on-surface hover:text-primary hover:border-primary flex items-center justify-center gap-1 transition-all cursor-pointer text-xs font-semibold shrink-0 shadow-xs"
+                    >
+                      <span className="material-symbols-outlined text-[16px]">tune</span>
+                      <span>Éditer</span>
+                    </button>
+                  )}
+                </div>
               </div>
 
               <div>
@@ -1732,33 +1913,6 @@ export default function VademecumPage({ properties, currentUser, reservations = 
                   className="w-full px-3 py-2 bg-canvas-slate border border-border-subtle rounded-xl text-xs text-on-surface focus:outline-none focus:border-primary"
                   required
                 ></textarea>
-              </div>
-
-              <div className="grid grid-cols-2 gap-3">
-                <div>
-                  <label className="block text-xs font-bold text-on-surface mb-1">Code à copier (optionnel)</label>
-                  <input
-                    type="text"
-                    placeholder="ex: 1974A"
-                    value={newCodeToCopy}
-                    onChange={(e) => setNewCodeToCopy(e.target.value)}
-                    className="w-full px-3 py-2 bg-canvas-slate border border-border-subtle rounded-xl text-xs text-on-surface focus:outline-none focus:border-primary"
-                  />
-                </div>
-
-                <div>
-                  <label className="block text-xs font-bold text-on-surface mb-1">Importance</label>
-                  <CustomSelect
-                    value={newImportance}
-                    onChange={(e) => setNewImportance(e.target.value)}
-                    options={[
-                      { value: 'INFO', label: 'INFO (Normal)', dotColor: 'bg-primary' },
-                      { value: 'IMPORTANT', label: 'IMPORTANT', dotColor: 'bg-amber-rich' },
-                      { value: 'CRITIQUE', label: 'CRITIQUE', dotColor: 'bg-error' },
-                    ]}
-                    className="h-10 text-xs"
-                  />
-                </div>
               </div>
 
               <div className="flex items-center justify-end gap-3 pt-4 border-t border-border-subtle">

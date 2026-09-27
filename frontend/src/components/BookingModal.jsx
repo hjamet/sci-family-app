@@ -120,7 +120,59 @@ function resolveCurrentUserFullName(currentUser) {
   return 'Henri Jamet';
 }
 
-export default function BookingModal({
+class BookingErrorBoundary extends React.Component {
+  constructor(props) {
+    super(props);
+    this.state = { hasError: false, error: null };
+  }
+
+  static getDerivedStateFromError(error) {
+    return { hasError: true, error };
+  }
+
+  componentDidCatch(error, errorInfo) {
+    console.error("Erreur capturée dans BookingModal:", error, errorInfo);
+  }
+
+  render() {
+    if (this.state.hasError) {
+      return (
+        <div 
+          className="fixed inset-0 z-50 bg-slate-900/70 backdrop-blur-sm flex items-center justify-center p-4 animate-in fade-in duration-200"
+          role="dialog"
+          aria-modal="true"
+        >
+          <div className="bg-white dark:bg-slate-900 rounded-2xl p-6 sm:p-8 max-w-lg w-full shadow-2xl border border-rose-200 dark:border-rose-800 text-center space-y-4">
+            <div className="w-14 h-14 rounded-full bg-rose-100 dark:bg-rose-950/60 text-rose-600 dark:text-rose-400 flex items-center justify-center mx-auto">
+              <span className="material-symbols-outlined text-3xl">calendar_month</span>
+            </div>
+            <h3 className="font-bold text-lg text-slate-900 dark:text-slate-100">
+              Réservation de séjour sécurisée
+            </h3>
+            <p className="text-xs sm:text-sm text-slate-600 dark:text-slate-300 leading-relaxed">
+              Un incident de rendu a été intercepté pour protéger l'intégrité de la session.
+            </p>
+            <div className="pt-2 flex items-center justify-center gap-3">
+              <button
+                type="button"
+                onClick={() => {
+                  this.setState({ hasError: false, error: null });
+                  if (this.props.onClose) this.props.onClose();
+                }}
+                className="px-5 py-2.5 rounded-xl bg-slate-800 hover:bg-slate-700 text-white font-semibold text-xs sm:text-sm transition-colors cursor-pointer"
+              >
+                Fermer la fenêtre
+              </button>
+            </div>
+          </div>
+        </div>
+      );
+    }
+    return this.props.children;
+  }
+}
+
+function BookingModalContent({
   isOpen,
   onClose,
   initialWeek,
@@ -1139,5 +1191,13 @@ export default function BookingModal({
 
       </div>
     </div>
+  );
+}
+
+export default function BookingModal(props) {
+  return (
+    <BookingErrorBoundary onClose={props.onClose}>
+      <BookingModalContent {...props} />
+    </BookingErrorBoundary>
   );
 }

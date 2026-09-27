@@ -229,6 +229,7 @@ export default function App() {
               <VademecumPage
                 properties={properties}
                 currentUser={currentUser}
+                onOpenBooking={() => setIsBookingOpen(true)}
               />
             }
           />
@@ -238,6 +239,7 @@ export default function App() {
               <VademecumPage
                 properties={properties}
                 currentUser={currentUser}
+                onOpenBooking={() => setIsBookingOpen(true)}
               />
             }
           />

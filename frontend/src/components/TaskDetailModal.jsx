@@ -25,6 +25,7 @@ import {
 } from '../utils/taskAssignment';
 import CustomSelect from './CustomSelect';
 import DocumentViewerModal from './DocumentViewerModal';
+import UploadDocumentModal from './UploadDocumentModal';
 import FamilyChat from './common/FamilyChat';
 
 const SUBJECTS = [
