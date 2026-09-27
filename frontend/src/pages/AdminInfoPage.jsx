@@ -15,6 +15,8 @@ import {
   fetchDocuments,
   fetchDocumentCategories,
   createDocumentCategory,
+  updateDocumentCategory,
+  deleteDocumentCategory,
   uploadDocument,
   updateDocument,
   deleteDocument,
@@ -131,7 +133,6 @@ export default function AdminInfoPage({ currentUser }) {
   const [uploadOrganisme, setUploadOrganisme] = useState('');
   const [uploadTitle, setUploadTitle] = useState('');
   const [uploadCategory, setUploadCategory] = useState('');
-  const [uploadAuthor, setUploadAuthor] = useState(typeof activeUser === 'string' ? activeUser : 'Henri Jamet');
   const [uploadFile, setUploadFile] = useState(null);
   const [uploadedFileName, setUploadedFileName] = useState('');
   const [isSubmittingUpload, setIsSubmittingUpload] = useState(false);
@@ -142,6 +143,15 @@ export default function AdminInfoPage({ currentUser }) {
   const [newCatEmoji, setNewCatEmoji] = useState('📁');
   const [newCatColor, setNewCatColor] = useState('slate');
   const [isCreatingCat, setIsCreatingCat] = useState(false);
+
+  // Édition / suppression catégorie (Annotation 10)
+  const [isEditCategoryModalOpen, setIsEditCategoryModalOpen] = useState(false);
+  const [selectedEditingCat, setSelectedEditingCat] = useState(null);
+  const [editCatName, setEditCatName] = useState('');
+  const [editCatEmoji, setEditCatEmoji] = useState('📁');
+  const [editCatColor, setEditCatColor] = useState('slate');
+  const [isUpdatingCat, setIsUpdatingCat] = useState(false);
+  const [isDeletingCat, setIsDeletingCat] = useState(false);
 
   const [operationType, setOperationType] = useState('in'); // 'in' | 'out'
   const [operationAmount, setOperationAmount] = useState('');
@@ -162,17 +172,25 @@ export default function AdminInfoPage({ currentUser }) {
   const toastTimerRef = useRef(null);
 
   const showToast = (title, desc, icon = 'check_circle') => {
+    // ANNOTATION 13 : Suppression du toast d'erreur rouge doublon.
+    // Toute erreur est exclusivement routée vers le bus d'événement global app-error (GlobalErrorAlert).
+    if (icon === 'error' || icon === 'alert' || (title && title.toLowerCase().includes('erreur'))) {
+      window.dispatchEvent(new CustomEvent('app-error', {
+        detail: {
+          message: desc ? `${title} : ${desc}` : title,
+          status: 500,
+          endpoint: '/api/documents/upload'
+        }
+      }));
+      return;
+    }
+
     if (toastTimerRef.current) clearTimeout(toastTimerRef.current);
     setToast({ visible: true, title, desc, icon });
 
-    // RÈGLE IMPÉRATIVE HENRI : Ne JAMAIS effacer automatiquement les erreurs !
-    // L'utilisateur doit pouvoir lire l'intégralité du message d'erreur tant qu'il ne l'a pas fermé manuellement.
-    const isError = icon === 'error' || icon === 'alert' || (title && title.toLowerCase().includes('erreur'));
-    if (!isError) {
-      toastTimerRef.current = setTimeout(() => {
-        setToast((prev) => ({ ...prev, visible: false }));
-      }, 4000);
-    }
+    toastTimerRef.current = setTimeout(() => {
+      setToast((prev) => ({ ...prev, visible: false }));
+    }, 4000);
   };
 
   // Chargement réel des documents depuis /api/documents (Annotation 6)
@@ -352,6 +370,74 @@ export default function AdminInfoPage({ currentUser }) {
     }
   };
 
+  // Annotation 10 : Ouverture de la modale d'édition de la catégorie sélectionnée
+  const handleOpenEditCategoryModal = () => {
+    const current = categoriesList.find((c) => c.name === uploadCategory) || categoriesList[0];
+    if (!current) {
+      showToast('Aucune catégorie', 'Veuillez d\'abord sélectionner une catégorie.', 'warning');
+      return;
+    }
+    setSelectedEditingCat(current);
+    setEditCatName(current.name);
+    setEditCatEmoji(current.emoji || '📁');
+    setEditCatColor(current.color || 'slate');
+    setIsEditCategoryModalOpen(true);
+  };
+
+  // Annotation 10 : Mise à jour de catégorie (PUT)
+  const handleUpdateCategorySubmit = async (e) => {
+    e.preventDefault();
+    if (!selectedEditingCat || !editCatName.trim()) return;
+    setIsUpdatingCat(true);
+    try {
+      const updated = await updateDocumentCategory(selectedEditingCat.id, {
+        name: editCatName.trim(),
+        emoji: editCatEmoji || '📁',
+        color: editCatColor || 'slate'
+      });
+      setCategoriesList((prev) => prev.map((c) => (c.id === updated.id ? updated : c)));
+      if (uploadCategory === selectedEditingCat.name) {
+        setUploadCategory(updated.name);
+      }
+      if (selectedEditingCat.name !== updated.name) {
+        setDocuments((prev) => prev.map((doc) =>
+          doc.category === selectedEditingCat.name ? { ...doc, category: updated.name } : doc
+        ));
+      }
+      setIsEditCategoryModalOpen(false);
+      showToast('Catégorie mise à jour', `Catégorie « ${updated.name} » actualisée avec succès.`, 'check_circle');
+    } catch (err) {
+      showToast('Erreur mise à jour', err.message, 'error');
+    } finally {
+      setIsUpdatingCat(false);
+    }
+  };
+
+  // Annotation 10 : Suppression de catégorie avec confirmation préalable obligatoire (DELETE)
+  const handleDeleteCategory = async () => {
+    if (!selectedEditingCat) return;
+    if (window.confirm("Êtes-vous certain de vouloir supprimer cette catégorie ?")) {
+      setIsDeletingCat(true);
+      try {
+        await deleteDocumentCategory(selectedEditingCat.id);
+        const remaining = categoriesList.filter((c) => c.id !== selectedEditingCat.id);
+        setCategoriesList(remaining);
+        setDocuments((prev) => prev.map((doc) =>
+          doc.category === selectedEditingCat.name ? { ...doc, category: 'Autre' } : doc
+        ));
+        if (uploadCategory === selectedEditingCat.name) {
+          setUploadCategory(remaining.length > 0 ? remaining[0].name : '');
+        }
+        setIsEditCategoryModalOpen(false);
+        showToast('Catégorie supprimée', `La catégorie « ${selectedEditingCat.name} » a été supprimée.`, 'delete');
+      } catch (err) {
+        showToast('Erreur suppression', err.message, 'error');
+      } finally {
+        setIsDeletingCat(false);
+      }
+    }
+  };
+
   // Calcul dynamique du nom de fichier canonique : [ORGANISME] [MMAAAA] [Titre].[ext]
   const getCanonicalFileName = useMemo(() => {
     const org = (uploadOrganisme || '').trim() || 'ORGANISME';
@@ -371,7 +457,7 @@ export default function AdminInfoPage({ currentUser }) {
     return `${org} ${mmaaaa} ${title}${ext}`;
   }, [uploadOrganisme, uploadTitle, uploadedFileName]);
 
-  // Upload document workflow (Annotation 5 : Enregistrement réel avec format canonique et catégorie)
+  // Upload document workflow (Annotation 5 & 11)
   const handleUploadSubmit = async (e) => {
     e.preventDefault();
     if (!uploadOrganisme.trim() || !uploadTitle.trim() || !uploadFile) {
@@ -381,12 +467,19 @@ export default function AdminInfoPage({ currentUser }) {
 
     setIsSubmittingUpload(true);
     try {
+      // Annotation 11 : Déposant déterminé automatiquement depuis la session de l'utilisateur connecté
+      const deposant = (
+        currentUser && typeof currentUser === 'object'
+          ? (currentUser.name || currentUser.fullName || (currentUser.prenom ? `${currentUser.prenom} ${currentUser.nom || ''}`.trim() : null) || currentUser.id)
+          : (typeof currentUser === 'string' && currentUser ? currentUser : null)
+      ) || (typeof activeUser === 'string' ? activeUser : 'Henri Jamet');
+
       const formData = new FormData();
       formData.append('file', uploadFile);
       formData.append('organisme', uploadOrganisme.trim());
       formData.append('title', uploadTitle.trim());
       formData.append('category', uploadCategory || (categoriesList[0]?.name || 'Actes & Statuts'));
-      formData.append('uploaded_by', uploadAuthor || 'Henri Jamet');
+      formData.append('uploaded_by', deposant);
 
       const newDoc = await uploadDocument(formData);
       setDocuments((prev) => [newDoc, ...prev]);
@@ -397,7 +490,13 @@ export default function AdminInfoPage({ currentUser }) {
       setUploadedFileName('');
       showToast('Document archivé', `« ${newDoc.filename || newDoc.name} » a été archivé avec succès.`, 'cloud_done');
     } catch (err) {
-      showToast('Erreur de téléversement', err.message, 'error');
+      window.dispatchEvent(new CustomEvent('app-error', {
+        detail: {
+          message: err.message,
+          status: err.status || 500,
+          endpoint: '/api/documents/upload'
+        }
+      }));
     } finally {
       setIsSubmittingUpload(false);
     }
@@ -1483,32 +1582,34 @@ export default function AdminInfoPage({ currentUser }) {
                   </div>
                 )}
 
-                {/* Liste des catégories disponibles */}
-                <CustomSelect
-                  id="doc-category-select"
-                  value={uploadCategory}
-                  onChange={(e) => setUploadCategory(e.target.value)}
-                  options={categoriesList.map((cat) => ({
-                    value: cat.name,
-                    label: `${cat.emoji || '📁'} ${cat.name}`,
-                  }))}
-                  className="h-[48px]"
-                />
+                {/* Liste des catégories disponibles avec bouton d'édition (Annotation 10) */}
+                <div className="flex items-center gap-2">
+                  <div className="flex-1">
+                    <CustomSelect
+                      id="doc-category-select"
+                      value={uploadCategory}
+                      onChange={(e) => setUploadCategory(e.target.value)}
+                      options={categoriesList.map((cat) => ({
+                        value: cat.name,
+                        label: `${cat.emoji || '📁'} ${cat.name}`,
+                      }))}
+                      className="h-[48px]"
+                    />
+                  </div>
+                  <button
+                    type="button"
+                    id="btn-edit-category"
+                    onClick={handleOpenEditCategoryModal}
+                    title="Éditer la catégorie sélectionnée"
+                    className="h-[48px] px-3.5 bg-surface-container-lowest border-2 border-border-subtle rounded-DEFAULT text-on-surface hover:text-primary hover:border-primary flex items-center justify-center gap-1.5 transition-all cursor-pointer font-label-md text-xs font-semibold shrink-0 shadow-xs"
+                  >
+                    <span className="material-symbols-outlined text-[18px]">tune</span>
+                    <span>Éditer</span>
+                  </button>
+                </div>
               </div>
 
-              {/* Déposant */}
-              <div>
-                <label htmlFor="doc-author-input" className="block font-label-md text-xs font-bold text-on-surface mb-1">
-                  Déposant / Associé
-                </label>
-                <input
-                  id="doc-author-input"
-                  type="text"
-                  value={uploadAuthor}
-                  onChange={(e) => setUploadAuthor(e.target.value)}
-                  className="w-full h-[48px] px-4 bg-surface-container-lowest border-2 border-border-subtle rounded-DEFAULT font-body-md text-sm text-on-surface focus:outline-none focus:border-primary transition-all"
-                />
-              </div>
+              {/* Annotation 11 : Champ Déposant / Associé supprimé définitivement (renseigné automatiquement via la session utilisateur) */}
 
               {/* Actions de la modale */}
               <div className="mt-2 pt-space-sm border-t border-border-subtle flex items-center justify-end gap-space-sm">
@@ -1520,6 +1621,7 @@ export default function AdminInfoPage({ currentUser }) {
                 >
                   Annuler
                 </button>
+                {/* Annotation 12 : Remplacement de "Archiver le document" par "Envoyer" */}
                 <button
                   type="submit"
                   disabled={isSubmittingUpload}
@@ -1528,8 +1630,155 @@ export default function AdminInfoPage({ currentUser }) {
                   <span className="material-symbols-outlined text-[20px]">
                     {isSubmittingUpload ? 'sync' : 'check'}
                   </span>
-                  <span>{isSubmittingUpload ? 'Archivage en cours...' : 'Archiver le document'}</span>
+                  <span>{isSubmittingUpload ? 'Envoi en cours...' : 'Envoyer'}</span>
                 </button>
+              </div>
+
+            </form>
+
+          </div>
+        </div>
+      )}
+
+      {/* ========================================================================= */}
+      {/* MODAL ÉDITION DE CATÉGORIE (#modal-edit-category) (Annotation 10)         */}
+      {/* ========================================================================= */}
+      {isEditCategoryModalOpen && selectedEditingCat && (
+        <div id="modal-edit-category" className="fixed inset-0 z-60 bg-inverse-surface/50 backdrop-blur-xs flex items-center justify-center p-4">
+          <div className="bg-surface-container-lowest w-full max-w-lg rounded-2xl p-space-lg shadow-[0_20px_48px_-12px_rgba(15,23,42,0.25)] border border-border-subtle relative max-h-[90vh] overflow-y-auto animate-in fade-in duration-150">
+            
+            {/* Modal Header */}
+            <div className="flex items-center justify-between pb-space-sm border-b border-border-subtle">
+              <div className="flex items-center gap-2.5">
+                <div className="w-10 h-10 rounded-full bg-sage-soft flex items-center justify-center text-primary">
+                  <span className="material-symbols-outlined text-[22px]">tune</span>
+                </div>
+                <div>
+                  <h3 className="font-headline-sm text-base sm:text-lg text-forest-deep font-bold">
+                    Éditer la catégorie
+                  </h3>
+                  <p className="font-body-md text-xs text-on-surface-variant">
+                    Modifier les paramètres ou supprimer la catégorie « {selectedEditingCat.name} »
+                  </p>
+                </div>
+              </div>
+              <button
+                id="btn-close-edit-category"
+                type="button"
+                onClick={() => setIsEditCategoryModalOpen(false)}
+                className="w-9 h-9 rounded-full hover:bg-surface-container text-on-surface-variant flex items-center justify-center transition-all cursor-pointer"
+              >
+                <span className="material-symbols-outlined text-[20px]">close</span>
+              </button>
+            </div>
+
+            {/* Modal Form */}
+            <form id="edit-category-form" onSubmit={handleUpdateCategorySubmit} className="mt-space-md flex flex-col gap-4">
+              
+              {/* Nom de la catégorie */}
+              <div>
+                <label htmlFor="edit-cat-name" className="block font-label-md text-xs font-bold text-on-surface mb-1">
+                  Nom de la catégorie *
+                </label>
+                <input
+                  id="edit-cat-name"
+                  type="text"
+                  required
+                  value={editCatName}
+                  onChange={(e) => setEditCatName(e.target.value)}
+                  placeholder="Ex : Assurance Habitation"
+                  className="w-full h-[48px] px-4 bg-surface-container-lowest border-2 border-border-subtle rounded-DEFAULT font-body-md text-sm text-on-surface focus:outline-none focus:border-primary focus:ring-4 focus:ring-primary/10 transition-all"
+                />
+              </div>
+
+              {/* Émoji / Icône */}
+              <div>
+                <label htmlFor="edit-cat-emoji" className="block font-label-md text-xs font-bold text-on-surface mb-1">
+                  Émoji / Icône représentatif
+                </label>
+                <div className="flex items-center gap-2">
+                  <input
+                    id="edit-cat-emoji"
+                    type="text"
+                    value={editCatEmoji}
+                    onChange={(e) => setEditCatEmoji(e.target.value)}
+                    maxLength={3}
+                    className="w-14 h-[48px] text-center text-xl bg-surface-container-lowest border-2 border-border-subtle rounded-DEFAULT font-body-md text-on-surface focus:outline-none focus:border-primary transition-all"
+                  />
+                  <div className="flex items-center gap-1.5 flex-wrap flex-1 p-2 bg-surface-container-low rounded-DEFAULT border border-border-subtle">
+                    {EMOJI_PRESETS.map((em) => (
+                      <button
+                        key={em}
+                        type="button"
+                        onClick={() => setEditCatEmoji(em)}
+                        className={`w-8 h-8 text-base rounded hover:bg-white flex items-center justify-center transition-all cursor-pointer ${
+                          editCatEmoji === em ? 'ring-2 ring-primary bg-white shadow-xs' : ''
+                        }`}
+                      >
+                        {em}
+                      </button>
+                    ))}
+                  </div>
+                </div>
+              </div>
+
+              {/* Couleur associée */}
+              <div>
+                <label className="block font-label-md text-xs font-bold text-on-surface mb-1.5">
+                  Couleur associée
+                </label>
+                <div className="grid grid-cols-2 sm:grid-cols-4 gap-2">
+                  {COLOR_OPTIONS.map((c) => (
+                    <button
+                      key={c.id}
+                      type="button"
+                      onClick={() => setEditCatColor(c.id)}
+                      className={`flex items-center gap-2 px-3 py-2 rounded-DEFAULT text-xs font-medium border cursor-pointer transition-all ${
+                        editCatColor === c.id
+                          ? 'ring-2 ring-primary ring-offset-1 font-bold shadow-xs'
+                          : 'opacity-80 hover:opacity-100'
+                      } ${c.badgeBg}`}
+                    >
+                      <span className={`w-3 h-3 rounded-full ${c.bg}`}></span>
+                      <span>{c.name}</span>
+                    </button>
+                  ))}
+                </div>
+              </div>
+
+              {/* Actions de la modale */}
+              <div className="mt-3 pt-space-sm border-t border-border-subtle flex flex-col sm:flex-row items-stretch sm:items-center justify-between gap-3">
+                {/* Bouton rouge sobre Supprimer */}
+                <button
+                  type="button"
+                  id="btn-delete-category"
+                  onClick={handleDeleteCategory}
+                  disabled={isDeletingCat || isUpdatingCat}
+                  className="h-[44px] px-4 rounded-DEFAULT bg-rose-50 text-rose-700 hover:bg-rose-100 hover:text-rose-800 border border-rose-200 font-label-md text-xs font-bold flex items-center justify-center gap-1.5 transition-all cursor-pointer disabled:opacity-50"
+                >
+                  <span className="material-symbols-outlined text-[18px]">delete</span>
+                  <span>{isDeletingCat ? 'Suppression...' : 'Supprimer cette catégorie'}</span>
+                </button>
+
+                <div className="flex items-center justify-end gap-2">
+                  <button
+                    type="button"
+                    onClick={() => setIsEditCategoryModalOpen(false)}
+                    className="h-[44px] px-4 rounded-DEFAULT bg-surface-container-lowest border-2 border-border-subtle text-on-surface font-label-md text-xs hover:bg-canvas-slate transition-all cursor-pointer"
+                  >
+                    Annuler
+                  </button>
+                  <button
+                    type="submit"
+                    disabled={isUpdatingCat || isDeletingCat || !editCatName.trim()}
+                    className="h-[44px] px-5 rounded-DEFAULT bg-primary text-white font-label-md text-xs font-bold hover:bg-forest-deep transition-all flex items-center gap-1.5 cursor-pointer shadow-xs disabled:opacity-50"
+                  >
+                    <span className="material-symbols-outlined text-[18px]">
+                      {isUpdatingCat ? 'sync' : 'save'}
+                    </span>
+                    <span>{isUpdatingCat ? 'Enregistrement...' : 'Enregistrer les modifications'}</span>
+                  </button>
+                </div>
               </div>
 
             </form>
@@ -1822,48 +2071,40 @@ export default function AdminInfoPage({ currentUser }) {
       />
 
       {/* ========================================================================= */}
-      {/* TOAST FEEDBACK NOTIFICATION                                               */}
+      {/* TOAST FEEDBACK NOTIFICATION (Notifications positives / succès exclusif)   */}
       {/* ========================================================================= */}
-      <div
-        id="toast-feedback"
-        role="alert"
-        className={`fixed bottom-6 right-6 z-50 px-5 py-3.5 rounded-xl shadow-2xl border flex items-center gap-3 transition-all duration-300 max-w-md md:max-w-lg ${
-          toast.icon === 'error'
-            ? 'bg-rose-950 text-rose-100 border-rose-600/80 shadow-rose-950/40'
-            : 'bg-forest-deep text-on-primary border-sage-border shadow-forest-deep/30'
-        } ${
-          toast.visible
-            ? 'translate-y-0 opacity-100 pointer-events-auto'
-            : 'translate-y-24 opacity-0 pointer-events-none'
-        }`}
-      >
-        <span
-          id="toast-icon"
-          className={`material-symbols-outlined text-[24px] shrink-0 ${
-            toast.icon === 'error' ? 'text-rose-400' : 'text-secondary-fixed'
-          }`}
+      {toast.visible && toast.icon !== 'error' && (
+        <div
+          id="toast-feedback"
+          role="status"
+          className="fixed bottom-6 right-6 z-50 px-5 py-3.5 rounded-xl shadow-2xl border flex items-center gap-3 transition-all duration-300 max-w-md md:max-w-lg bg-forest-deep text-on-primary border-sage-border shadow-forest-deep/30 translate-y-0 opacity-100 pointer-events-auto"
         >
-          {toast.icon === 'error' ? 'error' : toast.icon}
-        </span>
-        <div className="flex flex-col flex-1 min-w-0 pr-1">
-          <span id="toast-title" className="font-label-md text-label-md font-bold leading-tight">
-            {toast.title}
+          <span
+            id="toast-icon"
+            className="material-symbols-outlined text-[24px] shrink-0 text-secondary-fixed"
+          >
+            {toast.icon}
           </span>
-          <span id="toast-desc" className="font-body-md text-xs opacity-90 break-words mt-0.5 select-text font-mono">
-            {toast.desc}
-          </span>
+          <div className="flex flex-col flex-1 min-w-0 pr-1">
+            <span id="toast-title" className="font-label-md text-label-md font-bold leading-tight">
+              {toast.title}
+            </span>
+            <span id="toast-desc" className="font-body-md text-xs opacity-90 break-words mt-0.5 select-text font-mono">
+              {toast.desc}
+            </span>
+          </div>
+          <button
+            id="btn-close-toast"
+            type="button"
+            onClick={() => setToast((prev) => ({ ...prev, visible: false }))}
+            className="shrink-0 p-1.5 rounded-full hover:bg-white/10 active:bg-white/20 transition-colors text-white/80 hover:text-white cursor-pointer ml-1"
+            title="Fermer"
+            aria-label="Fermer la notification"
+          >
+            <X className="w-4 h-4" />
+          </button>
         </div>
-        <button
-          id="btn-close-toast"
-          type="button"
-          onClick={() => setToast((prev) => ({ ...prev, visible: false }))}
-          className="shrink-0 p-1.5 rounded-full hover:bg-white/10 active:bg-white/20 transition-colors text-white/80 hover:text-white cursor-pointer ml-1"
-          title="Fermer"
-          aria-label="Fermer la notification"
-        >
-          <X className="w-4 h-4" />
-        </button>
-      </div>
+      )}
 
     </div>
   );

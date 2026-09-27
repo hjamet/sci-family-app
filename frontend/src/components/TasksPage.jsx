@@ -104,13 +104,20 @@ export default function TasksPage({ currentUser = 'Henri Jamet' }) {
     }
     return projects.map((p, idx) => {
       const votes = p.votes || [];
-      const pourVotes = votes.filter(v => ['OUI', 'POUR'].includes(v.vote));
-      const absVotes = votes.filter(v => v.vote === 'ABSTENTION');
-      const contreVotes = votes.filter(v => ['NON', 'CONTRE'].includes(v.vote));
+      const pourVotes = votes.filter(v => ['OUI', 'POUR'].includes((v.vote || '').toUpperCase()));
+      const absVotes = votes.filter(v => (v.vote || '').toUpperCase() === 'ABSTENTION');
+      const contreVotes = votes.filter(v => ['NON', 'CONTRE'].includes((v.vote || '').toUpperCase()));
+      const reportAgVotes = votes.filter(v => {
+        const voteStr = (v.vote || '').toUpperCase();
+        return voteStr === 'REPORT_AG' || voteStr === 'DEMANDE_AG' || voteStr === 'REPORT_PROCHAINE_AG' || voteStr === 'REPORT AG';
+      });
       const pourCount = pourVotes.length;
+      const totalCast = pourCount + absVotes.length + contreVotes.length + reportAgVotes.length;
       const pourPct = Math.round((pourCount / 7) * 100);
       const absPct = Math.round((absVotes.length / 7) * 100);
-      const attentePct = Math.max(0, 100 - pourPct - absPct);
+      const reportAgPct = Math.round((reportAgVotes.length / 7) * 100);
+      const contrePct = Math.round((contreVotes.length / 7) * 100);
+      const attentePct = Math.max(0, 100 - pourPct - absPct - reportAgPct - contrePct);
       const isRoof = p.title && p.title.toLowerCase().includes('toiture');
 
       return {
@@ -120,14 +127,19 @@ export default function TasksPage({ currentUser = 'Henri Jamet' }) {
         budgetText: `Enveloppe budgétaire : ${(p.estimated_cost || 0).toLocaleString('fr-FR')} € TTC`,
         title: p.title,
         description: p.description || '',
-        participationText: `Participation : ${votes.length}/7 voix exprimées (${Math.round((votes.length / 7) * 100)}%)`,
-        quorumText: votes.length >= 4 ? 'Majorité qualifiée acquise' : 'En cours d\'instruction',
+        participationText: `Participation : ${totalCast}/7 voix exprimées (${Math.round((totalCast / 7) * 100)}%)`,
+        quorumText: reportAgVotes.length > 0 ? 'Débat en AG sollicité' : (pourCount >= 4 ? 'Majorité qualifiée acquise' : 'En cours d\'instruction'),
         pourWidth: `${pourPct}%`,
         abstentionWidth: `${absPct}%`,
+        reportAgWidth: `${reportAgPct}%`,
+        contreWidth: `${contrePct}%`,
         attenteWidth: `${attentePct}%`,
         pourLabel: `${pourCount} Pour`,
+        hasContre: contreVotes.length > 0,
+        contreLabel: `${contreVotes.length} Contre`,
         abstentionLabel: `${absVotes.length} Abstention`,
-        attenteLabel: `${Math.max(0, 7 - votes.length)} en attente`,
+        reportAgLabel: `${reportAgVotes.length} Report AG`,
+        attenteLabel: `${Math.max(0, 7 - totalCast)} en attente`,
         deadline: 'Consultation active',
         reporter: {
           name: p.submitted_by || 'Henri Jamet',
@@ -571,7 +583,10 @@ export default function TasksPage({ currentUser = 'Henri Jamet' }) {
         {loading ? (
           <VoteCardSkeleton />
         ) : currentVote ? (
-          <div className="bg-surface-container-low rounded-lg p-space-md border border-subtle">
+          <div
+            onClick={() => setIsRoofVoteModalOpen(true)}
+            className="bg-surface-container-low rounded-lg p-space-md border border-subtle hover:shadow-md transition-all cursor-pointer group"
+          >
             <div className="flex flex-col lg:flex-row lg:items-start justify-between gap-space-md mb-space-sm">
               <div className="space-y-1.5 flex-1">
                 <div className="flex flex-wrap items-center gap-2">
@@ -584,7 +599,7 @@ export default function TasksPage({ currentUser = 'Henri Jamet' }) {
                     {currentVote.budgetText}
                   </span>
                 </div>
-                <h3 className="font-headline-sm text-headline-sm text-forest-deep pt-1 font-bold">
+                <h3 className="font-headline-sm text-headline-sm text-forest-deep pt-1 font-bold group-hover:text-primary transition-colors">
                   {currentVote.title}
                 </h3>
                 <p className="font-body-md text-body-md text-on-surface-variant text-xs sm:text-sm">
@@ -596,17 +611,19 @@ export default function TasksPage({ currentUser = 'Henri Jamet' }) {
                 <span className="font-label-sm text-label-sm text-forest-deep font-semibold">
                   {currentVote.participationText}
                 </span>
-                <span className="text-[12px] text-primary font-medium flex items-center gap-1">
+                <span className={`text-[12px] font-medium flex items-center gap-1 ${currentVote.reportAgLabel?.startsWith('0') ? 'text-primary' : 'text-purple-700'}`}>
                   <span className="material-symbols-outlined text-[15px]">verified</span>
                   {currentVote.quorumText}
                 </span>
               </div>
             </div>
 
-            {/* Tri-segmented Progress Bar */}
+            {/* Multi-segmented Progress Bar */}
             <div className="w-full h-3 bg-surface-container-highest rounded-full overflow-hidden flex my-2">
               <div className="h-full bg-primary transition-all duration-500" style={{ width: currentVote.pourWidth }} title="Pour"></div>
               <div className="h-full bg-amber-rich transition-all duration-500" style={{ width: currentVote.abstentionWidth }} title="Abstention"></div>
+              <div className="h-full bg-purple-700 transition-all duration-500" style={{ width: currentVote.reportAgWidth }} title="Report AG"></div>
+              <div className="h-full bg-error transition-all duration-500" style={{ width: currentVote.contreWidth }} title="Contre"></div>
               <div className="h-full bg-outline-variant transition-all duration-500" style={{ width: currentVote.attenteWidth }} title="En attente"></div>
             </div>
 
@@ -617,9 +634,19 @@ export default function TasksPage({ currentUser = 'Henri Jamet' }) {
                   <span className="w-2.5 h-2.5 rounded-full bg-primary"></span>
                   {currentVote.pourLabel}
                 </span>
+                {currentVote.hasContre && (
+                  <span className="flex items-center gap-1.5 font-medium text-rose-700">
+                    <span className="w-2.5 h-2.5 rounded-full bg-rose-600"></span>
+                    {currentVote.contreLabel}
+                  </span>
+                )}
                 <span className="flex items-center gap-1.5 font-medium text-amber-rich">
                   <span className="w-2.5 h-2.5 rounded-full bg-amber-rich"></span>
                   {currentVote.abstentionLabel}
+                </span>
+                <span className="flex items-center gap-1.5 font-medium text-purple-800">
+                  <span className="w-2.5 h-2.5 rounded-full bg-purple-700"></span>
+                  {currentVote.reportAgLabel}
                 </span>
                 <span className="flex items-center gap-1.5 text-on-surface-variant">
                   <span className="w-2.5 h-2.5 rounded-full bg-outline-variant"></span>
@@ -650,16 +677,10 @@ export default function TasksPage({ currentUser = 'Henri Jamet' }) {
 
               <div className="flex items-center gap-2">
                 <button
-                  onClick={() => setIsRoofVoteModalOpen(true)}
-                  className="h-[44px] px-4 rounded-DEFAULT bg-surface-container-lowest border-2 border-outline-variant text-on-surface font-label-md text-label-md hover:bg-canvas-slate transition-all flex items-center gap-2 cursor-pointer font-medium"
-                  type="button"
-                >
-                  <span className="material-symbols-outlined text-[18px] text-on-surface-variant">visibility</span>
-                  <span>Voir le dossier</span>
-                </button>
-
-                <button
-                  onClick={() => setIsRoofVoteModalOpen(true)}
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    setIsRoofVoteModalOpen(true);
+                  }}
                   className="h-[44px] px-5 rounded-DEFAULT bg-surface-container-lowest border-2 border-primary-container text-primary-container font-label-md text-label-md hover:bg-sage-soft transition-all flex items-center gap-2 font-bold cursor-pointer"
                   type="button"
                 >
@@ -982,19 +1003,11 @@ export default function TasksPage({ currentUser = 'Henri Jamet' }) {
                     )}
                   </div>
 
-                  {/* Title & Budget */}
-                  <div className="flex flex-col sm:flex-row sm:items-start justify-between gap-2 mb-2">
+                  {/* Title */}
+                  <div className="mb-2">
                     <h3 className="font-headline-sm text-headline-sm text-forest-deep group-hover:text-primary transition-colors font-bold">
                       {t.title}
                     </h3>
-                    <div className="shrink-0 bg-sage-soft px-3 py-1 rounded-DEFAULT text-right">
-                      <span className="text-[11px] block font-medium text-on-surface-variant leading-none">
-                        {t.budget_type || 'Estimation'}
-                      </span>
-                      <span className="font-label-md text-label-md text-forest-deep font-bold">
-                        {t.budget_label || (t.budget ? `~${t.budget} € TTC` : 'Inclus SCI')}
-                      </span>
-                    </div>
                   </div>
 
                   {/* Description */}

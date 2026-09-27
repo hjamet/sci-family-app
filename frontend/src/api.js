@@ -567,6 +567,31 @@ export async function createDocumentCategory(data) {
   return res.json();
 }
 
+export async function updateDocumentCategory(id, data) {
+  const res = await fetch(`${API_BASE}/documents/categories/${id}`, {
+    method: 'PUT',
+    headers: getAuthJsonHeaders(),
+    body: JSON.stringify(data)
+  });
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({}));
+    throw new Error(err.detail || 'Erreur lors de la mise à jour de la catégorie');
+  }
+  return res.json();
+}
+
+export async function deleteDocumentCategory(id) {
+  const res = await fetch(`${API_BASE}/documents/categories/${id}`, {
+    method: 'DELETE',
+    headers: getAuthHeaders()
+  });
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({}));
+    throw new Error(err.detail || 'Erreur lors de la suppression de la catégorie');
+  }
+  return res.json();
+}
+
 export async function uploadDocument(formData) {
   const res = await fetch(`${API_BASE}/documents/upload`, {
     method: 'POST',

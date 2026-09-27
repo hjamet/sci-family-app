@@ -31,7 +31,7 @@ from .schemas import (
     ProjectCreate, ProjectReview, ProjectApprove, ProjectVoteCreate, ProjectVoteResponse, ProjectResponse, VoteEnum,
     ProjectCommentCreate, ProjectCommentResponse,
     AdminDocumentCreate, AdminDocumentUpdate, AdminDocumentResponse,
-    DocumentCategoryCreate, DocumentCategoryResponse,
+    DocumentCategoryCreate, DocumentCategoryUpdate, DocumentCategoryResponse,
     ClassificationEnum, TaskWeightEnum,
     AvailabilitySet, AvailabilityBatchCreate, AvailabilityResponse, SmartMatchItem,
     VademecumItemCreate, VademecumItemUpdate, VademecumItemResponse,
@@ -187,9 +187,12 @@ def run_document_migrations():
                 if column_names:
                     if "drive_file_id" not in column_names:
                         conn.execute(text("ALTER TABLE admin_documents ADD COLUMN drive_file_id VARCHAR(255)"))
-                        conn.commit()
+                    if "file_data" not in column_names:
+                        conn.execute(text("ALTER TABLE admin_documents ADD COLUMN file_data BLOB"))
+                    conn.commit()
             else:
                 conn.execute(text("ALTER TABLE admin_documents ADD COLUMN IF NOT EXISTS drive_file_id VARCHAR(255);"))
+                conn.execute(text("ALTER TABLE admin_documents ADD COLUMN IF NOT EXISTS file_data BYTEA;"))
                 conn.commit()
     except Exception as e:
         logger.warning(f"Notice: run_document_migrations: {e}")
@@ -2989,6 +2992,68 @@ def create_document_category(payload: DocumentCategoryCreate, db: Session = Depe
     db.refresh(new_cat)
     return new_cat
 
+@app.put("/api/documents/categories/{category_id}", response_model=DocumentCategoryResponse, tags=["Documents"])
+def update_document_category(category_id: int, payload: DocumentCategoryUpdate, db: Session = Depends(get_db)):
+    """Met à jour une catégorie de document existante (nom, emoji, couleur) et propage le renommage dans les documents."""
+    cat = db.query(DocumentCategory).filter(DocumentCategory.id == category_id).first()
+    if not cat:
+        raise HTTPException(status_code=404, detail="Catégorie non trouvée.")
+    
+    old_name = cat.name
+    if payload.name is not None:
+        clean_name = payload.name.strip()
+        if not clean_name:
+            raise HTTPException(status_code=400, detail="Le nom de la catégorie ne peut être vide.")
+        
+        # Vérifier unicité du nom si modifié
+        if clean_name.lower() != old_name.lower():
+            existing = db.query(DocumentCategory).filter(
+                DocumentCategory.name.ilike(clean_name),
+                DocumentCategory.id != category_id
+            ).first()
+            if existing:
+                raise HTTPException(status_code=400, detail="Une catégorie avec ce nom existe déjà.")
+        
+        cat.name = clean_name
+        # Propager la mise à jour aux documents associés
+        try:
+            db.query(AdminDocument).filter(AdminDocument.category == old_name).update(
+                {AdminDocument.category: clean_name},
+                synchronize_session=False
+            )
+        except Exception as e:
+            logger.warning(f"Erreur propagation renommage catégorie documents: {e}")
+
+    if payload.emoji is not None:
+        cat.emoji = payload.emoji.strip() if payload.emoji else "📁"
+    
+    if payload.color is not None:
+        cat.color = payload.color.strip() if payload.color else "slate"
+        
+    db.commit()
+    db.refresh(cat)
+    return cat
+
+@app.delete("/api/documents/categories/{category_id}", tags=["Documents"])
+def delete_document_category(category_id: int, db: Session = Depends(get_db)):
+    """Supprime une catégorie de document de manière sécurisée et réassigne les documents liés vers 'Autre'."""
+    cat = db.query(DocumentCategory).filter(DocumentCategory.id == category_id).first()
+    if not cat:
+        raise HTTPException(status_code=404, detail="Catégorie non trouvée.")
+    
+    cat_name = cat.name
+    try:
+        db.query(AdminDocument).filter(AdminDocument.category == cat_name).update(
+            {AdminDocument.category: "Autre"},
+            synchronize_session=False
+        )
+    except Exception as e:
+        logger.warning(f"Erreur réassignation catégorie documents: {e}")
+
+    db.delete(cat)
+    db.commit()
+    return {"message": f"Catégorie '{cat_name}' supprimée avec succès.", "id": category_id}
+
 
 # --- Real Documents Endpoints avec Intégration Google Drive Complète (Strict Jail) ---
 
@@ -3039,11 +3104,15 @@ def list_documents(
                     inspector_query = text("PRAGMA table_info(admin_documents)")
                     result = conn.execute(inspector_query).fetchall()
                     column_names = [row[1] for row in result]
-                    if column_names and "drive_file_id" not in column_names:
-                        conn.execute(text("ALTER TABLE admin_documents ADD COLUMN drive_file_id VARCHAR(255)"))
+                    if column_names:
+                        if "drive_file_id" not in column_names:
+                            conn.execute(text("ALTER TABLE admin_documents ADD COLUMN drive_file_id VARCHAR(255)"))
+                        if "file_data" not in column_names:
+                            conn.execute(text("ALTER TABLE admin_documents ADD COLUMN file_data BLOB"))
                         conn.commit()
                 else:
                     conn.execute(text("ALTER TABLE admin_documents ADD COLUMN IF NOT EXISTS drive_file_id VARCHAR(255);"))
+                    conn.execute(text("ALTER TABLE admin_documents ADD COLUMN IF NOT EXISTS file_data BYTEA;"))
                     conn.commit()
 
             # Seconde tentative de requête
@@ -3244,21 +3313,24 @@ async def upload_document_canonical(
     file_size = len(file_bytes)
     mimetype = file.content_type or "application/pdf"
 
-    # 1. Téléversement DIRECT dans Google Drive avec Strict Drive Jail
+    # 1. Téléversement DIRECT dans Google Drive avec Strict Drive Jail (si configuré)
+    drive_file_id = None
     try:
-        drive_file = drive_jail_service.upload_file(
-            filename=canonical_filename,
-            content=file_bytes,
-            mimetype=mimetype,
-            description=f"SCI Hellenvilliers - {category} - Déposé par {uploaded_by}"
-        )
-        drive_file_id = drive_file.get("id")
+        if drive_jail_service.is_configured():
+            drive_file = drive_jail_service.upload_file(
+                filename=canonical_filename,
+                content=file_bytes,
+                mimetype=mimetype,
+                description=f"SCI Hellenvilliers - {category} - Déposé par {uploaded_by}"
+            )
+            drive_file_id = drive_file.get("id") if drive_file else None
+        else:
+            logger.warning("Google Drive non configuré sur cet environnement, persistance documentaire locale/base assurée")
     except Exception as drive_err:
-        logger.error(f"Erreur upload Google Drive pour {canonical_filename} : {drive_err}")
-        raise HTTPException(
-            status_code=500,
-            detail=f"Échec de synchronisation Google Drive : {str(drive_err)}"
+        logger.warning(
+            f"Google Drive non configuré sur cet environnement, persistance documentaire locale/base assurée ({drive_err})"
         )
+        drive_file_id = None
 
     # 2. Sauvegarde de secours / cache local
     dest_path = os.path.join(DOCUMENTS_DIR, canonical_filename)
@@ -3272,10 +3344,11 @@ async def upload_document_canonical(
     db_doc = AdminDocument(
         title=clean_title,
         category=category,
-        file_url=f"/api/documents/drive/{drive_file_id}",
+        file_url=f"/api/documents/drive/{drive_file_id}" if drive_file_id else "/api/documents/temp",
         file_name=canonical_filename,
         file_type=mimetype,
         file_size=file_size,
+        file_data=file_bytes,
         drive_file_id=drive_file_id,
         source_type="MANUAL",
         uploaded_by=uploaded_by or "Henri Jamet",
@@ -3319,6 +3392,7 @@ def download_document(doc_id: str, db: Session = Depends(get_db)):
     """
     Télécharge un document en extrayant directement le binaire depuis Google Drive via drive_service.py.
     Applique le confinement strict (Strict Drive Jail) : HTTP 403 immédiat si hors du dossier Hellenvilliers SCI.
+    Secours transparent : Si Google Drive est indisponible ou non configuré, sert le binaire depuis la base de données ou le cache local.
     """
     doc = None
     if doc_id.isdigit():
@@ -3332,16 +3406,29 @@ def download_document(doc_id: str, db: Session = Depends(get_db)):
 
     # 1. Extraction binaire prioritaire depuis Google Drive (avec vérification Strict Jail 403)
     if target_drive_id:
-        content, metadata = drive_jail_service.download_file(target_drive_id)
-        filename = (doc.file_name if doc else None) or metadata.get("name") or f"document_{doc_id}.pdf"
-        mimetype = metadata.get("mimeType") or (doc.file_type if doc else "application/pdf")
+        try:
+            content, metadata = drive_jail_service.download_file(target_drive_id)
+            filename = (doc.file_name if doc else None) or metadata.get("name") or f"document_{doc_id}.pdf"
+            mimetype = metadata.get("mimeType") or (doc.file_type if doc else "application/pdf")
+            return Response(
+                content=content,
+                media_type=mimetype,
+                headers={"Content-Disposition": f'attachment; filename="{filename}"'}
+            )
+        except Exception as e:
+            logger.warning(f"Téléchargement Google Drive échoué pour {target_drive_id} ({e}), tentative depuis la base ou le cache local")
+
+    # 2. Secours base de données si contenu binaire présent
+    if doc and getattr(doc, "file_data", None):
+        filename = doc.file_name or f"document_{doc_id}.pdf"
+        mimetype = doc.file_type or "application/pdf"
         return Response(
-            content=content,
+            content=doc.file_data,
             media_type=mimetype,
             headers={"Content-Disposition": f'attachment; filename="{filename}"'}
         )
 
-    # 2. Secours cache local si fichier présent sans drive_id
+    # 3. Secours cache local si fichier présent sans drive_id
     if doc and doc.file_name:
         fpath = os.path.join(DOCUMENTS_DIR, doc.file_name)
         if os.path.exists(fpath):

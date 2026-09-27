@@ -64,10 +64,23 @@ async function copyToClipboard(text) {
 }
 
 /**
+ * Filtrage des notifications bénignes du moteur de rendu navigateur (Annotation 15)
+ */
+function isIgnoredMessage(msg) {
+  if (!msg) return false;
+  const str = String(msg);
+  return (
+    str.includes('ResizeObserver loop completed with undelivered notifications') ||
+    str.includes('ResizeObserver loop limit exceeded')
+  );
+}
+
+/**
  * Fonction globale exportée pour déclencher manuellement une alerte fail-fast
  */
 export function triggerGlobalError(detail) {
   if (typeof window !== 'undefined') {
+    if (detail && isIgnoredMessage(detail.message)) return;
     window.dispatchEvent(new CustomEvent('app-error', { detail }));
   }
 }
@@ -80,6 +93,11 @@ export default function GlobalErrorAlert() {
   // Fonction d'ajout ou d'incrémentation d'une erreur
   const pushError = useCallback((rawDetail) => {
     if (!rawDetail) return;
+
+    // Filtrage strict ResizeObserver (Annotation 15)
+    if (isIgnoredMessage(rawDetail.message) || isIgnoredMessage(rawDetail.stack)) {
+      return;
+    }
 
     const detail = {
       message: rawDetail.message || 'Une erreur inattendue est survenue.',
@@ -134,6 +152,9 @@ export default function GlobalErrorAlert() {
     // 1. Événement personnalisé émis par api.js ou tout composant
     const handleAppError = (event) => {
       if (event?.detail) {
+        if (isIgnoredMessage(event.detail.message) || isIgnoredMessage(event.detail.stack)) {
+          return;
+        }
         pushError(event.detail);
       }
     };
@@ -146,6 +167,10 @@ export default function GlobalErrorAlert() {
       }
 
       const msg = event.message || event.error?.message || "Erreur d'exécution JavaScript";
+      if (isIgnoredMessage(msg) || isIgnoredMessage(event.error?.stack)) {
+        return;
+      }
+
       pushError({
         message: String(msg),
         url: filename || (typeof window !== 'undefined' ? window.location.pathname : ''),
@@ -173,6 +198,10 @@ export default function GlobalErrorAlert() {
         message = reason;
       } else if (reason && typeof reason === 'object') {
         message = reason.detail || reason.message || JSON.stringify(reason);
+      }
+
+      if (isIgnoredMessage(message) || isIgnoredMessage(stack)) {
+        return;
       }
 
       pushError({

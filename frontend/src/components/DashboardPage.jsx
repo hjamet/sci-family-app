@@ -2,6 +2,8 @@ import React, { useState, useEffect, useCallback } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { fetchProjects, fetchReservations, fetchTasks } from '../api';
 import TaskDetailModal from './TaskDetailModal';
+import VoteRoofModal from './VoteRoofModal';
+import { extractParticipants } from '../pages/CalendarPage';
 import { VoteCardSkeleton, CompactStaySkeleton, CardSkeleton } from './SkeletonLoaders';
 
 export default function DashboardPage({
@@ -18,6 +20,7 @@ export default function DashboardPage({
   const [inspectingTask, setInspectingTask] = useState(null);
   const [isTaskModalOpen, setIsTaskModalOpen] = useState(false);
   const [isTaskEditingDirect, setIsTaskEditingDirect] = useState(false);
+  const [isRoofVoteModalOpen, setIsRoofVoteModalOpen] = useState(false);
 
   const handleOpenCreateTask = () => {
     setInspectingTask({
@@ -104,6 +107,17 @@ export default function DashboardPage({
 
   // Find active project or null
   const activeVote = projects.find(p => p.status === 'EN_VOTE' || p.status === 'SOUMIS' || p.status === 'EN_COURS') || (projects.length > 0 ? projects[0] : null);
+
+  const activeVoteVotes = activeVote?.votes || [];
+  const activeVotePour = activeVoteVotes.filter(v => ['OUI', 'POUR'].includes((v.vote || '').toUpperCase()));
+  const activeVoteAbs = activeVoteVotes.filter(v => (v.vote || '').toUpperCase() === 'ABSTENTION');
+  const activeVoteContre = activeVoteVotes.filter(v => ['NON', 'CONTRE'].includes((v.vote || '').toUpperCase()));
+  const activeVoteReportAg = activeVoteVotes.filter(v => {
+    const voteStr = (v.vote || '').toUpperCase();
+    return voteStr === 'REPORT_AG' || voteStr === 'DEMANDE_AG' || voteStr === 'REPORT_PROCHAINE_AG' || voteStr === 'REPORT AG';
+  });
+  const activeVoteCastCount = activeVotePour.length + activeVoteAbs.length + activeVoteContre.length + activeVoteReportAg.length;
+  const activeVotePendingCount = Math.max(0, 7 - activeVoteCastCount);
 
   const displayedStays = reservations && reservations.length > 0
     ? reservations.slice(0, 5)
@@ -350,21 +364,12 @@ export default function DashboardPage({
         {loading ? (
           <VoteCardSkeleton />
         ) : activeVote ? (
-          <article className="bg-white rounded-xl p-space-md border border-outline-variant/30 flex flex-col gap-4 shadow-sm">
-            <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2">
-              <div className="flex items-center gap-2">
-                <span className="px-2.5 py-0.5 rounded-full bg-emerald-50 text-emerald-800 border border-emerald-200 text-xs font-semibold">
-                  Majorité statutaire requise
-                </span>
-              </div>
-              <div className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full bg-canvas-slate border border-outline-variant/30 text-xs font-bold text-forest-deep self-start sm:self-auto">
-                <span className="text-on-surface-variant font-normal">Enveloppe budgétaire :</span>
-                {activeVote.estimated_cost ? `${activeVote.estimated_cost.toLocaleString('fr-FR')} € TTC` : 'Non renseigné'}
-              </div>
-            </div>
-
+          <article
+            onClick={() => setIsRoofVoteModalOpen(true)}
+            className="bg-white rounded-xl p-space-md border border-outline-variant/30 flex flex-col gap-4 shadow-sm hover:shadow-md transition-all cursor-pointer group"
+          >
             <div>
-              <h3 className="font-headline-md text-base sm:text-headline-sm font-bold text-forest-deep">
+              <h3 className="font-headline-md text-base sm:text-headline-sm font-bold text-forest-deep group-hover:text-primary transition-colors">
                 {activeVote.title}
               </h3>
               <p className="font-body-md text-on-surface-variant text-xs sm:text-sm leading-relaxed mt-1">
@@ -377,42 +382,61 @@ export default function DashboardPage({
               <div className="flex items-center justify-between text-xs">
                 <span className="font-bold text-forest-deep flex items-center gap-1.5">
                   <span className="material-symbols-outlined text-[16px] text-primary">poll</span>
-                  Participation : {activeVote.votes?.length || 0}/7 voix exprimées ({Math.round(((activeVote.votes?.length || 0) / 7) * 100)}%)
+                  Participation : {activeVoteCastCount}/7 voix exprimées ({Math.round((activeVoteCastCount / 7) * 100)}%)
                 </span>
-                <span className="font-bold text-primary">
-                  {(activeVote.votes?.length || 0) >= 4 ? 'Majorité qualifiée acquise' : 'En cours d\'instruction'}
+                <span className={`font-bold ${activeVoteReportAg.length > 0 ? 'text-purple-700' : 'text-primary'}`}>
+                  {activeVoteReportAg.length > 0
+                    ? 'Débat en AG sollicité'
+                    : (activeVotePour.length >= 4 ? 'Majorité qualifiée acquise' : 'En cours d\'instruction')}
                 </span>
               </div>
 
               <div className="w-full h-2.5 rounded-full bg-surface-container overflow-hidden flex">
                 <div 
                   className="bg-primary h-full transition-all duration-500" 
-                  style={{ width: `${Math.round(((activeVote.votes?.filter(v => ['OUI', 'POUR'].includes(v.vote)).length || 0) / 7) * 100)}%` }} 
+                  style={{ width: `${Math.round((activeVotePour.length / 7) * 100)}%` }} 
                   title="Pour"
                 ></div>
                 <div 
                   className="bg-amber-rich h-full transition-all duration-500" 
-                  style={{ width: `${Math.round(((activeVote.votes?.filter(v => v.vote === 'ABSTENTION').length || 0) / 7) * 100)}%` }} 
+                  style={{ width: `${Math.round((activeVoteAbs.length / 7) * 100)}%` }} 
                   title="Abstention"
                 ></div>
                 <div 
+                  className="bg-purple-700 h-full transition-all duration-500" 
+                  style={{ width: `${Math.round((activeVoteReportAg.length / 7) * 100)}%` }} 
+                  title="Report AG"
+                ></div>
+                <div 
                   className="bg-error h-full transition-all duration-500" 
-                  style={{ width: `${Math.round(((activeVote.votes?.filter(v => ['NON', 'CONTRE'].includes(v.vote)).length || 0) / 7) * 100)}%` }} 
+                  style={{ width: `${Math.round((activeVoteContre.length / 7) * 100)}%` }} 
                   title="Contre"
                 ></div>
               </div>
 
               <div className="flex flex-wrap items-center justify-between gap-2 text-xs text-on-surface-variant pt-1">
-                <span className="flex items-center gap-1.5 font-medium">
-                  <span className="w-2 h-2 rounded-full bg-primary inline-block"></span>
-                  {activeVote.votes?.filter(v => ['OUI', 'POUR'].includes(v.vote)).length || 0} Pour
-                </span>
-                <span className="flex items-center gap-1.5 font-medium">
-                  <span className="w-2 h-2 rounded-full bg-amber-rich inline-block"></span>
-                  {activeVote.votes?.filter(v => v.vote === 'ABSTENTION').length || 0} Abstention
-                </span>
+                <div className="flex flex-wrap items-center gap-3">
+                  <span className="flex items-center gap-1.5 font-medium">
+                    <span className="w-2 h-2 rounded-full bg-primary inline-block"></span>
+                    {activeVotePour.length} Pour
+                  </span>
+                  {activeVoteContre.length > 0 && (
+                    <span className="flex items-center gap-1.5 font-medium text-rose-700">
+                      <span className="w-2 h-2 rounded-full bg-rose-600 inline-block"></span>
+                      {activeVoteContre.length} Contre
+                    </span>
+                  )}
+                  <span className="flex items-center gap-1.5 font-medium">
+                    <span className="w-2 h-2 rounded-full bg-amber-rich inline-block"></span>
+                    {activeVoteAbs.length} Abstention
+                  </span>
+                  <span className="flex items-center gap-1.5 font-medium text-purple-800">
+                    <span className="w-2 h-2 rounded-full bg-purple-700 inline-block"></span>
+                    {activeVoteReportAg.length} Report AG
+                  </span>
+                </div>
                 <span className="italic text-on-surface-variant/80">
-                  {Math.max(0, 7 - (activeVote.votes?.length || 0))} en attente
+                  {activeVotePendingCount} en attente
                 </span>
               </div>
             </div>
@@ -424,26 +448,20 @@ export default function DashboardPage({
                 </div>
                 <div className="flex flex-col leading-tight">
                   <span className="text-xs font-semibold text-on-surface">Rapporteur : {activeVote.submitted_by || 'Henri Jamet'}</span>
-                  <span className="text-[11px] text-on-surface-variant">Membre Associé</span>
                 </div>
               </div>
 
               <div className="flex items-center gap-2.5">
                 <button
                   type="button"
-                  onClick={() => navigateTo('/taches')}
-                  className="inline-flex items-center gap-1.5 px-4 py-2 rounded-DEFAULT bg-white border-2 border-outline-variant text-on-surface font-label-sm text-xs font-semibold hover:border-outline hover:bg-canvas-slate transition-colors shadow-sm cursor-pointer"
-                >
-                  <span className="material-symbols-outlined text-[18px] text-primary">visibility</span>
-                  Voir le dossier
-                </button>
-                <button
-                  type="button"
-                  onClick={() => navigateTo('/taches')}
-                  className="inline-flex items-center gap-1.5 px-5 py-2 rounded-DEFAULT bg-white border-2 border-primary text-primary font-label-sm text-xs font-bold hover:bg-sage-soft transition-colors shadow-sm cursor-pointer"
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    setIsRoofVoteModalOpen(true);
+                  }}
+                  className="inline-flex items-center gap-1.5 px-5 py-2.5 rounded-DEFAULT bg-white border-2 border-primary text-primary font-label-sm text-xs font-bold hover:bg-sage-soft transition-colors shadow-sm cursor-pointer"
                 >
                   <span className="material-symbols-outlined text-[18px]">how_to_vote</span>
-                  Participer
+                  Participer au vote
                 </button>
               </div>
             </div>
@@ -481,17 +499,13 @@ export default function DashboardPage({
         <div className="flex flex-col space-y-space-md bg-surface-container-lowest rounded-2xl p-6 sm:p-space-lg shadow-sm border border-outline-variant/30">
           <div className="space-y-space-xs border-b border-outline-variant/20 pb-space-sm">
             <div className="flex items-center gap-2">
-              <span className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full bg-sage-soft text-primary font-label-sm text-label-sm font-semibold">
-                <span className="material-symbols-outlined text-[16px]">date_range</span>
-                Calendrier 52 Semaines
-              </span>
               <span className="text-xs text-on-surface-variant font-medium">Saison 2026</span>
             </div>
             <h2 className="font-headline-md text-headline-md text-forest-deep font-bold tracking-tight">
               Prochains Séjours au Domaine
             </h2>
             <p className="font-body-md text-body-md text-on-surface-variant leading-relaxed">
-              Réservations confirmées et présences familiales à Rosing et au Presbytère.
+              Réservations et présences familiales à Rosing et au Presbytère.
             </p>
           </div>
 
@@ -505,29 +519,10 @@ export default function DashboardPage({
                   ? `(${stay.start_date} - ${stay.end_date})`
                   : '(Dates à confirmer)';
 
-                // Épuration : suppression des badges redondants obsolètes ("Confirmé", "Réunion Annuelle & Fête")
-                const rawStatus = (stay.status || '').trim();
-                const isRedundantStatus = !rawStatus ||
-                  rawStatus.toLowerCase() === 'confirmé' ||
-                  rawStatus.toLowerCase() === 'confirme' ||
-                  rawStatus.toLowerCase() === 'confirmed' ||
-                  rawStatus.toLowerCase().includes('réunion annuelle') ||
-                  rawStatus.toLowerCase().includes('reunion annuelle') ||
-                  rawStatus.toLowerCase().includes('fête') ||
-                  rawStatus.toLowerCase().includes('fete') ||
-                  rawStatus.toLowerCase() === 'en_attente' ||
-                  rawStatus.toLowerCase() === 'pending';
+                const { members = [], guests = [], cleanDescription = '' } = extractParticipants(stay);
+                const stayTitle = stay.title || stay.property_name || (stay.property_id === 2 ? 'Le Presbytère' : 'Rosing');
+                const stayDescription = cleanDescription || stay.description || '';
 
-                const showContextTag = !isRedundantStatus;
-
-                const familyName = stay.user_name || stay.title || 'Associé SCI';
-                const isGathering = stay.is_gathering ||
-                  familyName.toLowerCase().includes('retrouvaille') ||
-                  rawStatus.toLowerCase().includes('retrouvaille') ||
-                  (stay.guests >= 7 && (stay.property_name?.includes('&') || stay.chambers_used >= 7));
-
-                const highlightLabel = stay.highlight_label || (isGathering ? '(7/7 associés)' : null);
-                const guestsCount = stay.guest_count || stay.guests || 1;
                 const propName = stay.property_name || (stay.property_id === 2 ? 'Le Presbytère' : 'Rosing');
                 const roomsCount = stay.chambers_used || stay.rooms_count || (Array.isArray(stay.selected_rooms) ? stay.selected_rooms.length : 1);
 
@@ -542,48 +537,64 @@ export default function DashboardPage({
                   roomIcon = 'bed';
                 }
 
-                const buttonIcon = isGathering ? 'groups' : 'visibility';
-
                 return (
                   <article
                     key={stay.id || idx}
-                    className="rounded-xl bg-white p-3.5 border border-outline-variant/30 flex flex-col justify-between gap-2.5 hover:shadow-md transition-all"
+                    className="rounded-xl bg-white p-4 border border-outline-variant/30 flex flex-col justify-between gap-3 hover:shadow-md transition-all"
                   >
                     <div className="flex items-center justify-between gap-2 flex-wrap">
                       <div className="flex items-center gap-2">
                         <span className="font-label-md text-label-md font-bold text-forest-deep">{weekLabel}</span>
                         <span className="text-xs text-on-surface-variant font-medium">{dateRange}</span>
                       </div>
+                    </div>
 
-                      {showContextTag && (
-                        <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full bg-surface-container text-on-surface-variant font-label-sm text-xs font-semibold">
-                          <span className="w-1.5 h-1.5 rounded-full bg-outline"></span>
-                          {rawStatus}
-                        </span>
+                    <div className="space-y-1.5">
+                      <h3 className="font-headline-sm text-base text-forest-deep font-bold leading-tight">
+                        {stayTitle}
+                      </h3>
+
+                      {stayDescription ? (
+                        <p className="font-body-md text-xs text-on-surface-variant italic leading-relaxed">
+                          « {stayDescription} »
+                        </p>
+                      ) : null}
+
+                      {/* Badges séparés : Membres famille (émeraude) & Invités extérieurs (ambre) */}
+                      {(members.length > 0 || guests.length > 0) && (
+                        <div className="flex flex-wrap items-center gap-1.5 pt-1">
+                          {members.map((member, mIdx) => (
+                            <span
+                              key={`mem-${mIdx}`}
+                              className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full text-xs font-semibold bg-emerald-50 text-emerald-800 border border-emerald-200"
+                            >
+                              <span className="material-symbols-outlined text-[13px]">person</span>
+                              <span>{member}</span>
+                            </span>
+                          ))}
+                          {guests.map((guest, gIdx) => (
+                            <span
+                              key={`gst-${gIdx}`}
+                              className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full text-xs font-semibold bg-amber-50 text-amber-900 border border-amber-200"
+                            >
+                              <span className="material-symbols-outlined text-[13px]">group</span>
+                              <span>{guest}</span>
+                            </span>
+                          ))}
+                        </div>
                       )}
                     </div>
 
-                    <div className="flex items-center justify-between gap-2">
-                      <div>
-                        {isGathering ? (
-                          <p className="font-body-md text-forest-deep font-bold text-sm leading-tight">
-                            {familyName} {highlightLabel && <span className="text-secondary font-semibold text-xs">{highlightLabel}</span>}
-                          </p>
-                        ) : (
-                          <p className="font-body-md text-on-surface font-semibold text-sm leading-tight">
-                            {familyName} <span className="text-on-surface-variant font-normal text-xs">({guestsCount} pers.)</span>
-                          </p>
-                        )}
-                        <div className="flex items-center gap-3 text-xs text-on-surface-variant pt-1">
-                          <span className="inline-flex items-center gap-1">
-                            <span className="material-symbols-outlined text-[15px] text-primary">{propIcon}</span>
-                            {propName}
-                          </span>
-                          <span className="inline-flex items-center gap-1">
-                            <span className="material-symbols-outlined text-[15px] text-primary">{roomIcon}</span>
-                            {roomsCount} chambre{roomsCount > 1 ? 's' : ''}
-                          </span>
-                        </div>
+                    <div className="flex items-center justify-between gap-2 pt-2 border-t border-outline-variant/20">
+                      <div className="flex items-center gap-3 text-xs text-on-surface-variant">
+                        <span className="inline-flex items-center gap-1">
+                          <span className="material-symbols-outlined text-[15px] text-primary">{propIcon}</span>
+                          {propName}
+                        </span>
+                        <span className="inline-flex items-center gap-1">
+                          <span className="material-symbols-outlined text-[15px] text-primary">{roomIcon}</span>
+                          {roomsCount} chambre{roomsCount > 1 ? 's' : ''}
+                        </span>
                       </div>
 
                       <button
@@ -591,7 +602,7 @@ export default function DashboardPage({
                         onClick={() => navigateTo('/calendrier')}
                         className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-DEFAULT bg-white border-2 border-primary text-primary font-label-sm text-xs font-semibold hover:bg-sage-soft transition-colors shadow-sm whitespace-nowrap cursor-pointer"
                       >
-                        <span className="material-symbols-outlined text-[16px]">{buttonIcon}</span>
+                        <span className="material-symbols-outlined text-[16px]">visibility</span>
                         Voir détails
                       </button>
                     </div>
@@ -695,12 +706,14 @@ export default function DashboardPage({
                           {deadline}
                         </span>
                       </div>
-                      <div className="text-right">
-                        <span className="text-xs text-on-surface-variant font-medium block">Budget prévisionnel</span>
-                        <span className={`font-headline-sm font-bold text-sm ${isHigh ? 'text-amber-rich' : 'text-forest-deep'}`}>
-                          {budgetText}
-                        </span>
-                      </div>
+                      {t.budget ? (
+                        <div className="text-right">
+                          <span className="text-xs text-on-surface-variant font-medium block">Budget devis</span>
+                          <span className={`font-headline-sm font-bold text-sm ${isHigh ? 'text-amber-rich' : 'text-forest-deep'}`}>
+                            ~{t.budget} €
+                          </span>
+                        </div>
+                      ) : null}
                     </div>
 
                     <div>
@@ -797,6 +810,16 @@ export default function DashboardPage({
           }}
         />
       )}
+
+      {/* Modale de Vote Toiture Presbytère Unifiée (Annotation 1) */}
+      <VoteRoofModal
+        isOpen={isRoofVoteModalOpen}
+        onClose={() => setIsRoofVoteModalOpen(false)}
+        currentUser={typeof currentUser === 'string' ? currentUser : (currentUser?.prenom ? `${currentUser.prenom} ${currentUser.nom || 'Jamet'}` : 'Henri Jamet')}
+        onVoteSubmit={() => {
+          loadDashboardData();
+        }}
+      />
 
     </div>
   );

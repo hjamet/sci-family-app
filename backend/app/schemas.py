@@ -217,6 +217,11 @@ class DocumentCategoryBase(BaseModel):
 class DocumentCategoryCreate(DocumentCategoryBase):
     pass
 
+class DocumentCategoryUpdate(BaseModel):
+    name: Optional[str] = None
+    emoji: Optional[str] = None
+    color: Optional[str] = None
+
 class DocumentCategoryResponse(DocumentCategoryBase):
     id: int
     created_at: Optional[datetime] = None

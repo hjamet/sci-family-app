@@ -44,6 +44,16 @@ class GoogleDriveJailService:
         self.folder_id = folder_id or ALLOWED_FOLDER_ID
         self._service: Optional[Resource] = None
 
+    def is_configured(self) -> bool:
+        """Vérifie si les dépendances et identifiants Google Drive sont disponibles sans lever d'exception."""
+        if not GOOGLE_DRIVE_AVAILABLE:
+            return False
+        try:
+            self._get_client()
+            return True
+        except Exception:
+            return False
+
     def _get_client(self) -> Resource:
         """Initialise le client Google Drive API v3 avec gestion prioritaire OAuth puis fallback Service Account."""
         if not GOOGLE_DRIVE_AVAILABLE:

@@ -1,5 +1,5 @@
 from datetime import datetime
-from sqlalchemy import Column, Integer, String, Text, DateTime, ForeignKey, Float, UniqueConstraint, Boolean
+from sqlalchemy import Column, Integer, String, Text, DateTime, ForeignKey, Float, UniqueConstraint, Boolean, LargeBinary
 from sqlalchemy.orm import relationship, synonym
 from .database import Base
 
@@ -56,6 +56,7 @@ class AdminDocument(Base):
     file_name = Column(String, nullable=True)
     file_type = Column(String, nullable=True)
     file_size = Column(Integer, nullable=True)
+    file_data = Column(LargeBinary, nullable=True)
     drive_file_id = Column(String(255), nullable=True, index=True)
     source_type = Column(String, nullable=True)  # TASK, ISSUE, PROJECT, MANUAL
     source_id = Column(Integer, nullable=True)
