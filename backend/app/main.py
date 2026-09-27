@@ -1892,16 +1892,27 @@ def process_vote_submission(
     if not db_proj:
         raise HTTPException(status_code=404, detail="Projet non trouvé")
 
-    existing_vote = db.query(ProjectVote).filter(
-        ProjectVote.project_id == project_id,
-        ProjectVote.user_name == user_name
-    ).first()
+    clean_name = (user_name or "").strip()
+    first_name = clean_name.split()[0].lower() if clean_name else ""
+
+    all_project_votes = db.query(ProjectVote).filter(ProjectVote.project_id == project_id).all()
+    existing_vote = None
+    for pv in all_project_votes:
+        pv_name = (pv.user_name or "").strip()
+        pv_first = pv_name.split()[0].lower() if pv_name else ""
+        if pv_name.lower() == clean_name.lower() or (first_name and pv_first == first_name):
+            existing_vote = pv
+            break
+
+    proj_status = (db_proj.status or "").strip().upper()
+    closed_or_archived = ["ARCHIVE", "ARCHIVEE", "ANNULE", "ANNULEE"]
 
     allowed_vote_statuses = [
         "EN_VOTE", "SOUMIS", "VOTE_EN_COURS", "OUVERT", "OUVERTE",
-        "EN_COURS", "REPORT_AG", "APPROUVE", "REFUSE"
+        "EN_COURS", "REPORT_AG", "APPROUVE", "REFUSE", "EN_ATTENTE_VALIDATION",
+        "VALIDE", "VALIDEE"
     ]
-    if db_proj.status in ["ARCHIVE", "ARCHIVEE", "ANNULE", "ANNULEE"] or db_proj.status not in allowed_vote_statuses:
+    if proj_status in closed_or_archived or (not existing_vote and proj_status not in allowed_vote_statuses):
         raise HTTPException(status_code=400, detail="Ce projet n'est pas ouvert au vote actuellement.")
 
     vote_str = vote_val.value.upper() if hasattr(vote_val, 'value') else str(vote_val).upper()
@@ -1921,7 +1932,7 @@ def process_vote_submission(
     else:
         new_vote = ProjectVote(
             project_id=project_id,
-            user_name=user_name,
+            user_name=clean_name,
             vote=vote_str,
             comment=comment
         )
@@ -1932,7 +1943,10 @@ def process_vote_submission(
 
     # Check if ALL associates have voted (7 associates in SCI Familiale)
     all_project_votes = db.query(ProjectVote).filter(ProjectVote.project_id == project_id).all()
-    distinct_voters = {v.user_name.strip().lower() for v in all_project_votes if v.user_name}
+    distinct_voters = {
+        (v.user_name or "").strip().split()[0].lower()
+        for v in all_project_votes if v.user_name
+    }
     total_associates = db.query(Member).count() or 7
 
     # Check if any vote requests report to AG

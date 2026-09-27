@@ -98,7 +98,14 @@ export function isTaskOpen(task) {
 export function isTaskPendingValidation(task) {
   if (!task) return false;
   const st = (task.status || '').toUpperCase().trim();
-  return st === 'PENDING_VALIDATION' || st === 'EN_ATTENTE_VALIDATION';
+  return (
+    st === 'PENDING_VALIDATION' ||
+    st === 'EN_ATTENTE_VALIDATION' ||
+    st === 'EN_ATTENTE_DE_VALIDATION' ||
+    st === 'A_VALIDER' ||
+    Boolean(task.pending_validation) ||
+    Boolean(task.requires_coordinator_validation)
+  );
 }
 
 /**

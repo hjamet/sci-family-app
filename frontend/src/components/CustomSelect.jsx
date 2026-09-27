@@ -20,6 +20,7 @@ export default function CustomSelect({
   onChange,
   options = [],
   placeholder = 'Sélectionner...',
+  placeholderClassName = '',
   className = '',
   dropdownClassName = '',
   disabled = false,
@@ -112,7 +113,7 @@ export default function CustomSelect({
         aria-label={ariaLabel || placeholder}
         disabled={disabled}
         onClick={() => !disabled && setIsOpen((prev) => !prev)}
-        className={`w-full min-h-[44px] bg-white dark:bg-surface-container border border-slate-200 dark:border-slate-700/80 rounded-xl px-3.5 py-2 text-sm flex items-center justify-between gap-2 shadow-xs hover:border-slate-300 dark:hover:border-slate-600 transition-all cursor-pointer focus:outline-none focus:ring-2 focus:ring-primary/20 focus:border-primary select-none ${className}`}
+        className={`w-full ${className.includes('min-h-') || className.includes('h-') ? '' : 'min-h-[44px]'} ${className.includes('border-') ? '' : 'border border-slate-200 dark:border-slate-700/80'} ${className.includes('rounded-') ? '' : 'rounded-xl'} ${className.includes('px-') || className.includes('py-') || className.includes('p-') ? '' : 'px-3.5 py-2'} ${className.includes('text-') ? '' : 'text-sm'} bg-white dark:bg-surface-container flex items-center justify-between gap-2 shadow-xs hover:border-slate-300 dark:hover:border-slate-600 transition-all cursor-pointer focus:outline-none focus:ring-2 focus:ring-primary/20 focus:border-primary select-none ${className}`}
       >
         <div className="flex items-center gap-2.5 truncate min-w-0">
           {selectedOption?.dotColor && (
@@ -123,7 +124,7 @@ export default function CustomSelect({
               {selectedOption.icon}
             </span>
           )}
-          <span className={`truncate ${selectedOption ? 'text-slate-800 dark:text-slate-100 font-medium' : 'text-slate-400 dark:text-slate-500'}`}>
+          <span className={`truncate ${selectedOption ? 'text-slate-800 dark:text-slate-100 font-medium' : (placeholderClassName || 'text-slate-400 dark:text-slate-500')}`}>
             {selectedOption ? selectedOption.label : placeholder}
           </span>
           {selectedOption?.badge && (
@@ -134,7 +135,9 @@ export default function CustomSelect({
         </div>
 
         <span
-          className={`material-symbols-outlined text-[20px] text-slate-400 dark:text-slate-500 transition-transform duration-200 shrink-0 ${
+          className={`material-symbols-outlined text-[18px] transition-transform duration-200 shrink-0 ${
+            placeholderClassName ? placeholderClassName.split(' ')[0] : 'text-slate-400 dark:text-slate-500'
+          } ${
             isOpen ? 'rotate-180 text-primary' : ''
           }`}
         >

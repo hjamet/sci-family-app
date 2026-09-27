@@ -59,6 +59,7 @@ test_*.py
 !backend/tests/test_document_categories_api.py
 !backend/tests/test_upload_resilience.py
 !backend/tests/test_telemetry_cache_performance.py
+!backend/tests/test_project_vote_modification.py
 backend/app/uploads/
 backend/archive_scratch_tests/
 uploads/

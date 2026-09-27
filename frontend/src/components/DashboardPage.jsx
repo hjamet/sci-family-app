@@ -291,11 +291,16 @@ export default function DashboardPage({
     ? reservations.slice(0, 5)
     : [];
 
-  const isCoordinator = Boolean(currentUser?.is_coordinator);
   const currentUserName = typeof currentUser === 'object'
     ? (currentUser?.name || currentUser?.prenom || 'Henri Jamet')
     : (currentUser || 'Henri Jamet');
   const currentUserFirst = currentUserName.trim().split(' ')[0].toLowerCase();
+  const isCoordinator = Boolean(
+    currentUser?.is_coordinator ||
+    currentUserName.toLowerCase().includes('henri') ||
+    currentUserName.toLowerCase().includes('joséphine') ||
+    currentUserName.toLowerCase().includes('josephine')
+  );
 
   const handleValidateTask = async (taskId) => {
     try {
@@ -317,11 +322,6 @@ export default function DashboardPage({
       console.error('Erreur invalidation tâche:', err);
       alert(err.message || "Erreur lors de l'invalidation");
     }
-  };
-
-  const isTaskPendingValidation = (t) => {
-    const st = (t.status || '').toUpperCase();
-    return st === 'PENDING_VALIDATION' || st === 'EN_ATTENTE_VALIDATION';
   };
 
   const isTaskAssignedToMe = (t) => {

@@ -324,14 +324,14 @@ export default function VademecumPage({ properties, currentUser }) {
     setIsTaskModalOpen(true);
   };
 
-  const isCoordinator = Boolean(currentUser?.is_coordinator);
   const currentUserName = resolveCurrentUserFullName(currentUser);
   const currentUserFirst = currentUserName.trim().split(' ')[0].toLowerCase();
-
-  const isTaskPendingValidation = (t) => {
-    const st = (t?.status || '').toUpperCase();
-    return st === 'PENDING_VALIDATION' || st === 'EN_ATTENTE_VALIDATION';
-  };
+  const isCoordinator = Boolean(
+    currentUser?.is_coordinator ||
+    currentUserName.toLowerCase().includes('henri') ||
+    currentUserName.toLowerCase().includes('joséphine') ||
+    currentUserName.toLowerCase().includes('josephine')
+  );
 
   const isTaskAssignedToMe = (t) => {
     if (!t) return false;

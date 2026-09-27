@@ -166,7 +166,12 @@ export default function TaskDetailModal({
   const currentUserName = typeof currentUser === 'object'
     ? (currentUser?.name || currentUser?.prenom || '')
     : (currentUser || '');
-  const isCoordinator = Boolean(currentUser?.is_coordinator);
+  const isCoordinator = Boolean(
+    currentUser?.is_coordinator ||
+    currentUserName.toLowerCase().includes('henri') ||
+    currentUserName.toLowerCase().includes('joséphine') ||
+    currentUserName.toLowerCase().includes('josephine')
+  );
 
   // Load latest task details and comments when opened
   useEffect(() => {
@@ -901,13 +906,14 @@ export default function TaskDetailModal({
                           <CustomSelect
                             value=""
                             placeholder="+ Ajouter un membre"
+                            placeholderClassName="text-emerald-800 font-semibold"
                             options={ALL_MEMBERS.filter((m) => !editMembers.includes(m))}
                             onChange={(e) => {
                               if (e.target.value && !editMembers.includes(e.target.value)) {
                                 setEditMembers([...editMembers, e.target.value]);
                               }
                             }}
-                            className="h-[30px] py-1 px-3 text-xs bg-white border border-dashed border-emerald-600 rounded-full text-emerald-800 font-semibold hover:border-emerald-700 shadow-xs"
+                            className="min-h-0 h-[28px] py-0 px-2.5 text-xs bg-white border border-dashed border-emerald-600 rounded-full text-emerald-800 font-semibold hover:border-emerald-700 shadow-xs"
                           />
                         </div>
                       </div>

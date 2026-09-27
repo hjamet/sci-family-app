@@ -462,8 +462,8 @@ export default function Header({
                 ? 'bg-sage-soft text-primary ring-2 ring-primary/40 shadow-xs font-bold'
                 : 'bg-canvas-slate hover:bg-sage-soft/70 text-on-surface-variant hover:text-primary border border-border-subtle shadow-xs'
             }`}
-            title="Statistiques & Équilibre"
-            aria-label="Statistiques & Équilibre"
+            title="Statistiques & Finances"
+            aria-label="Statistiques & Finances"
           >
             <span className="material-symbols-outlined text-[19px]">bar_chart</span>
           </button>
