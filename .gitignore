@@ -56,6 +56,7 @@ test_*.py
 !backend/test_drive_documents_crud.py
 !backend/test_documents_resilience.py
 !backend/tests/test_document_categories_api.py
+!backend/tests/test_upload_resilience.py
 backend/app/uploads/
 uploads/
 
