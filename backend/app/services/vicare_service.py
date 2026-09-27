@@ -9,14 +9,12 @@ from dotenv import load_dotenv
 dotenv_path = os.path.join(os.path.dirname(__file__), "..", "..", ".env")
 load_dotenv(dotenv_path)
 
-import threading
 import concurrent.futures
+import logging
 
-# In-memory telemetry cache with 120 seconds TTL and Stale-While-Revalidate
-_CACHE: Dict[str, Any] = {}
-_CACHE_TIMESTAMP: float = 0.0
-CACHE_TTL_SECONDS: int = 120
-_CACHE_LOCK = threading.Lock()
+logger = logging.getLogger(__name__)
+
+# Zero-Trust / Fail-Fast : ZÉRO cache (directive Henri). 100% direct-live vers l'API ViCare.
 HTTP_TIMEOUT_SECONDS: float = 4.0
 
 
@@ -201,50 +199,33 @@ def fetch_live_telemetry() -> Dict[str, Any]:
 class ViCareService:
     @staticmethod
     def get_status(property_id: Optional[int] = None, force_refresh: bool = False) -> Dict[str, Any]:
-        """Returns heating telemetry with 120s in-memory cache, thread-safe lock, and resilient fallback."""
-        global _CACHE, _CACHE_TIMESTAMP
-
-        now = time.time()
-        read_only = is_read_only_mode()
-
-        if not force_refresh and _CACHE and (now - _CACHE_TIMESTAMP < CACHE_TTL_SECONDS):
-            data = _CACHE.copy()
-        else:
-            with _CACHE_LOCK:
-                now = time.time()
-                if not force_refresh and _CACHE and (now - _CACHE_TIMESTAMP < CACHE_TTL_SECONDS):
-                    data = _CACHE.copy()
-                else:
-                    try:
-                        # Exécution avec timeout strict de 4.0s pour éviter tout blocage réseau ViCare
-                        with concurrent.futures.ThreadPoolExecutor(max_workers=1) as executor:
-                            future = executor.submit(fetch_live_telemetry)
-                            data = future.result(timeout=HTTP_TIMEOUT_SECONDS)
-                        _CACHE = data
-                        _CACHE_TIMESTAMP = time.time()
-                    except Exception as err:
-                        logger.warning(f"[VICARE] Timeout ou erreur télémétrie ViCare ({err}) : repli sur cache/valeurs de sécurité.")
-                        # Anti-502 Cache Fallback: Avoid 502 Bad Gateway if ViCare API is down/rate-limited/timeout
-                        if _CACHE:
-                            data = _CACHE.copy()
-                        else:
-                            data = {
-                                "room_temperature": 20.5,
-                                "target_temperature": 20.0,
-                                "outside_temperature": 14.2,
-                                "supply_temperature": 45.0,
-                                "boiler_temperature": 48.0,
-                                "dhw_temperature": 52.0,
-                                "mode": "heating",
-                                "active_mode": "heating",
-                                "active_program": "normal",
-                                "fuel_level_percent": 68.0,
-                                "fuel_liters_remaining": 2720.0,
-                                "fuel_capacity_liters": 3000.0,
-                                "fuel_supplier": "Éts JOSSE SAS"
-                            }
-                            _CACHE = data
-                            _CACHE_TIMESTAMP = time.time()
+        """
+        Returns heating telemetry strictly direct-live from ViCare API without any cache.
+        Zero-Trust & Fail-Fast : Zéro données périmées, zéro fausses valeurs hardcodées.
+        """
+        try:
+            # Exécution avec timeout strict de 4.0s pour éviter tout blocage réseau ViCare
+            with concurrent.futures.ThreadPoolExecutor(max_workers=1) as executor:
+                future = executor.submit(fetch_live_telemetry)
+                data = future.result(timeout=HTTP_TIMEOUT_SECONDS)
+        except HTTPException:
+            raise
+        except Exception as err:
+            err_type = type(err).__name__
+            err_str = str(err)
+            status_code = status.HTTP_502_BAD_GATEWAY
+            if "timeout" in err_str.lower() or isinstance(err, concurrent.futures.TimeoutError):
+                status_code = status.HTTP_504_GATEWAY_TIMEOUT
+                err_str = f"Timeout réseau ({HTTP_TIMEOUT_SECONDS}s) lors de la communication avec la chaudière ViCare."
+            elif "rate" in err_str.lower() or "limit" in err_str.lower() or "429" in err_str:
+                status_code = status.HTTP_429_TOO_MANY_REQUESTS
+            elif "permission" in err_str.lower() or "forbidden" in err_str.lower() or "403" in err_str or "auth" in err_str.lower():
+                status_code = status.HTTP_403_FORBIDDEN
+            logger.error(f"[VICARE] Erreur Fail-Fast télémétrie: {err_str}")
+            raise HTTPException(
+                status_code=status_code,
+                detail={"error": f"Erreur télémétrie chaudière ViCare: {err_str}", "type": err_type}
+            )
 
         msg = (
             "Garde-fou de sécurité inviolable actif (Garde-fou Henri #1) : "
@@ -260,11 +241,8 @@ class ViCareService:
 
     @classmethod
     def clear_cache(cls):
-        """Réinitialise le cache en mémoire (utile pour les tests et le rafraîchissement forcé)."""
-        global _CACHE, _CACHE_TIMESTAMP
-        with _CACHE_LOCK:
-            _CACHE = {}
-            _CACHE_TIMESTAMP = 0.0
+        """No-op conservée pour compatibilité ascendante (Zéro cache actif)."""
+        pass
 
     @staticmethod
     def set_mode(mode: str) -> Dict[str, Any]:

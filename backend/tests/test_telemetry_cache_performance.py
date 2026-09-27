@@ -19,9 +19,7 @@ client = TestClient(app)
 
 
 def test_klereo_cache_hit_and_stale_fallback():
-    """Vérifie le cache hit instantané (<5ms) et le repli sur stale cache en cas de panne Klereo."""
-    KlereoService.clear_cache()
-
+    """Vérifie l'interrogation 100% direct-live et le Fail-Fast strict (zéro stale data, HTTP 502 en cas de panne)."""
     mock_index = {
         "status": "ok",
         "response": [{
@@ -48,7 +46,7 @@ def test_klereo_cache_hit_and_stale_fallback():
         }]
     }
 
-    # Premier appel (remplit le cache)
+    # Premier appel direct-live
     with patch.object(KlereoService, "_authenticate", return_value="fake_token"), \
          patch("requests.get") as mock_get, \
          patch("requests.post") as mock_post:
@@ -61,29 +59,28 @@ def test_klereo_cache_hit_and_stale_fallback():
         assert mock_get.call_count == 1
         assert mock_post.call_count == 1
 
-    # Deuxième appel immédiat : doit être servi par le cache sans AUCUN appel réseau
-    with patch("requests.get") as mock_get2, patch("requests.post") as mock_post2:
-        t0 = time.time()
+    # Deuxième appel : interroge à nouveau en direct sans aucun cache stale
+    with patch.object(KlereoService, "_authenticate", return_value="fake_token"), \
+         patch("requests.get") as mock_get2, \
+         patch("requests.post") as mock_post2:
+        mock_get2.return_value = MagicMock(status_code=200, json=lambda: mock_index)
+        mock_post2.return_value = MagicMock(status_code=200, json=lambda: mock_details)
+
         resp2 = client.get("/api/pool/status")
-        dt_ms = (time.time() - t0) * 1000
         assert resp2.status_code == 200
         assert resp2.json()["water_temperature"] == 28.5
-        # Aucun appel réseau émis
-        assert mock_get2.call_count == 0
-        assert mock_post2.call_count == 0
-        assert dt_ms < 50
+        assert mock_get2.call_count == 1
+        assert mock_post2.call_count == 1
 
-    # Troisième appel avec panne Klereo distante : doit renvoyer le stale cache au lieu de crasher
+    # Troisième appel avec panne Klereo distante : Fail-Fast strict Zero-Trust (502 Bad Gateway obligatoire)
     with patch.object(KlereoService, "_authenticate", side_effect=RuntimeError("Klereo server timeout 504")):
-        resp3 = client.get("/api/pool/status?force_refresh=true")
-        assert resp3.status_code == 200
-        assert resp3.json()["water_temperature"] == 28.5
+        resp3 = client.get("/api/pool/status")
+        assert resp3.status_code == 502
+        assert "Erreur de communication avec Klereo Connect" in resp3.json()["detail"]["error"]
 
 
 def test_vicare_cache_hit_and_stale_fallback():
-    """Vérifie le cache hit instantané et le repli sur stale cache ViCare."""
-    ViCareService.clear_cache()
-
+    """Vérifie l'interrogation 100% direct-live et le Fail-Fast strict ViCare (zéro faux repli par défaut)."""
     mock_telemetry = {
         "room_temperature": 21.0,
         "target_temperature": 20.0,
@@ -100,48 +97,40 @@ def test_vicare_cache_hit_and_stale_fallback():
         "fuel_supplier": "Éts JOSSE SAS"
     }
 
-    # Premier appel : remplit le cache
+    # Premier appel direct-live
     with patch("app.services.vicare_service.fetch_live_telemetry", return_value=mock_telemetry) as mock_fetch:
         resp1 = client.get("/api/heating/status")
         assert resp1.status_code == 200
         assert resp1.json()["room_temperature"] == 21.0
         assert mock_fetch.call_count == 1
 
-    # Deuxième appel immédiat : cache hit sans appel externe
-    with patch("app.services.vicare_service.fetch_live_telemetry") as mock_fetch2:
-        t0 = time.time()
+    # Deuxième appel : interroge à nouveau en direct sans aucun cache
+    with patch("app.services.vicare_service.fetch_live_telemetry", return_value=mock_telemetry) as mock_fetch2:
         resp2 = client.get("/api/heating/status")
-        dt_ms = (time.time() - t0) * 1000
         assert resp2.status_code == 200
         assert resp2.json()["room_temperature"] == 21.0
-        assert mock_fetch2.call_count == 0
-        assert dt_ms < 50
+        assert mock_fetch2.call_count == 1
 
-    # Troisième appel avec timeout/panne ViCare : repli sur cache stale
+    # Troisième appel avec timeout ViCare : Fail-Fast strict 504/502 (aucun camouflage factice)
     with patch("app.services.vicare_service.fetch_live_telemetry", side_effect=TimeoutError("ViCare cloud timeout")):
-        resp3 = client.get("/api/heating/status?force_refresh=true")
-        assert resp3.status_code == 200
-        assert resp3.json()["room_temperature"] == 21.0
+        resp3 = client.get("/api/heating/status")
+        assert resp3.status_code in (502, 504)
+        assert "chaudière ViCare" in resp3.json()["detail"]["error"]
 
 
 def test_banking_status_cache_hit():
-    """Vérifie que /api/banking/status utilise le cache TTL et le réactive sur force_refresh."""
-    enable_banking_service.clear_status_cache()
-
-    # Premier appel : vérifie l'interrogation normale
-    resp1 = client.get("/api/banking/status")
-    assert resp1.status_code == 200
-    bal1 = resp1.json().get("total_balance")
-
-    # Deuxième appel immédiat : doit répondre instantanément depuis le cache
+    """Vérifie que /api/banking/status interroge en direct-live sans cache périmé."""
+    # Premier appel
     with patch.object(enable_banking_service, "get_account_balances") as mock_bal:
-        t0 = time.time()
+        resp1 = client.get("/api/banking/status")
+        assert resp1.status_code == 200
+        assert mock_bal.call_count == 1
+
+    # Deuxième appel immédiat : ré-interroge en direct (zéro cache)
+    with patch.object(enable_banking_service, "get_account_balances") as mock_bal2:
         resp2 = client.get("/api/banking/status")
-        dt_ms = (time.time() - t0) * 1000
         assert resp2.status_code == 200
-        assert resp2.json().get("total_balance") == bal1
-        assert mock_bal.call_count == 0
-        assert dt_ms < 50
+        assert mock_bal2.call_count == 1
 
 
 def test_drive_list_files_cache_hit():

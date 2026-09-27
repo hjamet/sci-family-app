@@ -106,113 +106,62 @@ function getAuthJsonHeaders(extraHeaders = {}) {
   return getAuthHeaders({ 'Content-Type': 'application/json', ...extraHeaders });
 }
 
-// ==================== COUCHE SWR & DÉDUPLICATION DES REQUÊTES EN VOL ====================
-// Map de requêtes en vol : cacheKey -> Promise (évite de lancer N requêtes identiques simultanément)
+// ==================== DÉDUPLICATION STRICTE DES REQUÊTES EN VOL (ZÉRO CACHE) ====================
+// Map de requêtes en vol : cacheKey -> Promise (évite d'envoyer 2 requêtes HTTP identiques au même instant précis)
+// Dès qu'une requête aboutit ou échoue, elle est immédiatement retirée. Zéro stockage de données passées.
 const inFlightRequests = new Map();
 
-// Cache mémoire SWR : cacheKey -> { data, timestamp, expiresAt }
-const memoryCache = new Map();
-const SWR_STORAGE_PREFIX = 'sci_swr_cache_';
+// Purge immédiate de tout ancien résidu sessionStorage au chargement
+if (typeof window !== 'undefined' && window.sessionStorage) {
+  try {
+    const keys = Object.keys(sessionStorage).filter(k => k.startsWith('sci_swr_cache_'));
+    keys.forEach(k => sessionStorage.removeItem(k));
+  } catch (_) {}
+}
 
 /**
- * Récupère immédiatement une donnée en cache (mémoire d'abord, puis sessionStorage)
- * Permet un affichage instantané (< 16ms) dès l'arrivée sur la page
+ * Zéro cache selon directive formelle d'Henri : retourne toujours null.
+ * Tout composant charge directement les données fraîches du serveur.
  */
 export function getCachedData(key) {
-  if (memoryCache.has(key)) {
-    return memoryCache.get(key).data;
-  }
-  if (typeof window !== 'undefined' && window.sessionStorage) {
-    try {
-      const raw = sessionStorage.getItem(SWR_STORAGE_PREFIX + key);
-      if (raw) {
-        const item = JSON.parse(raw);
-        memoryCache.set(key, item);
-        return item.data;
-      }
-    } catch (_) {}
-  }
   return null;
 }
 
 /**
- * Enregistre une donnée dans le cache mémoire et sessionStorage
+ * No-op conservée pour compatibilité sans stocker de données périmées.
  */
-export function setCachedData(key, data, ttlMs = 30000) {
-  const item = {
-    data,
-    timestamp: Date.now(),
-    expiresAt: Date.now() + ttlMs,
-  };
-  memoryCache.set(key, item);
-  if (typeof window !== 'undefined' && window.sessionStorage) {
-    try {
-      sessionStorage.setItem(SWR_STORAGE_PREFIX + key, JSON.stringify(item));
-    } catch (_) {}
-  }
+export function setCachedData(key, data, ttlMs = 0) {
+  // Aucun stockage de cache (Directive Zero-Trust Henri)
 }
 
 /**
- * Invalide sélectivement ou globalement le cache SWR et les promesses en vol
+ * Invalide les requêtes en cours et nettoie tout résidu.
  */
 export function invalidateApiCache(prefixOrKey = '') {
   if (!prefixOrKey) {
-    memoryCache.clear();
     inFlightRequests.clear();
-    if (typeof window !== 'undefined' && window.sessionStorage) {
-      try {
-        const keys = Object.keys(sessionStorage).filter(k => k.startsWith(SWR_STORAGE_PREFIX));
-        keys.forEach(k => sessionStorage.removeItem(k));
-      } catch (_) {}
-    }
     return;
-  }
-
-  for (const k of memoryCache.keys()) {
-    if (k.startsWith(prefixOrKey) || k.includes(prefixOrKey)) {
-      memoryCache.delete(k);
-    }
   }
   for (const k of inFlightRequests.keys()) {
     if (k.startsWith(prefixOrKey) || k.includes(prefixOrKey)) {
       inFlightRequests.delete(k);
     }
   }
-  if (typeof window !== 'undefined' && window.sessionStorage) {
-    try {
-      for (let i = sessionStorage.length - 1; i >= 0; i--) {
-        const k = sessionStorage.key(i);
-        if (k && k.startsWith(SWR_STORAGE_PREFIX) && k.includes(prefixOrKey)) {
-          sessionStorage.removeItem(k);
-        }
-      }
-    } catch (_) {}
-  }
 }
 
 /**
- * Exécute un fetch avec déduplication de requêtes en vol et cache SWR
+ * Exécute un fetch avec déduplication STRICTEMENT des requêtes identiques en vol au même instant t.
+ * Zéro stockage de données passées : chaque appel après terminaison va chercher les données fraîches en direct.
  */
-export async function swrFetch(cacheKey, fetcher, { ttl = 30000, forceRefresh = false } = {}) {
-  // Si rafraîchissement non forcé, vérifier la fraîcheur du cache
-  if (!forceRefresh) {
-    const cached = getCachedData(cacheKey);
-    const entry = memoryCache.get(cacheKey);
-    if (cached !== null && entry && entry.expiresAt > Date.now()) {
-      return cached;
-    }
-  }
-
-  // Déduplication : si une requête identique est déjà en vol, mutualiser la Promise existante
+export async function swrFetch(cacheKey, fetcher, options = {}) {
+  // Déduplication : si une requête identique est déjà en vol AU MÊME INSTANT t, mutualiser la Promise
   if (inFlightRequests.has(cacheKey)) {
     return inFlightRequests.get(cacheKey);
   }
 
   const promise = (async () => {
     try {
-      const data = await fetcher();
-      setCachedData(cacheKey, data, ttl);
-      return data;
+      return await fetcher();
     } finally {
       inFlightRequests.delete(cacheKey);
     }
@@ -462,6 +411,7 @@ export async function updateProjectCost(projectId, estimatedCost, coordinatorNot
     const err = await res.json().catch(() => ({}));
     throw new Error(err.detail || 'Erreur lors de la mise à jour du coût estimé');
   }
+  invalidateApiCache('projects');
   return res.json();
 }
 
@@ -526,6 +476,7 @@ export async function addProjectComment(projectId, data) {
     const err = await res.json().catch(() => ({}));
     throw new Error(err.detail || 'Erreur lors de l\'ajout du commentaire au projet');
   }
+  invalidateApiCache('projects');
   return res.json();
 }
 
@@ -832,6 +783,7 @@ export async function createVademecumItem(data) {
     const err = await res.json().catch(() => ({}));
     throw new Error(err.detail || 'Erreur lors de la création de la fiche Vademecum');
   }
+  invalidateApiCache('vademecum');
   return res.json();
 }
 
@@ -842,6 +794,7 @@ export async function updateVademecumItem(itemId, data) {
     body: JSON.stringify(data),
   });
   if (!res.ok) throw new Error('Erreur lors de la mise à jour de la fiche Vademecum');
+  invalidateApiCache('vademecum');
   return res.json();
 }
 
@@ -851,14 +804,15 @@ export async function deleteVademecumItem(itemId) {
     headers: getAuthHeaders()
   });
   if (!res.ok) throw new Error('Erreur lors de la suppression de la fiche Vademecum');
+  invalidateApiCache('vademecum');
   return true;
 }
 
 
-// Heating & ViCare System
 export async function fetchHeatingStatus(options = {}) {
   return swrFetch('heating_status', async () => {
-    const res = await fetch(`${API_BASE}/heating/status`, {
+    const query = (options?.forceRefresh || options?.refresh) ? '?refresh=true' : '';
+    const res = await fetch(`${API_BASE}/heating/status${query}`, {
       headers: getAuthHeaders()
     });
     if (!res.ok) {
@@ -866,7 +820,7 @@ export async function fetchHeatingStatus(options = {}) {
       throw new Error(err.detail || 'Erreur lors de la récupération du statut du chauffage ViCare');
     }
     return res.json();
-  }, { ttl: 30000, forceRefresh: options?.forceRefresh });
+  });
 }
 
 export async function setHeatingMode(mode) {
@@ -1028,6 +982,7 @@ export async function addTaskComment(taskId, commentData) {
     const err = await res.json().catch(() => ({}));
     throw new Error(err.detail || 'Erreur lors de l\'ajout du commentaire');
   }
+  invalidateApiCache('tasks');
   return res.json();
 }
 
@@ -1041,6 +996,7 @@ export async function reactToTaskComment(taskId, commentId, emoji, userName) {
     const err = await res.json().catch(() => ({}));
     throw new Error(err.detail || 'Erreur lors de la réaction');
   }
+  invalidateApiCache('tasks');
   return res.json();
 }
 
@@ -1050,24 +1006,23 @@ export const addTaskMessage = addTaskComment;
 // Piscine Telemetry
 export async function fetchPiscineStatus(options = {}) {
   return swrFetch('pool_status', async () => {
-    try {
-      const res = await fetch(`${API_BASE}/pool/status`, {
-        headers: getAuthHeaders()
-      });
-      if (res.ok) return await res.json();
-    } catch (_) {}
-    const res = await fetch(`${API_BASE}/piscine/status?live=true`, {
+    const query = (options?.forceRefresh || options?.refresh) ? '?refresh=true' : '';
+    const res = await fetch(`${API_BASE}/pool/status${query}`, {
       headers: getAuthHeaders()
     });
-    if (!res.ok) throw new Error('Erreur lors de la récupération du statut piscine');
+    if (!res.ok) {
+      const err = await res.json().catch(() => ({}));
+      throw new Error(err.detail || 'Erreur lors de la récupération du statut piscine Klereo');
+    }
     return res.json();
-  }, { ttl: 30000, forceRefresh: options?.forceRefresh });
+  });
 }
 
 // Open Banking DSP2 (Enable Banking & Swan France)
 export async function fetchBankStatus(options = {}) {
   return swrFetch('bank_status', async () => {
-    const res = await fetch(`${API_BASE}/banking/status`, {
+    const query = (options?.forceRefresh || options?.refresh) ? '?refresh=true' : '';
+    const res = await fetch(`${API_BASE}/banking/status${query}`, {
       headers: getAuthHeaders()
     });
     if (!res.ok) {
@@ -1081,7 +1036,7 @@ export async function fetchBankStatus(options = {}) {
       throw new Error(detail || `Erreur lors de la récupération du statut bancaire (HTTP ${res.status})`);
     }
     return res.json();
-  }, { ttl: 60000, forceRefresh: options?.forceRefresh });
+  });
 }
 
 export async function fetchBankAccounts() {
@@ -1136,6 +1091,7 @@ export async function triggerBankSync() {
     }
     throw new Error(detail || `Erreur lors de la synchronisation bancaire (HTTP ${res.status})`);
   }
+  invalidateApiCache('bank');
   return res.json();
 }
 
@@ -1364,6 +1320,7 @@ export async function saveHeatingSettings({ target_temperature, mode, author_nam
     const err = await res.json().catch(() => ({}));
     throw new Error(err.detail || 'Erreur lors de l\'enregistrement des réglages de chauffage');
   }
+  invalidateApiCache('heating');
   return res.json();
 }
 
@@ -1377,6 +1334,7 @@ export async function savePoolSettings({ target_temperature, filtration_mode, mo
     const err = await res.json().catch(() => ({}));
     throw new Error(err.detail || 'Erreur lors de l\'enregistrement des réglages piscine');
   }
+  invalidateApiCache('pool');
   return res.json();
 }
 

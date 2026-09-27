@@ -3997,8 +3997,13 @@ def get_workload_summary(
 @app.get("/api/vicare/status", response_model=HeatingStatusResponse)
 @app.get("/api/heating/status", response_model=HeatingStatusResponse)
 @app.get("/api/heating/vicare/status", response_model=HeatingStatusResponse)
-def get_heating_status(property_id: Optional[int] = Query(None)):
-    return ViCareService.get_status(property_id=property_id)
+def get_heating_status(
+    property_id: Optional[int] = Query(None),
+    refresh: bool = Query(False),
+    force_refresh: bool = Query(False)
+):
+    is_refresh = refresh or force_refresh
+    return ViCareService.get_status(property_id=property_id, force_refresh=is_refresh)
 
 @app.post("/api/vicare/mode", response_model=HeatingStatusResponse)
 @app.post("/api/heating/mode", response_model=HeatingStatusResponse)
@@ -4017,15 +4022,17 @@ def set_heating_temperature(req: HeatingTemperatureRequest):
 
 @app.get("/api/pool/status", response_model=PiscineStatusResponse, tags=["Pool"])
 @app.get("/api/klereo/status", response_model=PiscineStatusResponse, tags=["Pool"])
-def get_klereo_pool_status():
+def get_klereo_pool_status(refresh: bool = Query(False), force_refresh: bool = Query(False)):
     """Returns Klereo Connect live passive telemetry without simulation."""
-    telemetry = KlereoService.get_status()
+    is_refresh = refresh or force_refresh
+    telemetry = KlereoService.get_status(force_refresh=is_refresh)
     return PiscineStatusResponse(**telemetry)
 
 @app.get("/api/piscine/status", response_model=PiscineStatusResponse, tags=["Pool"])
-def get_piscine_status(live: bool = True):
+def get_piscine_status(live: bool = True, refresh: bool = Query(False), force_refresh: bool = Query(False)):
     """Returns PAC Rosing passive telemetry directly from live Klereo Connect API."""
-    telemetry = KlereoService.get_status()
+    is_refresh = refresh or force_refresh
+    telemetry = KlereoService.get_status(force_refresh=is_refresh)
     return PiscineStatusResponse(**telemetry)
 
 @app.post("/api/piscine/mode", tags=["Pool"])
@@ -4250,9 +4257,14 @@ def update_pool_settings(
 # --- Open Banking DSP2 (Enable Banking & Swan France) Endpoints ---
 
 @app.get("/api/banking/status", response_model=BankStatusResponse, tags=["Banking"])
-def get_banking_status(force_refresh: bool = Query(False), db: Session = Depends(get_db)):
+def get_banking_status(
+    refresh: bool = Query(False),
+    force_refresh: bool = Query(False),
+    db: Session = Depends(get_db)
+):
     """Retourne l'état réactif de l'intégration Open Banking DSP2 et les soldes consolidés de la SCI."""
-    status_data = enable_banking_service.check_connection_status(db=db, force_refresh=force_refresh)
+    is_refresh = refresh or force_refresh
+    status_data = enable_banking_service.check_connection_status(db=db, force_refresh=is_refresh)
 
     return BankStatusResponse(
         application_id=enable_banking_service.app_id,

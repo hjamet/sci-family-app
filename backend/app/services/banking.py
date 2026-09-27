@@ -23,11 +23,7 @@ except ImportError:
 
 logger = logging.getLogger("sci_banking")
 
-# Cache mémoire du statut bancaire (TTL: 120s, Stale-While-Revalidate & Graceful Fallback)
-_BANK_STATUS_CACHE: Dict[str, Any] = {}
-_BANK_STATUS_CACHE_TIMESTAMP: float = 0.0
-BANK_STATUS_CACHE_TTL: int = 120
-_BANK_STATUS_CACHE_LOCK = threading.Lock()
+# Zero-Trust / Fail-Fast : ZÉRO cache (directive Henri). 100% direct-live vers l'API Enable Banking.
 
 
 
@@ -789,135 +785,110 @@ class EnableBankingService:
         
         En temps normal (requêtes réussies) : status='ok', needs_reauth=False.
         En cas d'échec : status='expired'|'error', needs_reauth=True, URL Tilisy instantanée fournie.
+        Zero-Trust / Fail-Fast : ZÉRO cache (directive Henri). 100% direct-live.
         """
-        global _BANK_STATUS_CACHE, _BANK_STATUS_CACHE_TIMESTAMP
-        now = time.time()
+        accounts = db.query(BankAccount).all()
+        total_bal = sum(a.balance for a in accounts) if accounts else 0.0
+        latest_sync = max((a.last_synced_at for a in accounts if a.last_synced_at), default=None)
 
-        if not force_refresh and _BANK_STATUS_CACHE and (now - _BANK_STATUS_CACHE_TIMESTAMP < BANK_STATUS_CACHE_TTL):
-            return _BANK_STATUS_CACHE.copy()
+        # Vérification des sessions autorisées en base
+        active_sessions = db.query(BankAuthSession).filter(BankAuthSession.status == "AUTHORIZED").all()
 
-        with _BANK_STATUS_CACHE_LOCK:
-            now = time.time()
-            if not force_refresh and _BANK_STATUS_CACHE and (now - _BANK_STATUS_CACHE_TIMESTAMP < BANK_STATUS_CACHE_TTL):
-                return _BANK_STATUS_CACHE.copy()
+        # Si aucune session active et aucun compte synchronisé avec succès
+        if not active_sessions and (not accounts or not latest_sync):
+            reauth_info = self._get_or_create_reauth_url(db)
+            return {
+                "status": "expired",
+                "needs_reauth": True,
+                "days_left": None,
+                "valid_until": None,
+                "message": "Liaison bancaire interrompue : La ré-authentification DSP2 de sécurité (tous les 180 jours) est requise pour actualiser les données.",
+                "reauth_url": reauth_info.get("url"),
+                "active_accounts_count": len(accounts),
+                "total_balance": round(total_bal, 2),
+                "last_synced_at": latest_sync,
+                "last_successful_sync": latest_sync
+            }
 
-            accounts = db.query(BankAccount).all()
-            total_bal = sum(a.balance for a in accounts) if accounts else 0.0
-            latest_sync = max((a.last_synced_at for a in accounts if a.last_synced_at), default=None)
+        # Test réactif effectif de l'API Enable Banking (100% direct sans cache)
+        is_query_successful = False
+        error_detail = ""
+        is_auth_error = False
 
-            # Vérification des sessions autorisées en base
-            active_sessions = db.query(BankAuthSession).filter(BankAuthSession.status == "AUTHORIZED").all()
-
-            # Si aucune session active et aucun compte synchronisé avec succès
-            if not active_sessions and (not accounts or not latest_sync):
-                reauth_info = self._get_or_create_reauth_url(db)
-                res = {
-                    "status": "expired",
-                    "needs_reauth": True,
-                    "days_left": None,
-                    "valid_until": None,
-                    "message": "Liaison bancaire interrompue : La ré-authentification DSP2 de sécurité (tous les 180 jours) est requise pour actualiser les données.",
-                    "reauth_url": reauth_info.get("url"),
-                    "active_accounts_count": len(accounts),
-                    "total_balance": round(total_bal, 2),
-                    "last_synced_at": latest_sync,
-                    "last_successful_sync": latest_sync
-                }
-                _BANK_STATUS_CACHE = res
-                _BANK_STATUS_CACHE_TIMESTAMP = time.time()
-                return res.copy()
-
-            # Test réactif effectif de l'API Enable Banking
-            is_query_successful = False
-            error_detail = ""
-            is_auth_error = False
-
-            try:
-                if accounts:
-                    target_acc_id = accounts[0].account_id
-                    # Tentative d'interrogation réelle du solde (timeout 3.5s)
-                    self.get_account_balances(target_acc_id)
+        try:
+            if accounts:
+                target_acc_id = accounts[0].account_id
+                # Tentative d'interrogation réelle du solde (timeout 3.5s)
+                self.get_account_balances(target_acc_id)
+                is_query_successful = True
+            elif active_sessions:
+                sess = active_sessions[0]
+                sess_data = self.get_session(sess.session_id)
+                if sess_data and sess_data.get("status") in ["AUTHORIZED", "ACTIVE"]:
                     is_query_successful = True
-                elif active_sessions:
-                    sess = active_sessions[0]
-                    sess_data = self.get_session(sess.session_id)
-                    if sess_data and sess_data.get("status") in ["AUTHORIZED", "ACTIVE"]:
-                        is_query_successful = True
-                    else:
-                        is_auth_error = True
-                        error_detail = f"Statut session : {sess_data.get('status') if sess_data else 'inconnu'}"
                 else:
-                    self.get_accounts()
-                    is_query_successful = True
-            except Exception as e:
-                error_str = str(e)
-                logger.warning(f"Échec de l'interrogation réactive Enable Banking Swan : {error_str}")
-                # En cas de lenteur/timeout réseau Enable Banking, renvoyer immédiatement le cache stale s'il existe
-                if _BANK_STATUS_CACHE:
-                    logger.warning(f"[BANKING] Renvoi du cache stale suite à anomalie réseau: {error_str}")
-                    return _BANK_STATUS_CACHE.copy()
-
-                error_detail = error_str
-                lower_err = error_str.lower()
-                if any(term in lower_err for term in ["401", "403", "404", "expired", "not found", "unauthorized", "does_not_exist", "session", "consent"]):
                     is_auth_error = True
-                else:
-                    is_auth_error = False
-
-            if is_query_successful:
-                res = {
-                    "status": "ok",
-                    "needs_reauth": False,
-                    "days_left": None,
-                    "valid_until": None,
-                    "message": "Liaison bancaire Swan active et opérationnelle.",
-                    "reauth_url": None,
-                    "active_accounts_count": len(accounts),
-                    "total_balance": round(total_bal, 2),
-                    "last_synced_at": latest_sync,
-                    "last_successful_sync": latest_sync
-                }
+                    error_detail = f"Statut session : {sess_data.get('status') if sess_data else 'inconnu'}"
             else:
-                # Marquer les sessions comme expirées en cas de rejet d'authentification
-                if is_auth_error and active_sessions:
-                    for s in active_sessions:
-                        s.status = "EXPIRED"
-                    try:
-                        db.commit()
-                    except Exception:
-                        db.rollback()
+                self.get_accounts()
+                is_query_successful = True
+        except Exception as e:
+            error_str = str(e)
+            logger.warning(f"Échec de l'interrogation réactive Enable Banking Swan : {error_str}")
+            error_detail = error_str
+            lower_err = error_str.lower()
+            if any(term in lower_err for term in ["401", "403", "404", "expired", "not found", "unauthorized", "does_not_exist", "session", "consent"]):
+                is_auth_error = True
+            else:
+                is_auth_error = False
 
-                reauth_info = self._get_or_create_reauth_url(db)
-                status_code = "expired" if is_auth_error else "error"
-                msg = (
-                    "Liaison bancaire interrompue : La ré-authentification DSP2 de sécurité (tous les 180 jours) est requise pour actualiser les données."
-                    if is_auth_error
-                    else f"Liaison bancaire indisponible : Impossible d'interroger Swan via Enable Banking ({error_detail})."
-                )
-                res = {
-                    "status": status_code,
-                    "needs_reauth": True,
-                    "days_left": None,
-                    "valid_until": None,
-                    "message": msg,
-                    "reauth_url": reauth_info.get("url"),
-                    "active_accounts_count": len(accounts),
-                    "total_balance": round(total_bal, 2),
-                    "last_synced_at": latest_sync,
-                    "last_successful_sync": latest_sync
-                }
+        if is_query_successful:
+            return {
+                "status": "ok",
+                "needs_reauth": False,
+                "days_left": None,
+                "valid_until": None,
+                "message": "Liaison bancaire Swan active et opérationnelle.",
+                "reauth_url": None,
+                "active_accounts_count": len(accounts),
+                "total_balance": round(total_bal, 2),
+                "last_synced_at": latest_sync,
+                "last_successful_sync": latest_sync
+            }
+        else:
+            # Marquer les sessions comme expirées en cas de rejet d'authentification
+            if is_auth_error and active_sessions:
+                for s in active_sessions:
+                    s.status = "EXPIRED"
+                try:
+                    db.commit()
+                except Exception:
+                    db.rollback()
 
-            _BANK_STATUS_CACHE = res
-            _BANK_STATUS_CACHE_TIMESTAMP = time.time()
-            return res.copy()
+            reauth_info = self._get_or_create_reauth_url(db)
+            status_code = "expired" if is_auth_error else "error"
+            msg = (
+                "Liaison bancaire interrompue : La ré-authentification DSP2 de sécurité (tous les 180 jours) est requise pour actualiser les données."
+                if is_auth_error
+                else f"Liaison bancaire indisponible : Impossible d'interroger Swan via Enable Banking ({error_detail})."
+            )
+            return {
+                "status": status_code,
+                "needs_reauth": True,
+                "days_left": None,
+                "valid_until": None,
+                "message": msg,
+                "reauth_url": reauth_info.get("url"),
+                "active_accounts_count": len(accounts),
+                "total_balance": round(total_bal, 2),
+                "last_synced_at": latest_sync,
+                "last_successful_sync": latest_sync
+            }
 
     @classmethod
     def clear_status_cache(cls):
-        """Réinitialise le cache mémoire du statut bancaire."""
-        global _BANK_STATUS_CACHE, _BANK_STATUS_CACHE_TIMESTAMP
-        with _BANK_STATUS_CACHE_LOCK:
-            _BANK_STATUS_CACHE = {}
-            _BANK_STATUS_CACHE_TIMESTAMP = 0.0
+        """No-op conservée pour compatibilité ascendante (Zéro cache actif)."""
+        pass
 
 
 
