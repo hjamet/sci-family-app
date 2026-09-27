@@ -53,6 +53,9 @@ export default function Header({
   currentUser = 'Henri Jamet',
   onLogout,
   onNavigate,
+  onOpenVoteModal,
+  onOpenTaskModal,
+  onOpenBookingModal,
 }) {
   const [isUserMenuOpen, setIsUserMenuOpen] = useState(false);
   const [isNotifOpen, setIsNotifOpen] = useState(false);
@@ -65,12 +68,26 @@ export default function Header({
     ? (currentUser?.prenom ? `${currentUser.prenom} ${currentUser.nom || 'Jamet'}` : 'Henri Jamet')
     : (currentUser || 'Henri Jamet');
 
+  const resolveUserId = (user) => {
+    if (!user) return 'default';
+    if (typeof user === 'object') {
+      return user.id ?? (user.prenom ? user.prenom.toLowerCase() : 'user');
+    }
+    return String(user).toLowerCase().replace(/\s+/g, '_');
+  };
+
+  const getStorageKey = (user) => {
+    const uid = resolveUserId(user);
+    return `sci_read_notifications_${uid}`;
+  };
+
   const [notifications, setNotifications] = useState([
     {
       id: 'notif-vote-roof',
       title: 'Vote toiture ouvert',
       description: 'Consultation sur le devis Riffael & Denis (2 400 €).',
       type: 'vote',
+      projectId: 'roof',
       path: '/taches',
       tabId: 'taches',
       time: 'En cours',
@@ -81,6 +98,7 @@ export default function Header({
       title: 'Tâche assignée : Placo bibliothèque',
       description: 'Chantier prioritaire suite à infiltration.',
       type: 'task',
+      taskId: 'task-placo',
       path: '/taches',
       tabId: 'taches',
       time: 'Prioritaire',
@@ -100,12 +118,40 @@ export default function Header({
 
   const [readNotifIds, setReadNotifIds] = useState(() => {
     try {
-      const saved = localStorage.getItem('sci_read_notifications');
-      return saved ? JSON.parse(saved) : [];
+      const key = getStorageKey(currentUser);
+      const saved = localStorage.getItem(key);
+      if (saved) return JSON.parse(saved);
+      const legacy = localStorage.getItem('sci_read_notifications');
+      return legacy ? JSON.parse(legacy) : [];
     } catch {
       return [];
     }
   });
+
+  useEffect(() => {
+    try {
+      const key = getStorageKey(currentUser);
+      const saved = localStorage.getItem(key);
+      if (saved) {
+        setReadNotifIds(JSON.parse(saved));
+      } else {
+        const legacy = localStorage.getItem('sci_read_notifications');
+        if (legacy) setReadNotifIds(JSON.parse(legacy));
+      }
+    } catch (err) {
+      console.warn('Erreur synchronisation notifications lues:', err);
+    }
+  }, [currentUser]);
+
+  const persistReadIds = (newIds) => {
+    setReadNotifIds(newIds);
+    try {
+      const key = getStorageKey(currentUser);
+      localStorage.setItem(key, JSON.stringify(newIds));
+    } catch (err) {
+      console.warn('Erreur persistance readNotifIds:', err);
+    }
+  };
 
   useEffect(() => {
     let isMounted = true;
@@ -145,6 +191,8 @@ export default function Header({
                 title: `Vote ouvert : ${p.title}`,
                 description: p.description ? p.description.slice(0, 75) + '...' : 'Votre avis d\'associé est requis.',
                 type: 'vote',
+                projectId: p.id,
+                project: p,
                 path: '/taches',
                 tabId: 'taches',
                 time: 'Vote actif',
@@ -169,6 +217,8 @@ export default function Header({
                 title: `${t.priority === 'URGENT' ? '🚨 ' : ''}${t.title}`,
                 description: t.description ? t.description.slice(0, 75) + '...' : 'Tâche en attente d\'action.',
                 type: 'task',
+                taskId: t.id,
+                task: t,
                 path: '/taches',
                 tabId: 'taches',
                 time: t.priority === 'URGENT' ? 'Urgent' : 'En cours',
@@ -224,31 +274,49 @@ export default function Header({
     };
   }, []);
 
-  const unreadCount = notifications.filter((n) => !readNotifIds.includes(n.id)).length;
+  const unreadNotifications = notifications.filter((n) => !readNotifIds.includes(n.id));
+  const unreadCount = unreadNotifications.length;
 
   const markAllAsRead = (e) => {
     if (e) e.stopPropagation();
     const allIds = notifications.map((n) => n.id);
     const updated = Array.from(new Set([...readNotifIds, ...allIds]));
-    setReadNotifIds(updated);
-    try {
-      localStorage.setItem('sci_read_notifications', JSON.stringify(updated));
-    } catch (err) {
-      console.warn('Erreur persistance readNotifIds:', err);
-    }
+    persistReadIds(updated);
   };
 
   const handleNotificationClick = (notif) => {
+    // 1. Ajouter l'ID de la notification à readNotificationIds et persister
     if (!readNotifIds.includes(notif.id)) {
       const updated = [...readNotifIds, notif.id];
-      setReadNotifIds(updated);
-      try {
-        localStorage.setItem('sci_read_notifications', JSON.stringify(updated));
-      } catch (err) {
-        console.warn('Erreur persistance readNotifIds:', err);
+      persistReadIds(updated);
+    }
+
+    // 2. Fermer le popover de notifications
+    setIsNotifOpen(false);
+
+    // 3. Ouvrir immédiatement la modale associée sans recharger ni changer de page
+    if (notif.type === 'vote') {
+      if (onOpenVoteModal) {
+        onOpenVoteModal(notif.projectId || notif.project?.id || notif.id, notif.project);
+        return;
       }
     }
-    setIsNotifOpen(false);
+
+    if (notif.type === 'task') {
+      if (onOpenTaskModal) {
+        onOpenTaskModal(notif.taskId || notif.task?.id || notif.id, notif.task);
+        return;
+      }
+    }
+
+    if (notif.type === 'sejour' || notif.type === 'booking') {
+      if (onOpenBookingModal) {
+        onOpenBookingModal();
+        return;
+      }
+    }
+
+    // Fallback navigation si alerte ou aucun gestionnaire de modale
     if (setActiveTab && notif.tabId) {
       setActiveTab(notif.tabId);
     }
@@ -377,51 +445,52 @@ export default function Header({
                   )}
                 </div>
 
-                {/* Liste des alertes et mentions récentes */}
+                {/* Liste des notifications non lues (disparaissent dès qu'elles sont lues) */}
                 <div className="flex flex-col gap-1.5 max-h-72 overflow-y-auto pr-1">
-                  {notifications.length === 0 ? (
-                    <p className="text-center py-4 text-xs text-slate-500">Aucune alerte ou notification</p>
+                  {unreadNotifications.length === 0 ? (
+                    <div className="flex flex-col items-center justify-center py-6 px-4 text-center">
+                      <div className="w-10 h-10 rounded-full bg-emerald-50 dark:bg-emerald-950/60 text-primary flex items-center justify-center mb-2 shadow-2xs">
+                        <span className="material-symbols-outlined text-[20px]">done_all</span>
+                      </div>
+                      <p className="text-xs font-bold text-slate-800 dark:text-slate-200">
+                        Aucune notification en attente
+                      </p>
+                      <p className="text-[11px] text-slate-500 dark:text-slate-400 mt-0.5">
+                        Toutes vos notifications et votes ont été traités.
+                      </p>
+                    </div>
                   ) : (
-                    notifications.map((notif) => {
-                      const isUnread = !readNotifIds.includes(notif.id);
-                      return (
+                    unreadNotifications.map((notif) => (
+                      <div
+                        key={notif.id}
+                        onClick={() => handleNotificationClick(notif)}
+                        className="p-2.5 rounded-xl transition-all cursor-pointer flex items-start gap-2.5 bg-emerald-50/70 dark:bg-emerald-950/30 hover:bg-emerald-100/70 dark:hover:bg-emerald-900/40 border border-emerald-200/60 dark:border-emerald-800/40 shadow-2xs group"
+                      >
                         <div
-                          key={notif.id}
-                          onClick={() => handleNotificationClick(notif)}
-                          className={`p-2.5 rounded-xl transition-all cursor-pointer flex items-start gap-2.5 ${
-                            isUnread
-                              ? 'bg-emerald-50/70 dark:bg-emerald-950/30 hover:bg-emerald-100/70 dark:hover:bg-emerald-900/40 border border-emerald-200/60 dark:border-emerald-800/40 shadow-2xs'
-                              : 'hover:bg-slate-50 dark:hover:bg-slate-800/60 border border-transparent'
+                          className={`w-7 h-7 rounded-lg flex items-center justify-center shrink-0 mt-0.5 transition-transform group-hover:scale-105 ${
+                            notif.type === 'alert'
+                              ? 'bg-amber-100 text-amber-700 dark:bg-amber-900/60 dark:text-amber-300'
+                              : notif.type === 'vote'
+                              ? 'bg-purple-100 text-purple-700 dark:bg-purple-900/60 dark:text-purple-300'
+                              : 'bg-emerald-100 text-emerald-700 dark:bg-emerald-900/60 dark:text-emerald-300'
                           }`}
                         >
-                          <div
-                            className={`w-7 h-7 rounded-lg flex items-center justify-center shrink-0 mt-0.5 ${
-                              notif.type === 'alert'
-                                ? 'bg-amber-100 text-amber-700 dark:bg-amber-900/60 dark:text-amber-300'
-                                : notif.type === 'vote'
-                                ? 'bg-purple-100 text-purple-700 dark:bg-purple-900/60 dark:text-purple-300'
-                                : 'bg-emerald-100 text-emerald-700 dark:bg-emerald-900/60 dark:text-emerald-300'
-                            }`}
-                          >
-                            <span className="material-symbols-outlined text-[16px]">{notif.icon || 'notifications'}</span>
-                          </div>
-                          <div className="flex-1 min-w-0">
-                            <div className="flex items-center justify-between gap-1">
-                              <p className={`text-xs truncate ${isUnread ? 'font-bold text-slate-900 dark:text-slate-100' : 'font-medium text-slate-700 dark:text-slate-300'}`}>
-                                {notif.title}
-                              </p>
-                              <span className="text-[10px] text-slate-400 shrink-0">{notif.time}</span>
-                            </div>
-                            <p className="text-[11px] text-slate-500 dark:text-slate-400 line-clamp-2 mt-0.5 leading-snug">
-                              {notif.description}
-                            </p>
-                          </div>
-                          {isUnread && (
-                            <span className="w-2 h-2 rounded-full bg-amber-500 shrink-0 mt-2"></span>
-                          )}
+                          <span className="material-symbols-outlined text-[16px]">{notif.icon || 'notifications'}</span>
                         </div>
-                      );
-                    })
+                        <div className="flex-1 min-w-0">
+                          <div className="flex items-center justify-between gap-1">
+                            <p className="text-xs truncate font-bold text-slate-900 dark:text-slate-100 group-hover:text-primary transition-colors">
+                              {notif.title}
+                            </p>
+                            <span className="text-[10px] text-slate-400 shrink-0">{notif.time}</span>
+                          </div>
+                          <p className="text-[11px] text-slate-500 dark:text-slate-400 line-clamp-2 mt-0.5 leading-snug">
+                            {notif.description}
+                          </p>
+                        </div>
+                        <span className="w-2 h-2 rounded-full bg-amber-500 shrink-0 mt-2"></span>
+                      </div>
+                    ))
                   )}
                 </div>
               </div>

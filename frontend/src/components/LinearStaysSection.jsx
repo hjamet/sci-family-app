@@ -16,11 +16,11 @@ const MONTH_NAMES = [
   'Juillet', 'Août', 'Septembre', 'Octobre', 'Novembre', 'Décembre'
 ];
 
-export default function LinearStaysSection({ reservations, onOpenBooking }) {
+export default function LinearStaysSection({ reservations = [], onOpenBooking }) {
   const [filterStatus, setFilterStatus] = useState('Tous');
 
   // Sort stays chronologically
-  const sortedStays = [...reservations]
+  const sortedStays = [...(reservations || [])]
     .filter(r => filterStatus === 'Tous' || r.status === filterStatus)
     .sort((a, b) => new Date(a.start_date) - new Date(b.start_date));
 

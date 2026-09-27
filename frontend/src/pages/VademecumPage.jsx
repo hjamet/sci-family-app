@@ -100,7 +100,7 @@ function formatPureRoomName(raw) {
   return name.replace(/\s*\([^)]*(couchage|personne)[^)]*\)/gi, '').trim();
 }
 
-export default function VademecumPage({ properties, currentUser }) {
+export default function VademecumPage({ properties, currentUser, reservations = [] }) {
   // Multi-page stay state (Annotation 2 : Navigation multi-pages avec Page 0 Domaine seul)
   const [upcomingStays, setUpcomingStays] = useState([]);
   const [currentPageIndex, setCurrentPageIndex] = useState(0); // 0 = Domaine seul, 1..N = Séjours futurs
@@ -160,7 +160,7 @@ export default function VademecumPage({ properties, currentUser }) {
   const loadInitialData = async () => {
     try {
       if (!heatingStatus && !piscineStatus) setTelemetryLoading(true);
-      if (!reservations || reservations.length === 0) setStayLoading(true);
+      if (!upcomingStays || upcomingStays.length === 0) setStayLoading(true);
 
       const [heatResResult, poolResResult, taskResResult, reservationsResResult] = await Promise.allSettled([
         fetchHeatingStatus(),
@@ -172,7 +172,7 @@ export default function VademecumPage({ properties, currentUser }) {
       const heatRes = heatResResult.status === 'fulfilled' ? heatResResult.value : { error: 'Liaison ViCare indisponible' };
       const poolRes = poolResResult.status === 'fulfilled' ? poolResResult.value : null;
       const taskRes = taskResResult.status === 'fulfilled' ? (taskResResult.value || []) : [];
-      const reservationsRes = reservationsResResult.status === 'fulfilled' ? (reservationsResResult.value || []) : [];
+      const reservationsRes = reservationsResResult.status === 'fulfilled' ? (reservationsResResult.value || []) : (reservations || []);
 
       // ViCare Telemetry & Fail-fast
       if (heatRes && !heatRes.error) {
@@ -215,13 +215,17 @@ export default function VademecumPage({ properties, currentUser }) {
       }
 
       // Reservations (Annotation 2 : Filtrer les séjours futurs réels de l'utilisateur connecté)
-      if (Array.isArray(reservationsRes)) {
+      const allReservations = Array.isArray(reservationsRes) && reservationsRes.length > 0
+        ? reservationsRes
+        : (Array.isArray(reservations) ? reservations : []);
+
+      if (allReservations.length > 0 || Array.isArray(reservationsRes)) {
         const todayStr = new Date().toISOString().split('T')[0];
         const userName = resolveCurrentUserFullName(currentUser);
         const userFirst = userName.split(' ')[0].toLowerCase();
         const currentUserId = currentUser?.id;
 
-        const userUpcoming = reservationsRes
+        const userUpcoming = allReservations
           .filter((r) => {
             if (r.status === 'Refusée' || r.status === 'Annulée') return false;
             const isUpcoming = (r.end_date && r.end_date >= todayStr) || (r.start_date && r.start_date >= todayStr);
@@ -231,7 +235,9 @@ export default function VademecumPage({ properties, currentUser }) {
               return true;
             }
             const rUser = (r.user_name || '').toLowerCase();
-            return rUser.includes(userFirst) || userName.toLowerCase().includes(rUser);
+            if (rUser.includes(userFirst) || userName.toLowerCase().includes(rUser)) return true;
+            const notes = (r.notes || '').toLowerCase();
+            return notes.includes(userFirst) || notes.includes(userName.toLowerCase());
           })
           .sort((a, b) => (a.start_date || '').localeCompare(b.start_date || ''));
 

@@ -13,7 +13,9 @@ import HeatingPage from './pages/HeatingPage';
 import SettingsPage from './pages/SettingsPage';
 import StatistiquesPage from './pages/StatistiquesPage';
 import BookingModal from './components/BookingModal';
-import { fetchProperties, getCachedData } from './api';
+import VoteRoofModal from './components/VoteRoofModal';
+import TaskDetailModal from './components/TaskDetailModal';
+import { fetchProperties, fetchProjects, fetchTaskById, castProjectVote, getCachedData } from './api';
 import GlobalErrorAlert from './components/GlobalErrorAlert';
 
 export default function App() {
@@ -23,6 +25,107 @@ export default function App() {
 
   const [properties, setProperties] = useState(() => getCachedData('properties') || []);
   const [isBookingOpen, setIsBookingOpen] = useState(false);
+
+  // Modales globales pour ouverture directe depuis les notifications (Annotation UI)
+  const [isVoteModalOpen, setIsVoteModalOpen] = useState(false);
+  const [activeVoteProject, setActiveVoteProject] = useState(null);
+
+  const [isTaskModalOpen, setIsTaskModalOpen] = useState(false);
+  const [activeTask, setActiveTask] = useState(null);
+
+  const handleOpenVoteModal = async (projectId, projectData) => {
+    if (projectData && (projectData.title || projectData.id)) {
+      setActiveVoteProject(projectData);
+      setIsVoteModalOpen(true);
+      return;
+    }
+
+    try {
+      const allProjects = await fetchProjects();
+      let matched = null;
+      if (Array.isArray(allProjects)) {
+        if (projectId && projectId !== 'roof') {
+          matched = allProjects.find((p) => String(p.id) === String(projectId));
+        }
+        if (!matched) {
+          matched = allProjects.find((p) => 
+            p.title && (p.title.toLowerCase().includes('toiture') || p.title.toLowerCase().includes('couverture'))
+          ) || allProjects.find((p) => p.status === 'voting' || p.status === 'open' || p.is_voting);
+        }
+      }
+      if (matched) {
+        setActiveVoteProject(matched);
+      } else {
+        setActiveVoteProject({
+          id: projectId || 1,
+          title: 'Réfection Couverture & Isolation Combles Presbytère',
+          description: "Remplacement complet des ardoises vétustes sur le versant Nord du Presbytère, reprise des liteaux et pose d'un isolant en laine de bois haute densité (R=7 m²·K/W). Consultation sur le devis Riffael & Denis (2 400 €).",
+          ref: 'VOTE-2026-04',
+          estimated_cost: 2400,
+          category: 'Presbytère',
+          status: 'voting',
+          votes: [],
+        });
+      }
+    } catch {
+      setActiveVoteProject({
+        id: projectId || 1,
+        title: 'Réfection Couverture & Isolation Combles Presbytère',
+        description: "Remplacement complet des ardoises vétustes sur le versant Nord du Presbytère, reprise des liteaux et pose d'un isolant en laine de bois haute densité (R=7 m²·K/W). Consultation sur le devis Riffael & Denis (2 400 €).",
+        ref: 'VOTE-2026-04',
+        estimated_cost: 2400,
+        category: 'Presbytère',
+        status: 'voting',
+        votes: [],
+      });
+    }
+
+    setIsVoteModalOpen(true);
+  };
+
+  const handleOpenTaskModal = async (taskId, taskData) => {
+    if (taskData && taskData.title) {
+      setActiveTask(taskData);
+      setIsTaskModalOpen(true);
+      return;
+    }
+
+    if (taskId && taskId !== 'task-placo') {
+      try {
+        const fullTask = await fetchTaskById(taskId);
+        if (fullTask) {
+          setActiveTask(fullTask);
+          setIsTaskModalOpen(true);
+          return;
+        }
+      } catch (err) {
+        console.warn('Erreur chargement tâche par ID:', err);
+      }
+    }
+
+    const currentUserName = typeof currentUser === 'object'
+      ? (currentUser?.prenom ? `${currentUser.prenom} ${currentUser.nom || 'Jamet'}` : 'Henri Jamet')
+      : (currentUser || 'Henri Jamet');
+
+    setActiveTask({
+      id: taskId || 'task-placo',
+      title: 'Placo bibliothèque',
+      description: 'Chantier prioritaire suite à infiltration.',
+      subject: 'Presbytère',
+      priority: 'URGENT',
+      status: 'A_FAIRE',
+      assigned_members: [currentUserName],
+      complexity: 'Modérée',
+      budget: 450,
+      checklist: [
+        { text: 'Dépose des plaques de plâtre endommagées', done: false },
+        { text: 'Traitement anti-humidité et séchage des pans de mur', done: false },
+        { text: 'Pose des nouvelles plaques hydrofuges BA13', done: false },
+        { text: 'Bandes à joint et couche de finition', done: false },
+      ],
+    });
+    setIsTaskModalOpen(true);
+  };
 
   // Sync active tab with current location pathname
   const getActiveTabFromPath = (path) => {
@@ -107,6 +210,9 @@ export default function App() {
         currentUser={currentUser}
         onLogout={logout}
         onNavigate={(path, tabId) => handleTabChange(tabId || path)}
+        onOpenVoteModal={handleOpenVoteModal}
+        onOpenTaskModal={handleOpenTaskModal}
+        onOpenBookingModal={() => setIsBookingOpen(true)}
       />
 
       {/* Main Container */}
@@ -223,6 +329,41 @@ export default function App() {
         properties={properties}
         currentUser={currentUser}
       />
+
+      {/* Global Vote Roof Modal (Ouverture directe par-dessus la page active depuis les notifications) */}
+      <VoteRoofModal
+        isOpen={isVoteModalOpen}
+        onClose={() => {
+          setIsVoteModalOpen(false);
+          setActiveVoteProject(null);
+        }}
+        currentUser={currentUser}
+        project={activeVoteProject}
+        onVoteSubmit={async (voteData) => {
+          try {
+            const projId = activeVoteProject?.id || 1;
+            await castProjectVote(projId, voteData);
+          } catch (err) {
+            console.warn('Erreur soumission vote modal global:', err);
+          }
+        }}
+      />
+
+      {/* Global Task Detail Modal (Ouverture directe par-dessus la page active depuis les notifications) */}
+      {isTaskModalOpen && (
+        <TaskDetailModal
+          isOpen={isTaskModalOpen}
+          task={activeTask}
+          isEditing={false}
+          initialMode="view"
+          onClose={() => {
+            setIsTaskModalOpen(false);
+            setActiveTask(null);
+          }}
+          currentUser={currentUser}
+          onTaskUpdated={() => {}}
+        />
+      )}
 
     </div>
   );
