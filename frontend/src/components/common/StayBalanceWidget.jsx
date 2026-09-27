@@ -2,13 +2,13 @@ import React, { useEffect, useState } from 'react';
 import { fetchStayBalance } from '../../api';
 
 const DEFAULT_MEMBERS = [
-  { name: 'Henri Jamet', role: 'Gérant', days: 14, stays: 2, max_days: 35, color: '#004532', bg: 'bg-emerald-50 text-emerald-900 border-emerald-300' },
-  { name: 'Frédéric Jamet', role: 'Usufruitier', days: 28, stays: 4, max_days: 60, color: '#0f4c81', bg: 'bg-teal-50 text-teal-900 border-teal-300' },
-  { name: 'Élisabeth Jamet', role: 'Usufruitière', days: 28, stays: 4, max_days: 60, color: '#065f46', bg: 'bg-emerald-50 text-emerald-950 border-emerald-300' },
-  { name: 'Joséphine Jamet', role: 'Coordination', days: 12, stays: 2, max_days: 35, color: '#15803d', bg: 'bg-green-50 text-green-900 border-green-300' },
-  { name: 'Hortense Jamet', role: 'Jardin', days: 18, stays: 3, max_days: 35, color: '#65a30d', bg: 'bg-lime-50 text-lime-900 border-lime-300' },
-  { name: 'Marguerite Jamet', role: 'Maison', days: 10, stays: 1, max_days: 35, color: '#059669', bg: 'bg-emerald-50 text-emerald-900 border-emerald-300' },
-  { name: 'Eugénie Jamet', role: 'Déco', days: 9, stays: 1, max_days: 35, color: '#b45309', bg: 'bg-amber-50 text-amber-900 border-amber-300' },
+  { name: 'Henri Jamet', days: 0, stays: 0, max_days: 35, color: '#004532', bg: 'bg-emerald-50 text-emerald-900 border-emerald-300' },
+  { name: 'Frédéric Jamet', days: 0, stays: 0, max_days: 60, color: '#0f4c81', bg: 'bg-teal-50 text-teal-900 border-teal-300' },
+  { name: 'Élisabeth Jamet', days: 0, stays: 0, max_days: 60, color: '#065f46', bg: 'bg-emerald-50 text-emerald-950 border-emerald-300' },
+  { name: 'Joséphine Jamet', days: 0, stays: 0, max_days: 35, color: '#15803d', bg: 'bg-green-50 text-green-900 border-green-300' },
+  { name: 'Hortense Jamet', days: 0, stays: 0, max_days: 35, color: '#65a30d', bg: 'bg-lime-50 text-lime-900 border-lime-300' },
+  { name: 'Marguerite Jamet', days: 0, stays: 0, max_days: 35, color: '#059669', bg: 'bg-emerald-50 text-emerald-900 border-emerald-300' },
+  { name: 'Eugénie Jamet', days: 0, stays: 0, max_days: 35, color: '#b45309', bg: 'bg-amber-50 text-amber-900 border-amber-300' },
 ];
 
 export default function StayBalanceWidget({ year = 2026, selectedMember, onSelectMember }) {
@@ -38,8 +38,7 @@ export default function StayBalanceWidget({ year = 2026, selectedMember, onSelec
           setBalance(merged);
         }
       } catch (err) {
-        // Fallback to default realistic figures
-        console.warn('StayBalance API fallback to defaults:', err.message);
+        console.warn('StayBalance API notice:', err.message);
       } finally {
         if (isMounted) setLoading(false);
       }
@@ -92,9 +91,6 @@ export default function StayBalanceWidget({ year = 2026, selectedMember, onSelec
                     style={{ backgroundColor: m.color }}
                   ></span>
                 </div>
-                <span className="inline-block px-2 py-0.5 rounded-full text-[10px] font-semibold bg-white border border-slate-200 text-on-surface-variant truncate">
-                  {m.role}
-                </span>
               </div>
 
               <div>

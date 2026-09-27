@@ -79,6 +79,29 @@ export default function TaskCard({
         .toUpperCase()
     : 'HJ';
 
+  // Annotation 1: Calcul d'avancement opérationnel strictement basé sur la checklist / subtasks
+  const rawList = task.checklist || task.subtasks;
+  let checklistItems = [];
+  if (Array.isArray(rawList)) {
+    checklistItems = rawList;
+  } else if (typeof rawList === 'string' && rawList.trim()) {
+    try {
+      const parsed = JSON.parse(rawList);
+      if (Array.isArray(parsed)) checklistItems = parsed;
+    } catch (_) {
+      checklistItems = [];
+    }
+  }
+
+  const hasChecklist = checklistItems.length > 0;
+  const totalSteps = checklistItems.length;
+  const completedSteps = hasChecklist
+    ? checklistItems.filter((item) =>
+        Boolean(item && (item.done || item.completed || item.status === 'done' || item.status === 'completed'))
+      ).length
+    : 0;
+  const progressPct = hasChecklist ? Math.round((completedSteps / totalSteps) * 100) : 0;
+
   return (
     <article
       onClick={() => onOpen && onOpen(task)}
@@ -194,45 +217,47 @@ export default function TaskCard({
           </p>
         )}
 
-        {/* Progress Box with Shimmer */}
-        <div className="p-space-xs px-3 bg-surface-container-low rounded-DEFAULT mb-space-md border border-slate-100">
-          <div className="flex items-center justify-between gap-2 mb-1.5">
-            <div className="flex items-center gap-1.5 text-label-sm font-semibold text-forest-deep text-xs">
-              <span className="material-symbols-outlined text-[18px] text-primary">
-                {task.step_icon || 'checklist'}
+        {/* Progress Box with Shimmer (Annotation 1 : Uniquement si la tâche a des sous-tâches/checklist) */}
+        {hasChecklist && (
+          <div className="p-space-xs px-3 bg-surface-container-low rounded-DEFAULT mb-space-md border border-slate-100">
+            <div className="flex items-center justify-between gap-2 mb-1.5">
+              <div className="flex items-center gap-1.5 text-label-sm font-semibold text-forest-deep text-xs">
+                <span className="material-symbols-outlined text-[18px] text-primary">
+                  {task.step_icon || 'checklist'}
+                </span>
+                <span>{task.step_label || 'Avancement opérationnel'}</span>
+              </div>
+              <span
+                className={`font-label-sm font-bold px-2 py-0.5 rounded-full text-xs ${
+                  isValidationTask
+                    ? 'text-purple-800 bg-purple-100'
+                    : isCritical
+                    ? 'text-error bg-error-container/40'
+                    : isHigh
+                    ? 'text-amber-rich bg-amber-soft'
+                    : 'text-primary bg-sage-soft'
+                }`}
+              >
+                {isValidationTask ? 'En attente de validation' : `${progressPct}%`}
               </span>
-              <span>{task.step_label || 'Avancement opérationnel'}</span>
             </div>
-            <span
-              className={`font-label-sm font-bold px-2 py-0.5 rounded-full text-xs ${
-                isValidationTask
-                  ? 'text-purple-800 bg-purple-100'
-                  : isCritical
-                  ? 'text-error bg-error-container/40'
-                  : isHigh
-                  ? 'text-amber-rich bg-amber-soft'
-                  : 'text-primary bg-sage-soft'
-              }`}
-            >
-              {isValidationTask ? 'En attente de validation' : `${task.progress || 50}%`}
-            </span>
-          </div>
 
-          <div className="w-full h-2 bg-surface-container-high rounded-full overflow-hidden">
-            <div
-              className={`h-full rounded-full transition-all duration-300 progress-shimmer ${
-                isValidationTask
-                  ? 'bg-gradient-to-r from-purple-500 to-indigo-600'
-                  : isCritical
-                  ? 'bg-gradient-to-r from-red-500 to-rose-600'
-                  : isHigh
-                  ? 'bg-gradient-to-r from-amber-500 to-emerald-600'
-                  : 'bg-gradient-to-r from-teal-500 to-emerald-600'
-              }`}
-              style={{ width: `${isValidationTask ? 100 : task.progress || 50}%` }}
-            ></div>
+            <div className="w-full h-2 bg-surface-container-high rounded-full overflow-hidden">
+              <div
+                className={`h-full rounded-full transition-all duration-300 progress-shimmer ${
+                  isValidationTask
+                    ? 'bg-gradient-to-r from-purple-500 to-indigo-600'
+                    : isCritical
+                    ? 'bg-gradient-to-r from-red-500 to-rose-600'
+                    : isHigh
+                    ? 'bg-gradient-to-r from-amber-500 to-emerald-600'
+                    : 'bg-gradient-to-r from-teal-500 to-emerald-600'
+                }`}
+                style={{ width: `${isValidationTask ? 100 : progressPct}%` }}
+              ></div>
+            </div>
           </div>
-        </div>
+        )}
       </div>
 
       {/* Card Footer: Assignee & Action Button */}

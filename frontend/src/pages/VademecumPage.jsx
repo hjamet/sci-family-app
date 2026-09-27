@@ -1,4 +1,5 @@
 import React, { useState, useEffect } from 'react';
+import { useLocation } from 'react-router-dom';
 import { BookOpen, Search, Plus, Trash2 } from 'lucide-react';
 import {
   fetchVademecum,
@@ -101,6 +102,27 @@ function formatPureRoomName(raw) {
 }
 
 export default function VademecumPage({ properties, currentUser, reservations = [] }) {
+  const location = useLocation();
+
+  // Navigation automatique vers la section Vadémécum si ancre #vademecum présente (Annotation 5)
+  useEffect(() => {
+    const scrollToVademecum = () => {
+      const el = document.getElementById('vademecum');
+      if (el) {
+        el.scrollIntoView({ behavior: 'smooth', block: 'start' });
+      }
+    };
+
+    if (location.hash === '#vademecum' || (typeof window !== 'undefined' && window.location.hash === '#vademecum')) {
+      const t1 = setTimeout(scrollToVademecum, 100);
+      const t2 = setTimeout(scrollToVademecum, 400);
+      return () => {
+        clearTimeout(t1);
+        clearTimeout(t2);
+      };
+    }
+  }, [location.hash, stayLoading]);
+
   // Multi-page stay state (Annotation 2 : Navigation multi-pages avec Page 0 Domaine seul)
   const [upcomingStays, setUpcomingStays] = useState([]);
   const [currentPageIndex, setCurrentPageIndex] = useState(0); // 0 = Domaine seul, 1..N = Séjours futurs
@@ -442,8 +464,8 @@ export default function VademecumPage({ properties, currentUser, reservations = 
     setTimeout(() => setWifiCopied(false), 2500);
   };
 
-  // Full Vademecum Database Section Toggle & State
-  const [showFullVademecum, setShowFullVademecum] = useState(false);
+  // Full Vademecum Database Section: Toujours affiché en mode complet au chargement (Annotation 6)
+  const [showFullVademecum] = useState(true);
   const [selectedCategory, setSelectedCategory] = useState('Toutes');
   const [searchQuery, setSearchQuery] = useState('');
   const [vademecumItems, setVademecumItems] = useState([]);
@@ -490,10 +512,8 @@ export default function VademecumPage({ properties, currentUser, reservations = 
   };
 
   useEffect(() => {
-    if (showFullVademecum) {
-      loadVademecumDb();
-    }
-  }, [showFullVademecum, selectedCategory]);
+    loadVademecumDb();
+  }, [selectedCategory]);
 
   const handleCreateDbItem = async (e) => {
     e.preventDefault();
@@ -1477,7 +1497,7 @@ export default function VademecumPage({ properties, currentUser, reservations = 
       {/* ===================================================================== */}
       {/* 4. VADÉMÉCUM ESSENTIEL DU DOMAINE (Accès direct en séjour)            */}
       {/* ===================================================================== */}
-      <section className="bg-surface-container-lowest rounded-lg p-6 sm:p-8 lg:p-10 shadow-sm border border-border-subtle mb-6 w-full max-w-full">
+      <section id="vademecum" className="bg-surface-container-lowest rounded-lg p-6 sm:p-8 lg:p-10 shadow-sm border border-border-subtle mb-6 w-full max-w-full">
         
         {/* Section Header */}
         <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 mb-8">
@@ -1490,19 +1510,6 @@ export default function VademecumPage({ properties, currentUser, reservations = 
               Vadémécum &amp; Repères Pratiques du Séjour
             </h2>
           </div>
-
-          <button
-            onClick={() => setShowFullVademecum(!showFullVademecum)}
-            className="h-12 px-5 rounded-full bg-surface-container-lowest border-2 border-primary text-primary hover:bg-sage-soft font-label-md text-label-md flex items-center gap-2 self-start sm:self-auto shrink-0 shadow-sm transition-all font-semibold cursor-pointer"
-            type="button"
-          >
-            <span className="material-symbols-outlined text-[20px]">
-              {showFullVademecum ? 'unfold_less' : 'library_books'}
-            </span>
-            <span>
-              {showFullVademecum ? 'Masquer la base complète' : 'Consulter le vadémécum complet'}
-            </span>
-          </button>
         </div>
 
         {/* Practical Interactive Cards Grid */}

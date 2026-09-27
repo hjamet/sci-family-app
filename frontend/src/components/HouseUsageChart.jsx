@@ -11,50 +11,42 @@ const FULL_MONTH_NAMES = [
   'Juillet', 'Août', 'Septembre', 'Octobre', 'Novembre', 'Décembre'
 ];
 
-// Baseline projected room occupancy across the 7-room estate (Villa Rosing + Presbytère)
-const DEFAULT_MONTHLY_USAGE = [
-  { monthIndex: 0, occupiedRooms: 2, note: "Hiver - Séjours courts & WE" },
-  { monthIndex: 1, occupiedRooms: 3, note: "Vacances d'hiver" },
-  { monthIndex: 2, occupiedRooms: 3, note: "Début du printemps" },
-  { monthIndex: 3, occupiedRooms: 4, note: "Vacances de Pâques" },
-  { monthIndex: 4, occupiedRooms: 5, note: "Ponts de Mai" },
-  { monthIndex: 5, occupiedRooms: 5, note: "Juin ensoleillé" },
-  { monthIndex: 6, occupiedRooms: 7, note: "Grandes Vacances d'Été (Pic 100%)" },
-  { monthIndex: 7, occupiedRooms: 7, note: "Grandes Vacances d'Été (Pic 100%)" },
-  { monthIndex: 8, occupiedRooms: 4, note: "Rentrée & Automne" },
-  { monthIndex: 9, occupiedRooms: 3, note: "Vacances de la Toussaint" },
-  { monthIndex: 10, occupiedRooms: 2, note: "Novembre calme" },
-  { monthIndex: 11, occupiedRooms: 6, note: "Fêtes de fin d'année (Noël/Jour de l'An)" },
-];
-
 export default function HouseUsageChart({ reservations = [] }) {
   const [activeMonthIndex, setActiveMonthIndex] = useState(null);
 
-  // Compute or map 12 months occupancy
-  const monthData = DEFAULT_MONTHLY_USAGE.map((item) => {
-    // If reservations exist, we can adjust or calculate room count from reservations
-    const monthRes = reservations.filter(r => {
+  // Compute 12 months occupancy strictly from real reservations
+  const monthData = Array.from({ length: 12 }, (_, monthIndex) => {
+    const monthRes = (reservations || []).filter((r) => {
       if (!r.start_date) return false;
-      const d = new Date(r.start_date);
-      return d.getMonth() === item.monthIndex;
+      const start = new Date(r.start_date);
+      const end = r.end_date ? new Date(r.end_date) : start;
+      const startMonth = start.getMonth();
+      const endMonth = end.getMonth();
+      return monthIndex >= startMonth && monthIndex <= endMonth;
     });
 
-    let rooms = item.occupiedRooms;
-    if (monthRes.length > 0) {
-      // Each reservation occupies on average 3 to 4 rooms, max 7
-      rooms = Math.min(7, Math.max(rooms, monthRes.length * 3.5));
-    }
+    let totalRoomsUsed = 0;
+    monthRes.forEach((r) => {
+      const rooms = Number(r.rooms_count) || (r.property_id === 2 ? 5 : 2);
+      totalRoomsUsed = Math.max(totalRoomsUsed, rooms);
+    });
+
+    const occupiedRooms = Math.min(7, totalRoomsUsed);
+    const occupancyRate = Math.round((occupiedRooms / 7) * 100);
+    const note = monthRes.length > 0
+      ? `${monthRes.length} séjour${monthRes.length > 1 ? 's' : ''} (${occupiedRooms} ch. occupée${occupiedRooms > 1 ? 's' : ''})`
+      : 'Aucun séjour programmé';
 
     return {
-      ...item,
-      occupiedRooms: Math.round(rooms),
-      occupancyRate: Math.round((rooms / 7) * 100)
+      monthIndex,
+      occupiedRooms,
+      occupancyRate,
+      note,
     };
   });
 
-  const avgOccupancy = Math.round(
-    monthData.reduce((acc, m) => acc + m.occupiedRooms, 0) / 12
-  );
+  const totalOccupiedAcrossYear = monthData.reduce((acc, m) => acc + m.occupiedRooms, 0);
+  const avgOccupancy = Math.round(totalOccupiedAcrossYear / 12);
   const avgPct = Math.round((avgOccupancy / 7) * 100);
 
   // SVG Chart dimensions

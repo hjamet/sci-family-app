@@ -929,6 +929,21 @@ export async function closeTask(taskId, completionData) {
   return res.json();
 }
 
+export async function requestTaskValidation(taskId, data = {}) {
+  const res = await fetch(`${API_BASE}/tasks/${taskId}/submit-completion`, {
+    method: 'POST',
+    headers: getAuthJsonHeaders(),
+    body: JSON.stringify(data)
+  });
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({}));
+    throw new Error(err.detail || 'Erreur lors de la demande de validation');
+  }
+  invalidateApiCache('tasks');
+  return res.json();
+}
+
+
 export async function validateTask(taskId) {
   const res = await fetch(`${API_BASE}/tasks/${taskId}/validate`, {
     method: 'POST',

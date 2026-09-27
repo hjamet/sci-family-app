@@ -436,6 +436,15 @@ export default function TasksPage({ currentUser = 'Henri Jamet' }) {
             </button>
 
             <button
+              onClick={handleOpenCreateVote}
+              className="group flex items-center justify-center gap-2 px-5 py-3.5 rounded-DEFAULT bg-white dark:bg-slate-900 border-2 border-primary-container text-primary-container hover:bg-sage-soft font-label-lg text-sm sm:text-base font-bold shadow-sm hover:shadow-md transition-all duration-200 cursor-pointer whitespace-nowrap"
+              type="button"
+            >
+              <span className="material-symbols-outlined text-[22px] group-hover:scale-110 transition-transform">how_to_vote</span>
+              <span>Proposer un vote</span>
+            </button>
+
+            <button
               onClick={handleOpenCreateTask}
               className="group flex items-center justify-center gap-2 px-5 py-3.5 rounded-DEFAULT bg-white dark:bg-slate-900 border-2 border-primary text-primary hover:bg-sage-soft font-label-lg text-sm sm:text-base font-bold shadow-sm hover:shadow-md transition-all duration-200 cursor-pointer whitespace-nowrap"
               type="button"
@@ -580,7 +589,7 @@ export default function TasksPage({ currentUser = 'Henri Jamet' }) {
 
           <div className="flex items-center gap-2 shrink-0">
             {votesList.length > 1 && (
-              <div className="flex items-center gap-1 mr-2">
+              <div className="flex items-center gap-1">
                 <button
                   onClick={() => setActiveVoteIndex(prev => (prev > 0 ? prev - 1 : votesList.length - 1))}
                   className="w-9 h-9 rounded-DEFAULT border-2 border-outline-variant text-on-surface-variant flex items-center justify-center hover:bg-canvas-slate transition-colors cursor-pointer"
@@ -599,15 +608,6 @@ export default function TasksPage({ currentUser = 'Henri Jamet' }) {
                 </button>
               </div>
             )}
-
-            <button
-              onClick={handleOpenCreateVote}
-              className="h-[46px] px-5 rounded-DEFAULT bg-surface-container-lowest border-2 border-primary-container text-primary-container font-label-md text-label-md hover:bg-sage-soft hover:border-primary transition-all flex items-center gap-2 shadow-sm font-semibold cursor-pointer"
-              type="button"
-            >
-              <span className="material-symbols-outlined text-[20px]">how_to_vote</span>
-              <span>Ouvrir un vote formel</span>
-            </button>
           </div>
         </div>
 

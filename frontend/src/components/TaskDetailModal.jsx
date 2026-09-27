@@ -8,12 +8,13 @@ import {
   deleteTask,
   validateTask,
   invalidateTask,
+  requestTaskValidation,
   fetchTaskComments,
   addTaskComment,
   reactToTaskComment,
   uploadTaskDocuments,
 } from '../api';
-import { isTaskPendingValidation } from '../utils/taskAssignment';
+import { isTaskPendingValidation, isTaskAssignedToUser, isTaskOpen } from '../utils/taskAssignment';
 import CustomSelect from './CustomSelect';
 import DocumentViewerModal from './DocumentViewerModal';
 import FamilyChat from './common/FamilyChat';
@@ -180,6 +181,10 @@ export default function TaskDetailModal({
     resolvedUserName.toLowerCase().includes('joséphine') ||
     resolvedUserName.toLowerCase().includes('josephine')
   );
+
+  const isAssignedToCurrentUser = isTaskAssignedToUser(task, currentUser);
+  const isPendingValidation = isTaskPendingValidation(task);
+  const isOpenTask = isTaskOpen(task);
 
   // Load latest task details and comments when opened
   useEffect(() => {
@@ -376,6 +381,29 @@ export default function TaskDetailModal({
       alert(err.message || 'Erreur lors de la clôture.');
     } finally {
       setClosingSubmitting(false);
+    }
+  };
+
+  // Demande de validation par le membre en charge (Annotation 2)
+  const handleRequestValidation = async () => {
+    try {
+      if (task?.id) {
+        try {
+          await requestTaskValidation(task.id, {
+            completion_notes: `Tâche marquée comme faite par ${currentUserName || 'le membre en charge'}. Demande de validation transmise au coordinateur.`
+          });
+        } catch (_) {
+          await updateTask(task.id, { status: 'PENDING_VALIDATION' });
+        }
+        const refreshed = await fetchTaskById(task.id).catch(() => ({ ...task, status: 'PENDING_VALIDATION' }));
+        setTask(refreshed);
+      } else {
+        setTask({ ...task, status: 'PENDING_VALIDATION' });
+      }
+      if (onTaskUpdated) onTaskUpdated();
+    } catch (err) {
+      console.error('Erreur demande de validation:', err);
+      alert(err.message || 'Erreur lors de la demande de validation.');
     }
   };
 
@@ -586,40 +614,47 @@ export default function TaskDetailModal({
               </button>
             )}
 
-            {/* Actions superviseur : Valider / Invalider violets si tâche à valider (Annotation 8), sinon Clôturer */}
-            {!isNewTask && isCoordinator && (
-              isTaskPendingValidation(task) ? (
-                <div className="flex items-center gap-2">
-                  <button
-                    type="button"
-                    onClick={handleValidateModalTask}
-                    title="Valider la tâche"
-                    className="inline-flex items-center gap-1.5 h-11 px-4 rounded-xl border-2 font-label-md text-xs sm:text-sm font-bold shadow-sm transition-colors bg-purple-700 hover:bg-purple-800 text-white border-purple-700 cursor-pointer"
-                  >
-                    <span className="material-symbols-outlined text-[18px]">check</span>
-                    <span>Valider</span>
-                  </button>
-                  <button
-                    type="button"
-                    onClick={handleInvalidateModalTask}
-                    title="Invalider la tâche"
-                    className="inline-flex items-center gap-1.5 h-11 px-4 rounded-xl border-2 font-label-md text-xs sm:text-sm font-bold shadow-sm transition-colors bg-purple-50 hover:bg-purple-100 text-purple-800 border-purple-300 dark:border-purple-600 dark:bg-purple-950/60 dark:text-purple-200 cursor-pointer"
-                  >
-                    <span className="material-symbols-outlined text-[18px]">close</span>
-                    <span>Invalider</span>
-                  </button>
-                </div>
-              ) : (
+            {/* Actions superviseur et membres : Valider / Invalider si en attente de validation, Demander validation pour le membre assigné (Annotation 2) */}
+            {!isNewTask && (
+              isPendingValidation ? (
+                isCoordinator ? (
+                  <div className="flex items-center gap-2">
+                    <button
+                      type="button"
+                      onClick={handleValidateModalTask}
+                      title="Valider la tâche"
+                      className="inline-flex items-center gap-1.5 h-11 px-4 rounded-xl border-2 font-label-md text-xs sm:text-sm font-bold shadow-sm transition-colors bg-purple-700 hover:bg-purple-800 text-white border-purple-700 cursor-pointer"
+                    >
+                      <span className="material-symbols-outlined text-[18px]">check</span>
+                      <span>Valider</span>
+                    </button>
+                    <button
+                      type="button"
+                      onClick={handleInvalidateModalTask}
+                      title="Invalider la tâche"
+                      className="inline-flex items-center gap-1.5 h-11 px-4 rounded-xl border-2 font-label-md text-xs sm:text-sm font-bold shadow-sm transition-colors bg-purple-50 hover:bg-purple-100 text-purple-800 border-purple-300 dark:border-purple-600 dark:bg-purple-950/60 dark:text-purple-200 cursor-pointer"
+                    >
+                      <span className="material-symbols-outlined text-[18px]">close</span>
+                      <span>Invalider</span>
+                    </button>
+                  </div>
+                ) : (
+                  <span className="inline-flex items-center gap-1.5 px-3.5 py-1.5 rounded-xl font-label-md text-xs sm:text-sm font-bold bg-purple-100 text-purple-800 dark:bg-purple-900/60 dark:text-purple-200 border border-purple-300">
+                    <span className="material-symbols-outlined text-[18px]">verified</span>
+                    <span>En attente de validation</span>
+                  </span>
+                )
+              ) : (isOpenTask && isAssignedToCurrentUser ? (
                 <button
                   type="button"
-                  onClick={() => setIsClosingModalOpen(true)}
-                  title="Clôturer la tâche"
+                  onClick={handleRequestValidation}
+                  title="Demander la validation"
                   className="inline-flex items-center gap-1.5 h-11 px-4 rounded-xl border-2 font-label-md text-xs sm:text-sm font-bold shadow-sm transition-colors bg-white border-primary text-primary hover:bg-sage-soft cursor-pointer"
                 >
                   <span className="material-symbols-outlined text-[18px] text-primary">check_circle</span>
-                  <span>Clôturer</span>
+                  <span>Demander la validation</span>
                 </button>
-              )
+              ) : null)
             )}
 
             {/* Delete Task Button: Harmonisation border-2 et alignement droite ml-auto (Annotation 3) */}

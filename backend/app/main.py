@@ -2309,15 +2309,13 @@ def compute_task_progress(task: Task):
         except Exception:
             checklist = []
     total_steps = len(checklist) if isinstance(checklist, list) else 0
-    completed_steps = sum(1 for step in checklist if isinstance(step, dict) and step.get("completed")) if total_steps > 0 else 0
+    completed_steps = sum(1 for step in checklist if isinstance(step, dict) and (step.get("completed") or step.get("done") or step.get("status") in ["done", "completed"])) if total_steps > 0 else 0
     if total_steps > 0:
         pct = round((completed_steps / total_steps) * 100)
     else:
         st = str(task.status or "").upper()
-        if st in ["TERMINE", "ARCHIVEE"]:
+        if st in ["TERMINE", "ARCHIVEE", "VALIDE"]:
             pct = 100
-        elif st in ["EN_COURS"]:
-            pct = 50
         else:
             pct = 0
     return pct, completed_steps, total_steps

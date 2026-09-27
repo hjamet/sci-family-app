@@ -4,18 +4,14 @@ import HouseUsageChart from '../components/HouseUsageChart';
 import WorkloadDashboard from '../components/WorkloadDashboard';
 import { fetchReservations, fetchStayBalance } from '../api';
 
-const DEFAULT_PODIUM = [
-  { rank: 1, medal: '🥇', name: 'Frédéric Jamet', role: 'Usufruitier', days: 28, stays: 4, max_days: 60, color: 'from-amber-400 to-amber-600', ring: 'ring-amber-400/40', badge: 'bg-amber-100 text-amber-900 border-amber-300' },
-  { rank: 2, medal: '🥈', name: 'Élisabeth Jamet', role: 'Usufruitière', days: 28, stays: 4, max_days: 60, color: 'from-slate-300 to-slate-500', ring: 'ring-slate-300/40', badge: 'bg-slate-100 text-slate-800 border-slate-300' },
-  { rank: 3, medal: '🥉', name: 'Hortense Jamet', role: 'Jardin', days: 18, stays: 3, max_days: 35, color: 'from-amber-700 to-amber-900', ring: 'ring-amber-700/40', badge: 'bg-amber-50 text-amber-900 border-amber-200' },
-];
-
 export default function StatistiquesPage({ currentUser }) {
   const [year, setYear] = useState(2026);
   const [reservations, setReservations] = useState([]);
-  const [podium, setPodium] = useState(DEFAULT_PODIUM);
-  const [totalDays, setTotalDays] = useState(119);
-  const [totalStays, setTotalStays] = useState(16);
+  const [podium, setPodium] = useState([]);
+  const [totalDays, setTotalDays] = useState(0);
+  const [totalStays, setTotalStays] = useState(0);
+  const [activeMembersCount, setActiveMembersCount] = useState(0);
+  const [occupancyRate, setOccupancyRate] = useState(0);
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
@@ -41,8 +37,15 @@ export default function StatistiquesPage({ currentUser }) {
 
           const computedTotalDays = members.reduce((acc, m) => acc + (m.days || 0), 0);
           const computedTotalStays = members.reduce((acc, m) => acc + (m.stays_count || m.stays || 0), 0);
-          if (computedTotalDays > 0) setTotalDays(computedTotalDays);
-          if (computedTotalStays > 0) setTotalStays(computedTotalStays);
+          setTotalDays(computedTotalDays);
+          setTotalStays(computedTotalStays);
+
+          const activeCount = members.filter(m => (m.days || 0) > 0 || (m.stays_count || m.stays || 0) > 0).length;
+          setActiveMembersCount(activeCount);
+
+          // Taux d'occupation dynamique basé sur les jours réels réservés
+          const occ = Math.min(100, Math.round((computedTotalDays / 365) * 100));
+          setOccupancyRate(occ);
 
           const medals = ['🥇', '🥈', '🥉'];
           const colors = [
@@ -55,28 +58,22 @@ export default function StatistiquesPage({ currentUser }) {
             'ring-slate-300/40',
             'ring-amber-700/40'
           ];
-          const badges = [
-            'bg-amber-100 text-amber-900 border-amber-300',
-            'bg-slate-100 text-slate-800 border-slate-300',
-            'bg-amber-50 text-amber-900 border-amber-200'
-          ];
 
-          const top3 = members.slice(0, 3).map((m, idx) => ({
-            rank: idx + 1,
-            medal: medals[idx],
-            name: m.name,
-            role: m.role || 'Associé',
-            days: m.days || 0,
-            stays: m.stays_count || m.stays || 0,
-            max_days: m.max_days || 35,
-            color: colors[idx],
-            ring: rings[idx],
-            badge: badges[idx],
-          }));
+          const top3 = members
+            .filter(m => (m.days || 0) > 0)
+            .slice(0, 3)
+            .map((m, idx) => ({
+              rank: idx + 1,
+              medal: medals[idx],
+              name: m.name,
+              days: m.days || 0,
+              stays: m.stays_count || m.stays || 0,
+              max_days: m.max_days || 35,
+              color: colors[idx],
+              ring: rings[idx],
+            }));
 
-          if (top3.length > 0) {
-            setPodium(top3);
-          }
+          setPodium(top3);
         }
       } catch (err) {
         console.warn('StatistiquesPage data loading warning:', err);
@@ -162,8 +159,8 @@ export default function StatistiquesPage({ currentUser }) {
           <div>
             <span className="text-[11px] font-bold uppercase tracking-wider text-on-surface-variant block">Taux d'Occupation</span>
             <div className="flex items-baseline gap-1.5">
-              <span className="text-xl sm:text-2xl font-black text-forest-deep">58%</span>
-              <span className="text-xs text-emerald-600 font-semibold">+12% vs {year - 1}</span>
+              <span className="text-xl sm:text-2xl font-black text-forest-deep">{occupancyRate}%</span>
+              <span className="text-xs text-on-surface-variant font-medium">exercice {year}</span>
             </div>
           </div>
         </div>
@@ -175,8 +172,10 @@ export default function StatistiquesPage({ currentUser }) {
           <div>
             <span className="text-[11px] font-bold uppercase tracking-wider text-on-surface-variant block">Associés Actifs</span>
             <div className="flex items-baseline gap-1.5">
-              <span className="text-xl sm:text-2xl font-black text-forest-deep">7 / 7</span>
-              <span className="text-xs text-on-surface-variant font-medium">100% mobilisés</span>
+              <span className="text-xl sm:text-2xl font-black text-forest-deep">{activeMembersCount} / 7</span>
+              <span className="text-xs text-on-surface-variant font-medium">
+                {activeMembersCount > 0 ? `${Math.round((activeMembersCount / 7) * 100)}% mobilisés` : 'aucun séjour'}
+              </span>
             </div>
           </div>
         </div>
@@ -200,33 +199,35 @@ export default function StatistiquesPage({ currentUser }) {
         </div>
 
         <div className="grid grid-cols-1 md:grid-cols-3 gap-4 pt-1">
-          {podium.map((item, index) => {
-            const isFirst = index === 0;
-            return (
-              <div
-                key={item.name}
-                className={`relative rounded-2xl p-5 border transition-all ${
-                  isFirst
-                    ? 'bg-gradient-to-b from-amber-50/70 to-surface-container-lowest border-amber-300 ring-2 ring-amber-400/20 shadow-md md:-translate-y-1'
-                    : 'bg-surface-container-lowest border-border-subtle hover:border-primary/40 shadow-xs'
-                }`}
-              >
-                <div className="flex items-center justify-between gap-3 mb-3">
-                  <div className="flex items-center gap-2.5">
-                    <span className="text-2xl">{item.medal}</span>
-                    <div>
-                      <span className="text-[11px] font-bold text-on-surface-variant uppercase tracking-wider block">
-                        Place #{item.rank}
-                      </span>
-                      <h3 className="font-bold text-sm sm:text-base text-forest-deep leading-tight">
-                        {item.name}
-                      </h3>
+          {podium.length === 0 ? (
+            <div className="col-span-full py-8 text-center text-xs text-on-surface-variant bg-surface-container-lowest rounded-2xl border border-dashed border-border-subtle">
+              Aucun séjour comptabilisé pour l'exercice {year}.
+            </div>
+          ) : (
+            podium.map((item, index) => {
+              const isFirst = index === 0;
+              return (
+                <div
+                  key={item.name}
+                  className={`relative rounded-2xl p-5 border transition-all ${
+                    isFirst
+                      ? 'bg-gradient-to-b from-amber-50/70 to-surface-container-lowest border-amber-300 ring-2 ring-amber-400/20 shadow-md md:-translate-y-1'
+                      : 'bg-surface-container-lowest border-border-subtle hover:border-primary/40 shadow-xs'
+                  }`}
+                >
+                  <div className="flex items-center justify-between gap-3 mb-3">
+                    <div className="flex items-center gap-2.5">
+                      <span className="text-2xl">{item.medal}</span>
+                      <div>
+                        <span className="text-[11px] font-bold text-on-surface-variant uppercase tracking-wider block">
+                          Place #{item.rank}
+                        </span>
+                        <h3 className="font-bold text-sm sm:text-base text-forest-deep leading-tight">
+                          {item.name}
+                        </h3>
+                      </div>
                     </div>
                   </div>
-                  <span className={`px-2.5 py-0.5 rounded-full text-[11px] font-bold border ${item.badge}`}>
-                    {item.role}
-                  </span>
-                </div>
 
                 <div className="space-y-2 pt-2 border-t border-slate-100">
                   <div className="flex items-center justify-between text-xs">
@@ -248,7 +249,8 @@ export default function StatistiquesPage({ currentUser }) {
                 </div>
               </div>
             );
-          })}
+          })
+        )}
         </div>
       </section>
 

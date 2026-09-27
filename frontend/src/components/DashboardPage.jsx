@@ -248,6 +248,7 @@ export default function DashboardPage({
   }, [loadDashboardData]);
 
   const navigateTo = (target) => {
+    const [pathPart, hashPart] = String(target).split('#');
     const routeMap = {
       home: '/',
       reservations: '/calendrier',
@@ -263,22 +264,23 @@ export default function DashboardPage({
       sejour: '/sejour',
       energie: '/energie',
     };
-    const cleanKey = typeof target === 'string' && target.startsWith('/') ? target.slice(1) : target;
-    const destPath = routeMap[target] || routeMap[cleanKey] || (typeof target === 'string' && target.startsWith('/') ? target : `/${target}`);
+    const cleanKey = pathPart.startsWith('/') ? pathPart.slice(1) : pathPart;
+    const basePath = routeMap[pathPart] || routeMap[cleanKey] || (pathPart.startsWith('/') ? pathPart : `/${pathPart}`);
+    const destPath = hashPart ? `${basePath}#${hashPart}` : basePath;
 
     if (setActiveTab) {
-      if (target === '/calendrier' || target === 'calendrier' || target === 'reservations') {
+      if (cleanKey === 'calendrier' || cleanKey === 'reservations') {
         setActiveTab('reservations');
-      } else if (target === '/taches' || target === 'taches' || target === 'tasks' || target === '/votes' || target === 'votes' || target === 'democratie') {
+      } else if (cleanKey === 'taches' || cleanKey === 'tasks' || cleanKey === 'votes' || cleanKey === 'democratie') {
         setActiveTab('tasks');
-      } else if (target === '/sejour' || target === 'sejour' || target === 'vademecum') {
+      } else if (cleanKey === 'sejour' || cleanKey === 'vademecum') {
         setActiveTab('vademecum');
-      } else if (target === '/energie' || target === 'energie') {
+      } else if (cleanKey === 'energie') {
         setActiveTab('vademecum');
-      } else if (target === '/admin' || target === 'admin') {
+      } else if (cleanKey === 'admin') {
         setActiveTab('admin');
       } else {
-        setActiveTab(target);
+        setActiveTab(cleanKey);
       }
     }
 
@@ -416,7 +418,7 @@ export default function DashboardPage({
 
             <button
               type="button"
-              onClick={() => navigateTo('/sejour')}
+              onClick={() => navigateTo('/sejour#vademecum')}
               className="group rounded-2xl p-3 flex items-center gap-2.5 text-left transition-all hover:scale-[1.02] shadow-sm cursor-pointer bg-emerald-500/10 hover:bg-emerald-500/20 text-emerald-900 dark:text-emerald-200 border border-emerald-500/20"
             >
               <span className="material-symbols-outlined text-[22px] shrink-0 group-hover:scale-110 transition-transform">
@@ -916,7 +918,7 @@ export default function DashboardPage({
               <CardSkeleton className="p-4" />
             </div>
           ) : displayedTasks.length > 0 ? (
-            <div className="flex flex-col space-y-space-sm">
+            <div className="flex flex-col space-y-3 max-h-[390px] overflow-y-auto pr-1">
               {displayedTasks.map((t, idx) => (
                 <TaskCard
                   key={t.id || idx}
