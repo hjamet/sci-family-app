@@ -76,18 +76,23 @@ load_dotenv()
 logger = logging.getLogger("sci_api")
 
 
-# Create DB tables (safe startup)
-try:
-    Base.metadata.create_all(bind=engine)
-except Exception as e:
-    logger.warning(f"Notice: Base.metadata.create_all could not complete on startup: {e}")
+# Create DB tables & ensure seed data on startup (safe startup)
+# Sur Vercel Serverless, la base PostgreSQL Supabase est déjà migrée et peuplée de façon pérenne.
+# Ré-exécuter create_all et seed_database à chaque cold-start de lambda ajoutait 2 à 4 secondes de latence.
+is_vercel = bool(os.environ.get("VERCEL") or os.environ.get("AWS_LAMBDA_FUNCTION_NAME"))
+force_init = os.environ.get("FORCE_DB_RESET", "false").lower() == "true" or os.environ.get("RUN_DB_MIGRATION", "false").lower() == "true"
 
-# Ensure seed data on startup (safe startup)
-try:
-    with next(get_db()) as db:
-        seed_database(db)
-except Exception as e:
-    logger.warning(f"Notice: seed_database could not complete on startup: {e}")
+if not is_vercel or force_init:
+    try:
+        Base.metadata.create_all(bind=engine)
+    except Exception as e:
+        logger.warning(f"Notice: Base.metadata.create_all could not complete on startup: {e}")
+
+    try:
+        with next(get_db()) as db:
+            seed_database(db)
+    except Exception as e:
+        logger.warning(f"Notice: seed_database could not complete on startup: {e}")
 
 app = FastAPI(
     title="SCI Familiale Management API",

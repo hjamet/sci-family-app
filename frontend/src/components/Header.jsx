@@ -124,30 +124,14 @@ export default function Header({
     let isMounted = true;
     async function loadDynamicNotifications() {
       try {
-        const [poolRes, projRes, taskRes, resRes] = await Promise.allSettled([
-          fetchPiscineStatus(),
+        // Étape 1 : Données ultra-rapides Supabase SQL (projets, tâches, séjours)
+        const [projRes, taskRes, resRes] = await Promise.allSettled([
           fetchProjects(),
           fetchTasks(),
           fetchReservations(),
         ]);
 
         const dynamicNotifs = [];
-
-        // 1. Alertes piscine réelles
-        if (poolRes.status === 'fulfilled' && poolRes.value?.alerts?.length > 0) {
-          poolRes.value.alerts.forEach((alertText, idx) => {
-            dynamicNotifs.push({
-              id: `pool-alert-${idx}`,
-              title: 'Alerte Équipement Piscine',
-              description: alertText,
-              type: 'alert',
-              path: '/sejour',
-              tabId: 'sejour',
-              time: 'Télémétrie',
-              icon: 'pool',
-            });
-          });
-        }
 
         // 2. Projets en vote ouvert
         if (projRes.status === 'fulfilled' && Array.isArray(projRes.value)) {
@@ -226,6 +210,28 @@ export default function Header({
         if (isMounted) {
           setNotifications(dynamicNotifs);
         }
+
+        // Étape 2 : Alertes piscine réelles interrogées en tâche de fond différée
+        fetchPiscineStatus()
+          .then((poolData) => {
+            if (isMounted && poolData?.alerts?.length > 0) {
+              const poolNotifs = poolData.alerts.map((alertText, idx) => ({
+                id: `pool-alert-${idx}`,
+                title: 'Alerte Équipement Piscine',
+                description: alertText,
+                type: 'alert',
+                path: '/sejour',
+                tabId: 'sejour',
+                time: 'Télémétrie',
+                icon: 'pool',
+              }));
+              setNotifications((prev) => {
+                const nonPool = prev.filter((n) => !n.id.startsWith('pool-alert-'));
+                return [...poolNotifs, ...nonPool];
+              });
+            }
+          })
+          .catch(() => {});
       } catch (err) {
         console.warn('Erreur chargement notifications dynamiques:', err);
       }

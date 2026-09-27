@@ -3,6 +3,7 @@ import json
 import logging
 import os
 import time
+import concurrent.futures
 from datetime import datetime
 from typing import Any, Dict, Optional
 
@@ -372,6 +373,26 @@ class KlereoService:
 
     @classmethod
     def get_status(cls, force_refresh: bool = False) -> Dict[str, Any]:
-        """Point d'entrée principal pour la consultation de la télémétrie piscine (100% direct-live)."""
-        return cls.fetch_live_telemetry(force_refresh=force_refresh)
+        """
+        Point d'entrée principal pour la consultation de la télémétrie piscine (100% direct-live).
+        Protection anti-timeout stricte de 4.0s max pour ne jamais bloquer le serveur Vercel.
+        """
+        try:
+            with concurrent.futures.ThreadPoolExecutor(max_workers=1) as executor:
+                future = executor.submit(cls.fetch_live_telemetry, force_refresh=force_refresh)
+                return future.result(timeout=4.0)
+        except HTTPException:
+            raise
+        except Exception as err:
+            err_type = type(err).__name__
+            err_str = str(err)
+            status_code = status.HTTP_502_BAD_GATEWAY
+            if "timeout" in err_str.lower() or isinstance(err, concurrent.futures.TimeoutError):
+                status_code = status.HTTP_504_GATEWAY_TIMEOUT
+                err_str = "Timeout réseau (4.0s) lors de la communication avec Klereo Connect."
+            logger.error(f"[KLEREO] Erreur Fail-Fast télémétrie: {err_str}")
+            raise HTTPException(
+                status_code=status_code,
+                detail={"error": f"Erreur télémétrie piscine Klereo: {err_str}", "type": err_type}
+            )
 

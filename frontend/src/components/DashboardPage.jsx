@@ -203,36 +203,42 @@ export default function DashboardPage({
 
     // ==================== PHASE 2 : ÉQUIPEMENTS IOT & APIS EXTERNES EN ARRIÈRE-PLAN ====================
     // Chauffage ViCare, piscine Klereo et banque sont découplés en asynchrone non-bloquant
-    // Leur cycle de vie ou éventuelle latence réseau n'entrave jamais l'affichage du Dashboard
-    const poolPromise = fetchPiscineStatus(options)
-      .then((data) => {
-        setPoolStatus(data || null);
-        return data;
-      })
-      .catch(() => null)
-      .finally(() => {
-        setLoadingPool(false);
-      });
+    // Leur cycle de vie ou éventuelle latence réseau n'entrave JAMAIS l'affichage du Dashboard
+    const triggerIotAndExternal = () => {
+      fetchPiscineStatus(options)
+        .then((data) => {
+          setPoolStatus(data || null);
+          return data;
+        })
+        .catch(() => null)
+        .finally(() => {
+          setLoadingPool(false);
+        });
 
-    const heatPromise = fetchHeatingStatus(options)
-      .then((data) => {
-        setHeatingStatus(data || null);
-        return data;
-      })
-      .catch(() => null)
-      .finally(() => {
-        setLoadingHeating(false);
-      });
+      fetchHeatingStatus(options)
+        .then((data) => {
+          setHeatingStatus(data || null);
+          return data;
+        })
+        .catch(() => null)
+        .finally(() => {
+          setLoadingHeating(false);
+        });
 
-    const bankPromise = fetchBankStatus(options)
-      .then((data) => {
-        setBankStatus(data || null);
-        return data;
-      })
-      .catch(() => null)
-      .finally(() => {
-        setLoadingBank(false);
-      });
+      fetchBankStatus(options)
+        .then((data) => {
+          setBankStatus(data || null);
+          return data;
+        })
+        .catch(() => null)
+        .finally(() => {
+          setLoadingBank(false);
+        });
+    };
+
+    // Micro-délai de 60ms pour laisser la priorité réseau totale aux données SQL Supabase
+    // afin d'assurer un affichage instantané sous 50-100ms
+    const timer = setTimeout(triggerIotAndExternal, 60);
 
     // Ne bloquer que sur les données Supabase SQL indispensables pour l'interactivité
     await Promise.allSettled([
@@ -241,6 +247,8 @@ export default function DashboardPage({
       taskPromise,
       propPromise,
     ]);
+
+    return () => clearTimeout(timer);
   }, []);
 
   useEffect(() => {
