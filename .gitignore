@@ -41,6 +41,8 @@ frontend/test_*.js
 frontend/test_*.cjs
 frontend/verify_*.cjs
 test_*.py
+!backend/test_tasks.py
+!backend/tests/test_tasks.py
 !backend/test_resend_and_notifications.py
 !backend/tests/test_mention_notifications.py
 !backend/test_auth_validation.py
