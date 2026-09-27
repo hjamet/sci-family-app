@@ -15,7 +15,7 @@ import {
 import TaskDetailModal from './TaskDetailModal';
 import VoteRoofModal from './VoteRoofModal';
 import BookingModal from './BookingModal';
-import TaskCard from './TaskCard';
+import TaskCard from './common/TaskCard';
 import { extractParticipants } from '../pages/CalendarPage';
 import { VoteCardSkeleton, CompactStaySkeleton, CardSkeleton } from './SkeletonLoaders';
 import { isTaskAssignedToUser, isTaskOpen, isTaskPendingValidation } from '../utils/taskAssignment';

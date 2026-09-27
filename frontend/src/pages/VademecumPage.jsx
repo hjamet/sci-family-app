@@ -17,7 +17,7 @@ import {
 import SejourCutoffMapModal from '../components/sejour/SejourCutoffMapModal';
 import SejourDepartureChecklistModal from '../components/sejour/SejourDepartureChecklistModal';
 import TaskDetailModal from '../components/TaskDetailModal';
-import TaskCard from '../components/TaskCard';
+import TaskCard from '../components/common/TaskCard';
 import BookingModal from '../components/BookingModal';
 import { ThermalMetricSkeleton, StayCardSkeleton } from '../components/SkeletonLoaders';
 import CustomSelect from '../components/CustomSelect';

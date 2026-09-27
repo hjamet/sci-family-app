@@ -166,11 +166,19 @@ export default function TaskDetailModal({
   const currentUserName = typeof currentUser === 'object'
     ? (currentUser?.name || currentUser?.prenom || '')
     : (currentUser || '');
+  let resolvedUserName = currentUserName;
+  if (!resolvedUserName) {
+    try {
+      resolvedUserName = localStorage.getItem('sci_user') || '';
+    } catch (_) {}
+  }
   const isCoordinator = Boolean(
-    currentUser?.is_coordinator ||
-    currentUserName.toLowerCase().includes('henri') ||
-    currentUserName.toLowerCase().includes('joséphine') ||
-    currentUserName.toLowerCase().includes('josephine')
+    currentUser?.is_coordinator === true ||
+    currentUser?.is_coordinator === 'true' ||
+    currentUser?.is_coordinator === 1 ||
+    resolvedUserName.toLowerCase().includes('henri') ||
+    resolvedUserName.toLowerCase().includes('joséphine') ||
+    resolvedUserName.toLowerCase().includes('josephine')
   );
 
   // Load latest task details and comments when opened

@@ -5,7 +5,7 @@ import TaskDetailModal from './TaskDetailModal';
 import VoteRoofModal from './VoteRoofModal';
 import { CardSkeleton, TasksContainerSkeleton, VoteCardSkeleton } from './SkeletonLoaders';
 import CustomSelect from './CustomSelect';
-import TaskCard from './TaskCard';
+import TaskCard from './common/TaskCard';
 
 const AUTHENTIC_ASSOCIATES = [
   { id: 'all', name: 'Tous les associés', shortName: 'Tous' },
