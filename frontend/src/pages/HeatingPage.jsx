@@ -558,13 +558,27 @@ export default function HeatingPage({ currentUser }) {
           </div>
 
           <div className="pt-2 border-t border-border-subtle flex items-center justify-between text-xs text-on-surface-variant">
-            <span className="flex items-center gap-1 text-rose-700 font-semibold">
-              <Radio className="h-3.5 w-3.5 text-rose-600" />
-              Klereo CONNECT 868 MHz (Rupture signal)
-            </span>
-            <span className="font-semibold text-rose-800 bg-rose-100 px-2 py-0.5 rounded border border-rose-200">
-              🔒 Lecture seule & Radio KO
-            </span>
+            {poolStatus?.radio_error ? (
+              <>
+                <span className="flex items-center gap-1 text-rose-700 font-semibold">
+                  <Radio className="h-3.5 w-3.5 text-rose-600" />
+                  Klereo CONNECT 868 MHz (Rupture signal)
+                </span>
+                <span className="font-semibold text-rose-800 bg-rose-100 px-2 py-0.5 rounded border border-rose-200">
+                  🔒 Lecture seule & Radio KO
+                </span>
+              </>
+            ) : (
+              <>
+                <span className="flex items-center gap-1 text-emerald-700 font-semibold">
+                  <Radio className="h-3.5 w-3.5 text-emerald-600" />
+                  Klereo CONNECT 868 MHz (Liaison active)
+                </span>
+                <span className="font-semibold text-emerald-800 bg-emerald-100 px-2 py-0.5 rounded border border-emerald-200">
+                  🔒 Lecture seule
+                </span>
+              </>
+            )}
           </div>
         </div>
 

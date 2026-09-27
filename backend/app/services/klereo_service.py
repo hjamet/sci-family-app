@@ -279,11 +279,23 @@ class KlereoService:
 
             # Analyse dynamique liaison radio K-Link 868 MHz
             podinfo = pool_detail.get("podinfo", {})
-            ping_fail = podinfo.get("pingFail", 0)
-            ping_sent = podinfo.get("pingSent", 0)
-            last_ping_s = sys_0.get("lastPing")
-            if last_ping_s is None:
-                last_ping_s = pool_detail.get("lastPing", 0)
+            try:
+                ping_fail = int(podinfo.get("pingFail", 0) or 0)
+            except (ValueError, TypeError):
+                ping_fail = 0
+
+            try:
+                ping_sent = int(podinfo.get("pingSent", 0) or 0)
+            except (ValueError, TypeError):
+                ping_sent = 0
+
+            last_ping_raw = sys_0.get("lastPing")
+            if last_ping_raw is None:
+                last_ping_raw = pool_detail.get("lastPing")
+            try:
+                last_ping_s = int(last_ping_raw) if last_ping_raw is not None else None
+            except (ValueError, TypeError):
+                last_ping_s = None
 
             # Règle de résilience radio (Annotation 7) :
             # Si le dernier contact radio est récent (< 120s), la liaison est pleinement active.
@@ -310,6 +322,10 @@ class KlereoService:
                     msg = decode_alert(a)
                     if msg:
                         decoded_alerts.append(msg)
+
+            # Invariant de résilience absolue : si la liaison radio est établie, aucune fausse alerte radio dans alerts
+            if radio_ok:
+                decoded_alerts = [a for a in decoded_alerts if "radio" not in a.lower() and "k-link" not in a.lower()]
 
             consigne_eau = params.get("ConsigneEau")
             frost_protection_target = float(consigne_eau) if consigne_eau is not None else None

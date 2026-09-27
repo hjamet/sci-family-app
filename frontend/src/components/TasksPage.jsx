@@ -17,150 +17,18 @@ const AUTHENTIC_ASSOCIATES = [
   { id: 'frederic', name: 'Frédéric Jamet', shortName: 'Frédéric' },
 ];
 
-export function resolveUserMeta(currentUser) {
-  let name = '';
-  let id = null;
-  let prenom = '';
-
-  if (typeof currentUser === 'string' && currentUser.trim()) {
-    name = currentUser.trim();
-    prenom = name.split(' ')[0];
-  } else if (currentUser && typeof currentUser === 'object') {
-    id = currentUser.id ?? currentUser.member_id ?? null;
-    prenom = currentUser.prenom || (currentUser.name ? currentUser.name.split(' ')[0] : '');
-    name = currentUser.name || currentUser.fullName || (prenom ? `${prenom} Jamet` : '');
-  }
-
-  if (!prenom) {
-    try {
-      const stored = localStorage.getItem('sci_user');
-      if (stored) {
-        prenom = stored.trim().split(' ')[0];
-        name = stored.includes('Jamet') ? stored.trim() : `${prenom} Jamet`;
-      }
-    } catch (_) {}
-  }
-
-  if (!prenom) prenom = 'Henri';
-  if (!name) name = `${prenom} Jamet`;
-
-  const lowerPrenom = prenom.toLowerCase();
-  const idMap = {
-    henri: 1,
-    hortense: 2,
-    marguerite: 3,
-    eugenie: 4,
-    eugénie: 4,
-    josephine: 5,
-    joséphine: 5,
-    maman: 6,
-    elisabeth: 6,
-    élisabeth: 6,
-    frederic: 7,
-    frédéric: 7,
-  };
-  if (id == null && idMap[lowerPrenom]) {
-    id = idMap[lowerPrenom];
-  }
-
-  return {
-    name,
-    prenom,
-    id: id != null ? Number(id) : null,
-    lowerPrenom,
-    lowerName: name.toLowerCase(),
-  };
-}
-
-export function isTaskOpen(task) {
-  if (!task) return false;
-  const st = (task.status || '').toUpperCase().trim();
-  const closedStatuses = [
-    'TERMINÉE',
-    'TERMINEE',
-    'TERMINE',
-    'TERMINÉ',
-    'VALIDÉ',
-    'VALIDE',
-    'ARCHIVÉ',
-    'ARCHIVEE',
-    'COMPLETED',
-    'ANNULÉE',
-    'ANNULEE',
-  ];
-  return !closedStatuses.includes(st);
-}
-
-export function isTaskPendingValidation(task) {
-  if (!task) return false;
-  const st = (task.status || '').toUpperCase().trim();
-  return st === 'PENDING_VALIDATION' || st === 'EN_ATTENTE_VALIDATION';
-}
-
-export function isTaskAssignedToUser(task, userMeta) {
-  if (!task || !userMeta) return false;
-
-  // 1. Comparaison directe par ID
-  const taskMemberId = task.assigned_member_id ?? task.assignee_id ?? task.member_id ?? task.user_id;
-  if (userMeta.id != null && taskMemberId != null && Number(taskMemberId) === Number(userMeta.id)) {
-    return true;
-  }
-
-  // 2. Correspondance par prénom ou nom dans assignee ou assignee_name
-  const assigneeStr = (task.assignee || task.assignee_name || '').toLowerCase();
-  if (assigneeStr) {
-    if (userMeta.lowerPrenom && assigneeStr.includes(userMeta.lowerPrenom)) return true;
-    if (userMeta.lowerName && (assigneeStr.includes(userMeta.lowerName) || userMeta.lowerName.includes(assigneeStr))) return true;
-  }
-
-  // 3. Correspondance dans assigned_members (tableau d'objets, tableau de chaînes, ou JSON encodé)
-  let members = [];
-  if (Array.isArray(task.assigned_members)) {
-    members = task.assigned_members;
-  } else if (typeof task.assigned_members === 'string' && task.assigned_members.trim()) {
-    try {
-      const parsed = JSON.parse(task.assigned_members);
-      if (Array.isArray(parsed)) members = parsed;
-      else members = [task.assigned_members];
-    } catch (_) {
-      members = [task.assigned_members];
-    }
-  }
-
-  for (const m of members) {
-    if (typeof m === 'object' && m !== null) {
-      if (userMeta.id != null && m.id != null && Number(m.id) === Number(userMeta.id)) return true;
-      const mName = (m.name || m.prenom || '').toLowerCase();
-      if (userMeta.lowerPrenom && mName.includes(userMeta.lowerPrenom)) return true;
-      if (userMeta.lowerName && mName.includes(userMeta.lowerName)) return true;
-    } else if (typeof m === 'string') {
-      const mStr = m.toLowerCase();
-      if (userMeta.lowerPrenom && mStr.includes(userMeta.lowerPrenom)) return true;
-      if (userMeta.lowerName && mStr.includes(userMeta.lowerName)) return true;
-    }
-  }
-
-  // 4. Mention explicite dans le titre ou la description (ex: "[Référent: Henri]" ou "[Référente: Joséphine]")
-  const fullText = `${task.title || ''} ${task.description || ''}`.toLowerCase();
-  if (userMeta.lowerPrenom) {
-    if (
-      fullText.includes(`[référent: ${userMeta.lowerPrenom}`) ||
-      fullText.includes(`[référente: ${userMeta.lowerPrenom}`) ||
-      fullText.includes(`[référent : ${userMeta.lowerPrenom}`) ||
-      fullText.includes(`[référente : ${userMeta.lowerPrenom}`)
-    ) {
-      return true;
-    }
-  }
-
-  // 5. Fallback created_by si pas d'autre assignation
-  if (!assigneeStr && members.length === 0 && !taskMemberId && task.created_by) {
-    const creatorStr = String(task.created_by).toLowerCase();
-    if (userMeta.lowerPrenom && creatorStr.includes(userMeta.lowerPrenom)) return true;
-  }
-
-  return false;
-}
+export {
+  resolveUserMeta,
+  isTaskOpen,
+  isTaskPendingValidation,
+  isTaskAssignedToUser,
+} from '../utils/taskAssignment';
+import {
+  resolveUserMeta,
+  isTaskOpen,
+  isTaskPendingValidation,
+  isTaskAssignedToUser,
+} from '../utils/taskAssignment';
 
 export default function TasksPage({ currentUser = 'Henri Jamet' }) {
   const navigate = useNavigate();
