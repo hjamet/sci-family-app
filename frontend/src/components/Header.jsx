@@ -1,4 +1,5 @@
 import React, { useState, useRef, useEffect } from 'react';
+import { fetchTasks, fetchProjects, fetchPiscineStatus } from '../api';
 
 // Logo SVG épuré et architectural : Monogramme 'H' surmonté du toit de la bâtisse familiale
 function HouseHLogo({ className = "w-10 h-10" }) {
@@ -54,28 +55,207 @@ export default function Header({
   onNavigate,
 }) {
   const [isUserMenuOpen, setIsUserMenuOpen] = useState(false);
+  const [isNotifOpen, setIsNotifOpen] = useState(false);
   const [isMobileMenuOpen, setIsMobileMenuOpen] = useState(false);
   const dropdownRef = useRef(null);
+  const notifRef = useRef(null);
   const mobileMenuRef = useRef(null);
 
   const displayName = typeof currentUser === 'object'
     ? (currentUser?.prenom ? `${currentUser.prenom} ${currentUser.nom || 'Jamet'}` : 'Henri Jamet')
     : (currentUser || 'Henri Jamet');
 
+  const [notifications, setNotifications] = useState([
+    {
+      id: 'notif-vote-roof',
+      title: 'Vote toiture ouvert',
+      description: 'Consultation sur le devis Riffael & Denis (2 400 €).',
+      type: 'vote',
+      path: '/taches',
+      tabId: 'taches',
+      time: 'En cours',
+      icon: 'how_to_vote',
+    },
+    {
+      id: 'notif-task-placo',
+      title: 'Tâche assignée : Placo bibliothèque',
+      description: 'Chantier prioritaire suite à infiltration.',
+      type: 'task',
+      path: '/taches',
+      tabId: 'taches',
+      time: 'Prioritaire',
+      icon: 'assignment_ind',
+    },
+    {
+      id: 'notif-pool-ph',
+      title: 'Alerte Bassin Klereo',
+      description: 'Niveau bas bidon pH à renouveler.',
+      type: 'alert',
+      path: '/sejour',
+      tabId: 'sejour',
+      time: 'Télémétrie',
+      icon: 'pool',
+    },
+  ]);
+
+  const [readNotifIds, setReadNotifIds] = useState(() => {
+    try {
+      const saved = localStorage.getItem('sci_read_notifications');
+      return saved ? JSON.parse(saved) : [];
+    } catch {
+      return [];
+    }
+  });
+
+  useEffect(() => {
+    let isMounted = true;
+    async function loadDynamicNotifications() {
+      try {
+        const [poolRes, projRes, taskRes] = await Promise.allSettled([
+          fetchPiscineStatus(),
+          fetchProjects(),
+          fetchTasks(),
+        ]);
+
+        const dynamicNotifs = [];
+
+        // 1. Alertes piscine réelles
+        if (poolRes.status === 'fulfilled' && poolRes.value?.alerts?.length > 0) {
+          poolRes.value.alerts.forEach((alertText, idx) => {
+            dynamicNotifs.push({
+              id: `pool-alert-${idx}`,
+              title: 'Alerte Équipement Piscine',
+              description: alertText,
+              type: 'alert',
+              path: '/sejour',
+              tabId: 'sejour',
+              time: 'Télémétrie',
+              icon: 'pool',
+            });
+          });
+        }
+
+        // 2. Projets en vote ouvert
+        if (projRes.status === 'fulfilled' && Array.isArray(projRes.value)) {
+          projRes.value
+            .filter((p) => p.status === 'voting' || p.status === 'open' || p.is_voting)
+            .forEach((p) => {
+              dynamicNotifs.push({
+                id: `proj-vote-${p.id}`,
+                title: `Vote ouvert : ${p.title}`,
+                description: p.description ? p.description.slice(0, 75) + '...' : 'Votre avis d\'associé est requis.',
+                type: 'vote',
+                path: '/taches',
+                tabId: 'taches',
+                time: 'Vote actif',
+                icon: 'how_to_vote',
+              });
+            });
+        }
+
+        // 3. Tâches urgentes ou assignées
+        if (taskRes.status === 'fulfilled' && Array.isArray(taskRes.value)) {
+          const userFirst = typeof currentUser === 'string' ? currentUser.split(' ')[0] : (currentUser?.prenom || 'Henri');
+          taskRes.value
+            .filter((t) => {
+              if (t.status === 'DONE' || t.status === 'VALIDE') return false;
+              const assigned = Array.isArray(t.assigned_members) ? t.assigned_members.join(' ') : String(t.responsible || '');
+              return assigned.toLowerCase().includes(userFirst.toLowerCase()) || t.priority === 'URGENT';
+            })
+            .slice(0, 3)
+            .forEach((t) => {
+              dynamicNotifs.push({
+                id: `task-assign-${t.id}`,
+                title: `${t.priority === 'URGENT' ? '🚨 ' : ''}${t.title}`,
+                description: t.description ? t.description.slice(0, 75) + '...' : 'Tâche en attente d\'action.',
+                type: 'task',
+                path: '/taches',
+                tabId: 'taches',
+                time: t.priority === 'URGENT' ? 'Urgent' : 'En cours',
+                icon: 'assignment_ind',
+              });
+            });
+        }
+
+        if (isMounted && dynamicNotifs.length > 0) {
+          setNotifications((prev) => {
+            const existingIds = new Set(prev.map((n) => n.id));
+            const newOnes = dynamicNotifs.filter((n) => !existingIds.has(n.id));
+            return [...newOnes, ...prev];
+          });
+        }
+      } catch (err) {
+        console.warn('Erreur chargement notifications dynamiques:', err);
+      }
+    }
+
+    loadDynamicNotifications();
+    return () => {
+      isMounted = false;
+    };
+  }, [currentUser]);
+
   useEffect(() => {
     function handleClickOutside(event) {
       if (dropdownRef.current && !dropdownRef.current.contains(event.target)) {
         setIsUserMenuOpen(false);
       }
+      if (notifRef.current && !notifRef.current.contains(event.target)) {
+        setIsNotifOpen(false);
+      }
       if (mobileMenuRef.current && !mobileMenuRef.current.contains(event.target)) {
         setIsMobileMenuOpen(false);
       }
     }
+
+    function handleKeyDown(event) {
+      if (event.key === 'Escape') {
+        setIsNotifOpen(false);
+        setIsUserMenuOpen(false);
+        setIsMobileMenuOpen(false);
+      }
+    }
+
     document.addEventListener('mousedown', handleClickOutside);
+    document.addEventListener('keydown', handleKeyDown);
     return () => {
       document.removeEventListener('mousedown', handleClickOutside);
+      document.removeEventListener('keydown', handleKeyDown);
     };
   }, []);
+
+  const unreadCount = notifications.filter((n) => !readNotifIds.includes(n.id)).length;
+
+  const markAllAsRead = (e) => {
+    if (e) e.stopPropagation();
+    const allIds = notifications.map((n) => n.id);
+    const updated = Array.from(new Set([...readNotifIds, ...allIds]));
+    setReadNotifIds(updated);
+    try {
+      localStorage.setItem('sci_read_notifications', JSON.stringify(updated));
+    } catch (err) {
+      console.warn('Erreur persistance readNotifIds:', err);
+    }
+  };
+
+  const handleNotificationClick = (notif) => {
+    if (!readNotifIds.includes(notif.id)) {
+      const updated = [...readNotifIds, notif.id];
+      setReadNotifIds(updated);
+      try {
+        localStorage.setItem('sci_read_notifications', JSON.stringify(updated));
+      } catch (err) {
+        console.warn('Erreur persistance readNotifIds:', err);
+      }
+    }
+    setIsNotifOpen(false);
+    if (setActiveTab && notif.tabId) {
+      setActiveTab(notif.tabId);
+    }
+    if (onNavigate && notif.path) {
+      onNavigate(notif.path, notif.tabId);
+    }
+  };
 
   const handleTabClick = (item) => {
     if (setActiveTab) {

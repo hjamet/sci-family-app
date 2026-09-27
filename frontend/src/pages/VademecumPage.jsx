@@ -13,10 +13,11 @@ import {
 } from '../api';
 import SejourCutoffMapModal from '../components/sejour/SejourCutoffMapModal';
 import SejourDepartureChecklistModal from '../components/sejour/SejourDepartureChecklistModal';
-import SejourTaskModal from '../components/sejour/SejourTaskModal';
+import TaskDetailModal from '../components/TaskDetailModal';
 import BookingModal from '../components/BookingModal';
 import { ThermalMetricSkeleton, StayCardSkeleton } from '../components/SkeletonLoaders';
 import CustomSelect from '../components/CustomSelect';
+import { extractParticipants } from './CalendarPage';
 
 function resolveCurrentUserFullName(user) {
   if (typeof user === 'string' && user.trim()) return user.trim();
@@ -61,6 +62,22 @@ function formatShutdownSchedule(stay) {
   const dateFormatted = formatDateReadable(stay.end_date);
   const depTime = stay.departure_time || '11:00';
   return `${dateFormatted} à ${depTime} (au départ des lieux)`;
+}
+
+function formatThermalTimeSlot(dateStr, timeStr, offsetHours = 0) {
+  if (!dateStr) return '';
+  const d = new Date(dateStr);
+  if (isNaN(d.getTime())) return dateStr;
+  const daysShort = ['dim.', 'lun.', 'mar.', 'mer.', 'jeu.', 'ven.', 'sam.'];
+  const dayName = daysShort[d.getDay()];
+
+  let hour = 15;
+  if (timeStr) {
+    const h = parseInt(String(timeStr).split(':')[0], 10);
+    if (!isNaN(h)) hour = h;
+  }
+  const targetHour = Math.max(0, Math.min(23, hour + offsetHours));
+  return `${dayName} ${targetHour}h`;
 }
 
 function formatPureRoomName(raw) {
@@ -633,28 +650,65 @@ export default function VademecumPage({ properties, currentUser }) {
                 </div>
               </div>
 
-              {/* Capacity & Occupants breakdown */}
-              <div className="flex flex-wrap items-center gap-2.5 pt-1">
-                <div className="inline-flex items-center gap-2 p-1.5 px-3 rounded-xl bg-sage-soft border border-sage-border text-on-surface shadow-sm">
-                  <div className="w-6 h-6 rounded-full bg-primary text-on-primary flex items-center justify-center shrink-0">
-                    <span className="material-symbols-outlined text-[16px]">person</span>
-                  </div>
-                  <div className="flex items-center gap-1.5 font-label-sm text-label-sm">
-                    <span className="font-bold text-primary">{currentStay.user_name}</span>
-                  </div>
-                </div>
+              {/* Capacity & Occupants breakdown (Annotation 6 : Badges nominatifs distincts Membres émeraude vs Invités ambre) */}
+              {(() => {
+                const { members: rawMembers = [], guests: rawGuests = [] } = currentStay
+                  ? extractParticipants(currentStay)
+                  : { members: [], guests: [] };
 
-                {currentStay.guest_count > 1 && (
-                  <div className="inline-flex items-center gap-2 p-1.5 px-3 rounded-xl bg-canvas-slate border border-border-subtle text-on-surface shadow-sm">
-                    <div className="w-6 h-6 rounded-full bg-secondary-container/15 text-secondary flex items-center justify-center shrink-0">
-                      <span className="material-symbols-outlined text-[16px]">group</span>
-                    </div>
-                    <div className="flex items-center gap-1.5 font-label-sm text-label-sm">
-                      <span className="font-semibold text-on-surface">{currentStay.guest_count} personnes</span>
-                    </div>
+                let membersList = [...rawMembers];
+                if (
+                  currentStay?.user_name &&
+                  !membersList.some(
+                    (m) =>
+                      m.toLowerCase().includes(currentStay.user_name.toLowerCase()) ||
+                      currentStay.user_name.toLowerCase().includes(m.toLowerCase())
+                  )
+                ) {
+                  membersList.unshift(currentStay.user_name);
+                }
+
+                let guestsList = [...rawGuests];
+                const totalDeclared = currentStay?.guest_count || (membersList.length + guestsList.length) || 1;
+                const unnamedGuestsCount = Math.max(0, totalDeclared - membersList.length - guestsList.length);
+                if (unnamedGuestsCount > 0 && guestsList.length === 0) {
+                  for (let i = 1; i <= unnamedGuestsCount; i++) {
+                    guestsList.push(`Invité ${i}`);
+                  }
+                }
+
+                return (
+                  <div className="flex flex-wrap items-center gap-2 pt-1">
+                    {/* Membres de la famille (Vert émeraude / sauge) */}
+                    {membersList.map((member, mIdx) => (
+                      <div
+                        key={`mem-${mIdx}`}
+                        className="inline-flex items-center gap-1.5 px-3 py-1 rounded-xl bg-emerald-50 dark:bg-emerald-950/40 border border-emerald-200 dark:border-emerald-800/60 text-emerald-900 dark:text-emerald-200 shadow-2xs font-label-sm text-xs font-semibold"
+                      >
+                        <div className="w-5 h-5 rounded-full bg-emerald-700 text-white flex items-center justify-center shrink-0">
+                          <span className="material-symbols-outlined text-[13px]">person</span>
+                        </div>
+                        <span>{member}</span>
+                        <span className="text-[10px] text-emerald-600 dark:text-emerald-400 font-medium">Famille</span>
+                      </div>
+                    ))}
+
+                    {/* Invités extérieurs dédiés (Teinte ambre / ocre raffinée) */}
+                    {guestsList.map((guest, gIdx) => (
+                      <div
+                        key={`gst-${gIdx}`}
+                        className="inline-flex items-center gap-1.5 px-3 py-1 rounded-xl bg-amber-50 dark:bg-amber-950/40 border border-amber-200 dark:border-amber-800/50 text-amber-900 dark:text-amber-200 shadow-2xs font-label-sm text-xs font-semibold"
+                      >
+                        <div className="w-5 h-5 rounded-full bg-amber-600 text-white flex items-center justify-center shrink-0">
+                          <span className="material-symbols-outlined text-[13px]">person_add</span>
+                        </div>
+                        <span>{guest}</span>
+                        <span className="text-[10px] text-amber-700 dark:text-amber-400 font-medium">Invité</span>
+                      </div>
+                    ))}
                   </div>
-                )}
-              </div>
+                );
+              })()}
 
               {/* Annotation 3 : Noms purs des chambres sélectionnées sans mention de couchages */}
               <div className="flex flex-col gap-2 pt-1 font-label-sm text-label-sm text-on-surface-variant">
@@ -722,54 +776,6 @@ export default function VademecumPage({ properties, currentUser }) {
           </div>
         </div>
 
-        {/* Cycles Automatiques asservis au séjour (Pages 1 à N uniquement - Conforme Stitch) */}
-        {currentPageIndex > 0 && currentStay && (
-          <div className="p-4 sm:p-5 rounded-2xl bg-gradient-to-r from-emerald-50 via-teal-50/70 to-emerald-50/50 border border-emerald-200/80 flex flex-col md:flex-row md:items-center justify-between gap-4 text-xs shadow-xs">
-            <div className="flex items-start sm:items-center gap-3">
-              <div className="w-10 h-10 rounded-xl bg-primary text-white flex items-center justify-center shrink-0 shadow-xs">
-                <span className="material-symbols-outlined text-[22px]">schedule</span>
-              </div>
-              <div>
-                <div className="font-bold text-forest-deep text-sm flex items-center gap-2 flex-wrap">
-                  <span>Cycles Automatiques ViCare du Séjour</span>
-                  <span className="px-2 py-0.5 rounded-full bg-emerald-200/80 text-emerald-950 font-mono text-[10px] font-bold">
-                    Asservissement Calendrier
-                  </span>
-                </div>
-                <p className="text-on-surface-variant text-[11px] mt-0.5">
-                  Mise en marche anticipée et extinction programmées selon les horaires de votre séjour.
-                </p>
-              </div>
-            </div>
-
-            <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 shrink-0">
-              <div className="flex items-center gap-3 bg-white/90 px-3.5 py-2.5 rounded-xl border border-emerald-200 shadow-2xs">
-                <div className="w-8 h-8 rounded-lg bg-emerald-100 text-emerald-800 flex items-center justify-center shrink-0">
-                  <span className="material-symbols-outlined text-[18px]">heat</span>
-                </div>
-                <div>
-                  <span className="text-[10px] uppercase font-bold text-on-surface-variant block">Préchauffage auto (19°C)</span>
-                  <span className="font-bold text-forest-deep text-xs">
-                    {formatPreheatingSchedule(currentStay)}
-                  </span>
-                </div>
-              </div>
-
-              <div className="flex items-center gap-3 bg-white/90 px-3.5 py-2.5 rounded-xl border border-emerald-200 shadow-2xs">
-                <div className="w-8 h-8 rounded-lg bg-slate-100 text-slate-700 flex items-center justify-center shrink-0">
-                  <span className="material-symbols-outlined text-[18px]">mode_fan_off</span>
-                </div>
-                <div>
-                  <span className="text-[10px] uppercase font-bold text-on-surface-variant block">Extinction & Hors-gel (12°C)</span>
-                  <span className="font-bold text-forest-deep text-xs">
-                    {formatShutdownSchedule(currentStay)}
-                  </span>
-                </div>
-              </div>
-            </div>
-          </div>
-        )}
-
         {telemetryLoading ? (
           <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
             <ThermalMetricSkeleton title="Supervision Chauffage (ViCare)..." />
@@ -793,6 +799,24 @@ export default function VademecumPage({ properties, currentUser }) {
                   </span>
                 </div>
               </div>
+
+              {/* Consigne et Horaires prévus pour le séjour (Annotation 8 Stitch) */}
+              {currentPageIndex > 0 && currentStay && (
+                <div className="p-3 bg-emerald-50/90 dark:bg-emerald-950/30 rounded-xl border border-emerald-200/80 dark:border-emerald-800/50 flex items-center justify-between gap-2 shadow-2xs">
+                  <div className="flex items-center gap-2 min-w-0">
+                    <span className="material-symbols-outlined text-primary text-[18px] shrink-0">schedule</span>
+                    <div className="flex flex-col min-w-0">
+                      <span className="text-[10px] uppercase font-bold text-on-surface-variant leading-none">Horaires séjour</span>
+                      <span className="text-xs font-bold text-forest-deep dark:text-emerald-200 truncate mt-0.5">
+                        Démarrage prévu {formatThermalTimeSlot(currentStay.start_date, currentStay.arrival_time || '15:00', -5)} • Arrêt {formatThermalTimeSlot(currentStay.end_date, currentStay.departure_time || '11:00', 0)}
+                      </span>
+                    </div>
+                  </div>
+                  <span className="px-2 py-1 rounded-md bg-white dark:bg-slate-900 border border-emerald-200 dark:border-emerald-800/50 text-primary font-bold text-xs shrink-0 tabular-nums">
+                    {heatingTarget.toFixed(1)}°C
+                  </span>
+                </div>
+              )}
 
               {/* Fail-Fast ViCare Alert (Annotation 4 & 6) */}
               {heatingError && (
@@ -929,6 +953,24 @@ export default function VademecumPage({ properties, currentUser }) {
                 </div>
               </div>
 
+              {/* Consigne et Horaires prévus pour le séjour (Annotation 8 Stitch) */}
+              {currentPageIndex > 0 && currentStay && (
+                <div className="p-3 bg-emerald-50/90 dark:bg-emerald-950/30 rounded-xl border border-emerald-200/80 dark:border-emerald-800/50 flex items-center justify-between gap-2 shadow-2xs">
+                  <div className="flex items-center gap-2 min-w-0">
+                    <span className="material-symbols-outlined text-primary text-[18px] shrink-0">schedule</span>
+                    <div className="flex flex-col min-w-0">
+                      <span className="text-[10px] uppercase font-bold text-on-surface-variant leading-none">Horaires séjour</span>
+                      <span className="text-xs font-bold text-forest-deep dark:text-emerald-200 truncate mt-0.5">
+                        Relance ECS dès {formatThermalTimeSlot(currentStay.start_date, currentStay.arrival_time || '15:00', -5)} • Arrêt {formatThermalTimeSlot(currentStay.end_date, currentStay.departure_time || '11:00', 0)}
+                      </span>
+                    </div>
+                  </div>
+                  <span className="px-2 py-1 rounded-md bg-white dark:bg-slate-900 border border-emerald-200 dark:border-emerald-800/50 text-primary font-bold text-xs shrink-0 tabular-nums">
+                    {dhwTarget.toFixed(1)}°C
+                  </span>
+                </div>
+              )}
+
               {/* DHW Target temperature control */}
               <div className="p-3.5 bg-white rounded-xl border border-border-subtle flex items-center justify-between gap-2 shadow-sm">
                 <div className="flex flex-col min-w-0 pr-1">
@@ -1001,6 +1043,24 @@ export default function VademecumPage({ properties, currentUser }) {
                   </span>
                 </div>
               </div>
+
+              {/* Consigne et Horaires prévus pour le séjour (Annotation 8 Stitch) */}
+              {currentPageIndex > 0 && currentStay && (
+                <div className="p-3 bg-emerald-50/90 dark:bg-emerald-950/30 rounded-xl border border-emerald-200/80 dark:border-emerald-800/50 flex items-center justify-between gap-2 shadow-2xs">
+                  <div className="flex items-center gap-2 min-w-0">
+                    <span className="material-symbols-outlined text-primary text-[18px] shrink-0">schedule</span>
+                    <div className="flex flex-col min-w-0">
+                      <span className="text-[10px] uppercase font-bold text-on-surface-variant leading-none">Régulation séjour</span>
+                      <span className="text-xs font-bold text-forest-deep dark:text-emerald-200 truncate mt-0.5">
+                        Filtration auto asservie aux dates du séjour
+                      </span>
+                    </div>
+                  </div>
+                  <span className="px-2 py-1 rounded-md bg-white dark:bg-slate-900 border border-emerald-200 dark:border-emerald-800/50 text-primary font-bold text-xs shrink-0 tabular-nums">
+                    {poolTarget.toFixed(1)}°C
+                  </span>
+                </div>
+              )}
 
               {/* Alerte Radio Klereo si anomalie radio avérée renvoyée par l'API */}
               {piscineStatus?.radio_error && piscineStatus?.radio_alert && (
@@ -1166,7 +1226,8 @@ export default function VademecumPage({ properties, currentUser }) {
               return (
                 <article
                   key={task.id || idx}
-                  className={`rounded-xl p-5 border shadow-sm flex flex-col justify-between gap-4 transition-all hover:shadow-md ${
+                  onClick={() => handleOpenTaskDetail(task)}
+                  className={`rounded-xl p-5 border shadow-sm flex flex-col justify-between gap-4 transition-all hover:shadow-md cursor-pointer group ${
                     isCompleted
                       ? 'bg-sage-soft/30 border-sage-border'
                       : isHigh
@@ -1194,7 +1255,7 @@ export default function VademecumPage({ properties, currentUser }) {
                     </div>
 
                     <div>
-                      <h3 className="font-headline-sm text-headline-sm text-forest-deep font-bold">
+                      <h3 className="font-headline-sm text-headline-sm text-forest-deep font-bold group-hover:text-primary transition-colors">
                         {task.title}
                       </h3>
                       <p className="font-body-md text-on-surface-variant text-xs leading-relaxed mt-1">
@@ -1215,20 +1276,38 @@ export default function VademecumPage({ properties, currentUser }) {
                         )}
                       </div>
                     </div>
-                    <button
-                      onClick={() => handleToggleTaskComplete(task.id)}
-                      className={`inline-flex items-center gap-1.5 px-4 py-2 rounded-DEFAULT border-2 font-label-sm text-xs font-bold transition-colors shadow-sm cursor-pointer ${
-                        isCompleted
-                          ? 'bg-sage-soft border-primary text-primary hover:bg-emerald-100'
-                          : 'bg-white border-primary text-primary hover:bg-sage-soft'
-                      }`}
-                      type="button"
-                    >
-                      <span className="material-symbols-outlined text-[16px]">
-                        {isCompleted ? 'verified' : 'check_circle'}
-                      </span>
-                      <span>{isCompleted ? 'Action Validée ✅' : 'Valider l’action'}</span>
-                    </button>
+                    <div className="flex items-center gap-2">
+                      <button
+                        type="button"
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          handleOpenTaskDetail(task);
+                        }}
+                        className="inline-flex items-center gap-1.5 px-3 py-2 rounded-xl bg-canvas-slate hover:bg-surface-container border border-border-subtle text-on-surface font-label-sm text-xs font-semibold transition-colors shadow-2xs cursor-pointer"
+                        title="Consulter le détail de la tâche"
+                      >
+                        <span className="material-symbols-outlined text-[16px] text-primary">visibility</span>
+                        <span>Consulter</span>
+                      </button>
+
+                      <button
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          handleToggleTaskComplete(task.id);
+                        }}
+                        className={`inline-flex items-center gap-1.5 px-3.5 py-2 rounded-xl border-2 font-label-sm text-xs font-bold transition-colors shadow-sm cursor-pointer ${
+                          isCompleted
+                            ? 'bg-sage-soft border-primary text-primary hover:bg-emerald-100'
+                            : 'bg-white border-primary text-primary hover:bg-sage-soft'
+                        }`}
+                        type="button"
+                      >
+                        <span className="material-symbols-outlined text-[16px]">
+                          {isCompleted ? 'verified' : 'check_circle'}
+                        </span>
+                        <span>{isCompleted ? 'Validée ✅' : 'Valider'}</span>
+                      </button>
+                    </div>
                   </div>
                 </article>
               );
@@ -1564,15 +1643,16 @@ export default function VademecumPage({ properties, currentUser }) {
         onClose={() => setIsChecklistModalOpen(false)}
       />
 
-      {/* Modal 3: Task Detail */}
-      <SejourTaskModal
+      {/* Modal 3: Task Detail (Annotation 9 : Modale unifiée TaskDetailModal) */}
+      <TaskDetailModal
         task={selectedTask}
         isOpen={isTaskModalOpen}
         onClose={() => {
           setIsTaskModalOpen(false);
           setSelectedTask(null);
         }}
-        onToggleComplete={handleToggleTaskComplete}
+        currentUser={currentUser}
+        onTaskUpdated={loadInitialData}
       />
 
       {/* Modal 4: BookingModal (Annotation 9 : Véritable BookingModal prérempli au clic sur Modifier) */}

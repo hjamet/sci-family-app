@@ -3,6 +3,7 @@ import {
   fetchTaskById,
   updateTask,
   createTask,
+  createProject,
   closeTask,
   deleteTask,
   fetchTaskComments,
@@ -46,10 +47,28 @@ export default function TaskDetailModal({
   initialMode = 'view',
   isEditing = false,
 }) {
+  const isVoteInitiative = !!(initialTask?.isVoteInitiative || initialTask?.isVote || initialTask?.is_project);
   const isNewTask = !initialTask || !initialTask.id || isEditing || initialMode === 'edit';
   const [task, setTask] = useState(initialTask || {});
   const [mode, setMode] = useState(isNewTask ? 'edit' : (initialMode || 'view')); // 'view' | 'edit'
-  const [comments, setComments] = useState([]);
+  
+  // Initialisation des commentaires (avec message d'accueil si nouvelle création)
+  const [comments, setComments] = useState(() => {
+    if (isNewTask) {
+      return [
+        {
+          id: 'welcome-1',
+          author_name: 'Coordination SCI',
+          content: isVoteInitiative 
+            ? "Fil de concertation ouvert pour cette initiative. Vous pouvez échanger avec les associés avant et pendant le vote."
+            : "Fil de discussion ouvert pour la préparation et le suivi de cette mission.",
+          created_at: new Date().toISOString(),
+          reactions: {},
+        }
+      ];
+    }
+    return [];
+  });
 
   // Visionneuse universelle intégrée (Annotation 9)
   const [viewerDoc, setViewerDoc] = useState(null);
@@ -161,9 +180,9 @@ export default function TaskDetailModal({
     const taskObj = initialTask && initialTask.id ? initialTask : {
       title: initialTask?.title || '',
       description: initialTask?.description || '',
-      subject: initialTask?.subject || 'Rosing',
-      complexity: initialTask?.complexity || 'Modérée',
-      budget: initialTask?.budget || 0,
+      subject: initialTask?.subject || (isVoteInitiative ? 'Presbytère' : 'Rosing'),
+      complexity: initialTask?.complexity || (isVoteInitiative ? 'Élevée' : 'Modérée'),
+      budget: initialTask?.budget || (isVoteInitiative ? 1500 : 0),
       assigned_members: initialTask?.assigned_members || [currentUserName || 'Henri Jamet'],
       checklist: initialTask?.checklist || [
         { text: 'Diagnostic initial et constat sur place', done: false },
@@ -190,8 +209,6 @@ export default function TaskDetailModal({
             syncEditFields(updatedTask);
             setComments(taskComments || []);
           }
-        } else {
-          if (isMounted) setComments([]);
         }
       } catch (err) {
         console.error('Erreur chargement détails tâche:', err);
@@ -202,15 +219,15 @@ export default function TaskDetailModal({
     return () => {
       isMounted = false;
     };
-  }, [isOpen, initialTask, initialMode, isEditing]);
+  }, [isOpen, initialTask, initialMode, isEditing, isVoteInitiative]);
 
   const syncEditFields = (t) => {
     if (!t) return;
     setEditTitle(t.title || '');
     setEditDescription(t.description || '');
-    setEditSubject(t.subject || 'Rosing');
-    setEditComplexity(t.complexity || 'Modérée');
-    setEditBudget(t.budget || 0);
+    setEditSubject(t.subject || (isVoteInitiative ? 'Presbytère' : 'Rosing'));
+    setEditComplexity(t.complexity || (isVoteInitiative ? 'Élevée' : 'Modérée'));
+    setEditBudget(t.budget || t.estimated_cost || (isVoteInitiative ? 1500 : 0));
     setEditMembers(t.assigned_members || (t.assignee ? [t.assignee] : ['Henri Jamet']));
     setEditChecklist(
       Array.isArray(t.checklist) && t.checklist.length > 0
@@ -248,11 +265,11 @@ export default function TaskDetailModal({
     }
   };
 
-  // Save changes in Edit Mode (ou Création de nouvelle tâche - Annotation 16)
+  // Save changes in Edit Mode (ou Création de nouvelle tâche / vote unifié - Annotation 2 & 16)
   const handleSaveEdit = async () => {
     try {
       if (!editTitle.trim()) {
-        alert('Veuillez renseigner un titre pour la tâche.');
+        alert(isVoteInitiative ? "Veuillez renseigner un titre pour l'initiative au vote." : "Veuillez renseigner un titre pour la tâche.");
         return;
       }
 
@@ -269,7 +286,7 @@ export default function TaskDetailModal({
         assigned_members: editMembers && editMembers.length > 0 ? editMembers : [currentUserName || 'Henri Jamet'],
         assignee: editMembers?.[0] || currentUserName || 'Henri Jamet',
         created_by: currentUserName || 'Henri Jamet',
-        status: 'EN_COURS',
+        status: isVoteInitiative ? 'EN_VOTE' : 'EN_COURS',
         progress: 0,
       };
 
@@ -279,17 +296,30 @@ export default function TaskDetailModal({
         setMode('view');
         if (onTaskUpdated) onTaskUpdated();
       } else {
-        // Création d'une nouvelle tâche (Annotation 16)
+        // Création unifiée (Tâche standard ou Initiative de vote - Annotation 2)
         try {
-          await createTask(payload);
+          if (isVoteInitiative) {
+            await createProject({
+              title: editTitle.trim(),
+              description: editDescription.trim(),
+              estimated_cost: parseFloat(editBudget) || 0,
+              category: editSubject,
+              property_id: 1,
+              submitted_by: currentUserName || 'Henri Jamet',
+              status: 'EN_VOTE',
+              checklist: editChecklist,
+            });
+          } else {
+            await createTask(payload);
+          }
         } catch (apiErr) {
-          console.warn('API createTask notice, fallback local:', apiErr);
+          console.warn('API create notice, fallback local:', apiErr);
         }
         if (onTaskUpdated) onTaskUpdated();
         onClose();
       }
     } catch (err) {
-      console.error('Erreur sauvegarde tâche:', err);
+      console.error('Erreur sauvegarde:', err);
       alert(err.message || 'Erreur lors de la sauvegarde des modifications.');
     } finally {
       setSavingEdit(false);
@@ -351,7 +381,7 @@ export default function TaskDetailModal({
           author_name: authorName,
         });
       } else {
-        // Fallback local demo comment
+        // En mode création préalable (Annotation 2), conservation locale fluide
         confirmedComment = {
           id: Date.now(),
           author_name: authorName,
@@ -369,17 +399,17 @@ export default function TaskDetailModal({
         )
       );
     } catch (err) {
-      console.error('Erreur envoi message tâche:', err);
-      // FAIL-FAST: Déclencher l'alerte rouge globale
-      window.dispatchEvent(
-        new CustomEvent('app-error', {
-          detail: {
-            message: "Échec de l'envoi du message : " + (err.message || 'Erreur réseau'),
-            status: 500,
-          },
-        })
-      );
-      // Conserver le message dans la discussion avec statut d'erreur et bouton [Réessayer]
+      console.error('Erreur envoi message:', err);
+      if (task?.id) {
+        window.dispatchEvent(
+          new CustomEvent('app-error', {
+            detail: {
+              message: "Échec de l'envoi du message : " + (err.message || 'Erreur réseau'),
+              status: 500,
+            },
+          })
+        );
+      }
       setComments((prev) =>
         prev.map((c) =>
           c.id === tempId
@@ -412,10 +442,7 @@ export default function TaskDetailModal({
       isError: false,
     };
 
-    // 1 & 2. Ajout optimiste immédiat dans le state des messages
     setComments((prev) => [...prev, tempMessage]);
-
-    // 3. Appel réseau en tâche de fond
     sendCommentToServer(tempId, text.trim(), authorName);
   };
 
@@ -438,7 +465,6 @@ export default function TaskDetailModal({
         const updated = await reactToTaskComment(task.id, commentId, emoji, currentUser);
         setComments(comments.map((c) => (c.id === commentId ? updated : c)));
       } else {
-        // Local simulation
         setComments(
           comments.map((c) => {
             if (c.id === commentId) {
@@ -491,21 +517,25 @@ export default function TaskDetailModal({
         {/* ========================================== */}
         <header className="bg-surface-container-low px-4 sm:px-6 py-3.5 flex flex-wrap items-center justify-between gap-3 shrink-0 border-b border-border-subtle">
           <div className="flex flex-wrap items-center gap-2.5">
-            {/* Financial Context Pill */}
-            <div className="flex items-center gap-1.5 px-3.5 py-1.5 rounded-full bg-amber-soft text-amber-rich font-label-md text-xs sm:text-sm font-bold">
+            {/* Financial & Status Context Pill */}
+            <div className={`flex items-center gap-1.5 px-3.5 py-1.5 rounded-full font-label-md text-xs sm:text-sm font-bold ${
+              isVoteInitiative ? 'bg-sage-soft text-forest-deep' : 'bg-amber-soft text-amber-rich'
+            }`}>
               <span className="material-symbols-outlined text-[18px]">
-                {isNewTask ? 'add_task' : 'savings'}
+                {isNewTask ? (isVoteInitiative ? 'how_to_vote' : 'add_task') : (isVoteInitiative ? 'how_to_vote' : 'savings')}
               </span>
               <span>
                 {isNewTask
-                  ? 'Nouvelle tâche — Proposition'
-                  : `Budget alloué : ${task.budget ? `${task.budget.toLocaleString('fr-FR')} €` : '3 900 €'}`}
+                  ? (isVoteInitiative ? 'Initiative statutaire — Soumission au vote' : 'Nouvelle tâche — Proposition')
+                  : (isVoteInitiative
+                    ? `Scrutin statutaire — Budget : ${(task.budget || task.estimated_cost || 0).toLocaleString('fr-FR')} € TTC`
+                    : `Budget alloué : ${(task.budget || task.estimated_cost ? `${(task.budget || task.estimated_cost).toLocaleString('fr-FR')} €` : '3 900 €')}`)}
               </span>
             </div>
           </div>
 
-          <div className="flex items-center gap-2 ml-auto">
-            {/* View / Edit Mode Toggle Button (INTERDIT SI NOUVELLE TÂCHE SANS CONTENU - Annotation 16) */}
+          <div className="flex items-center gap-2.5 flex-1 justify-end">
+            {/* Boutons d'actions principales */}
             {!isNewTask && (
               <button
                 type="button"
@@ -515,20 +545,7 @@ export default function TaskDetailModal({
                 <span className="material-symbols-outlined text-[18px] text-emerald-800">
                   {mode === 'view' ? 'edit_note' : 'visibility'}
                 </span>
-                <span>{mode === 'view' ? 'Éditer la tâche' : 'Consulter'}</span>
-              </button>
-            )}
-
-            {/* Delete Task Button (Annotation 2: Style harmonisé et restriction stricte aux coordinateurs) */}
-            {!isNewTask && isCoordinator && (
-              <button
-                type="button"
-                onClick={handleDeleteTask}
-                className="px-3.5 py-1.5 h-11 rounded-xl border border-rose-200 bg-rose-50 hover:bg-rose-100 text-rose-700 text-xs sm:text-sm font-semibold flex items-center gap-1.5 transition-colors shadow-sm cursor-pointer"
-                title="Supprimer la tâche"
-              >
-                <span className="material-symbols-outlined text-base">delete</span>
-                <span>Supprimer</span>
+                <span>{mode === 'view' ? 'Éditer' : 'Consulter'}</span>
               </button>
             )}
 
@@ -541,7 +558,20 @@ export default function TaskDetailModal({
                 className="inline-flex items-center gap-1.5 h-11 px-4 rounded-xl border-2 font-label-md text-xs sm:text-sm font-bold shadow-sm transition-colors bg-white border-primary text-primary hover:bg-sage-soft cursor-pointer"
               >
                 <span className="material-symbols-outlined text-[18px] text-primary">check_circle</span>
-                <span>Clôturer la tâche</span>
+                <span>Clôturer</span>
+              </button>
+            )}
+
+            {/* Delete Task Button: Harmonisation border-2 et alignement droite ml-auto (Annotation 3) */}
+            {!isNewTask && isCoordinator && (
+              <button
+                type="button"
+                onClick={handleDeleteTask}
+                className="ml-auto px-3.5 py-1.5 h-11 rounded-xl border-2 border-rose-300 dark:border-rose-700 bg-rose-50 dark:bg-rose-950/40 hover:bg-rose-100 dark:hover:bg-rose-900/50 text-rose-700 dark:text-rose-300 text-xs sm:text-sm font-semibold flex items-center gap-1.5 transition-colors shadow-sm cursor-pointer"
+                title="Supprimer la tâche"
+              >
+                <span className="material-symbols-outlined text-base">delete</span>
+                <span>Supprimer</span>
               </button>
             )}
 
@@ -549,7 +579,7 @@ export default function TaskDetailModal({
             <button
               type="button"
               onClick={onClose}
-              className="w-11 h-11 flex items-center justify-center rounded-full bg-white text-on-surface-variant hover:bg-surface-container-high transition-colors cursor-pointer border border-slate-200"
+              className={`w-11 h-11 flex items-center justify-center rounded-full bg-white text-on-surface-variant hover:bg-surface-container-high transition-colors cursor-pointer border border-slate-200 ${(!isNewTask && isCoordinator) ? '' : 'ml-auto'}`}
               title="Fermer la fenêtre"
             >
               <span className="material-symbols-outlined text-[20px]">close</span>
@@ -558,14 +588,14 @@ export default function TaskDetailModal({
         </header>
 
         {/* ========================================== */}
-        {/* 2. MAIN 2-COLUMN BODY (SCROLLABLE)        */}
+        {/* 2. MAIN 2-COLUMN BODY (SCROLLABLE & UNIFIÉ) */}
         {/* ========================================== */}
         <div className="grid grid-cols-1 lg:grid-cols-12 gap-0 overflow-hidden flex-1 divide-y lg:divide-y-0 lg:divide-x divide-border-subtle min-h-0">
           
           {/* ========================================== */}
-          {/* COLONNE GAUCHE : TÂCHE & ÉDITION           */}
+          {/* COLONNE GAUCHE (7 cols) : TÂCHE & ÉDITION  */}
           {/* ========================================== */}
-          <section className={`${isNewTask ? 'lg:col-span-12 max-w-4xl mx-auto w-full' : 'lg:col-span-7'} p-5 sm:p-7 flex flex-col gap-6 bg-surface-container-lowest overflow-y-auto`}>
+          <section className="lg:col-span-7 p-5 sm:p-7 flex flex-col gap-6 bg-surface-container-lowest overflow-y-auto">
             
             {/* MODE CONSULTATION */}
             {mode === 'view' && (
@@ -575,10 +605,10 @@ export default function TaskDetailModal({
                 <div className="space-y-1.5">
                   <div className="flex flex-wrap gap-2 mb-1">
                     <span className="px-3 py-1 bg-surface-container text-on-surface font-label-sm text-xs rounded-full">
-                      {task.category || 'Espaces Verts & Parc'}
+                      {task.category || (isVoteInitiative ? 'Projet & Scrutin SCI' : 'Espaces Verts & Parc')}
                     </span>
                     <span className="px-3 py-1 bg-surface-container text-on-surface font-label-sm text-xs rounded-full">
-                      {task.subject || 'Rosing'}
+                      {task.subject || (isVoteInitiative ? 'Presbytère' : 'Rosing')}
                     </span>
                     <span className="px-3 py-1 bg-surface-container text-on-surface font-label-sm text-xs rounded-full">
                       Chantier 2026
@@ -589,10 +619,10 @@ export default function TaskDetailModal({
                     id="modal-task-title"
                     className="font-headline-lg text-xl sm:text-2xl text-forest-deep tracking-tight font-bold"
                   >
-                    {task.title || 'Renégociation Contrat Jardinier EI Perrot & Fauche Tardive'}
+                    {task.title || (isVoteInitiative ? "Réfection Toiture & Scrutin Statutaire" : "Renégociation Contrat Jardinier EI Perrot & Fauche Tardive")}
                   </h1>
                   <p className="font-body-md text-xs text-on-surface-variant">
-                    Réf. {task.ref || `T-2026-${task.id || '088'}`} • Statut : {task.status || 'En cours'}
+                    Réf. {task.ref || `${isVoteInitiative ? 'VOTE' : 'T'}-2026-${task.id || '088'}`} • Statut : {task.status || 'En cours'}
                   </p>
                 </div>
 
@@ -606,7 +636,7 @@ export default function TaskDetailModal({
                   </div>
 
                   <div className="p-4 bg-canvas-slate rounded-2xl font-body-lg text-xs sm:text-sm text-on-surface leading-relaxed shadow-sm border border-slate-200/60">
-                    <p>{task.description || 'Description détaillée des travaux à accomplir sur le domaine.'}</p>
+                    <p>{task.description || (isVoteInitiative ? "Consultation des associés pour engagement de travaux." : "Description détaillée des travaux à accomplir sur le domaine.")}</p>
                   </div>
                 </div>
 
@@ -720,10 +750,12 @@ export default function TaskDetailModal({
                 <div className="bg-white border-b border-slate-200 p-3 rounded-xl flex items-center justify-between shadow-xs">
                   <div className="flex items-center gap-2">
                     <span className="material-symbols-outlined text-primary text-[20px]">
-                      {isNewTask ? 'add_task' : 'edit_document'}
+                      {isNewTask ? (isVoteInitiative ? 'how_to_vote' : 'add_task') : 'edit_document'}
                     </span>
                     <span className="font-bold text-xs sm:text-sm text-forest-deep">
-                      {isNewTask ? 'Nouvelle tâche' : `Mode Édition — Tâche #${task.ref || task.id}`}
+                      {isNewTask 
+                        ? (isVoteInitiative ? 'Proposer une initiative au vote' : 'Nouvelle tâche') 
+                        : `Mode Édition — Tâche #${task.ref || task.id}`}
                     </span>
                   </div>
                   <div className="flex items-center gap-2">
@@ -741,21 +773,34 @@ export default function TaskDetailModal({
                       className="px-4 py-1.5 rounded-lg bg-emerald-600 text-white hover:bg-emerald-700 text-xs font-bold transition-all shadow-xs flex items-center gap-1 cursor-pointer"
                     >
                       <span className="material-symbols-outlined text-[16px]">
-                        {isNewTask ? 'add_circle' : 'check'}
+                        {isNewTask ? (isVoteInitiative ? 'how_to_vote' : 'add_circle') : 'check'}
                       </span>
-                      <span>{isNewTask ? 'Créer la tâche' : 'Enregistrer'}</span>
+                      <span>
+                        {isNewTask ? (isVoteInitiative ? "Soumettre l'initiative au vote" : "Créer la tâche") : "Enregistrer"}
+                      </span>
                     </button>
                   </div>
                 </div>
 
-                {/* Section 1 : Gouvernance & Gestion technique (Pour Henri & Joséphine - Annotations 10 & 11) */}
-                {isCoordinator && (
+                {/* Rappel statutaire si initiative de vote */}
+                {isVoteInitiative && (
+                  <div className="p-3.5 bg-amber-50 border border-amber-200 rounded-xl flex items-start gap-2.5 text-xs text-amber-900">
+                    <span className="material-symbols-outlined text-[20px] text-amber-600 shrink-0 mt-0.5">gavel</span>
+                    <div>
+                      <strong className="block font-bold">Règle Statutaire SCI (Engagement &gt; 300 €) :</strong>
+                      <span>Cette proposition sera soumise à la délibération et au vote statutaire des 7 associés de la famille avec calcul automatique de majorité qualifiée.</span>
+                    </div>
+                  </div>
+                )}
+
+                {/* Section 1 : Gouvernance & Gestion technique (Pour Henri & Joséphine ou Initiative au vote) */}
+                {(isCoordinator || isVoteInitiative) && (
                   <section className="bg-white border-2 border-emerald-600/30 rounded-2xl p-4 sm:p-5 shadow-xs flex flex-col gap-4">
                     <div className="flex flex-wrap items-center justify-between gap-2 border-b border-slate-100 pb-3">
                       <div className="flex items-center gap-2">
                         <span className="material-symbols-outlined text-forest-deep text-[22px]">admin_panel_settings</span>
                         <h3 className="font-headline-sm text-sm sm:text-base font-bold text-forest-deep">
-                          Gouvernance & Gestion technique
+                          {isVoteInitiative ? 'Paramètres du Scrutin & Budget' : 'Gouvernance & Gestion technique'}
                         </h3>
                       </div>
                     </div>
@@ -784,7 +829,9 @@ export default function TaskDetailModal({
 
                     {/* Assigned Members */}
                     <div className="space-y-1.5">
-                      <label className="font-label-md text-xs font-semibold text-on-surface">Membres attribués</label>
+                      <label className="font-label-md text-xs font-semibold text-on-surface">
+                        {isVoteInitiative ? 'Rapporteurs / Porteurs du projet' : 'Membres attribués'}
+                      </label>
                       <div className="flex flex-wrap items-center gap-2 p-2.5 bg-canvas-slate rounded-xl border border-slate-300 min-h-[44px]">
                         {editMembers.map((m) => (
                           <span
@@ -820,9 +867,11 @@ export default function TaskDetailModal({
                       </div>
                     </div>
 
-                    {/* Budget alloué (Annotation 11: Fréquence / Nature supprimé) */}
+                    {/* Budget alloué */}
                     <div className="flex flex-col gap-1">
-                      <label className="font-label-md text-xs font-semibold text-on-surface">Budget alloué (€ TTC)</label>
+                      <label className="font-label-md text-xs font-semibold text-on-surface">
+                        {isVoteInitiative ? 'Enveloppe budgétaire estimée (€ TTC)' : 'Budget alloué (€ TTC)'}
+                      </label>
                       <input
                         type="number"
                         value={editBudget}
@@ -852,26 +901,30 @@ export default function TaskDetailModal({
                   <div className="flex items-center justify-between border-b border-slate-100 pb-3">
                     <h3 className="font-headline-sm text-sm sm:text-base font-bold text-on-surface flex items-center gap-2">
                       <span className="material-symbols-outlined text-primary text-[20px]">assignment</span>
-                      Champs standards (Tous membres)
+                      {isVoteInitiative ? "Détails de l'initiative soumise au vote" : "Champs standards (Tous membres)"}
                     </h3>
                   </div>
 
                   <div className="flex flex-col gap-1">
-                    <label className="font-label-md text-xs font-semibold text-on-surface">Titre de la tâche</label>
+                    <label className="font-label-md text-xs font-semibold text-on-surface">
+                      {isVoteInitiative ? "Intitulé de l'initiative au vote" : "Titre de la tâche"}
+                    </label>
                     <input
                       type="text"
                       value={editTitle}
                       onChange={(e) => setEditTitle(e.target.value)}
+                      placeholder={isVoteInitiative ? "Ex: Rénovation Façade Est & Volets Presbytère" : "Titre de la tâche..."}
                       className="bg-canvas-slate rounded-xl p-2.5 text-xs sm:text-sm border border-slate-300 focus:outline-none focus:ring-2 focus:ring-primary font-semibold"
                     />
                   </div>
 
                   <div className="flex flex-col gap-1">
-                    <label className="font-label-md text-xs font-semibold text-on-surface">Description détaillée</label>
+                    <label className="font-label-md text-xs font-semibold text-on-surface">Description détaillée &amp; Justificatifs</label>
                     <textarea
                       rows={3}
                       value={editDescription}
                       onChange={(e) => setEditDescription(e.target.value)}
+                      placeholder={isVoteInitiative ? "Expliquez l'urgence, les devis obtenus, l'impact sur la propriété et l'intérêt pour la SCI..." : "Description..."}
                       className="bg-canvas-slate rounded-xl p-2.5 text-xs sm:text-sm border border-slate-300 focus:outline-none focus:ring-2 focus:ring-primary leading-relaxed resize-none"
                     />
                   </div>
@@ -879,7 +932,7 @@ export default function TaskDetailModal({
                   {/* Checklist editor */}
                   <div className="space-y-2 pt-1">
                     <div className="flex items-center justify-between">
-                      <label className="font-label-md text-xs font-semibold text-on-surface">Jalons & Checklist</label>
+                      <label className="font-label-md text-xs font-semibold text-on-surface">Jalons &amp; Checklist</label>
                       <button
                         type="button"
                         onClick={addChecklistItem}
@@ -928,24 +981,23 @@ export default function TaskDetailModal({
 
           </section>
 
-          {/* ========================================== */}
-          {/* COLONNE DROITE (5 cols) : FIL DE DISCUSSION */}
-          {/* ========================================== */}
-          {!isNewTask && (
-            <section className="lg:col-span-5 bg-canvas-slate flex flex-col h-full min-h-0">
-              <FamilyChat
-                messages={comments}
-                onSendMessage={handleSendCommentText}
-                onAddReaction={handleEmojiReact}
-                currentUser={currentUser}
-                title="Fil de discussion familial"
-                placeholder="Votre message à la famille..."
-                onRetryMessage={handleRetryComment}
-                onAttachClick={() => fileUploadRef.current?.click()}
-                className="h-full"
-              />
-            </section>
-          )}
+          {/* ========================================================= */}
+          {/* COLONNE DROITE (5 cols) : FIL DE DISCUSSION UNIFIÉ (CHAT)  */}
+          {/* Toujours présent, même lors de la rédaction d'initiative  */}
+          {/* ========================================================= */}
+          <section className="lg:col-span-5 bg-canvas-slate flex flex-col h-full min-h-0">
+            <FamilyChat
+              messages={comments}
+              onSendMessage={handleSendCommentText}
+              onAddReaction={handleEmojiReact}
+              currentUser={currentUser}
+              title="Fil de discussion familial"
+              placeholder="Votre message à la famille..."
+              onRetryMessage={handleRetryComment}
+              onAttachClick={() => fileUploadRef.current?.click()}
+              className="h-full"
+            />
+          </section>
 
         </div>
 

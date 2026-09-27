@@ -4,7 +4,7 @@ import {
   ThumbsUp, ThumbsDown, HelpCircle, ShieldCheck, Sparkles, Filter, MessageSquare
 } from 'lucide-react';
 import { fetchProjects, createProject, reviewProject, castProjectVote } from '../api';
-import NewProjectModal from './NewProjectModal';
+import TaskDetailModal from './TaskDetailModal';
 import CoordinatorApprovalModal from './CoordinatorApprovalModal';
 import VoteRoofModal from './VoteRoofModal';
 import CustomSelect from './CustomSelect';
@@ -639,14 +639,26 @@ export default function ProjectsPage({ properties, currentUser }) {
         </div>
       )}
 
-      {/* New Project Modal */}
-      <NewProjectModal
-        isOpen={isModalOpen}
-        onClose={() => setIsModalOpen(false)}
-        properties={properties}
-        currentUser={currentUser}
-        onSubmit={handleCreateProject}
-      />
+      {/* Modale Unifiée de Tâche / Vote avec Chat Familial (Annotation 2) */}
+      {isModalOpen && (
+        <TaskDetailModal
+          isOpen={isModalOpen}
+          task={{
+            title: '',
+            description: '',
+            subject: 'Presbytère',
+            complexity: 'Élevée',
+            budget: 1500,
+            isVoteInitiative: true,
+            assigned_members: [typeof currentUser === 'string' ? currentUser : (currentUser?.name || 'Henri Jamet')],
+          }}
+          isEditing={true}
+          initialMode="edit"
+          onClose={() => setIsModalOpen(false)}
+          currentUser={currentUser}
+          onTaskUpdated={loadProjects}
+        />
+      )}
 
       {/* Coordinator Approval Modal */}
       {approvalModalProject && (
@@ -663,6 +675,7 @@ export default function ProjectsPage({ properties, currentUser }) {
         isOpen={isRoofVoteModalOpen}
         onClose={() => setIsRoofVoteModalOpen(false)}
         currentUser={currentUser}
+        project={projects.find(p => (p.title || '').toLowerCase().includes('toiture')) || projects[0]}
         onVoteSubmit={async () => {
           await loadProjects();
         }}

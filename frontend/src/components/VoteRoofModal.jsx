@@ -2,74 +2,200 @@ import React, { useState, useEffect } from 'react';
 import { MarkdownContent } from './common/RichTextEditor';
 import DocumentViewerModal from './DocumentViewerModal';
 import FamilyChat from './common/FamilyChat';
+import { castProjectVote } from '../api';
 
-export default function VoteRoofModal({ isOpen, onClose, currentUser = 'Henri Jamet', onVoteSubmit }) {
+// Error Boundary de protection intégrée pour empêcher tout écran blanc
+class VoteErrorBoundary extends React.Component {
+  constructor(props) {
+    super(props);
+    this.state = { hasError: false, error: null };
+  }
+
+  static getDerivedStateFromError(error) {
+    return { hasError: true, error };
+  }
+
+  componentDidCatch(error, errorInfo) {
+    console.error("Erreur capturée dans VoteRoofModal:", error, errorInfo);
+  }
+
+  render() {
+    if (this.state.hasError) {
+      return (
+        <div 
+          className="fixed inset-0 z-50 bg-slate-900/70 backdrop-blur-sm flex items-center justify-center p-4 animate-in fade-in duration-200"
+          role="dialog"
+          aria-modal="true"
+        >
+          <div className="bg-white dark:bg-slate-900 rounded-2xl p-6 sm:p-8 max-w-lg w-full shadow-2xl border border-rose-200 dark:border-rose-800 text-center space-y-4">
+            <div className="w-14 h-14 rounded-full bg-rose-100 dark:bg-rose-950/60 text-rose-600 dark:text-rose-400 flex items-center justify-center mx-auto">
+              <span className="material-symbols-outlined text-3xl">how_to_vote</span>
+            </div>
+            <h3 className="font-bold text-lg text-slate-900 dark:text-slate-100">
+              Scrutin statutaire sécurisé
+            </h3>
+            <p className="text-xs sm:text-sm text-slate-600 dark:text-slate-300 leading-relaxed">
+              Le vote reste actif et vos données sont préservées. Un incident de rendu a été intercepté pour protéger l'intégrité de la session.
+            </p>
+            <div className="pt-2 flex items-center justify-center gap-3">
+              <button
+                type="button"
+                onClick={() => {
+                  this.setState({ hasError: false, error: null });
+                  if (this.props.onClose) this.props.onClose();
+                }}
+                className="px-5 py-2.5 rounded-xl bg-slate-800 hover:bg-slate-700 text-white font-semibold text-xs sm:text-sm transition-colors cursor-pointer"
+              >
+                Fermer la fenêtre
+              </button>
+            </div>
+          </div>
+        </div>
+      );
+    }
+    return this.props.children;
+  }
+}
+
+// 7 associés statutaires de la SCI Hellenvilliers
+const DEFAULT_ASSOCIATES = [
+  {
+    id: 'henri',
+    name: 'Henri Jamet',
+    role: 'Gérance SCI',
+    isGerance: true,
+    vote: 'POUR',
+    date: '12 mai 2026, 14:30',
+    initials: 'HJ'
+  },
+  {
+    id: 'hortense',
+    name: 'Hortense Jamet',
+    role: 'Associée',
+    isGerance: false,
+    vote: 'POUR',
+    date: '14 mai 2026, 10:20',
+    initials: 'HJ'
+  },
+  {
+    id: 'marguerite',
+    name: 'Marguerite Jamet',
+    role: 'Associée',
+    isGerance: false,
+    vote: 'POUR',
+    date: '14 mai 2026, 16:45',
+    initials: 'MJ'
+  },
+  {
+    id: 'eugenie',
+    name: 'Eugénie Jamet',
+    role: 'Associée',
+    isGerance: false,
+    vote: 'POUR',
+    date: '15 mai 2026, 08:15',
+    initials: 'EJ'
+  },
+  {
+    id: 'josephine',
+    name: 'Joséphine Jamet',
+    role: 'Associée',
+    isGerance: false,
+    vote: 'ABSTENTION',
+    date: '15 mai 2026, 09:15',
+    initials: 'JJ'
+  },
+  {
+    id: 'elisabeth',
+    name: 'Élisabeth Jamet',
+    role: 'Associée',
+    isGerance: false,
+    vote: 'EN_ATTENTE',
+    date: null,
+    initials: 'EJ'
+  },
+  {
+    id: 'frederic',
+    name: 'Frédéric Jamet',
+    role: 'Associé',
+    isGerance: false,
+    vote: 'EN_ATTENTE',
+    date: null,
+    initials: 'FJ'
+  },
+];
+
+function VoteRoofModalInner({
+  isOpen,
+  onClose,
+  currentUser = 'Henri Jamet',
+  onVoteSubmit,
+  project,
+}) {
+  // Extraction sécurisée du nom utilisateur sans risque d'exception .toLowerCase()
+  const resolveUserName = (user) => {
+    if (!user) return 'Henri Jamet';
+    if (typeof user === 'string') return user.trim() || 'Henri Jamet';
+    if (typeof user === 'object') {
+      if (user.name) return String(user.name).trim();
+      if (user.prenom) return `${user.prenom} ${user.nom || ''}`.trim();
+      if (user.username) return String(user.username).trim();
+    }
+    return 'Henri Jamet';
+  };
+  const currentUserName = resolveUserName(currentUser);
+
+  // Normalisation des propriétés du projet avec fallbacks complets
+  const activeProject = project || {};
+  const projectTitle = activeProject.title || 'Réfection Couverture & Isolation Combles Presbytère';
+  const projectDescription = activeProject.description || "Remplacement complet des ardoises vétustes sur le versant Nord du Presbytère, reprise des liteaux et pose d'un isolant en laine de bois haute densité (R=7 m²·K/W). Ce chantier fait suite aux infiltrations constatées lors des pluies d'avril et sécurise la charpente avant les expertises de plâtrerie intérieure.";
+  const projectRef = activeProject.ref || (activeProject.id ? `VOTE-2026-${String(activeProject.id).padStart(2, '0')}` : 'VOTE-2026-04');
+  const projectReporter = activeProject.submitted_by || activeProject.reporter?.name || 'Henri Jamet';
+  const projectBudget = activeProject.estimated_cost ? `${Number(activeProject.estimated_cost).toLocaleString('fr-FR')} € TTC` : (activeProject.budgetText || '4 850,00 € TTC');
+  const projectSubject = activeProject.category || activeProject.subject || 'Le Presbytère';
+  const projectBadgeStatus = activeProject.badgeStatus || (activeProject.status === 'EN_COURS' ? 'Vote formel en cours' : (activeProject.status || 'Chantier Prioritaire 2026'));
+
   // Liste nominative des 7 associés statutaires de la SCI Hellenvilliers
-  const [associatesVotes, setAssociatesVotes] = useState([
-    {
-      id: 'henri',
-      name: 'Henri Jamet',
-      role: 'Gérance SCI',
-      isGerance: true,
-      vote: 'POUR',
-      date: '12 mai 2026, 14:30',
-      initials: 'HJ'
-    },
-    {
-      id: 'hortense',
-      name: 'Hortense Jamet',
-      role: 'Associée',
-      isGerance: false,
-      vote: 'POUR',
-      date: '14 mai 2026, 10:20',
-      initials: 'HJ'
-    },
-    {
-      id: 'marguerite',
-      name: 'Marguerite Jamet',
-      role: 'Associée',
-      isGerance: false,
-      vote: 'POUR',
-      date: '14 mai 2026, 16:45',
-      initials: 'MJ'
-    },
-    {
-      id: 'eugenie',
-      name: 'Eugénie Jamet',
-      role: 'Associée',
-      isGerance: false,
-      vote: 'POUR',
-      date: '15 mai 2026, 08:15',
-      initials: 'EJ'
-    },
-    {
-      id: 'josephine',
-      name: 'Joséphine Jamet',
-      role: 'Associée',
-      isGerance: false,
-      vote: 'ABSTENTION',
-      date: '15 mai 2026, 09:15',
-      initials: 'JJ'
-    },
-    {
-      id: 'elisabeth',
-      name: 'Élisabeth Jamet',
-      role: 'Associée',
-      isGerance: false,
-      vote: 'EN_ATTENTE',
-      date: null,
-      initials: 'EJ'
-    },
-    {
-      id: 'frederic',
-      name: 'Frédéric Jamet',
-      role: 'Associé',
-      isGerance: false,
-      vote: 'EN_ATTENTE',
-      date: null,
-      initials: 'FJ'
-    },
-  ]);
+  const [associatesVotes, setAssociatesVotes] = useState(() => {
+    if (project && Array.isArray(project.votes) && project.votes.length > 0) {
+      return DEFAULT_ASSOCIATES.map(assoc => {
+        const found = project.votes.find(v => {
+          const vName = (v.user_name || v.author || v.user || v.name || '').toLowerCase();
+          return vName.includes(assoc.name.toLowerCase()) || assoc.name.toLowerCase().includes(vName) ||
+            (vName.includes(assoc.id));
+        });
+        if (found) {
+          return {
+            ...assoc,
+            vote: (found.vote || '').toUpperCase(),
+            date: found.date || found.created_at || 'Mai 2026'
+          };
+        }
+        return { ...assoc, vote: 'EN_ATTENTE', date: null };
+      });
+    }
+    return DEFAULT_ASSOCIATES;
+  });
+
+  // Synchronisation dynamique si le projet change
+  useEffect(() => {
+    if (project && Array.isArray(project.votes) && project.votes.length > 0) {
+      setAssociatesVotes(prev => prev.map(assoc => {
+        const found = project.votes.find(v => {
+          const vName = (v.user_name || v.author || v.user || v.name || '').toLowerCase();
+          return vName.includes(assoc.name.toLowerCase()) || assoc.name.toLowerCase().includes(vName) ||
+            (vName.includes(assoc.id));
+        });
+        if (found) {
+          return {
+            ...assoc,
+            vote: (found.vote || '').toUpperCase(),
+            date: found.date || found.created_at || 'Mai 2026'
+          };
+        }
+        return assoc;
+      }));
+    }
+  }, [project]);
 
   // Messages du fil de discussion familial
   const [messages, setMessages] = useState([
@@ -119,19 +245,29 @@ export default function VoteRoofModal({ isOpen, onClose, currentUser = 'Henri Ja
     }
   ]);
 
-  // Formulaire de vote interactif direct (Annotation 13)
+  // Formulaire de vote interactif direct
   const [selectedVote, setSelectedVote] = useState('POUR');
   const [toastMessage, setToastMessage] = useState(null);
 
   // Vue détaillée du tableau des associés
   const [showFullTable, setShowFullTable] = useState(true);
 
-  // Trouver l'associé connecté
-  const currentAssociate = associatesVotes.find(a => 
-    a.name.toLowerCase().includes(currentUser.toLowerCase()) ||
-    currentUser.toLowerCase().includes(a.name.toLowerCase()) ||
-    (currentUser.toLowerCase().includes('henri') && a.id === 'henri')
-  ) || associatesVotes[0];
+  // Trouver l'associé connecté avec protections robustes
+  const currentAssociate = associatesVotes.find(a => {
+    if (!a || !a.name) return false;
+    const aLower = a.name.toLowerCase();
+    const uLower = currentUserName.toLowerCase();
+    return (
+      (uLower && (aLower.includes(uLower) || uLower.includes(aLower))) ||
+      (uLower.includes('henri') && a.id === 'henri') ||
+      (uLower.includes('hortense') && a.id === 'hortense') ||
+      (uLower.includes('marguerite') && a.id === 'marguerite') ||
+      (uLower.includes('eugénie') && a.id === 'eugenie') ||
+      (uLower.includes('joséphine') && a.id === 'josephine') ||
+      (uLower.includes('élisabeth') && a.id === 'elisabeth') ||
+      (uLower.includes('frédéric') && a.id === 'frederic')
+    );
+  }) || associatesVotes[0] || DEFAULT_ASSOCIATES[0];
 
   // Synchroniser le vote actuel de l'utilisateur
   useEffect(() => {
@@ -157,15 +293,19 @@ export default function VoteRoofModal({ isOpen, onClose, currentUser = 'Henri Ja
     }
   }, [isOpen, onClose]);
 
+  // État de la visionneuse intégrée
+  const [viewerDoc, setViewerDoc] = useState(null);
+  const [isViewerOpen, setIsViewerOpen] = useState(false);
+
   if (!isOpen) return null;
 
   // Calculs statistiques en temps réel avec prise en compte du report AG
   const totalAssociates = 7;
-  const pourVotes = associatesVotes.filter(a => a.vote === 'POUR');
-  const contreVotes = associatesVotes.filter(a => a.vote === 'CONTRE');
+  const pourVotes = associatesVotes.filter(a => ['POUR', 'OUI'].includes(a.vote));
+  const contreVotes = associatesVotes.filter(a => ['CONTRE', 'NON'].includes(a.vote));
   const abstentionVotes = associatesVotes.filter(a => a.vote === 'ABSTENTION');
-  const reportAgVotes = associatesVotes.filter(a => a.vote === 'REPORT_AG' || a.vote === 'REPORT_PROCHAINE_AG');
-  const attenteVotes = associatesVotes.filter(a => a.vote === 'EN_ATTENTE');
+  const reportAgVotes = associatesVotes.filter(a => ['REPORT_AG', 'REPORT_PROCHAINE_AG', 'DEMANDE_AG', 'REPORT AG'].includes(a.vote));
+  const attenteVotes = associatesVotes.filter(a => a.vote === 'EN_ATTENTE' || !a.vote);
 
   const pourCount = pourVotes.length;
   const contreCount = contreVotes.length;
@@ -184,8 +324,31 @@ export default function VoteRoofModal({ isOpen, onClose, currentUser = 'Henri Ja
   const isAgReportRequested = reportAgCount > 0;
   const isMajoriteAtteinte = pourCount >= 4;
 
-  // Enregistrement direct du vote en 1 clic (Annotation 13)
-  const handleCastVote = (voteChoice) => {
+  // Documents justificatifs sécurisés
+  const documentsList = (Array.isArray(activeProject.documents) && activeProject.documents.length > 0)
+    ? activeProject.documents
+    : (Array.isArray(activeProject.files) && activeProject.files.length > 0)
+    ? activeProject.files
+    : [
+        {
+          name: 'Devis-2026-Ets-Josse-Couverture-Presbytere.pdf',
+          desc: 'Devis Éts Josse • 4 850,00 € TTC • Garantie décennale • 1.4 Mo',
+          details: 'Devis réfection toiture Presbytère par les Éts Josse'
+        },
+        {
+          name: 'Rapport-Diagnostic-Infiltrations-Avril2026.pdf',
+          desc: 'Constat photos & humidimétrie • 850 Ko',
+          details: 'Rapport technique constat infiltrations pluies avril 2026'
+        },
+        {
+          name: 'Extrait-PV-AG-Aout2025-Poutres.pdf',
+          desc: 'Mandat cadre & délégation de gérance • 420 Ko',
+          details: "Extrait du Procès-Verbal de l'AG d'août 2025"
+        }
+      ];
+
+  // Enregistrement direct du vote en 1 clic
+  const handleCastVote = async (voteChoice) => {
     setSelectedVote(voteChoice);
     const now = new Date();
     const formattedDate = `${now.getDate()} mai 2026, ${now.getHours().toString().padStart(2, '0')}:${now.getMinutes().toString().padStart(2, '0')}`;
@@ -211,8 +374,22 @@ export default function VoteRoofModal({ isOpen, onClose, currentUser = 'Henri Ja
     setToastMessage(`Vote « ${voteLabels[voteChoice] || voteChoice} » enregistré pour ${currentAssociate.name} !`);
     setTimeout(() => setToastMessage(null), 3500);
 
+    // Synchronisation API si id disponible
+    if (activeProject.id) {
+      try {
+        await castProjectVote(activeProject.id, {
+          vote: voteChoice,
+          user_name: currentAssociate.name,
+          user_id: currentAssociate.id
+        });
+      } catch (err) {
+        console.warn('API castProjectVote fallback local:', err.message);
+      }
+    }
+
     if (onVoteSubmit) {
       onVoteSubmit({
+        project: activeProject,
         associate: currentAssociate.name,
         vote: voteChoice
       });
@@ -228,7 +405,7 @@ export default function VoteRoofModal({ isOpen, onClose, currentUser = 'Henri Ja
 
     const newMsg = {
       id: Date.now(),
-      author: currentAssociate?.name || (typeof currentUser === 'string' ? currentUser : currentUser?.name || 'Associé'),
+      author: currentAssociate?.name || currentUserName,
       initials: currentAssociate?.initials || 'AJ',
       date: formattedDate,
       content: text.trim(),
@@ -256,13 +433,9 @@ export default function VoteRoofModal({ isOpen, onClose, currentUser = 'Henri Ja
     }));
   };
 
-  // État de la visionneuse intégrée (Annotation 9)
-  const [viewerDoc, setViewerDoc] = useState(null);
-  const [isViewerOpen, setIsViewerOpen] = useState(false);
-
   // Consultation dans la visionneuse sans téléchargement
   const handleViewDoc = (docName, desc) => {
-    const content = `SCI FAMILIALE HELLENVILLIERS — DIRECTION DU DOMAINE\n\nDocument certifié : ${docName}\nObjet : ${desc}\nProjet : Réfection couverture Presbytère (4 850,00 € TTC, Devis Éts Josse)\nDate d'émission : Mai 2026\nStatut : Pièce certifiée conforme déposée au registre des délibérations.`;
+    const content = `SCI FAMILIALE HELLENVILLIERS — DIRECTION DU DOMAINE\n\nDocument certifié : ${docName}\nObjet : ${desc}\nProjet : ${projectTitle} (${projectBudget})\nDate d'émission : Mai 2026\nStatut : Pièce certifiée conforme déposée au registre des délibérations.`;
     setViewerDoc({
       filename: docName,
       title: docName,
@@ -274,7 +447,7 @@ export default function VoteRoofModal({ isOpen, onClose, currentUser = 'Henri Ja
 
   // Téléchargement réel / simulé du document
   const handleDownloadDoc = (docName, desc) => {
-    const content = `SCI FAMILIALE HELLENVILLIERS\n\nDocument certifié : ${docName}\nObjet : ${desc}\nProjet : Réfection couverture Presbytère (4 850 € TTC, Devis Éts Josse)\nDate d'émission : Mai 2026\nStatut : Validé pour consultation des 7 associés.`;
+    const content = `SCI FAMILIALE HELLENVILLIERS\n\nDocument certifié : ${docName}\nObjet : ${desc}\nProjet : ${projectTitle} (${projectBudget})\nDate d'émission : Mai 2026\nStatut : Validé pour consultation des 7 associés.`;
     const blob = new Blob([content], { type: 'text/plain;charset=utf-8' });
     const url = URL.createObjectURL(blob);
     const link = document.createElement('a');
@@ -307,7 +480,7 @@ export default function VoteRoofModal({ isOpen, onClose, currentUser = 'Henri Ja
           </div>
         )}
 
-        {/* 1. EN-TÊTE ÉPURÉ DE LA MODALE (Annotation 14 : suppression des 3 badges fictifs) */}
+        {/* 1. EN-TÊTE ÉPURÉ DE LA MODALE */}
         <header className="w-full bg-canvas-slate px-4 py-3 sm:px-space-lg sm:py-space-md flex items-center justify-between gap-space-sm border-b border-border-subtle shrink-0">
           <div className="flex items-center gap-2">
             <span className="material-symbols-outlined text-forest-deep text-xl">how_to_vote</span>
@@ -334,31 +507,31 @@ export default function VoteRoofModal({ isOpen, onClose, currentUser = 'Henri Ja
             {/* Titre & Contexte du scrutin */}
             <div className="flex flex-col gap-2">
               <div className="flex flex-wrap items-center gap-2">
-                <span className="px-2.5 py-0.5 rounded-full bg-surface-container text-on-surface-variant font-label-sm text-xs font-medium">Bâti &amp; Toiture</span>
-                <span className="px-2.5 py-0.5 rounded-full bg-surface-container text-on-surface-variant font-label-sm text-xs font-medium">Le Presbytère</span>
-                <span className="px-2.5 py-0.5 rounded-full bg-sage-soft text-forest-deep font-label-sm text-xs font-semibold">Chantier Prioritaire 2026</span>
+                <span className="px-2.5 py-0.5 rounded-full bg-surface-container text-on-surface-variant font-label-sm text-xs font-medium">Bâti &amp; Travaux</span>
+                <span className="px-2.5 py-0.5 rounded-full bg-surface-container text-on-surface-variant font-label-sm text-xs font-medium">{projectSubject}</span>
+                <span className="px-2.5 py-0.5 rounded-full bg-sage-soft text-forest-deep font-label-sm text-xs font-semibold">{projectBadgeStatus}</span>
               </div>
               <h1 id="modal-roof-title" className="font-headline-lg text-xl sm:text-2xl text-on-surface tracking-tight font-bold text-slate-900 mt-1">
-                Réfection Couverture &amp; Isolation Combles Presbytère
+                {projectTitle}
               </h1>
               <div className="flex flex-wrap items-center gap-2 text-on-surface-variant text-xs sm:text-sm">
-                <span className="font-semibold text-slate-600">Réf. VOTE-2026-04</span>
+                <span className="font-semibold text-slate-600">Réf. {projectRef}</span>
                 <span>•</span>
                 <span className="flex items-center gap-1 text-slate-700">
                   <span className="material-symbols-outlined text-[18px] text-primary">account_circle</span>
-                  Soumis par <strong>Henri Jamet</strong> (Gérance SCI) le 12 mai 2026
+                  Soumis par <strong>{projectReporter}</strong> (SCI) • Budget : <strong>{projectBudget}</strong>
                 </span>
               </div>
             </div>
 
-            {/* Description & Objectifs (Annotation 8 : suppression bloc impact financier & subvention) */}
+            {/* Description & Objectifs */}
             <div className="flex flex-col gap-3 bg-canvas-slate rounded-xl p-4 border border-border-subtle">
               <h2 className="font-headline-sm text-sm sm:text-base font-bold text-on-surface flex items-center gap-2">
                 <span className="material-symbols-outlined text-forest-deep text-xl">description</span>
                 Description des travaux &amp; Enjeux
               </h2>
               <div className="text-xs sm:text-sm text-on-surface-variant leading-relaxed text-slate-700">
-                <MarkdownContent content="Remplacement complet des ardoises vétustes sur le versant Nord du Presbytère, reprise des liteaux et pose d'un isolant en laine de bois haute densité (R=7 m²·K/W). Ce chantier fait suite aux infiltrations constatées lors des pluies d'avril et sécurise la charpente avant les expertises de plâtrerie intérieure." />
+                <MarkdownContent content={projectDescription} />
               </div>
             </div>
 
@@ -369,120 +542,52 @@ export default function VoteRoofModal({ isOpen, onClose, currentUser = 'Henri Ja
                   <span className="material-symbols-outlined text-forest-deep text-xl">folder_open</span>
                   Documents &amp; Justificatifs rattachés
                 </h2>
-                <span className="text-xs text-on-surface-variant font-medium">3 pièces certifiées</span>
+                <span className="text-xs text-on-surface-variant font-medium">{documentsList.length} pièce{documentsList.length > 1 ? 's' : ''} certifiée{documentsList.length > 1 ? 's' : ''}</span>
               </div>
 
               <div className="flex flex-col gap-2">
-                {/* Doc 1 : Devis Éts Josse */}
-                <div className="flex items-center justify-between p-3 bg-canvas-slate hover:bg-surface-container transition-colors rounded-xl border border-border-subtle">
-                  <div className="flex items-center gap-3 min-w-0">
-                    <div className="w-10 h-10 rounded-lg bg-error-container text-error flex items-center justify-center shrink-0">
-                      <span className="material-symbols-outlined text-xl">picture_as_pdf</span>
+                {documentsList.map((doc, idx) => {
+                  const docName = typeof doc === 'string' ? doc : (doc.name || doc.filename || `Document_${idx + 1}.pdf`);
+                  const docDesc = typeof doc === 'object' ? (doc.desc || doc.description || doc.details || 'Pièce certifiée') : 'Pièce certifiée';
+                  const docDetails = typeof doc === 'object' ? (doc.details || doc.name || docName) : docName;
+                  return (
+                    <div key={idx} className="flex items-center justify-between p-3 bg-canvas-slate hover:bg-surface-container transition-colors rounded-xl border border-border-subtle">
+                      <div className="flex items-center gap-3 min-w-0">
+                        <div className="w-10 h-10 rounded-lg bg-error-container text-error flex items-center justify-center shrink-0">
+                          <span className="material-symbols-outlined text-xl">picture_as_pdf</span>
+                        </div>
+                        <div className="flex flex-col min-w-0">
+                          <span className="text-xs sm:text-sm font-semibold text-on-surface truncate">
+                            {docName}
+                          </span>
+                          <span className="text-[11px] text-on-surface-variant truncate">
+                            {docDesc}
+                          </span>
+                        </div>
+                      </div>
+                      <div className="flex items-center gap-1.5 shrink-0 ml-2">
+                        <button 
+                          onClick={() => handleViewDoc(docName, docDetails)}
+                          className="px-2.5 py-1.5 rounded-lg bg-surface-container-lowest text-primary hover:bg-sage-soft text-xs font-semibold flex items-center gap-1 shadow-xs border border-primary transition-all cursor-pointer" 
+                          type="button"
+                          title="Consulter sans télécharger"
+                        >
+                          <span className="material-symbols-outlined text-[15px]">visibility</span>
+                          <span>Consulter</span>
+                        </button>
+                        <button 
+                          onClick={() => handleDownloadDoc(docName, docDetails)}
+                          className="px-2.5 py-1.5 rounded-lg bg-primary text-white hover:bg-forest-deep text-xs font-semibold flex items-center gap-1 shadow-xs transition-all cursor-pointer" 
+                          type="button"
+                          title="Télécharger une copie"
+                        >
+                          <span className="material-symbols-outlined text-[15px]">download</span>
+                          <span>Télécharger</span>
+                        </button>
+                      </div>
                     </div>
-                    <div className="flex flex-col min-w-0">
-                      <span className="text-xs sm:text-sm font-semibold text-on-surface truncate">
-                        Devis-2026-Ets-Josse-Couverture-Presbytere.pdf
-                      </span>
-                      <span className="text-[11px] text-on-surface-variant">
-                        Devis Éts Josse • 4 850,00 € TTC • Garantie décennale • 1.4 Mo
-                      </span>
-                    </div>
-                  </div>
-                  <div className="flex items-center gap-1.5 shrink-0 ml-2">
-                    <button 
-                      onClick={() => handleViewDoc('Devis-2026-Ets-Josse-Couverture-Presbytere.pdf', 'Devis réfection toiture Presbytère par les Éts Josse')}
-                      className="px-2.5 py-1.5 rounded-lg bg-surface-container-lowest text-primary hover:bg-sage-soft text-xs font-semibold flex items-center gap-1 shadow-xs border border-primary transition-all cursor-pointer" 
-                      type="button"
-                      title="Consulter sans télécharger"
-                    >
-                      <span className="material-symbols-outlined text-[15px]">visibility</span>
-                      <span>Consulter</span>
-                    </button>
-                    <button 
-                      onClick={() => handleDownloadDoc('Devis-2026-Ets-Josse-Couverture-Presbytere.pdf', 'Devis réfection toiture Presbytère par les Éts Josse')}
-                      className="px-2.5 py-1.5 rounded-lg bg-primary text-white hover:bg-forest-deep text-xs font-semibold flex items-center gap-1 shadow-xs transition-all cursor-pointer" 
-                      type="button"
-                      title="Télécharger une copie"
-                    >
-                      <span className="material-symbols-outlined text-[15px]">download</span>
-                      <span>Télécharger</span>
-                    </button>
-                  </div>
-                </div>
-
-                {/* Doc 2 : Rapport Diagnostic */}
-                <div className="flex items-center justify-between p-3 bg-canvas-slate hover:bg-surface-container transition-colors rounded-xl border border-border-subtle">
-                  <div className="flex items-center gap-3 min-w-0">
-                    <div className="w-10 h-10 rounded-lg bg-error-container text-error flex items-center justify-center shrink-0">
-                      <span className="material-symbols-outlined text-xl">picture_as_pdf</span>
-                    </div>
-                    <div className="flex flex-col min-w-0">
-                      <span className="text-xs sm:text-sm font-semibold text-on-surface truncate">
-                        Rapport-Diagnostic-Infiltrations-Avril2026.pdf
-                      </span>
-                      <span className="text-[11px] text-on-surface-variant">
-                        Constat photos &amp; humidimétrie • 850 Ko
-                      </span>
-                    </div>
-                  </div>
-                  <div className="flex items-center gap-1.5 shrink-0 ml-2">
-                    <button 
-                      onClick={() => handleViewDoc('Rapport-Diagnostic-Infiltrations-Avril2026.pdf', 'Rapport technique constat infiltrations pluies avril 2026')}
-                      className="px-2.5 py-1.5 rounded-lg bg-surface-container-lowest text-primary hover:bg-sage-soft text-xs font-semibold flex items-center gap-1 shadow-xs border border-primary transition-all cursor-pointer" 
-                      type="button"
-                      title="Consulter sans télécharger"
-                    >
-                      <span className="material-symbols-outlined text-[15px]">visibility</span>
-                      <span>Consulter</span>
-                    </button>
-                    <button 
-                      onClick={() => handleDownloadDoc('Rapport-Diagnostic-Infiltrations-Avril2026.pdf', 'Rapport technique constat infiltrations pluies avril 2026')}
-                      className="px-2.5 py-1.5 rounded-lg bg-primary text-white hover:bg-forest-deep text-xs font-semibold flex items-center gap-1 shadow-xs transition-all cursor-pointer" 
-                      type="button"
-                      title="Télécharger une copie"
-                    >
-                      <span className="material-symbols-outlined text-[15px]">download</span>
-                      <span>Télécharger</span>
-                    </button>
-                  </div>
-                </div>
-
-                {/* Doc 3 : Extrait PV AG */}
-                <div className="flex items-center justify-between p-3 bg-canvas-slate hover:bg-surface-container transition-colors rounded-xl border border-border-subtle">
-                  <div className="flex items-center gap-3 min-w-0">
-                    <div className="w-10 h-10 rounded-lg bg-error-container text-error flex items-center justify-center shrink-0">
-                      <span className="material-symbols-outlined text-xl">picture_as_pdf</span>
-                    </div>
-                    <div className="flex flex-col min-w-0">
-                      <span className="text-xs sm:text-sm font-semibold text-on-surface truncate">
-                        Extrait-PV-AG-Aout2025-Poutres.pdf
-                      </span>
-                      <span className="text-[11px] text-on-surface-variant">
-                        Mandat cadre &amp; délégation de gérance • 420 Ko
-                      </span>
-                    </div>
-                  </div>
-                  <div className="flex items-center gap-1.5 shrink-0 ml-2">
-                    <button 
-                      onClick={() => handleViewDoc('Extrait-PV-AG-Aout2025-Poutres.pdf', 'Extrait du Procès-Verbal de l\'AG d\'août 2025')}
-                      className="px-2.5 py-1.5 rounded-lg bg-surface-container-lowest text-primary hover:bg-sage-soft text-xs font-semibold flex items-center gap-1 shadow-xs border border-primary transition-all cursor-pointer" 
-                      type="button"
-                      title="Consulter sans télécharger"
-                    >
-                      <span className="material-symbols-outlined text-[15px]">visibility</span>
-                      <span>Consulter</span>
-                    </button>
-                    <button 
-                      onClick={() => handleDownloadDoc('Extrait-PV-AG-Aout2025-Poutres.pdf', 'Extrait du Procès-Verbal de l\'AG d\'août 2025')}
-                      className="px-2.5 py-1.5 rounded-lg bg-primary text-white hover:bg-forest-deep text-xs font-semibold flex items-center gap-1 shadow-xs transition-all cursor-pointer" 
-                      type="button"
-                      title="Télécharger une copie"
-                    >
-                      <span className="material-symbols-outlined text-[15px]">download</span>
-                      <span>Télécharger</span>
-                    </button>
-                  </div>
-                </div>
+                  );
+                })}
               </div>
             </div>
 
@@ -569,7 +674,7 @@ export default function VoteRoofModal({ isOpen, onClose, currentUser = 'Henri Ja
               </div>
             </div>
 
-            {/* 4. TABLEAU NOMINATIF DES 7 ASSOCIÉS ÉPURÉ (Annotations 11 & 12 : suppression Rôle SCI et Remarque) */}
+            {/* 4. TABLEAU NOMINATIF DES 7 ASSOCIÉS ÉPURÉ */}
             <div className="bg-surface-container-lowest rounded-xl border border-border-subtle p-4 flex flex-col gap-3">
               <div className="flex items-center justify-between">
                 <div className="flex items-center gap-2">
@@ -613,7 +718,7 @@ export default function VoteRoofModal({ isOpen, onClose, currentUser = 'Henri Ja
                               <div className="flex items-center gap-2.5">
                                 <div className={`w-7 h-7 rounded-full flex items-center justify-center text-[11px] font-bold shrink-0 ${
                                   associate.isGerance ? 'bg-sage-soft text-forest-deep' : 'bg-surface-container-highest text-on-surface'
-                                }}`}>
+                                }`}>
                                   {associate.initials}
                                 </div>
                                 <span className="font-semibold text-slate-900 truncate">
@@ -642,13 +747,13 @@ export default function VoteRoofModal({ isOpen, onClose, currentUser = 'Henri Ja
                                     Abstention
                                   </span>
                                 )}
-                                {(associate.vote === 'REPORT_AG' || associate.vote === 'REPORT_PROCHAINE_AG') && (
+                                {['REPORT_AG', 'REPORT_PROCHAINE_AG', 'DEMANDE_AG', 'REPORT AG'].includes(associate.vote) && (
                                   <span className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full text-[11px] font-bold bg-purple-100 text-purple-800 border border-purple-200">
                                     <span>🏛️</span>
                                     Report AG
                                   </span>
                                 )}
-                                {associate.vote === 'EN_ATTENTE' && (
+                                {(associate.vote === 'EN_ATTENTE' || !associate.vote) && (
                                   <span className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full text-[11px] font-semibold bg-slate-100 text-slate-600 border border-slate-200">
                                     <span className="material-symbols-outlined text-[14px]">schedule</span>
                                     En attente
@@ -668,8 +773,15 @@ export default function VoteRoofModal({ isOpen, onClose, currentUser = 'Henri Ja
               )}
             </div>
 
-            {/* 5. SECTION DE VOTE SOBRE & DIRECTE EN 1 CLIC (Annotation 13) */}
+            {/* 5. SECTION DE VOTE SOBRE & DIRECTE EN 1 CLIC */}
             <div className="p-4 rounded-xl bg-surface-container-low border border-border-subtle flex flex-col gap-3 shadow-sm">
+              <div className="flex items-center justify-between">
+                <span className="text-xs font-bold text-slate-700 uppercase tracking-wider">
+                  Votre vote en tant que {currentAssociate.name} :
+                </span>
+                <span className="text-xs font-semibold text-primary">1 voix statutaire</span>
+              </div>
+
               {/* Les 3 boutons principaux de vote direct en 1 clic */}
               <div aria-label="Choix du vote direct" className="grid grid-cols-1 sm:grid-cols-3 gap-2.5" role="group">
                 {/* 1. Approuver */}
@@ -746,7 +858,7 @@ export default function VoteRoofModal({ isOpen, onClose, currentUser = 'Henri Ja
               messages={messages}
               onSendMessage={handleSendMessageText}
               onAddReaction={handleToggleReaction}
-              currentUser={currentUser}
+              currentUser={currentUserName}
               title="Fil de discussion familial"
               placeholder="Votre message à la famille..."
               onAttachClick={() => alert("Ajout de pièce jointe réservé aux administrateurs.")}
@@ -756,7 +868,7 @@ export default function VoteRoofModal({ isOpen, onClose, currentUser = 'Henri Ja
         </div>
       </div>
 
-      {/* Visionneuse universelle intégrée pour les justificatifs du vote (Annotation 9) */}
+      {/* Visionneuse universelle intégrée pour les justificatifs du vote */}
       <DocumentViewerModal
         isOpen={isViewerOpen}
         onClose={() => {
@@ -767,5 +879,13 @@ export default function VoteRoofModal({ isOpen, onClose, currentUser = 'Henri Ja
         onDownload={(doc) => handleDownloadDoc(doc.filename, 'Justificatif de vote SCI')}
       />
     </div>
+  );
+}
+
+export default function VoteRoofModal(props) {
+  return (
+    <VoteErrorBoundary onClose={props.onClose}>
+      <VoteRoofModalInner {...props} />
+    </VoteErrorBoundary>
   );
 }

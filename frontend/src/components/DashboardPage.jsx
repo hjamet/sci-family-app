@@ -6,6 +6,59 @@ import VoteRoofModal from './VoteRoofModal';
 import { extractParticipants } from '../pages/CalendarPage';
 import { VoteCardSkeleton, CompactStaySkeleton, CardSkeleton } from './SkeletonLoaders';
 
+export function formatLiteraryStayDates(startDateStr, endDateStr) {
+  if (!startDateStr && !endDateStr) return 'Dates à confirmer';
+
+  const parseParts = (str) => {
+    if (!str || typeof str !== 'string') return null;
+    const m = str.match(/^(\d{4})-(\d{1,2})-(\d{1,2})/);
+    if (m) {
+      return {
+        year: parseInt(m[1], 10),
+        month: parseInt(m[2], 10) - 1,
+        day: parseInt(m[3], 10),
+      };
+    }
+    const d = new Date(str);
+    if (isNaN(d.getTime())) return null;
+    return {
+      year: d.getFullYear(),
+      month: d.getMonth(),
+      day: d.getDate(),
+    };
+  };
+
+  const startParts = parseParts(startDateStr);
+  const endParts = parseParts(endDateStr);
+
+  const daysOfWeek = ['dimanche', 'lundi', 'mardi', 'mercredi', 'jeudi', 'vendredi', 'samedi'];
+  const months = [
+    'janvier', 'février', 'mars', 'avril', 'mai', 'juin',
+    'juillet', 'août', 'septembre', 'octobre', 'novembre', 'décembre'
+  ];
+
+  if (startParts && endParts) {
+    const startDate = new Date(startParts.year, startParts.month, startParts.day, 12, 0, 0);
+    const endDate = new Date(endParts.year, endParts.month, endParts.day, 12, 0, 0);
+
+    const startDayName = daysOfWeek[startDate.getDay()];
+    const endDayName = daysOfWeek[endDate.getDay()];
+    const startMonthName = months[startParts.month];
+    const endMonthName = months[endParts.month];
+
+    return `Du ${startDayName} ${startParts.day} ${startMonthName} au ${endDayName} ${endParts.day} ${endMonthName} ${endParts.year}`;
+  }
+
+  if (startParts) {
+    const startDate = new Date(startParts.year, startParts.month, startParts.day, 12, 0, 0);
+    const startDayName = daysOfWeek[startDate.getDay()];
+    const startMonthName = months[startParts.month];
+    return `À partir du ${startDayName} ${startParts.day} ${startMonthName} ${startParts.year}`;
+  }
+
+  return 'Dates à confirmer';
+}
+
 export default function DashboardPage({
   currentUser = 'Henri',
   setActiveTab,
@@ -35,6 +88,26 @@ export default function DashboardPage({
         { text: 'Demande de devis et consultation des artisans', done: false },
         { text: 'Validation budgétaire en coordination', done: false },
         { text: 'Réalisation des travaux et contrôle final', done: false },
+      ]
+    });
+    setIsTaskEditingDirect(true);
+    setIsTaskModalOpen(true);
+  };
+
+  const handleOpenCreateVote = () => {
+    setInspectingTask({
+      title: '',
+      description: '',
+      subject: 'Presbytère',
+      complexity: 'Élevée',
+      budget: 1500,
+      isVoteInitiative: true,
+      assigned_members: [typeof currentUser === 'string' ? currentUser : (currentUser?.prenom ? `${currentUser.prenom} ${currentUser.nom || 'Jamet'}` : 'Henri Jamet')],
+      checklist: [
+        { text: 'Demande et analyse des devis contradictoires', done: false },
+        { text: 'Consultation et vote des 7 associés statutaires', done: false },
+        { text: 'Engagement des dépenses et validation gérance', done: false },
+        { text: 'Contrôle de conformité et réception des travaux', done: false },
       ]
     });
     setIsTaskEditingDirect(true);
@@ -479,10 +552,7 @@ export default function DashboardPage({
             </p>
             <button
               type="button"
-              onClick={() => {
-                if (onOpenNewProject) onOpenNewProject();
-                else navigateTo('/taches');
-              }}
+              onClick={handleOpenCreateVote}
               className="inline-flex items-center gap-1.5 px-4 py-2 rounded-DEFAULT bg-white border-2 border-primary text-primary font-label-sm text-xs font-bold hover:bg-sage-soft transition-colors shadow-sm cursor-pointer"
             >
               <span className="material-symbols-outlined text-[18px]">add_circle</span>
@@ -514,11 +584,6 @@ export default function DashboardPage({
           ) : displayedStays.length > 0 ? (
             <div className="flex flex-col space-y-3 max-h-[390px] overflow-y-auto pr-1">
               {displayedStays.map((stay, idx) => {
-                const weekLabel = stay.week_number ? `Semaine ${stay.week_number}` : (stay.week ? `Semaine ${stay.week}` : `Séjour #${idx + 1}`);
-                const dateRange = stay.start_date && stay.end_date
-                  ? `(${stay.start_date} - ${stay.end_date})`
-                  : '(Dates à confirmer)';
-
                 const { members = [], guests = [], cleanDescription = '' } = extractParticipants(stay);
                 const stayTitle = stay.title || stay.property_name || (stay.property_id === 2 ? 'Le Presbytère' : 'Rosing');
                 const stayDescription = cleanDescription || stay.description || '';
@@ -543,9 +608,9 @@ export default function DashboardPage({
                     className="rounded-xl bg-white p-4 border border-outline-variant/30 flex flex-col justify-between gap-3 hover:shadow-md transition-all"
                   >
                     <div className="flex items-center justify-between gap-2 flex-wrap">
-                      <div className="flex items-center gap-2">
-                        <span className="font-label-md text-label-md font-bold text-forest-deep">{weekLabel}</span>
-                        <span className="text-xs text-on-surface-variant font-medium">{dateRange}</span>
+                      <div className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full bg-sage-soft border border-sage-border text-primary font-label-sm text-xs font-semibold">
+                        <span className="material-symbols-outlined text-[15px] text-primary">calendar_month</span>
+                        <span>{formatLiteraryStayDates(stay.start_date, stay.end_date)}</span>
                       </div>
                     </div>
 
@@ -815,7 +880,8 @@ export default function DashboardPage({
       <VoteRoofModal
         isOpen={isRoofVoteModalOpen}
         onClose={() => setIsRoofVoteModalOpen(false)}
-        currentUser={typeof currentUser === 'string' ? currentUser : (currentUser?.prenom ? `${currentUser.prenom} ${currentUser.nom || 'Jamet'}` : 'Henri Jamet')}
+        currentUser={currentUser}
+        project={activeVote}
         onVoteSubmit={() => {
           loadDashboardData();
         }}

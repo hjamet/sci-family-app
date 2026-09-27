@@ -1,9 +1,8 @@
 import React, { useState, useEffect, useMemo } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { fetchTasks, createTask, fetchProjects, createProject } from '../api';
+import { fetchTasks, createTask, fetchProjects } from '../api';
 import TaskDetailModal from './TaskDetailModal';
 import VoteRoofModal from './VoteRoofModal';
-import NewProjectModal from './NewProjectModal';
 import { CardSkeleton, TasksContainerSkeleton, VoteCardSkeleton } from './SkeletonLoaders';
 import CustomSelect from './CustomSelect';
 
@@ -17,6 +16,145 @@ const AUTHENTIC_ASSOCIATES = [
   { id: 'maman', name: 'Maman (Élisabeth) Jamet', shortName: 'Maman' },
   { id: 'frederic', name: 'Frédéric Jamet', shortName: 'Frédéric' },
 ];
+
+export function resolveUserMeta(currentUser) {
+  let name = '';
+  let id = null;
+  let prenom = '';
+
+  if (typeof currentUser === 'string' && currentUser.trim()) {
+    name = currentUser.trim();
+    prenom = name.split(' ')[0];
+  } else if (currentUser && typeof currentUser === 'object') {
+    id = currentUser.id ?? currentUser.member_id ?? null;
+    prenom = currentUser.prenom || (currentUser.name ? currentUser.name.split(' ')[0] : '');
+    name = currentUser.name || currentUser.fullName || (prenom ? `${prenom} Jamet` : '');
+  }
+
+  if (!prenom) {
+    try {
+      const stored = localStorage.getItem('sci_user');
+      if (stored) {
+        prenom = stored.trim().split(' ')[0];
+        name = stored.includes('Jamet') ? stored.trim() : `${prenom} Jamet`;
+      }
+    } catch (_) {}
+  }
+
+  if (!prenom) prenom = 'Henri';
+  if (!name) name = `${prenom} Jamet`;
+
+  const lowerPrenom = prenom.toLowerCase();
+  const idMap = {
+    henri: 1,
+    hortense: 2,
+    marguerite: 3,
+    eugenie: 4,
+    eugénie: 4,
+    josephine: 5,
+    joséphine: 5,
+    maman: 6,
+    elisabeth: 6,
+    élisabeth: 6,
+    frederic: 7,
+    frédéric: 7,
+  };
+  if (id == null && idMap[lowerPrenom]) {
+    id = idMap[lowerPrenom];
+  }
+
+  return {
+    name,
+    prenom,
+    id: id != null ? Number(id) : null,
+    lowerPrenom,
+    lowerName: name.toLowerCase(),
+  };
+}
+
+export function isTaskOpen(task) {
+  if (!task) return false;
+  const st = (task.status || '').toUpperCase().trim();
+  const closedStatuses = [
+    'TERMINÉE',
+    'TERMINEE',
+    'TERMINE',
+    'TERMINÉ',
+    'VALIDÉ',
+    'VALIDE',
+    'ARCHIVÉ',
+    'ARCHIVEE',
+    'COMPLETED',
+    'ANNULÉE',
+    'ANNULEE',
+  ];
+  return !closedStatuses.includes(st);
+}
+
+export function isTaskAssignedToUser(task, userMeta) {
+  if (!task || !userMeta) return false;
+
+  // 1. Comparaison directe par ID
+  const taskMemberId = task.assigned_member_id ?? task.assignee_id ?? task.member_id ?? task.user_id;
+  if (userMeta.id != null && taskMemberId != null && Number(taskMemberId) === Number(userMeta.id)) {
+    return true;
+  }
+
+  // 2. Correspondance par prénom ou nom dans assignee ou assignee_name
+  const assigneeStr = (task.assignee || task.assignee_name || '').toLowerCase();
+  if (assigneeStr) {
+    if (userMeta.lowerPrenom && assigneeStr.includes(userMeta.lowerPrenom)) return true;
+    if (userMeta.lowerName && (assigneeStr.includes(userMeta.lowerName) || userMeta.lowerName.includes(assigneeStr))) return true;
+  }
+
+  // 3. Correspondance dans assigned_members (tableau d'objets, tableau de chaînes, ou JSON encodé)
+  let members = [];
+  if (Array.isArray(task.assigned_members)) {
+    members = task.assigned_members;
+  } else if (typeof task.assigned_members === 'string' && task.assigned_members.trim()) {
+    try {
+      const parsed = JSON.parse(task.assigned_members);
+      if (Array.isArray(parsed)) members = parsed;
+      else members = [task.assigned_members];
+    } catch (_) {
+      members = [task.assigned_members];
+    }
+  }
+
+  for (const m of members) {
+    if (typeof m === 'object' && m !== null) {
+      if (userMeta.id != null && m.id != null && Number(m.id) === Number(userMeta.id)) return true;
+      const mName = (m.name || m.prenom || '').toLowerCase();
+      if (userMeta.lowerPrenom && mName.includes(userMeta.lowerPrenom)) return true;
+      if (userMeta.lowerName && mName.includes(userMeta.lowerName)) return true;
+    } else if (typeof m === 'string') {
+      const mStr = m.toLowerCase();
+      if (userMeta.lowerPrenom && mStr.includes(userMeta.lowerPrenom)) return true;
+      if (userMeta.lowerName && mStr.includes(userMeta.lowerName)) return true;
+    }
+  }
+
+  // 4. Mention explicite dans le titre ou la description (ex: "[Référent: Henri]" ou "[Référente: Joséphine]")
+  const fullText = `${task.title || ''} ${task.description || ''}`.toLowerCase();
+  if (userMeta.lowerPrenom) {
+    if (
+      fullText.includes(`[référent: ${userMeta.lowerPrenom}`) ||
+      fullText.includes(`[référente: ${userMeta.lowerPrenom}`) ||
+      fullText.includes(`[référent : ${userMeta.lowerPrenom}`) ||
+      fullText.includes(`[référente : ${userMeta.lowerPrenom}`)
+    ) {
+      return true;
+    }
+  }
+
+  // 5. Fallback created_by si pas d'autre assignation
+  if (!assigneeStr && members.length === 0 && !taskMemberId && task.created_by) {
+    const creatorStr = String(task.created_by).toLowerCase();
+    if (userMeta.lowerPrenom && creatorStr.includes(userMeta.lowerPrenom)) return true;
+  }
+
+  return false;
+}
 
 export default function TasksPage({ currentUser = 'Henri Jamet' }) {
   const navigate = useNavigate();
@@ -37,12 +175,11 @@ export default function TasksPage({ currentUser = 'Henri Jamet' }) {
   // Voting Spotlight Carrousel State
   const [activeVoteIndex, setActiveVoteIndex] = useState(0);
 
-  // Modal states unifiées (Annotation 16)
+  // Modal states unifiées (Annotation 2 & 16)
   const [inspectingTask, setInspectingTask] = useState(null);
   const [isTaskModalOpen, setIsTaskModalOpen] = useState(false);
   const [isTaskEditingDirect, setIsTaskEditingDirect] = useState(false);
   const [isRoofVoteModalOpen, setIsRoofVoteModalOpen] = useState(false);
-  const [isNewProjectModalOpen, setIsNewProjectModalOpen] = useState(false);
 
   const handleOpenCreateTask = () => {
     setInspectingTask({
@@ -63,6 +200,27 @@ export default function TasksPage({ currentUser = 'Henri Jamet' }) {
     setIsTaskModalOpen(true);
   };
 
+  // Câblage direct de l'initiative au vote sur la modale unifiée avec FamilyChat (Annotation 2)
+  const handleOpenCreateVote = () => {
+    setInspectingTask({
+      title: '',
+      description: '',
+      subject: 'Presbytère',
+      complexity: 'Élevée',
+      budget: 1500,
+      isVoteInitiative: true,
+      assigned_members: [typeof currentUser === 'string' ? currentUser : (currentUser?.name || 'Henri Jamet')],
+      checklist: [
+        { text: 'Demande et analyse des devis contradictoires', done: false },
+        { text: 'Consultation et vote des 7 associés statutaires', done: false },
+        { text: 'Engagement des dépenses et validation gérance', done: false },
+        { text: 'Contrôle de conformité et réception des travaux', done: false },
+      ]
+    });
+    setIsTaskEditingDirect(true);
+    setIsTaskModalOpen(true);
+  };
+
   const handleOpenInspectTask = (t) => {
     setInspectingTask(t);
     setIsTaskEditingDirect(false);
@@ -75,13 +233,8 @@ export default function TasksPage({ currentUser = 'Henri Jamet' }) {
       if (m.id === 'all') {
         return { id: 'all', label: `Tous les associés (${tasks.length})` };
       }
-      const count = tasks.filter((t) => {
-        const target = m.shortName.toLowerCase();
-        return (
-          t.assignee?.toLowerCase().includes(target) ||
-          (Array.isArray(t.assigned_members) && t.assigned_members.some((am) => am.toLowerCase().includes(target)))
-        );
-      }).length;
+      const memberMeta = resolveUserMeta({ prenom: m.shortName, name: m.name, id: m.id });
+      const count = tasks.filter((t) => isTaskAssignedToUser(t, memberMeta)).length;
       return { id: m.id, label: `${m.name} (${count})`, name: m.name };
     });
   }, [tasks]);
@@ -193,18 +346,6 @@ export default function TasksPage({ currentUser = 'Henri Jamet' }) {
     await loadTasks();
   };
 
-  const handleCreateProjectSubmit = async (projectData) => {
-    try {
-      await createProject(projectData);
-      setIsNewProjectModalOpen(false);
-      await loadTasks();
-      alert('Initiative créée et soumise au vote statutaire de la SCI.');
-    } catch (err) {
-      console.error('Erreur création initiative:', err);
-      setIsNewProjectModalOpen(false);
-    }
-  };
-
   const handleVoteRoofSubmit = (voteResult) => {
     if (voteResult?.vote === 'POUR') {
       setRoofVoteStats(prev => ({
@@ -240,11 +381,9 @@ export default function TasksPage({ currentUser = 'Henri Jamet' }) {
 
     // Filtre Assigné
     if (selectedAssignee !== 'all') {
-      const target = selectedAssignee.toLowerCase();
-      const matchesAssignee =
-        t.assignee?.toLowerCase().includes(target) ||
-        (Array.isArray(t.assigned_members) && t.assigned_members.some((m) => m.toLowerCase().includes(target)));
-      if (!matchesAssignee) return false;
+      const assoc = AUTHENTIC_ASSOCIATES.find(a => a.id === selectedAssignee);
+      const targetMeta = resolveUserMeta(assoc ? { prenom: assoc.shortName, name: assoc.name, id: assoc.id } : selectedAssignee);
+      if (!isTaskAssignedToUser(t, targetMeta)) return false;
     }
 
     // Filtre Sujet
@@ -286,55 +425,17 @@ export default function TasksPage({ currentUser = 'Henri Jamet' }) {
     Planifié: tasks.filter(t => t.priority === 'Planifié').length,
   };
 
-  const currentUserName = typeof currentUser === 'string'
-    ? currentUser
-    : (currentUser?.name || currentUser?.prenom || 'Henri Jamet');
-  const currentUserId = typeof currentUser === 'object' ? currentUser?.id : null;
-  const currentUserFirst = currentUserName.trim().split(' ')[0].toLowerCase();
+  const userMeta = useMemo(() => resolveUserMeta(currentUser), [currentUser]);
 
-  // 1. Calculs des Tâches
-  const completedTasksCount = tasks.filter(t => {
-    const st = (t.status || '').toUpperCase();
-    return (
-      st === 'TERMINÉE' ||
-      st === 'TERMINEE' ||
-      st === 'VALIDÉ' ||
-      st === 'VALIDE' ||
-      st === 'ARCHIVÉ' ||
-      st === 'ARCHIVEE' ||
-      st === 'COMPLETED'
-    );
-  }).length;
-
+  // 1. Calculs des Tâches (Annotation 9 : robustesse filtre et calcul tâches ouvertes)
+  const completedTasksCount = tasks.filter(t => !isTaskOpen(t)).length;
   const totalTasks = tasks.length;
   const totalOpenTasksCount = Math.max(0, totalTasks - completedTasksCount);
 
-  // Mes tâches parmi les tâches ouvertes
-  const myOpenTasksCount = tasks.filter(t => {
-    const st = (t.status || '').toUpperCase();
-    const isOpen = (
-      st !== 'TERMINÉE' &&
-      st !== 'TERMINEE' &&
-      st !== 'VALIDÉ' &&
-      st !== 'VALIDE' &&
-      st !== 'ARCHIVÉ' &&
-      st !== 'ARCHIVEE' &&
-      st !== 'COMPLETED'
-    );
-    if (!isOpen) return false;
-
-    const assignee = (t.assignee || t.assignee_name || '').toLowerCase();
-    const members = Array.isArray(t.assigned_members)
-      ? t.assigned_members.map(m => (typeof m === 'string' ? m : m?.name || '').toLowerCase())
-      : [];
-
-    const isMatch = (str) => {
-      const s = String(str).toLowerCase();
-      return s.includes(currentUserName.toLowerCase()) || (currentUserFirst.length >= 3 && s.includes(currentUserFirst));
-    };
-
-    return isMatch(assignee) || members.some(isMatch);
-  }).length;
+  // Mes tâches parmi les tâches ouvertes (Annotation 9 : synchronisation parfaite /sejour et /taches)
+  const myOpenTasksCount = useMemo(() => {
+    return tasks.filter(t => isTaskOpen(t) && isTaskAssignedToUser(t, userMeta)).length;
+  }, [tasks, userMeta]);
 
   // Avancement global
   const avgProgress = totalTasks === 0 || totalOpenTasksCount === 0
@@ -358,14 +459,14 @@ export default function TasksPage({ currentUser = 'Henri Jamet' }) {
       const hasVoted = votes.some(v => {
         const voter = (v.user_name || v.author || v.user || v.name || '').toLowerCase();
         return (
-          voter.includes(currentUserName.toLowerCase()) ||
-          (currentUserFirst.length >= 3 && voter.includes(currentUserFirst)) ||
-          (currentUserId && v.user_id === currentUserId)
+          (userMeta.lowerName && voter.includes(userMeta.lowerName)) ||
+          (userMeta.lowerPrenom && voter.includes(userMeta.lowerPrenom)) ||
+          (userMeta.id != null && (v.user_id === userMeta.id || v.member_id === userMeta.id))
         );
       });
       return !hasVoted;
     }).length;
-  }, [openVotes, currentUserName, currentUserFirst, currentUserId]);
+  }, [openVotes, userMeta]);
 
   return (
     <div className="flex flex-col w-full pb-16">
@@ -569,7 +670,7 @@ export default function TasksPage({ currentUser = 'Henri Jamet' }) {
             )}
 
             <button
-              onClick={() => setIsNewProjectModalOpen(true)}
+              onClick={handleOpenCreateVote}
               className="h-[46px] px-5 rounded-DEFAULT bg-surface-container-lowest border-2 border-primary-container text-primary-container font-label-md text-label-md hover:bg-sage-soft hover:border-primary transition-all flex items-center gap-2 shadow-sm font-semibold cursor-pointer"
               type="button"
             >
@@ -702,7 +803,7 @@ export default function TasksPage({ currentUser = 'Henri Jamet' }) {
               Les projets et engagements de dépenses (&gt; 300 €) soumis à la délibération et au vote des associés de la SCI apparaîtront ici.
             </p>
             <button
-              onClick={() => setIsNewProjectModalOpen(true)}
+              onClick={handleOpenCreateVote}
               className="h-[44px] px-5 rounded-DEFAULT bg-surface-container-lowest border-2 border-primary-container text-primary-container font-label-md text-label-md hover:bg-sage-soft transition-all flex items-center gap-2 font-bold cursor-pointer"
               type="button"
             >
@@ -1103,21 +1204,13 @@ export default function TasksPage({ currentUser = 'Henri Jamet' }) {
       {/* 7. MODALES CONNECTÉES                                                     */}
       {/* ========================================================================= */}
 
-      {/* Modale de Vote Toiture Presbytère (Stitch) */}
+      {/* Modale de Vote Unifiée avec Projet Dynamique & ErrorBoundary (Annotation 1) */}
       <VoteRoofModal
         isOpen={isRoofVoteModalOpen}
         onClose={() => setIsRoofVoteModalOpen(false)}
-        currentUser={typeof currentUser === 'string' ? currentUser : 'Henri Jamet'}
+        currentUser={currentUser}
+        project={currentVote}
         onVoteSubmit={handleVoteRoofSubmit}
-      />
-
-      {/* Modale d'Ouverture de Vote Formel (Initiative SCI) */}
-      <NewProjectModal
-        isOpen={isNewProjectModalOpen}
-        onClose={() => setIsNewProjectModalOpen(false)}
-        properties={[{ id: 1, name: 'Domaine d\'Hellenvilliers' }]}
-        currentUser={typeof currentUser === 'string' ? currentUser : 'Henri Jamet'}
-        onSubmit={handleCreateProjectSubmit}
       />
 
       {/* Modale de Consultation et Édition Détaillée de Tâche Unifiée (Annotation 16) */}
