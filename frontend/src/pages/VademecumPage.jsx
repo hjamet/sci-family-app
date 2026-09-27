@@ -1509,282 +1509,143 @@ export default function VademecumPage({ properties, currentUser, reservations = 
             <h2 className="font-headline-lg text-headline-lg text-primary tracking-tight font-bold">
               Vadémécum &amp; Repères Pratiques du Séjour
             </h2>
+            <p className="text-xs text-on-surface-variant mt-1">
+              Consignes permanentes, codes et procédures de la maison
+            </p>
+          </div>
+
+          <div className="flex flex-wrap items-center gap-2">
+            <button
+              onClick={() => setIsCutoffModalOpen(true)}
+              className="h-10 px-3.5 rounded-xl bg-surface-container-low border border-border-subtle hover:border-primary text-on-surface font-label-sm text-xs font-semibold flex items-center gap-1.5 transition cursor-pointer"
+              type="button"
+            >
+              <span className="material-symbols-outlined text-[18px]">map</span>
+              <span>Plan des coupures</span>
+            </button>
+
+            <button
+              onClick={() => setIsChecklistModalOpen(true)}
+              className="h-10 px-3.5 rounded-xl bg-surface-container-low border border-border-subtle hover:border-primary text-on-surface font-label-sm text-xs font-semibold flex items-center gap-1.5 transition cursor-pointer"
+              type="button"
+            >
+              <span className="material-symbols-outlined text-[18px]">verified</span>
+              <span>Check-list départ</span>
+            </button>
+
+            <button
+              onClick={() => setIsNewItemModalOpen(true)}
+              className="h-10 px-4 bg-primary hover:bg-forest-deep text-white rounded-xl text-xs font-bold shadow-sm transition flex items-center justify-center gap-1.5 shrink-0 cursor-pointer"
+              type="button"
+            >
+              <Plus className="h-4 w-4" />
+              <span>Ajouter une Fiche</span>
+            </button>
           </div>
         </div>
 
-        {/* Practical Interactive Cards Grid */}
-        <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-4 gap-6">
-          
-          {/* Card 1: Wi-Fi */}
-          <div className="p-6 rounded-2xl bg-canvas-slate flex flex-col justify-between gap-4 shadow-sm border border-transparent hover:border-sage-border transition-all min-w-0">
-            <div>
-              <div className="flex items-center justify-between mb-4">
-                <div className="w-10 h-10 rounded-full bg-sage-soft text-primary flex items-center justify-center">
-                  <span className="material-symbols-outlined text-[22px]">wifi</span>
-                </div>
-                <span className="px-2.5 py-0.5 rounded-full bg-surface-container-lowest font-label-sm text-label-sm text-secondary font-semibold">
-                  Fibre 1 Gb/s
-                </span>
-              </div>
-              <div className="flex flex-col gap-1">
-                <span className="font-label-sm text-label-sm text-outline">Réseau Wi-Fi Domaine</span>
-                <span className="font-headline-sm text-headline-sm text-on-surface font-semibold truncate">
-                  Hellenvilliers_Rosing_5G
-                </span>
-                <p className="font-body-md text-body-md text-on-surface-variant text-xs mt-1">
-                  Couverture Salon, Cuisine, Bureaux &amp; Terrasse Sud.
-                </p>
-              </div>
-            </div>
-
-            <div className="pt-2">
+        {/* Filter & Search Bar */}
+        <div className="flex flex-col sm:flex-row items-center justify-between gap-3 bg-canvas-slate p-3 rounded-2xl border border-border-subtle mb-6">
+          <div className="flex overflow-x-auto space-x-1.5 py-1 w-full sm:w-auto">
+            {categories.map((cat) => (
               <button
-                onClick={handleCopyWifi}
-                className="w-full h-11 px-3 rounded-full bg-surface-container-lowest border-2 border-outline-variant text-on-surface hover:bg-white hover:border-primary font-label-sm text-label-sm flex items-center justify-center gap-1.5 transition-all font-semibold cursor-pointer"
+                key={cat}
+                onClick={() => setSelectedCategory(cat)}
+                className={`px-3 py-1.5 rounded-xl text-xs font-bold whitespace-nowrap transition cursor-pointer ${
+                  selectedCategory === cat
+                    ? 'bg-primary text-white shadow-sm'
+                    : 'bg-white text-on-surface-variant hover:text-on-surface border border-border-subtle'
+                }`}
                 type="button"
               >
-                <span className="material-symbols-outlined text-[18px]">
-                  {wifiCopied ? 'check' : 'content_copy'}
-                </span>
-                <span>{wifiCopied ? 'Mot de passe copié !' : 'Copier le mot de passe'}</span>
+                {cat}
               </button>
-            </div>
+            ))}
           </div>
 
-          {/* Card 2: Emergency valves & electrical cutoff */}
-          <div className="p-6 rounded-2xl bg-canvas-slate flex flex-col justify-between gap-4 shadow-sm border border-transparent hover:border-sage-border transition-all min-w-0">
-            <div>
-              <div className="flex items-center justify-between mb-4">
-                <div className="w-10 h-10 rounded-full bg-surface-container-high text-primary flex items-center justify-center">
-                  <span className="material-symbols-outlined text-[22px]">valve</span>
-                </div>
-                <span className="px-2.5 py-0.5 rounded-full bg-surface-container-lowest font-label-sm text-label-sm text-primary font-semibold">
-                  Cellier &amp; Linky
-                </span>
-              </div>
-              <div className="flex flex-col gap-1">
-                <span className="font-label-sm text-label-sm text-outline">Vannes &amp; Coupures Générales</span>
-                <span className="font-headline-sm text-headline-sm text-on-surface font-semibold truncate">
-                  Arrêt Eau &amp; Électricité
-                </span>
-                <p className="font-body-md text-body-md text-on-surface-variant text-xs mt-1">
-                  Robinet d'arrêt général d'eau situé dans le cellier sous l'escalier. Disjoncteur principal au vestibule d'entrée.
-                </p>
-              </div>
-            </div>
-
-            <div className="pt-2">
-              <button
-                onClick={() => setIsCutoffModalOpen(true)}
-                className="w-full h-11 px-3 rounded-full bg-surface-container-lowest border-2 border-outline-variant text-on-surface hover:bg-white hover:border-primary font-label-sm text-label-sm flex items-center justify-center gap-1.5 transition-all font-semibold cursor-pointer"
-                type="button"
-              >
-                <span className="material-symbols-outlined text-[18px]">map</span>
-                <span>Voir plan des coupures</span>
-              </button>
-            </div>
+          <div className="relative w-full sm:w-64">
+            <input
+              type="text"
+              placeholder="Rechercher (ex: Wifi, eau)..."
+              value={searchQuery}
+              onChange={(e) => setSearchQuery(e.target.value)}
+              className="w-full px-3.5 py-2 pl-9 bg-white border border-border-subtle rounded-xl text-xs text-on-surface focus:outline-none focus:border-primary"
+            />
+            <Search className="absolute left-3 top-2.5 h-3.5 w-3.5 text-outline" />
           </div>
-
-          {/* Card 3: Departure & Frost-free protocol */}
-          <div className="p-6 rounded-2xl bg-canvas-slate flex flex-col justify-between gap-4 shadow-sm border border-transparent hover:border-sage-border transition-all min-w-0">
-            <div>
-              <div className="flex items-center justify-between mb-4">
-                <div className="w-10 h-10 rounded-full bg-amber-soft text-amber-rich flex items-center justify-center">
-                  <span className="material-symbols-outlined text-[22px]">checklist_rtl</span>
-                </div>
-                <span className="px-2.5 py-0.5 rounded-full bg-surface-container-lowest font-label-sm text-label-sm text-amber-rich font-semibold">
-                  Protocole Départ
-                </span>
-              </div>
-              <div className="flex flex-col gap-1">
-                <span className="font-label-sm text-label-sm text-outline">Consignes de Départ</span>
-                <span className="font-headline-sm text-headline-sm text-on-surface font-semibold truncate">
-                  Fermeture &amp; Poubelles
-                </span>
-                <p className="font-body-md text-body-md text-on-surface-variant text-xs mt-1">
-                  Baisser à 12°C, fermer radiateurs des chambres, vider frigo, bacs au point de collecte Mesnil-sur-Iton le lundi matin.
-                </p>
-              </div>
-            </div>
-
-            <div className="pt-2">
-              <button
-                onClick={() => setIsChecklistModalOpen(true)}
-                className="w-full h-11 px-3 rounded-full bg-surface-container-lowest border-2 border-outline-variant text-on-surface hover:bg-white hover:border-primary font-label-sm text-label-sm flex items-center justify-center gap-1.5 transition-all font-semibold cursor-pointer"
-                type="button"
-              >
-                <span className="material-symbols-outlined text-[18px]">verified</span>
-                <span>Pointer la check-list départ</span>
-              </button>
-            </div>
-          </div>
-
-          {/* Card 4: Emergency Contacts & Plumber on-call */}
-          <div className="p-6 rounded-2xl bg-canvas-slate flex flex-col justify-between gap-4 shadow-sm border border-transparent hover:border-sage-border transition-all min-w-0">
-            <div>
-              <div className="flex items-center justify-between mb-4">
-                <div className="w-10 h-10 rounded-full bg-error-container text-error flex items-center justify-center">
-                  <span className="material-symbols-outlined text-[22px]">emergency</span>
-                </div>
-                <span className="px-2.5 py-0.5 rounded-full bg-surface-container-lowest font-label-sm text-label-sm text-error font-semibold">
-                  Astreinte 24/7
-                </span>
-              </div>
-              <div className="flex flex-col gap-1">
-                <span className="font-label-sm text-label-sm text-outline">Assistance &amp; Numéros Clés</span>
-                <span className="font-headline-sm text-headline-sm text-on-surface font-semibold truncate">
-                  Éts Josse &amp; Urgences
-                </span>
-                <div className="font-body-md text-body-md text-on-surface-variant text-xs mt-1 flex flex-col gap-0.5">
-                  <span>• Pompiers : <strong>18</strong></span>
-                  <span>• Chauffage Josse : <strong>02 32 35 12 00</strong></span>
-                  <span>• Pharmacie Mesnil-sur-Iton</span>
-                </div>
-              </div>
-            </div>
-
-            <div className="pt-2">
-              <a
-                className="w-full h-11 px-3 rounded-full bg-surface-container-lowest border-2 border-outline-variant text-on-surface hover:bg-white hover:border-primary font-label-sm text-label-sm flex items-center justify-center gap-1.5 transition-all font-semibold cursor-pointer"
-                href="tel:0232351200"
-              >
-                <span className="material-symbols-outlined text-[18px]">call</span>
-                <span>Appeler le chauffagiste</span>
-              </a>
-            </div>
-          </div>
-
         </div>
 
-        {/* Collapsible Full Database Section */}
-        {showFullVademecum && (
-          <div className="mt-10 pt-8 border-t border-border-subtle animate-in fade-in duration-300">
-            
-            <div className="flex flex-col md:flex-row md:items-center justify-between gap-4 mb-6">
-              <div>
-                <h3 className="font-headline-md text-lg font-bold text-on-surface">
-                  Base Complète des Fiches Vademecum
-                </h3>
-                <p className="text-xs text-on-surface-variant mt-0.5">
-                  Consignes permanentes, codes et procédures de la maison
-                </p>
-              </div>
-
-              <button
-                onClick={() => setIsNewItemModalOpen(true)}
-                className="px-4 py-2 bg-primary hover:bg-forest-deep text-white rounded-xl text-xs font-bold shadow-sm transition flex items-center justify-center gap-1.5 shrink-0 cursor-pointer"
-                type="button"
+        {/* Database Cards Grid */}
+        {loadingDb ? (
+          <div className="flex justify-center py-12 text-outline">
+            <div className="w-8 h-8 border-3 border-primary border-t-transparent rounded-full animate-spin"></div>
+          </div>
+        ) : filteredDbItems.length === 0 ? (
+          <div className="bg-canvas-slate border border-border-subtle rounded-2xl p-8 text-center text-on-surface-variant">
+            <BookOpen className="h-10 w-10 text-outline mx-auto mb-2" />
+            <h4 className="text-sm font-bold text-on-surface">Aucune fiche enregistrée</h4>
+            <p className="text-xs mt-1">Créez votre première fiche vademecum pour l'intendance du domaine.</p>
+          </div>
+        ) : (
+          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+            {filteredDbItems.map((item) => (
+              <div
+                key={item.id}
+                className="bg-white border border-border-subtle hover:border-sage-border rounded-2xl p-4 shadow-xs hover:shadow-sm transition flex flex-col justify-between"
               >
-                <Plus className="h-4 w-4" />
-                <span>Ajouter une Fiche</span>
-              </button>
-            </div>
+                <div>
+                  <div className="flex items-center justify-between gap-2 mb-2">
+                    <span className="px-2 py-0.5 rounded-md bg-canvas-slate border border-border-subtle text-[11px] font-bold text-on-surface-variant">
+                      {item.category}
+                    </span>
+                    {item.importance === 'CRITIQUE' && (
+                      <span className="px-2 py-0.5 rounded-full text-[10px] font-black bg-rose-50 text-rose-700 border border-rose-200">
+                        CRITIQUE
+                      </span>
+                    )}
+                    {item.importance === 'IMPORTANT' && (
+                      <span className="px-2 py-0.5 rounded-full text-[10px] font-black bg-amber-soft text-amber-rich border border-amber-200">
+                        IMPORTANT
+                      </span>
+                    )}
+                  </div>
 
-            {/* Filter & Search Bar */}
-            <div className="flex flex-col sm:flex-row items-center justify-between gap-3 bg-canvas-slate p-3 rounded-2xl border border-border-subtle mb-6">
-              <div className="flex overflow-x-auto space-x-1.5 py-1 w-full sm:w-auto">
-                {categories.map((cat) => (
+                  <h4 className="text-sm font-bold text-on-surface mb-1">{item.title}</h4>
+                  <p className="text-xs text-on-surface-variant leading-relaxed whitespace-pre-line mb-3">
+                    {item.content}
+                  </p>
+                </div>
+
+                {item.code_to_copy && (
+                  <div className="bg-canvas-slate border border-border-subtle rounded-xl p-2.5 flex items-center justify-between gap-2 mt-2">
+                    <span className="text-xs font-mono font-bold text-primary truncate">
+                      {item.code_to_copy}
+                    </span>
+                    <button
+                      onClick={() => handleCopyDbCode(item.id, item.code_to_copy)}
+                      className="px-2.5 py-1 bg-white hover:bg-sage-soft text-primary border border-border-subtle rounded-lg text-[11px] font-bold flex items-center gap-1 transition shrink-0 cursor-pointer"
+                      type="button"
+                    >
+                      <span className="material-symbols-outlined text-[14px]">
+                        {copiedDbId === item.id ? 'check' : 'content_copy'}
+                      </span>
+                      <span>{copiedDbId === item.id ? 'Copié' : 'Copier'}</span>
+                    </button>
+                  </div>
+                )}
+
+                <div className="flex justify-end pt-2 mt-3 border-t border-border-subtle">
                   <button
-                    key={cat}
-                    onClick={() => setSelectedCategory(cat)}
-                    className={`px-3 py-1.5 rounded-xl text-xs font-bold whitespace-nowrap transition cursor-pointer ${
-                      selectedCategory === cat
-                        ? 'bg-primary text-white shadow-sm'
-                        : 'bg-white text-on-surface-variant hover:text-on-surface border border-border-subtle'
-                    }`}
+                    onClick={() => handleDeleteDbItem(item.id)}
+                    className="text-outline hover:text-error text-xs flex items-center gap-1 transition font-medium cursor-pointer"
                     type="button"
                   >
-                    {cat}
+                    <Trash2 className="h-3 w-3" />
+                    <span>Supprimer</span>
                   </button>
-                ))}
+                </div>
               </div>
-
-              <div className="relative w-full sm:w-64">
-                <input
-                  type="text"
-                  placeholder="Rechercher (ex: Wifi, eau)..."
-                  value={searchQuery}
-                  onChange={(e) => setSearchQuery(e.target.value)}
-                  className="w-full px-3.5 py-2 pl-9 bg-white border border-border-subtle rounded-xl text-xs text-on-surface focus:outline-none focus:border-primary"
-                />
-                <Search className="absolute left-3 top-2.5 h-3.5 w-3.5 text-outline" />
-              </div>
-            </div>
-
-            {/* Database Cards Grid */}
-            {loadingDb ? (
-              <div className="flex justify-center py-12 text-outline">
-                <div className="w-8 h-8 border-3 border-primary border-t-transparent rounded-full animate-spin"></div>
-              </div>
-            ) : filteredDbItems.length === 0 ? (
-              <div className="bg-canvas-slate border border-border-subtle rounded-2xl p-8 text-center text-on-surface-variant">
-                <BookOpen className="h-10 w-10 text-outline mx-auto mb-2" />
-                <h4 className="text-sm font-bold text-on-surface">Aucune fiche enregistrée</h4>
-                <p className="text-xs mt-1">Créez votre première fiche vademecum pour l'intendance du domaine.</p>
-              </div>
-            ) : (
-              <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
-                {filteredDbItems.map((item) => (
-                  <div
-                    key={item.id}
-                    className="bg-white border border-border-subtle hover:border-sage-border rounded-2xl p-4 shadow-xs hover:shadow-sm transition flex flex-col justify-between"
-                  >
-                    <div>
-                      <div className="flex items-center justify-between gap-2 mb-2">
-                        <span className="px-2 py-0.5 rounded-md bg-canvas-slate border border-border-subtle text-[11px] font-bold text-on-surface-variant">
-                          {item.category}
-                        </span>
-                        {item.importance === 'CRITIQUE' && (
-                          <span className="px-2 py-0.5 rounded-full text-[10px] font-black bg-rose-50 text-rose-700 border border-rose-200">
-                            CRITIQUE
-                          </span>
-                        )}
-                        {item.importance === 'IMPORTANT' && (
-                          <span className="px-2 py-0.5 rounded-full text-[10px] font-black bg-amber-soft text-amber-rich border border-amber-200">
-                            IMPORTANT
-                          </span>
-                        )}
-                      </div>
-
-                      <h4 className="text-sm font-bold text-on-surface mb-1">{item.title}</h4>
-                      <p className="text-xs text-on-surface-variant leading-relaxed whitespace-pre-line mb-3">
-                        {item.content}
-                      </p>
-                    </div>
-
-                    {item.code_to_copy && (
-                      <div className="bg-canvas-slate border border-border-subtle rounded-xl p-2.5 flex items-center justify-between gap-2 mt-2">
-                        <span className="text-xs font-mono font-bold text-primary truncate">
-                          {item.code_to_copy}
-                        </span>
-                        <button
-                          onClick={() => handleCopyDbCode(item.id, item.code_to_copy)}
-                          className="px-2.5 py-1 bg-white hover:bg-sage-soft text-primary border border-border-subtle rounded-lg text-[11px] font-bold flex items-center gap-1 transition shrink-0 cursor-pointer"
-                          type="button"
-                        >
-                          <span className="material-symbols-outlined text-[14px]">
-                            {copiedDbId === item.id ? 'check' : 'content_copy'}
-                          </span>
-                          <span>{copiedDbId === item.id ? 'Copié' : 'Copier'}</span>
-                        </button>
-                      </div>
-                    )}
-
-                    <div className="flex justify-end pt-2 mt-3 border-t border-border-subtle">
-                      <button
-                        onClick={() => handleDeleteDbItem(item.id)}
-                        className="text-outline hover:text-error text-xs flex items-center gap-1 transition font-medium cursor-pointer"
-                        type="button"
-                      >
-                        <Trash2 className="h-3 w-3" />
-                        <span>Supprimer</span>
-                      </button>
-                    </div>
-                  </div>
-                ))}
-              </div>
-            )}
-
+            ))}
           </div>
         )}
 
