@@ -767,7 +767,7 @@ export default function DashboardPage({
               Aucun scrutin statutaire actif
             </h3>
             <p className="font-body-md text-on-surface-variant text-xs max-w-sm mb-3">
-              Tous les arbitrages de dépenses et projets majeurs sont à jour. Les futurs scrutins statutaires (&gt; 300 €) s'afficheront ici.
+              Tous les arbitrages de dépenses et projets majeurs sont à jour. Les futurs scrutins statutaires s'afficheront ici.
             </p>
             <button
               type="button"

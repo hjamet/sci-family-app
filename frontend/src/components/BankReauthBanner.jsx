@@ -15,7 +15,8 @@ import { fetchBankStatus, triggerBankSync, startBankAuth } from '../api';
 export default function BankReauthBanner({
   bankStatus: propBankStatus,
   onRefresh,
-  className = ''
+  className = '',
+  urlError = null
 }) {
   const [bankStatus, setBankStatus] = useState(propBankStatus || null);
   const [loading, setLoading] = useState(false);
@@ -136,22 +137,31 @@ export default function BankReauthBanner({
     }
   };
 
-  // RÈGLE D'OR HENRI : En temps normal (API fonctionnelle, statut OK, pas de ré-auth requise),
+  // RÈGLE D'OR HENRI : En temps normal (API fonctionnelle, statut OK, pas de ré-auth requise, zéro erreur URL),
   // l'interface reste STRICTEMENT et TOTALEMENT épurée (ZÉRO bannière, ZÉRO message résiduel).
-  if (!bankStatus || (!bankStatus.needs_reauth && bankStatus.status === 'ok')) {
+  const hasError = Boolean(
+    urlError ||
+    (bankStatus && (bankStatus.needs_reauth || bankStatus.status !== 'ok' || bankStatus.raw_error))
+  );
+
+  if (!bankStatus && !urlError) {
     return null;
   }
 
-  const isExpiringSoon = bankStatus.status === 'expiring_soon';
-  const lastSyncTimestamp = bankStatus.last_successful_sync || bankStatus.last_synced_at;
+  if (!hasError) {
+    return null;
+  }
+
+  const isExpiringSoon = bankStatus?.status === 'expiring_soon' && !urlError;
+  const lastSyncTimestamp = bankStatus?.last_successful_sync || bankStatus?.last_synced_at;
   const formattedLastSync = formatDateTime(lastSyncTimestamp);
-  const formattedLastAttempt = formatDateTime(bankStatus.last_sync_attempt);
+  const formattedLastAttempt = formatDateTime(bankStatus?.last_sync_attempt);
 
   // Extraction des champs de diagnostic technique
-  const rawError = bankStatus.raw_error || (bankStatus.status === 'error' ? bankStatus.message : null);
+  const rawError = bankStatus?.raw_error || urlError || (bankStatus?.status === 'error' ? bankStatus?.message : null);
   const rawErrorText = normalizeErrorString(rawError);
-  const errorCode = bankStatus.error_code ? String(bankStatus.error_code) : null;
-  const errorDetailsText = normalizeErrorString(bankStatus.error_details);
+  const errorCode = bankStatus?.error_code ? String(bankStatus.error_code) : (urlError ? 'REDIRECT_ERROR' : null);
+  const errorDetailsText = normalizeErrorString(bankStatus?.error_details);
 
   // Copie dans le presse-papier du rapport d'incident complet
   const handleCopyError = (e) => {

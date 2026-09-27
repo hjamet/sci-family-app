@@ -188,11 +188,6 @@ export default function ProjectsPage({ properties, currentUser }) {
                 <span className="px-2.5 py-0.5 rounded-full bg-emerald-800/80 text-emerald-200 text-xs font-semibold">
                   {activeVoteProject.category || activeVoteProject.subject || 'SCI Familiale'}
                 </span>
-                {typeof activeVoteProject.estimated_cost === 'number' && activeVoteProject.estimated_cost > 300 && (
-                  <span className="px-2.5 py-0.5 rounded-full bg-amber-soft text-amber-rich text-xs font-semibold">
-                    Seuil &gt; 300 € (Art. 12 des Statuts)
-                  </span>
-                )}
               </div>
 
               <div>

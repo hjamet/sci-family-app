@@ -863,72 +863,142 @@ function VoteRoofModalInner({
                 <span className="text-xs font-semibold text-primary">1 voix statutaire</span>
               </div>
 
-              {/* Les 3 boutons principaux de vote direct en 1 clic */}
-              <div aria-label="Choix du vote direct" className="grid grid-cols-1 sm:grid-cols-3 gap-2.5" role="group">
-                {/* 1. Approuver */}
-                <button
-                  type="button"
-                  onClick={() => handleCastVote('POUR')}
-                  className={`group relative flex items-center justify-center gap-2 py-3 px-4 rounded-xl border text-xs sm:text-sm font-semibold transition-all cursor-pointer ${
-                    selectedVote === 'POUR'
-                      ? 'bg-emerald-600 text-white border-emerald-600 shadow-md ring-2 ring-emerald-500/30 font-bold'
-                      : 'bg-white hover:bg-emerald-50 text-slate-700 hover:text-emerald-800 border-slate-200 hover:border-emerald-300 shadow-sm'
-                  }`}
-                >
-                  <span className="material-symbols-outlined text-[20px] shrink-0">check_circle</span>
-                  <span>Approuver</span>
-                </button>
+              {/* Choix de vote : dynamique si projectOptions existe, ou standard sinon (Annotation 4) */}
+              {projectOptions.length > 0 ? (
+                <div className="flex flex-col gap-2.5">
+                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5">
+                    {projectOptions.map((opt, idx) => {
+                      const isSelected = selectedVote === opt;
+                      return (
+                        <button
+                          key={idx}
+                          type="button"
+                          onClick={() => handleCastVote(opt)}
+                          className={`group relative flex items-center justify-start gap-2.5 py-3 px-4 rounded-xl border text-xs sm:text-sm font-semibold transition-all cursor-pointer text-left ${
+                            isSelected
+                              ? 'bg-emerald-600 text-white border-emerald-600 shadow-md ring-2 ring-emerald-500/30 font-bold'
+                              : 'bg-white hover:bg-emerald-50 text-slate-800 hover:text-emerald-900 border-slate-200 hover:border-emerald-300 shadow-sm'
+                          }`}
+                        >
+                          <span className={`w-5 h-5 rounded-full flex items-center justify-center text-xs font-bold shrink-0 ${
+                            isSelected ? 'bg-white text-emerald-800' : 'bg-emerald-100 text-emerald-800'
+                          }`}>
+                            {idx + 1}
+                          </span>
+                          <span className="flex-1 truncate">{opt}</span>
+                          {isSelected && (
+                            <span className="material-symbols-outlined text-[18px] text-white shrink-0">check_circle</span>
+                          )}
+                        </button>
+                      );
+                    })}
+                  </div>
 
-                {/* 2. Refuser */}
-                <button
-                  type="button"
-                  onClick={() => handleCastVote('CONTRE')}
-                  className={`group relative flex items-center justify-center gap-2 py-3 px-4 rounded-xl border text-xs sm:text-sm font-semibold transition-all cursor-pointer ${
-                    selectedVote === 'CONTRE'
-                      ? 'bg-rose-600 text-white border-rose-600 shadow-md ring-2 ring-rose-500/30 font-bold'
-                      : 'bg-white hover:bg-rose-50 text-slate-700 hover:text-rose-800 border-slate-200 hover:border-rose-300 shadow-sm'
-                  }`}
-                >
-                  <span className="material-symbols-outlined text-[20px] shrink-0">cancel</span>
-                  <span>Refuser</span>
-                </button>
+                  {/* Options statutaires obligatoires : Blanc & Report AG */}
+                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5 pt-2 border-t border-slate-200/80">
+                    <button
+                      type="button"
+                      onClick={() => handleCastVote('BLANC')}
+                      className={`py-2.5 px-4 rounded-xl border text-xs font-semibold flex items-center justify-center gap-2 transition-all cursor-pointer ${
+                        selectedVote === 'BLANC'
+                          ? 'bg-slate-700 text-white border-slate-700 shadow-md ring-2 ring-slate-400/30 font-bold'
+                          : 'bg-white hover:bg-slate-100 text-slate-700 border-slate-200 hover:border-slate-300 shadow-sm'
+                      }`}
+                    >
+                      <span className="w-2.5 h-2.5 rounded-full border-2 border-slate-400 bg-white"></span>
+                      <span>⚪ Voter blanc</span>
+                      {selectedVote === 'BLANC' && (
+                        <span className="material-symbols-outlined text-[16px] text-white ml-1">check</span>
+                      )}
+                    </button>
 
-                {/* 3. S'abstenir */}
-                <button
-                  type="button"
-                  onClick={() => handleCastVote('ABSTENTION')}
-                  className={`group relative flex items-center justify-center gap-2 py-3 px-4 rounded-xl border text-xs sm:text-sm font-semibold transition-all cursor-pointer ${
-                    selectedVote === 'ABSTENTION'
-                      ? 'bg-slate-700 text-white border-slate-700 shadow-md ring-2 ring-slate-400/30 font-bold'
-                      : 'bg-white hover:bg-slate-100 text-slate-700 hover:text-slate-900 border-slate-200 hover:border-slate-300 shadow-sm'
-                  }`}
-                >
-                  <span className="material-symbols-outlined text-[20px] shrink-0">pause_circle</span>
-                  <span>S'abstenir</span>
-                </button>
-              </div>
+                    <button
+                      type="button"
+                      onClick={() => handleCastVote('REPORT_AG')}
+                      className={`py-2.5 px-4 rounded-xl border text-xs font-semibold flex items-center justify-center gap-2 transition-all cursor-pointer ${
+                        selectedVote === 'REPORT_AG'
+                          ? 'bg-purple-700 text-white border-purple-700 shadow-md ring-2 ring-purple-400/30 font-bold'
+                          : 'bg-white hover:bg-purple-50 text-slate-700 hover:text-purple-900 border-slate-200 hover:border-purple-300 shadow-sm'
+                      }`}
+                    >
+                      <span className="text-base">🏛️</span>
+                      <span>Reporter à la prochaine AG</span>
+                      {selectedVote === 'REPORT_AG' && (
+                        <span className="material-symbols-outlined text-[16px] text-white ml-1">check</span>
+                      )}
+                    </button>
+                  </div>
+                </div>
+              ) : (
+                <>
+                  {/* Les 3 boutons principaux de vote direct en 1 clic */}
+                  <div aria-label="Choix du vote direct" className="grid grid-cols-1 sm:grid-cols-3 gap-2.5" role="group">
+                    {/* 1. Approuver */}
+                    <button
+                      type="button"
+                      onClick={() => handleCastVote('POUR')}
+                      className={`group relative flex items-center justify-center gap-2 py-3 px-4 rounded-xl border text-xs sm:text-sm font-semibold transition-all cursor-pointer ${
+                        selectedVote === 'POUR'
+                          ? 'bg-emerald-600 text-white border-emerald-600 shadow-md ring-2 ring-emerald-500/30 font-bold'
+                          : 'bg-white hover:bg-emerald-50 text-slate-700 hover:text-emerald-800 border-slate-200 hover:border-emerald-300 shadow-sm'
+                      }`}
+                    >
+                      <span className="material-symbols-outlined text-[20px] shrink-0">check_circle</span>
+                      <span>Approuver</span>
+                    </button>
 
-              {/* Option statutaire séparée : Reporter à la prochaine Assemblée Générale */}
-              <div className="pt-3 border-t border-slate-200/80 flex flex-col gap-2">
-                <button
-                  type="button"
-                  onClick={() => handleCastVote('REPORT_AG')}
-                  className={`w-full py-2.5 px-4 rounded-xl border text-xs font-semibold flex items-center justify-center gap-2 transition-all cursor-pointer ${
-                    selectedVote === 'REPORT_AG'
-                      ? 'bg-purple-700 text-white border-purple-700 shadow-md ring-2 ring-purple-400/30 font-bold'
-                      : 'bg-white hover:bg-purple-50 text-slate-700 hover:text-purple-900 border-slate-200 hover:border-purple-300 shadow-sm'
-                  }`}
-                >
-                  <span className="text-base">🏛️</span>
-                  <span>Demander un débat en Assemblée Générale</span>
-                  {selectedVote === 'REPORT_AG' && (
-                    <span className="material-symbols-outlined text-[16px] text-white ml-1">check</span>
-                  )}
-                </button>
-                <p className="text-[11px] text-slate-500 italic leading-relaxed px-1">
-                  Conformément aux statuts de la SCI, dès lors qu'un associé sollicite un débat en AG, la décision à distance est suspendue. Les votes exprimés restent visibles à titre indicatif et la résolution sera portée à l'ordre du jour de la prochaine AG.
-                </p>
-              </div>
+                    {/* 2. Refuser */}
+                    <button
+                      type="button"
+                      onClick={() => handleCastVote('CONTRE')}
+                      className={`group relative flex items-center justify-center gap-2 py-3 px-4 rounded-xl border text-xs sm:text-sm font-semibold transition-all cursor-pointer ${
+                        selectedVote === 'CONTRE'
+                          ? 'bg-rose-600 text-white border-rose-600 shadow-md ring-2 ring-rose-500/30 font-bold'
+                          : 'bg-white hover:bg-rose-50 text-slate-700 hover:text-rose-800 border-slate-200 hover:border-rose-300 shadow-sm'
+                      }`}
+                    >
+                      <span className="material-symbols-outlined text-[20px] shrink-0">cancel</span>
+                      <span>Refuser</span>
+                    </button>
+
+                    {/* 3. S'abstenir */}
+                    <button
+                      type="button"
+                      onClick={() => handleCastVote('ABSTENTION')}
+                      className={`group relative flex items-center justify-center gap-2 py-3 px-4 rounded-xl border text-xs sm:text-sm font-semibold transition-all cursor-pointer ${
+                        selectedVote === 'ABSTENTION'
+                          ? 'bg-slate-700 text-white border-slate-700 shadow-md ring-2 ring-slate-400/30 font-bold'
+                          : 'bg-white hover:bg-slate-100 text-slate-700 hover:text-slate-900 border-slate-200 hover:border-slate-300 shadow-sm'
+                      }`}
+                    >
+                      <span className="material-symbols-outlined text-[20px] shrink-0">pause_circle</span>
+                      <span>S'abstenir</span>
+                    </button>
+                  </div>
+
+                  {/* Option statutaire séparée : Reporter à la prochaine Assemblée Générale */}
+                  <div className="pt-3 border-t border-slate-200/80 flex flex-col gap-2">
+                    <button
+                      type="button"
+                      onClick={() => handleCastVote('REPORT_AG')}
+                      className={`w-full py-2.5 px-4 rounded-xl border text-xs font-semibold flex items-center justify-center gap-2 transition-all cursor-pointer ${
+                        selectedVote === 'REPORT_AG'
+                          ? 'bg-purple-700 text-white border-purple-700 shadow-md ring-2 ring-purple-400/30 font-bold'
+                          : 'bg-white hover:bg-purple-50 text-slate-700 hover:text-purple-900 border-slate-200 hover:border-purple-300 shadow-sm'
+                      }`}
+                    >
+                      <span className="text-base">🏛️</span>
+                      <span>Demander un débat en Assemblée Générale</span>
+                      {selectedVote === 'REPORT_AG' && (
+                        <span className="material-symbols-outlined text-[16px] text-white ml-1">check</span>
+                      )}
+                    </button>
+                    <p className="text-[11px] text-slate-500 italic leading-relaxed px-1">
+                      Conformément aux statuts de la SCI, dès lors qu'un associé sollicite un débat en AG, la décision à distance est suspendue. Les votes exprimés restent visibles à titre indicatif et la résolution sera portée à l'ordre du jour de la prochaine AG.
+                    </p>
+                  </div>
+                </>
+              )}
             </div>
 
           </section>

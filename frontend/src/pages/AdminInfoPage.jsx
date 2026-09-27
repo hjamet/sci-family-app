@@ -730,7 +730,7 @@ export default function AdminInfoPage({ currentUser }) {
         )}
 
         {/* Bannière d'alerte raccordement bancaire DSP2 réactive */}
-        <BankReauthBanner bankStatus={bankStatus} onRefresh={loadBankStatus} />
+        <BankReauthBanner bankStatus={bankStatus} onRefresh={loadBankStatus} urlError={bankingError} />
 
         <div className="flex items-center justify-between mb-space-sm">
           <div className="flex items-center gap-2">

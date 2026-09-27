@@ -752,7 +752,7 @@ export default function TasksPage({ currentUser = 'Henri Jamet' }) {
               Aucun scrutin statutaire en cours
             </h3>
             <p className="font-body-md text-body-md text-on-surface-variant max-w-md text-sm mb-4">
-              Les projets et engagements de dépenses (&gt; 300 €) soumis à la délibération et au vote des associés de la SCI apparaîtront ici.
+              Les projets et initiatives de travaux soumis à la délibération et au vote des associés de la SCI apparaîtront ici.
             </p>
             <button
               onClick={handleOpenCreateVote}
