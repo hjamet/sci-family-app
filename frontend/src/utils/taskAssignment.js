@@ -75,21 +75,24 @@ export function resolveUserMeta(currentUser) {
  */
 export function isTaskOpen(task) {
   if (!task) return false;
-  const st = (task.status || '').toUpperCase().trim();
-  const closedStatuses = [
-    'TERMINÉE',
-    'TERMINEE',
-    'TERMINE',
-    'TERMINÉ',
-    'VALIDÉ',
-    'VALIDE',
-    'ARCHIVÉ',
-    'ARCHIVEE',
-    'COMPLETED',
-    'ANNULÉE',
-    'ANNULEE',
+  const raw = (task.status || '').trim();
+  const st = raw.toUpperCase();
+  const norm = stripAccents(raw).toLowerCase().replace(/[_\s-]+/g, '_');
+  const closedNormalized = [
+    'terminee',
+    'termine',
+    'validee',
+    'valide',
+    'archivee',
+    'archive',
+    'completed',
+    'annulee',
+    'annule',
+    'cloturee',
+    'cloture',
+    'closed',
   ];
-  return !closedStatuses.includes(st);
+  return !closedNormalized.includes(norm);
 }
 
 /**
@@ -97,12 +100,21 @@ export function isTaskOpen(task) {
  */
 export function isTaskPendingValidation(task) {
   if (!task) return false;
-  const st = (task.status || '').toUpperCase().trim();
+  const rawStatus = (task.status || '').trim();
+  const st = rawStatus.toUpperCase();
+  const normalized = stripAccents(rawStatus).toLowerCase().replace(/[_\s-]+/g, '_');
   return (
     st === 'PENDING_VALIDATION' ||
     st === 'EN_ATTENTE_VALIDATION' ||
     st === 'EN_ATTENTE_DE_VALIDATION' ||
     st === 'A_VALIDER' ||
+    st === 'À_VALIDER' ||
+    st === 'À VALIDER' ||
+    st === 'A VALIDER' ||
+    normalized === 'pending_validation' ||
+    normalized === 'en_attente_validation' ||
+    normalized === 'en_attente_de_validation' ||
+    normalized === 'a_valider' ||
     Boolean(task.pending_validation) ||
     Boolean(task.requires_coordinator_validation)
   );

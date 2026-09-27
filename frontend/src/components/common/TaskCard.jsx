@@ -68,8 +68,9 @@ export default function TaskCard({
     assigneeName = 'Henri Jamet';
   }
 
-  const initials = assigneeName
-    ? assigneeName
+  const displayAssigneeName = isValidationTask ? (task.created_by || assigneeName) : assigneeName;
+  const initials = displayAssigneeName
+    ? displayAssigneeName
         .split(' ')
         .filter(Boolean)
         .map((n) => n[0])
@@ -246,7 +247,7 @@ export default function TaskCard({
               className={`w-8 h-8 rounded-full ${
                 isValidationTask ? 'bg-purple-700 text-white' : 'bg-primary text-on-primary'
               } font-bold text-xs flex items-center justify-center ring-2 ring-surface-container-lowest`}
-              title={assigneeName}
+              title={displayAssigneeName}
             >
               {initials}
             </div>
