@@ -18,6 +18,7 @@ import {
   updateDocumentCategory,
   deleteDocumentCategory,
   uploadDocument,
+  createAccountingTransaction,
   updateDocument,
   deleteDocument,
   fetchBankStatus
@@ -164,11 +165,15 @@ export default function AdminInfoPage({ currentUser }) {
   const [isUpdatingCat, setIsUpdatingCat] = useState(false);
   const [isDeletingCat, setIsDeletingCat] = useState(false);
 
-  const [operationType, setOperationType] = useState('in'); // 'in' | 'out'
+  const [operationType, setOperationType] = useState('out'); // Exclusivement Sorties déductibles (Annotation 5)
   const [operationAmount, setOperationAmount] = useState('');
-  const [operationDate, setOperationDate] = useState('2026-06-15');
+  const [operationDate, setOperationDate] = useState(() => new Date().toISOString().split('T')[0]);
   const [operationLabel, setOperationLabel] = useState('');
+  const [operationFile, setOperationFile] = useState(null);
   const [operationFileName, setOperationFileName] = useState('');
+  const [operationFileError, setOperationFileError] = useState('');
+  const [operationLabelError, setOperationLabelError] = useState('');
+  const [isSubmittingOperation, setIsSubmittingOperation] = useState(false);
 
   // État persistant d'erreur bancaire (Consigne Henri : aucune disparition automatique pour les erreurs)
   const [bankingError, setBankingError] = useState(null);
@@ -515,35 +520,79 @@ export default function AdminInfoPage({ currentUser }) {
     }
   };
 
-  // Operation workflow
-  const handleOperationSubmit = (e) => {
+  // Operation workflow (Annotations 5, 6, 7 — Sortie Exclusive, Justification & Facture obligatoires)
+  const handleOperationSubmit = async (e) => {
     e.preventDefault();
-    const amountNum = parseFloat(operationAmount);
-    if (isNaN(amountNum) || amountNum <= 0) return;
+    setOperationFileError('');
+    setOperationLabelError('');
 
-    if (operationType === 'in') {
-      setFinancialTotals((prev) => ({
-        ...prev,
-        entrees: (prev.entrees !== null ? prev.entrees : 0) + amountNum,
-        reserves: prev.reserves !== null ? prev.reserves + amountNum : amountNum
-      }));
-    } else {
+    const amountNum = parseFloat(operationAmount);
+    if (isNaN(amountNum) || amountNum <= 0) {
+      showToast('Montant invalide', 'Veuillez saisir un montant valide supérieur à 0 €.', 'warning');
+      return;
+    }
+
+    if (!operationLabel || !operationLabel.trim()) {
+      setOperationLabelError('La justification de paiement est obligatoire.');
+      showToast('Justification obligatoire', 'Veuillez renseigner la justification de paiement.', 'warning');
+      return;
+    }
+
+    if (!operationFile) {
+      const errorMsg = 'Veuillez joindre une facture ou un justificatif de paiement pour valider la dépense.';
+      setOperationFileError(errorMsg);
+      showToast('Justificatif obligatoire', errorMsg, 'warning');
+      return;
+    }
+
+    setIsSubmittingOperation(true);
+    try {
+      const deposant = (
+        currentUser && typeof currentUser === 'object'
+          ? (currentUser.name || currentUser.fullName || (currentUser.prenom ? `${currentUser.prenom} ${currentUser.nom || ''}`.trim() : null) || currentUser.id)
+          : (typeof currentUser === 'string' && currentUser ? currentUser : null)
+      ) || (typeof activeUser === 'string' ? activeUser : 'Henri Jamet');
+
+      const formData = new FormData();
+      formData.append('file', operationFile);
+      formData.append('justification', operationLabel.trim());
+      formData.append('amount', String(amountNum));
+      formData.append('booking_date', operationDate || new Date().toISOString().split('T')[0]);
+      formData.append('type', 'out');
+      formData.append('uploaded_by', deposant);
+
+      await createAccountingTransaction(formData);
+
+      // Mise à jour réactive des totaux financiers (sorties déduites, réserves ajustées)
       setFinancialTotals((prev) => ({
         ...prev,
         sorties: (prev.sorties !== null ? prev.sorties : 0) + amountNum,
         reserves: prev.reserves !== null ? prev.reserves - amountNum : -amountNum
       }));
-    }
 
-    setIsOperationModalOpen(false);
-    showToast(
-      'Opération enregistrée',
-      `${operationType === 'in' ? '+' : '-'}${amountNum.toFixed(2)} € — ${operationLabel}`,
-      'payments'
-    );
-    setOperationAmount('');
-    setOperationLabel('');
-    setOperationFileName('');
+      // Rechargement dynamique des documents pour affichage direct du justificatif
+      await loadDocuments();
+
+      setIsOperationModalOpen(false);
+      showToast(
+        'Dépense enregistrée',
+        `-${amountNum.toFixed(2)} € — ${operationLabel.trim()} (Justificatif archivé)`,
+        'payments'
+      );
+
+      // Réinitialisation du formulaire
+      setOperationAmount('');
+      setOperationLabel('');
+      setOperationFile(null);
+      setOperationFileName('');
+      setOperationFileError('');
+      setOperationLabelError('');
+    } catch (err) {
+      console.error('Erreur enregistrement dépense:', err);
+      showToast('Erreur', err.message || 'Impossible d\'enregistrer la dépense', 'error');
+    } finally {
+      setIsSubmittingOperation(false);
+    }
   };
 
   // Pre-fill operation for quick invoice payment
@@ -552,6 +601,10 @@ export default function AdminInfoPage({ currentUser }) {
     setOperationType('out');
     setOperationAmount(parseFloat(rawVal) || '');
     setOperationLabel(`Règlement Facture ${inv.supplier} (${inv.reference})`);
+    setOperationFile(null);
+    setOperationFileName('');
+    setOperationFileError('');
+    setOperationLabelError('');
     setIsOperationModalOpen(true);
   };
 
@@ -662,13 +715,17 @@ export default function AdminInfoPage({ currentUser }) {
               id="btn-open-operation"
               type="button"
               onClick={() => {
-                setOperationType('in');
+                setOperationType('out');
+                setOperationFile(null);
+                setOperationFileName('');
+                setOperationFileError('');
+                setOperationLabelError('');
                 setIsOperationModalOpen(true);
               }}
               className="group flex items-center justify-center gap-2 px-5 py-3.5 rounded-DEFAULT bg-white dark:bg-slate-900 border-2 border-outline-variant text-on-surface hover:bg-canvas-slate hover:border-outline font-label-lg text-sm sm:text-base font-semibold transition-all duration-200 shadow-sm cursor-pointer whitespace-nowrap"
             >
               <span className="material-symbols-outlined text-[22px] text-on-surface-variant group-hover:scale-110 transition-transform">payments</span>
-              <span>Ajouter une opération</span>
+              <span>Déclarer une dépense</span>
             </button>
 
             <button
@@ -765,8 +822,8 @@ export default function AdminInfoPage({ currentUser }) {
             {/* Card 1: Entrées / Cotisations CCA */}
             <div
               onClick={() => {
-                setOperationType('in');
-                setIsOperationModalOpen(true);
+                setFinancialModalTab('entrees');
+                setIsFinancialModalOpen(true);
               }}
               role="button"
               tabIndex={0}
@@ -795,6 +852,10 @@ export default function AdminInfoPage({ currentUser }) {
             <div
               onClick={() => {
                 setOperationType('out');
+                setOperationFile(null);
+                setOperationFileName('');
+                setOperationFileError('');
+                setOperationLabelError('');
                 setIsOperationModalOpen(true);
               }}
               role="button"
@@ -1849,7 +1910,7 @@ export default function AdminInfoPage({ currentUser }) {
       )}
 
       {/* ========================================================================= */}
-      {/* MODAL 2 : AJOUTER UNE OPÉRATION FINANCIÈRE (#modal-operation)             */}
+      {/* MODAL 2 : DÉCLARER UNE DÉPENSE POUR LA SCI (#modal-operation)             */}
       {/* ========================================================================= */}
       {isOperationModalOpen && (
         <div id="modal-operation" className="fixed inset-0 z-50 bg-inverse-surface/45 backdrop-blur-xs flex items-center justify-center p-4">
@@ -1858,22 +1919,26 @@ export default function AdminInfoPage({ currentUser }) {
             {/* Modal Header */}
             <div className="flex items-center justify-between pb-space-sm border-b border-border-subtle">
               <div className="flex items-center gap-2">
-                <div className="w-10 h-10 rounded-full bg-sage-soft flex items-center justify-center text-primary">
-                  <span className="material-symbols-outlined text-[22px]">payments</span>
+                <div className="w-10 h-10 rounded-full bg-emerald-50 dark:bg-emerald-950/40 flex items-center justify-center text-emerald-800 dark:text-emerald-300 border border-emerald-200 dark:border-emerald-800">
+                  <span className="material-symbols-outlined text-[22px]">receipt_long</span>
                 </div>
                 <div>
                   <h3 className="font-headline-sm text-headline-sm text-forest-deep font-semibold">
-                    Ajouter une opération financière
+                    Déclarer une dépense pour la SCI
                   </h3>
                   <p className="font-body-md text-xs text-on-surface-variant">
-                    Livre des comptes &amp; Comptes Courants d'Associés (CCA)
+                    Dépense déductible des prochaines factures
                   </p>
                 </div>
               </div>
               <button
                 id="btn-close-operation"
                 type="button"
-                onClick={() => setIsOperationModalOpen(false)}
+                onClick={() => {
+                  setIsOperationModalOpen(false);
+                  setOperationFileError('');
+                  setOperationLabelError('');
+                }}
                 className="w-9 h-9 rounded-full hover:bg-surface-container text-on-surface-variant flex items-center justify-center transition-all cursor-pointer"
               >
                 <span className="material-symbols-outlined text-[20px]">close</span>
@@ -1883,67 +1948,31 @@ export default function AdminInfoPage({ currentUser }) {
             {/* Modal Form */}
             <form id="operation-form" onSubmit={handleOperationSubmit} className="mt-space-md flex flex-col gap-space-md">
               
-              {/* Type: Entrée vs Sortie */}
-              <div>
-                <label className="block font-label-md text-label-md text-on-surface mb-2 font-semibold">
-                  Type de mouvement bancaire
-                </label>
-                <div className="grid grid-cols-2 gap-space-sm">
-                  <label
-                    id="label-op-in"
-                    className={`flex items-center justify-center gap-2 h-[52px] rounded-DEFAULT border-2 font-label-md text-label-md cursor-pointer transition-all ${
-                      operationType === 'in'
-                        ? 'border-primary bg-sage-soft text-forest-deep'
-                        : 'border-border-subtle bg-surface-container-lowest text-on-surface-variant'
-                    }`}
-                  >
-                    <input
-                      id="op-in-radio"
-                      type="radio"
-                      name="op-type"
-                      value="in"
-                      checked={operationType === 'in'}
-                      onChange={() => setOperationType('in')}
-                      className="hidden"
-                    />
-                    <span className="material-symbols-outlined text-[20px] text-primary">arrow_downward</span>
-                    <span>Entrée (Cotisation / CCA)</span>
-                  </label>
-
-                  <label
-                    id="label-op-out"
-                    className={`flex items-center justify-center gap-2 h-[52px] rounded-DEFAULT border-2 font-label-md text-label-md cursor-pointer transition-all ${
-                      operationType === 'out'
-                        ? 'border-amber-rich bg-amber-soft text-amber-rich'
-                        : 'border-border-subtle bg-surface-container-lowest text-on-surface-variant'
-                    }`}
-                  >
-                    <input
-                      id="op-out-radio"
-                      type="radio"
-                      name="op-type"
-                      value="out"
-                      checked={operationType === 'out'}
-                      onChange={() => setOperationType('out')}
-                      className="hidden"
-                    />
-                    <span className="material-symbols-outlined text-[20px]">arrow_upward</span>
-                    <span>Sortie (Facture / Entretien)</span>
-                  </label>
-                </div>
+              {/* Callout Déductibilité — Sortie Exclusive (Annotation 5) */}
+              <div
+                id="callout-deductibilite"
+                className="p-3.5 rounded-DEFAULT bg-emerald-50/90 dark:bg-emerald-950/30 border border-emerald-200 dark:border-emerald-800 text-emerald-950 dark:text-emerald-100 flex items-start gap-3 shadow-xs"
+              >
+                <span className="material-symbols-outlined text-[20px] text-emerald-700 dark:text-emerald-400 shrink-0 mt-0.5">
+                  savings
+                </span>
+                <p className="font-body-md text-xs sm:text-sm font-medium leading-relaxed">
+                  Toutes dépenses effectuées pour la SCI et déclarées ici seront réduites de vos prochaines factures.
+                </p>
               </div>
 
               {/* Montant & Date */}
               <div className="grid grid-cols-1 sm:grid-cols-2 gap-space-sm">
                 <div>
                   <label htmlFor="op-amount-input" className="block font-label-md text-label-md text-on-surface mb-2 font-semibold">
-                    Montant en Euros (€)
+                    Montant de la dépense (€) <span className="text-error">*</span>
                   </label>
                   <div className="relative">
                     <input
                       id="op-amount-input"
                       type="number"
                       step="0.01"
+                      min="0.01"
                       required
                       placeholder="0.00"
                       value={operationAmount}
@@ -1956,7 +1985,7 @@ export default function AdminInfoPage({ currentUser }) {
 
                 <div>
                   <label htmlFor="op-date-input" className="block font-label-md text-label-md text-on-surface mb-2 font-semibold">
-                    Date de valeur
+                    Date de valeur / règlement
                   </label>
                   <input
                     id="op-date-input"
@@ -1968,35 +1997,48 @@ export default function AdminInfoPage({ currentUser }) {
                 </div>
               </div>
 
-              {/* Libellé */}
+              {/* Justification de paiement — obligatoire (Annotation 6) */}
               <div>
                 <label htmlFor="op-label-input" className="block font-label-md text-label-md text-on-surface mb-2 font-semibold">
-                  Libellé de l'écriture
+                  Justification de paiement (obligatoire)
                 </label>
                 <input
                   id="op-label-input"
                   type="text"
                   required
-                  placeholder="Ex : Cotisation CCA mensuelle Henri Jamet..."
+                  placeholder="Ex : Achat quincaillerie, réparation toiture, fournitures..."
                   value={operationLabel}
-                  onChange={(e) => setOperationLabel(e.target.value)}
-                  className="w-full h-[52px] px-4 bg-surface-container-lowest border-2 border-border-subtle rounded-DEFAULT font-body-md text-body-md text-on-surface focus:outline-none focus:border-primary transition-all"
+                  onChange={(e) => {
+                    setOperationLabel(e.target.value);
+                    if (operationLabelError) setOperationLabelError('');
+                  }}
+                  className={`w-full h-[52px] px-4 bg-surface-container-lowest border-2 ${
+                    operationLabelError ? 'border-error' : 'border-border-subtle'
+                  } rounded-DEFAULT font-body-md text-body-md text-on-surface focus:outline-none focus:border-primary transition-all`}
                 />
+                {operationLabelError && (
+                  <p className="mt-1.5 text-xs text-error font-medium flex items-center gap-1">
+                    <span className="material-symbols-outlined text-[16px]">error</span>
+                    <span>{operationLabelError}</span>
+                  </p>
+                )}
               </div>
 
-              {/* Justificatif lié */}
+              {/* Justificatif / facture — obligatoire (Annotation 7) */}
               <div>
                 <label className="block font-label-md text-label-md text-on-surface mb-2 font-semibold">
-                  Attacher un justificatif / facture (Optionnel)
+                  Justificatif / facture (obligatoire)
                 </label>
                 <div className="flex items-center gap-2">
                   <input
                     id="op-file-name"
                     type="text"
                     readOnly
-                    placeholder="Aucun fichier sélectionné"
+                    placeholder="Aucun justificatif sélectionné (requis)"
                     value={operationFileName}
-                    className="flex-1 h-[52px] px-4 bg-surface-container-low border border-border-subtle rounded-DEFAULT font-body-md text-xs text-on-surface-variant"
+                    className={`flex-1 h-[52px] px-4 bg-surface-container-low border ${
+                      operationFileError ? 'border-error text-error' : 'border-border-subtle text-on-surface-variant'
+                    } rounded-DEFAULT font-body-md text-xs`}
                   />
                   <label className="h-[52px] px-4 rounded-DEFAULT bg-surface-container-lowest border-2 border-border-subtle text-on-surface font-label-md text-label-md hover:border-primary hover:text-primary flex items-center justify-center gap-1 cursor-pointer transition-all">
                     <span className="material-symbols-outlined text-[18px]">attach_file</span>
@@ -2004,15 +2046,32 @@ export default function AdminInfoPage({ currentUser }) {
                     <input
                       id="op-file-upload"
                       type="file"
+                      accept=".pdf,.png,.jpg,.jpeg,.webp"
                       className="hidden"
                       onChange={(e) => {
                         if (e.target.files && e.target.files[0]) {
-                          setOperationFileName(e.target.files[0].name);
+                          const file = e.target.files[0];
+                          setOperationFile(file);
+                          setOperationFileName(file.name);
+                          setOperationFileError('');
                         }
                       }}
                     />
                   </label>
                 </div>
+
+                {/* Avertissement rouge/ambre si aucun justificatif joint */}
+                {operationFileError && (
+                  <div
+                    id="op-file-error-alert"
+                    className="mt-2 p-2.5 rounded-DEFAULT bg-amber-50 dark:bg-amber-950/40 border border-amber-300 dark:border-amber-700 text-amber-900 dark:text-amber-200 flex items-center gap-2 text-xs font-semibold animate-in fade-in duration-200"
+                  >
+                    <span className="material-symbols-outlined text-[18px] text-amber-600 dark:text-amber-400 shrink-0">
+                      warning
+                    </span>
+                    <span>{operationFileError}</span>
+                  </div>
+                )}
               </div>
 
               {/* Actions */}
@@ -2020,17 +2079,25 @@ export default function AdminInfoPage({ currentUser }) {
                 <button
                   id="btn-cancel-operation"
                   type="button"
-                  onClick={() => setIsOperationModalOpen(false)}
+                  onClick={() => {
+                    setIsOperationModalOpen(false);
+                    setOperationFileError('');
+                    setOperationLabelError('');
+                  }}
                   className="h-[52px] px-6 rounded-DEFAULT bg-surface-container-lowest border-2 border-border-subtle text-on-surface font-label-lg text-label-lg hover:bg-canvas-slate transition-all cursor-pointer"
                 >
                   Annuler
                 </button>
                 <button
+                  id="btn-submit-operation"
                   type="submit"
-                  className="h-[52px] px-6 rounded-DEFAULT bg-surface-container-lowest border-2 border-primary text-primary font-label-lg text-label-lg hover:bg-sage-soft transition-all flex items-center gap-2 cursor-pointer"
+                  disabled={isSubmittingOperation}
+                  className="h-[52px] px-6 rounded-DEFAULT bg-surface-container-lowest border-2 border-primary text-primary font-label-lg text-label-lg hover:bg-sage-soft transition-all flex items-center gap-2 cursor-pointer disabled:opacity-50"
                 >
-                  <span className="material-symbols-outlined text-[20px]">save</span>
-                  <span>Enregistrer l'opération</span>
+                  <span className="material-symbols-outlined text-[20px]">
+                    {isSubmittingOperation ? 'progress_activity' : 'save'}
+                  </span>
+                  <span>{isSubmittingOperation ? 'Enregistrement...' : 'Enregistrer la dépense'}</span>
                 </button>
               </div>
 

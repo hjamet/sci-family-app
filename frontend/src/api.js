@@ -695,6 +695,19 @@ export async function uploadDocument(formData) {
   return res.json();
 }
 
+export async function createAccountingTransaction(formData) {
+  const res = await fetch(`${API_BASE}/accounting/transactions`, {
+    method: 'POST',
+    headers: getAuthHeaders(),
+    body: formData
+  });
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({}));
+    throw new Error(err.detail || 'Erreur lors de l\'enregistrement de la dépense');
+  }
+  return res.json();
+}
+
 export async function deleteAdminDocument(idOrFilename) {
   const res = await fetch(`${API_BASE}/documents/${encodeURIComponent(idOrFilename)}`, {
     method: 'DELETE',

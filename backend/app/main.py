@@ -4837,6 +4837,183 @@ def trigger_banking_sync(db: Session = Depends(get_db)):
         raise HTTPException(status_code=500, detail=f"Échec de la synchronisation : {str(e)}")
 
 
+@app.post("/api/accounting/transactions", status_code=status.HTTP_201_CREATED, tags=["Accounting", "Banking"])
+@app.post("/api/banking/transactions", status_code=status.HTTP_201_CREATED, tags=["Accounting", "Banking"])
+async def create_accounting_transaction(
+    file: UploadFile = File(..., description="Justificatif ou facture obligatoire"),
+    justification: str = Form(..., description="Justification de paiement obligatoire"),
+    amount: float = Form(..., description="Montant de la dépense"),
+    booking_date: Optional[str] = Form(None, description="Date de valeur YYYY-MM-DD"),
+    type: Optional[str] = Form("out", description="Type d'opération (forcé à dépense / sortie)"),
+    uploaded_by: Optional[str] = Form("Henri Jamet"),
+    db: Session = Depends(get_db)
+):
+    """
+    Enregistre une dépense déductible pour la SCI et archive obligatoirement le justificatif associé.
+    Annotations 5, 6 & 7 :
+    - 100% sorties déductibles (type='out' ou 'expense'). Zéro entrée permise.
+    - Justification de paiement obligatoire.
+    - Fichier justificatif / facture strictement obligatoire avec archivage canonique.
+    """
+    # 1. Validation du montant (> 0)
+    try:
+        amount_val = float(amount)
+    except (ValueError, TypeError):
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Le montant de la dépense doit être un nombre valide supérieur à 0."
+        )
+    if amount_val <= 0:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Le montant de la dépense doit être strictement supérieur à 0."
+        )
+
+    # 2. Validation de la justification de paiement (obligatoire)
+    clean_justification = (justification or "").strip()
+    if not clean_justification:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="La justification de paiement est obligatoire."
+        )
+
+    # 3. Validation du justificatif / facture (obligatoire)
+    if not file or not file.filename:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Veuillez joindre une facture ou un justificatif de paiement pour valider la dépense."
+        )
+
+    # 4. Traitement et archivage canonique du fichier justificatif
+    now = datetime.utcnow()
+    mmaaaa = now.strftime("%m%Y")
+    original_name = file.filename or "justificatif.pdf"
+    _, ext = os.path.splitext(original_name)
+    if not ext:
+        ext = ".pdf"
+
+    # Nettoyage du titre pour la convention canonique
+    safe_title = re.sub(r'[^\w\s-]', '', clean_justification).strip()
+    if not safe_title:
+        safe_title = "Justificatif Depense"
+    canonical_filename = f"SCI {mmaaaa} {safe_title}{ext}"
+
+    file_bytes = await file.read()
+    file_size = len(file_bytes)
+    mimetype = file.content_type or "application/pdf"
+
+    # Téléversement Drive sécurisé (si configuré)
+    drive_file_id = None
+    try:
+        if drive_jail_service.is_configured():
+            drive_file = drive_jail_service.upload_file(
+                filename=canonical_filename,
+                content=file_bytes,
+                mimetype=mimetype,
+                description=f"SCI Hellenvilliers - Dépense Déductible : {clean_justification} ({amount_val:.2f} €) - Déposé par {uploaded_by}"
+            )
+            drive_file_id = drive_file.get("id") if drive_file else None
+    except Exception as drive_err:
+        logger.warning(f"Google Drive upload fallback notice: {drive_err}")
+
+    # Sauvegarde locale de secours
+    dest_path = os.path.join(DOCUMENTS_DIR, canonical_filename)
+    try:
+        with open(dest_path, "wb") as f:
+            f.write(file_bytes)
+    except Exception as e:
+        logger.warning(f"Erreur écriture cache local {canonical_filename}: {e}")
+
+    # Enregistrement du document dans admin_documents
+    db_doc = AdminDocument(
+        title=clean_justification,
+        category="Travaux & Factures",
+        file_url=f"/api/documents/drive/{drive_file_id}" if drive_file_id else "/api/documents/temp",
+        file_name=canonical_filename,
+        file_type=mimetype,
+        file_size=file_size,
+        file_data=file_bytes,
+        drive_file_id=drive_file_id,
+        source_type="EXPENSE",
+        uploaded_by=uploaded_by or "Henri Jamet",
+        notes=f"Dépense déductible : {amount_val:.2f} €"
+    )
+    db.add(db_doc)
+    db.commit()
+    db.refresh(db_doc)
+
+    db_doc.file_url = f"/api/documents/{db_doc.id}/download"
+    db.commit()
+    db.refresh(db_doc)
+
+    # 5. Enregistrement bancaire immuable en sortie / débit (montant négatif)
+    account = db.query(BankAccount).first()
+    if not account:
+        account = BankAccount(
+            account_id="CA-NORMANDIE-HELLENVILLIERS",
+            name="Compte Courant SCI Hellenvilliers",
+            iban="FR76 1690 6000 1234 5678 9012 345",
+            balance=0.0,
+            currency="EUR",
+            aspsp_name="Crédit Agricole Normandie"
+        )
+        db.add(account)
+        db.commit()
+        db.refresh(account)
+
+    expense_amount = -abs(amount_val)  # STRICTEMENT UNE SORTIE (Montant négatif)
+    clean_date = (booking_date or "").strip() or now.strftime("%Y-%m-%d")
+    tx_id = f"EXP-{int(now.timestamp())}-{uuid.uuid4().hex[:6].upper()}"
+
+    new_tx = BankTransaction(
+        transaction_id=tx_id,
+        account_id=account.id,
+        booking_date=clean_date,
+        value_date=clean_date,
+        amount=expense_amount,
+        currency="EUR",
+        remittance_information=clean_justification,
+        creditor_name="Fournisseur / Débit",
+        debtor_name="SCI Hellenvilliers",
+        category="Dépense Déductible",
+        raw_json=json.dumps({
+            "source": "manual_expense",
+            "document_id": db_doc.id,
+            "document_filename": canonical_filename,
+            "uploaded_by": uploaded_by or "Henri Jamet",
+            "deductible": True
+        })
+    )
+    db.add(new_tx)
+    account.balance = (account.balance or 0.0) + expense_amount
+    db.commit()
+    db.refresh(new_tx)
+
+    return {
+        "success": True,
+        "message": "Dépense enregistrée et justificatif archivé avec succès.",
+        "transaction": {
+            "id": new_tx.id,
+            "transaction_id": new_tx.transaction_id,
+            "account_id": new_tx.account_id,
+            "booking_date": new_tx.booking_date,
+            "amount": new_tx.amount,
+            "currency": new_tx.currency,
+            "remittance_information": new_tx.remittance_information,
+            "category": new_tx.category,
+            "creditor_name": new_tx.creditor_name,
+            "debtor_name": new_tx.debtor_name
+        },
+        "document": {
+            "id": db_doc.id,
+            "title": db_doc.title,
+            "filename": db_doc.file_name,
+            "file_url": db_doc.file_url,
+            "file_size": db_doc.file_size
+        }
+    }
+
+
 # --- Serve Frontend Production Build (Single Combined FastAPI server) ---
 FRONTEND_DIST_DIR = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "..", "frontend", "dist"))
 
