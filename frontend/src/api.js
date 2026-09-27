@@ -78,12 +78,14 @@ async function monitoredFetch(input, init = {}) {
       }
     } catch (_) {}
 
-    emitAppError({
-      url,
-      method,
-      status: res.status,
-      message: typeof detailMsg === 'object' ? JSON.stringify(detailMsg) : String(detailMsg),
-    });
+    if (!init?.silentError) {
+      emitAppError({
+        url,
+        method,
+        status: res.status,
+        message: typeof detailMsg === 'object' ? JSON.stringify(detailMsg) : String(detailMsg),
+      });
+    }
   }
 
   return res;
@@ -813,7 +815,8 @@ export async function fetchHeatingStatus(options = {}) {
   return swrFetch('heating_status', async () => {
     const query = (options?.forceRefresh || options?.refresh) ? '?refresh=true' : '';
     const res = await fetch(`${API_BASE}/heating/status${query}`, {
-      headers: getAuthHeaders()
+      headers: getAuthHeaders(),
+      silentError: options?.silentError ?? true,
     });
     if (!res.ok) {
       const err = await res.json().catch(() => ({}));
@@ -1008,7 +1011,8 @@ export async function fetchPiscineStatus(options = {}) {
   return swrFetch('pool_status', async () => {
     const query = (options?.forceRefresh || options?.refresh) ? '?refresh=true' : '';
     const res = await fetch(`${API_BASE}/pool/status${query}`, {
-      headers: getAuthHeaders()
+      headers: getAuthHeaders(),
+      silentError: options?.silentError ?? true,
     });
     if (!res.ok) {
       const err = await res.json().catch(() => ({}));

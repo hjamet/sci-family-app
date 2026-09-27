@@ -1,5 +1,8 @@
 import os
 import time
+import shutil
+import tempfile
+import pickle
 import contextlib
 from typing import Dict, Any, Optional
 from fastapi import HTTPException, status
@@ -15,7 +18,8 @@ import logging
 logger = logging.getLogger(__name__)
 
 # Zero-Trust / Fail-Fast : ZÉRO cache (directive Henri). 100% direct-live vers l'API ViCare.
-HTTP_TIMEOUT_SECONDS: float = 4.0
+# Timeout strict de 3.5s max sur les requêtes pour éviter tout blocage réseau de 30 secondes.
+HTTP_TIMEOUT_SECONDS: float = 3.5
 
 
 def is_read_only_mode() -> bool:
@@ -25,6 +29,126 @@ def is_read_only_mode() -> bool:
     Even if environment variables attempt to disable it, this function always returns True.
     """
     return True
+
+
+def get_vicare_token_path() -> str:
+    """
+    Détermine un chemin inscriptible pour le fichier de jeton PyViCare (OAuth).
+    Sur Vercel Serverless (AWS Lambda), le système de fichiers sous /var/task est en LECTURE SEULE.
+    Toute tentative d'écriture déclenche OSError: [Errno 30] Read-only file system.
+    Seul /tmp est accessible en lecture/écriture.
+    """
+    repo_token_file = os.path.abspath(
+        os.path.join(os.path.dirname(__file__), "..", "..", "vicare_token.json")
+    )
+
+    is_vercel = bool(os.environ.get("VERCEL") or os.environ.get("AWS_LAMBDA_FUNCTION_NAME"))
+
+    # Test d'inscriptibilité du chemin local si hors Vercel
+    is_writable = False
+    if not is_vercel:
+        try:
+            parent_dir = os.path.dirname(repo_token_file)
+            test_file = os.path.join(parent_dir, f".test_write_{os.getpid()}")
+            with open(test_file, "w") as f:
+                f.write("")
+            os.remove(test_file)
+            is_writable = True
+        except (OSError, IOError, PermissionError):
+            is_writable = False
+
+    if is_vercel or not is_writable:
+        temp_dir = tempfile.gettempdir()
+        target_token_file = os.path.join(temp_dir, "vicare_token.json")
+
+        # Si le fichier token existe dans le repo/bundle mais pas encore dans /tmp, on le copie au démarrage
+        if os.path.isfile(repo_token_file) and (not os.path.isfile(target_token_file) or os.path.getsize(target_token_file) == 0):
+            try:
+                shutil.copy2(repo_token_file, target_token_file)
+                logger.info(f"[VICARE] Jeton ViCare initial copié vers /tmp inscriptible : {target_token_file}")
+            except OSError as copy_err:
+                logger.warning(f"[VICARE] Impossible de copier le token vers {target_token_file}: {copy_err}")
+        return target_token_file
+
+    return repo_token_file
+
+
+def _patch_pyvicare_safe_serialization():
+    """
+    Sécurise PyViCare contre tout crash OSError [Errno 30] Read-only file system
+    lors de la sérialisation/mise à jour du token, et force un timeout strict de 3.5s.
+    """
+    try:
+        from PyViCare.PyViCareOAuthManager import ViCareOAuthManager
+        import PyViCare.PyViCareOAuthManager as oam
+        from PyViCare.PyViCareAbstractOAuthManager import (
+            AbstractViCareOAuthManager, API_BASE_URL, TokenExpiredError, InvalidTokenError, PyViCareInternalServerError
+        )
+
+        # 1. Protection écriture du token par try...except OSError défensif
+        if hasattr(ViCareOAuthManager, "_ViCareOAuthManager__serialize_token"):
+            def safe_serialize_token(self, oauth, token_file):
+                if token_file is None:
+                    return
+                try:
+                    with open(token_file, mode="wb") as binary_file:
+                        pickle.dump(oauth, binary_file)
+                    logger.debug("[VICARE] Jeton sérialisé avec succès dans %s", token_file)
+                except OSError as e:
+                    logger.warning("[VICARE] Échec écriture token dans %s (%s). Tentative de repli /tmp.", token_file, e)
+                    try:
+                        fallback_path = os.path.join(tempfile.gettempdir(), "vicare_token.json")
+                        with open(fallback_path, mode="wb") as binary_file:
+                            pickle.dump(oauth, binary_file)
+                        self.token_file = fallback_path
+                        logger.info("[VICARE] Jeton sérialisé dans le repli /tmp: %s", fallback_path)
+                    except OSError as fb_err:
+                        logger.warning("[VICARE] Sauvegarde du token ignorée (disque en lecture seule): %s", fb_err)
+
+            ViCareOAuthManager._ViCareOAuthManager__serialize_token = safe_serialize_token
+
+        # 2. Timeout strict sur les requêtes PyViCare (au lieu du timeout par défaut de 31s)
+        if hasattr(AbstractViCareOAuthManager, "get"):
+            def safe_get(self, url: str) -> Any:
+                try:
+                    raw_response = self.oauth_session.get(f"{API_BASE_URL}{url}", timeout=HTTP_TIMEOUT_SECONDS)
+                    if hasattr(self, "_AbstractViCareOAuthManager__raise_on_non_json_error"):
+                        self._AbstractViCareOAuthManager__raise_on_non_json_error(raw_response)
+                    response = raw_response.json()
+                    if hasattr(self, "_AbstractViCareOAuthManager__handle_expired_token"):
+                        self._AbstractViCareOAuthManager__handle_expired_token(response)
+                    if hasattr(self, "_AbstractViCareOAuthManager__handle_rate_limit"):
+                        self._AbstractViCareOAuthManager__handle_rate_limit(response)
+                    if hasattr(self, "_AbstractViCareOAuthManager__handle_device_communication_error"):
+                        self._AbstractViCareOAuthManager__handle_device_communication_error(response)
+                    if hasattr(self, "_AbstractViCareOAuthManager__handle_not_paid_for"):
+                        self._AbstractViCareOAuthManager__handle_not_paid_for(response)
+                    if hasattr(self, "_AbstractViCareOAuthManager__handle_server_error"):
+                        self._AbstractViCareOAuthManager__handle_server_error(response)
+                    return response
+                except (TokenExpiredError, InvalidTokenError):
+                    self.renewToken()
+                    return self.get(url)
+                except OSError as e:
+                    raise PyViCareInternalServerError({"statusCode": 0, "message": str(e), "viErrorId": "n/a"}) from e
+
+            AbstractViCareOAuthManager.get = safe_get
+
+        # 3. Timeout strict sur l'appel d'authentification initial requests.post
+        if hasattr(oam, "requests") and hasattr(oam.requests, "post"):
+            orig_post = oam.requests.post
+            def safe_post(*args, **kwargs):
+                if "timeout" not in kwargs:
+                    kwargs["timeout"] = HTTP_TIMEOUT_SECONDS
+                return orig_post(*args, **kwargs)
+            oam.requests.post = safe_post
+
+    except Exception as patch_err:
+        logger.warning(f"[VICARE] Notice sécurisation PyViCare: {patch_err}")
+
+
+# Appliquer le patch de sécurisation au démarrage
+_patch_pyvicare_safe_serialization()
 
 
 def get_vicare_client():
@@ -43,8 +167,14 @@ def get_vicare_client():
     try:
         from PyViCare.PyViCare import PyViCare
         vicare = PyViCare()
-        token_file = os.path.join(os.path.dirname(__file__), "..", "..", "vicare_token.json")
-        vicare.initWithCredentials(username, password, client_id, token_file)
+        token_file = get_vicare_token_path()
+        try:
+            vicare.initWithCredentials(username, password, client_id, token_file)
+        except OSError as os_err:
+            logger.warning(f"[VICARE] OSError avec token_file {token_file}: {os_err}. Bascule forcée dans /tmp.")
+            fallback_token = os.path.join(tempfile.gettempdir(), "vicare_token.json")
+            vicare = PyViCare()
+            vicare.initWithCredentials(username, password, client_id, fallback_token)
         return vicare
     except HTTPException:
         raise
@@ -56,10 +186,13 @@ def get_vicare_client():
             status_code = status.HTTP_429_TOO_MANY_REQUESTS
         elif "permission" in err_str.lower() or "forbidden" in err_str.lower() or "403" in err_str or "auth" in err_str.lower():
             status_code = status.HTTP_403_FORBIDDEN
+        elif "timeout" in err_str.lower():
+            status_code = status.HTTP_504_GATEWAY_TIMEOUT
         raise HTTPException(
             status_code=status_code,
             detail={"error": err_str, "type": err_type}
         )
+
 
 
 def fetch_live_telemetry() -> Dict[str, Any]:

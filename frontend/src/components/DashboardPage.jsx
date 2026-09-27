@@ -98,6 +98,9 @@ export default function DashboardPage({
   const [loadingProjects, setLoadingProjects] = useState(() => !getCachedData('projects'));
   const [loadingReservations, setLoadingReservations] = useState(() => !getCachedData('reservations'));
   const [loadingTasks, setLoadingTasks] = useState(() => !getCachedData('tasks'));
+  const [loadingHeating, setLoadingHeating] = useState(() => !getCachedData('heating_status'));
+  const [loadingPool, setLoadingPool] = useState(() => !getCachedData('pool_status'));
+  const [loadingBank, setLoadingBank] = useState(() => !getCachedData('bank_status'));
 
   const loading = loadingProjects && loadingReservations && loadingTasks;
 
@@ -153,8 +156,8 @@ export default function DashboardPage({
     : (currentUser ? currentUser.split(' ')[0] : 'Henri');
 
   const loadDashboardData = useCallback(async (options = {}) => {
-    // Parallélisation stricte Promise.allSettled
-    // Affichage progressif non-bloquant : chaque promesse peuple sa vue dès réception
+    // ==================== PHASE 1 : DONNÉES PRIORITAIRES SUPABASE SQL (< 50ms) ====================
+    // Les requêtes Supabase sont ultra-rapides et peuplent immédiatement la vue
     const projPromise = fetchProjects({}, options)
       .then((data) => {
         setProjects(Array.isArray(data) ? data : []);
@@ -191,27 +194,6 @@ export default function DashboardPage({
         return [];
       });
 
-    const poolPromise = fetchPiscineStatus(options)
-      .then((data) => {
-        setPoolStatus(data || null);
-        return data;
-      })
-      .catch(() => null);
-
-    const heatPromise = fetchHeatingStatus(options)
-      .then((data) => {
-        setHeatingStatus(data || null);
-        return data;
-      })
-      .catch(() => null);
-
-    const bankPromise = fetchBankStatus(options)
-      .then((data) => {
-        setBankStatus(data || null);
-        return data;
-      })
-      .catch(() => null);
-
     const propPromise = fetchProperties(options)
       .then((data) => {
         if (Array.isArray(data)) setProperties(data);
@@ -219,13 +201,44 @@ export default function DashboardPage({
       })
       .catch(() => null);
 
+    // ==================== PHASE 2 : ÉQUIPEMENTS IOT & APIS EXTERNES EN ARRIÈRE-PLAN ====================
+    // Chauffage ViCare, piscine Klereo et banque sont découplés en asynchrone non-bloquant
+    // Leur cycle de vie ou éventuelle latence réseau n'entrave jamais l'affichage du Dashboard
+    const poolPromise = fetchPiscineStatus(options)
+      .then((data) => {
+        setPoolStatus(data || null);
+        return data;
+      })
+      .catch(() => null)
+      .finally(() => {
+        setLoadingPool(false);
+      });
+
+    const heatPromise = fetchHeatingStatus(options)
+      .then((data) => {
+        setHeatingStatus(data || null);
+        return data;
+      })
+      .catch(() => null)
+      .finally(() => {
+        setLoadingHeating(false);
+      });
+
+    const bankPromise = fetchBankStatus(options)
+      .then((data) => {
+        setBankStatus(data || null);
+        return data;
+      })
+      .catch(() => null)
+      .finally(() => {
+        setLoadingBank(false);
+      });
+
+    // Ne bloquer que sur les données Supabase SQL indispensables pour l'interactivité
     await Promise.allSettled([
       projPromise,
       resPromise,
       taskPromise,
-      poolPromise,
-      heatPromise,
-      bankPromise,
       propPromise,
     ]);
   }, []);
@@ -441,10 +454,10 @@ export default function DashboardPage({
         >
           <div className="absolute -right-6 -bottom-6 w-32 h-32 rounded-full bg-white/10 blur-xl pointer-events-none group-hover:scale-150 transition-transform duration-500"></div>
           <div className="relative z-10 flex items-center justify-between gap-3">
-            <div className="w-12 h-12 rounded-xl bg-white/15 backdrop-blur-sm flex items-center justify-center text-emerald-200 group-hover:bg-white group-hover:text-[#065f46] transition-all duration-200 shadow-sm opacity-0 group-hover:opacity-100 pointer-events-none group-hover:pointer-events-auto">
+            <div className="w-12 h-12 rounded-xl bg-white/15 backdrop-blur-sm flex items-center justify-center text-emerald-200 group-hover:bg-white group-hover:text-[#065f46] transition-all duration-200 shadow-sm">
               <span className="material-symbols-outlined text-[28px]">how_to_vote</span>
             </div>
-            <span className="opacity-0 group-hover:opacity-100 transition-opacity duration-200 pointer-events-none group-hover:pointer-events-auto inline-flex items-center gap-1 text-[11px] font-semibold uppercase tracking-wider px-2.5 py-1 rounded-full bg-white/15 backdrop-blur-sm text-emerald-100">
+            <span className="inline-flex items-center gap-1 text-[11px] font-semibold uppercase tracking-wider px-2.5 py-1 rounded-full bg-white/15 backdrop-blur-sm text-emerald-100">
               1 voix = 1 pers.
             </span>
           </div>
@@ -455,7 +468,7 @@ export default function DashboardPage({
                 arrow_forward
               </span>
             </h3>
-            <p className="font-body-md text-xs leading-relaxed text-emerald-100/90 font-medium mt-2 opacity-0 group-hover:opacity-100 transition-opacity duration-200 pointer-events-none group-hover:pointer-events-auto">
+            <p className="font-body-md text-xs leading-relaxed text-emerald-100/90 font-medium mt-2">
               Liste des tâches à faire et des décisions à prendre.
             </p>
           </div>
@@ -468,11 +481,16 @@ export default function DashboardPage({
         >
           <div className="absolute -right-6 -bottom-6 w-32 h-32 rounded-full bg-white/10 blur-xl pointer-events-none group-hover:scale-150 transition-transform duration-500"></div>
           <div className="relative z-10 flex items-center justify-between gap-3">
-            <div className="w-12 h-12 rounded-xl bg-white/15 backdrop-blur-sm flex items-center justify-center text-blue-200 group-hover:bg-white group-hover:text-[#0f4c81] transition-all duration-200 shadow-sm opacity-0 group-hover:opacity-100 pointer-events-none group-hover:pointer-events-auto">
+            <div className="w-12 h-12 rounded-xl bg-white/15 backdrop-blur-sm flex items-center justify-center text-blue-200 group-hover:bg-white group-hover:text-[#0f4c81] transition-all duration-200 shadow-sm">
               <span className="material-symbols-outlined text-[28px]">folder_shared</span>
             </div>
-            <span className="opacity-0 group-hover:opacity-100 transition-opacity duration-200 pointer-events-none group-hover:pointer-events-auto inline-flex items-center gap-1 text-[11px] font-semibold uppercase tracking-wider px-2.5 py-1 rounded-full bg-white/15 backdrop-blur-sm text-blue-100">
-              {bankStatus?.total_balance !== undefined && bankStatus?.total_balance !== null
+            <span className="inline-flex items-center gap-1 text-[11px] font-semibold uppercase tracking-wider px-2.5 py-1 rounded-full bg-white/15 backdrop-blur-sm text-blue-100">
+              {loadingBank ? (
+                <span className="inline-flex items-center gap-1.5">
+                  <span className="w-1.5 h-1.5 rounded-full bg-blue-300 animate-pulse"></span>
+                  <span className="opacity-80">Trésorerie...</span>
+                </span>
+              ) : bankStatus?.total_balance !== undefined && bankStatus?.total_balance !== null
                 ? `Trésorerie : ${Math.round(bankStatus.total_balance).toLocaleString('fr-FR')} €`
                 : 'Statuts & CCA'}
             </span>
@@ -484,7 +502,7 @@ export default function DashboardPage({
                 arrow_forward
               </span>
             </h3>
-            <p className="font-body-md text-xs leading-relaxed text-blue-100/90 font-medium mt-2 opacity-0 group-hover:opacity-100 transition-opacity duration-200 pointer-events-none group-hover:pointer-events-auto">
+            <p className="font-body-md text-xs leading-relaxed text-blue-100/90 font-medium mt-2">
               Factures des membres, aperçu des comptes banquaires et Documents administratifs de la SCI
             </p>
           </div>
@@ -497,10 +515,10 @@ export default function DashboardPage({
         >
           <div className="absolute -right-6 -bottom-6 w-32 h-32 rounded-full bg-white/10 blur-xl pointer-events-none group-hover:scale-150 transition-transform duration-500"></div>
           <div className="relative z-10 flex items-center justify-between gap-3">
-            <div className="w-12 h-12 rounded-xl bg-white/15 backdrop-blur-sm flex items-center justify-center text-amber-200 group-hover:bg-white group-hover:text-[#d97706] transition-all duration-200 shadow-sm opacity-0 group-hover:opacity-100 pointer-events-none group-hover:pointer-events-auto">
+            <div className="w-12 h-12 rounded-xl bg-white/15 backdrop-blur-sm flex items-center justify-center text-amber-200 group-hover:bg-white group-hover:text-[#d97706] transition-all duration-200 shadow-sm">
               <span className="material-symbols-outlined text-[28px]">calendar_month</span>
             </div>
-            <span className="opacity-0 group-hover:opacity-100 transition-opacity duration-200 pointer-events-none group-hover:pointer-events-auto inline-flex items-center gap-1 text-[11px] font-semibold uppercase tracking-wider px-2.5 py-1 rounded-full bg-white/15 backdrop-blur-sm text-amber-100">
+            <span className="inline-flex items-center gap-1 text-[11px] font-semibold uppercase tracking-wider px-2.5 py-1 rounded-full bg-white/15 backdrop-blur-sm text-amber-100">
               52 Semaines
             </span>
           </div>
@@ -511,7 +529,7 @@ export default function DashboardPage({
                 arrow_forward
               </span>
             </h3>
-            <p className="font-body-md text-xs leading-relaxed text-amber-100/90 font-medium mt-2 opacity-0 group-hover:opacity-100 transition-opacity duration-200 pointer-events-none group-hover:pointer-events-auto">
+            <p className="font-body-md text-xs leading-relaxed text-amber-100/90 font-medium mt-2">
               Réservation et calendrier des passages
             </p>
           </div>
@@ -524,7 +542,7 @@ export default function DashboardPage({
         >
           <div className="absolute -right-6 -bottom-6 w-32 h-32 rounded-full bg-white/10 blur-xl pointer-events-none group-hover:scale-150 transition-transform duration-500"></div>
           <div className="relative z-10 flex items-center justify-between gap-3">
-            <div className="w-12 h-12 rounded-xl bg-white/15 backdrop-blur-sm flex items-center justify-center text-teal-200 group-hover:bg-white group-hover:text-[#0d9488] transition-all duration-200 shadow-sm opacity-0 group-hover:opacity-100 pointer-events-none group-hover:pointer-events-auto">
+            <div className="w-12 h-12 rounded-xl bg-white/15 backdrop-blur-sm flex items-center justify-center text-teal-200 group-hover:bg-white group-hover:text-[#0d9488] transition-all duration-200 shadow-sm">
               <span className="material-symbols-outlined text-[28px]">key</span>
             </div>
             <span
@@ -532,12 +550,22 @@ export default function DashboardPage({
                 e.stopPropagation();
                 navigateTo('/energie');
               }}
-              className="opacity-0 group-hover:opacity-100 transition-opacity duration-200 pointer-events-none group-hover:pointer-events-auto inline-flex items-center gap-1 text-[11px] font-semibold uppercase tracking-wider px-2.5 py-1 rounded-full bg-white/15 backdrop-blur-sm text-teal-100 hover:bg-white/30 cursor-pointer"
+              className="inline-flex items-center gap-1.5 text-[11px] font-semibold uppercase tracking-wider px-2.5 py-1 rounded-full bg-white/15 backdrop-blur-sm text-teal-100 hover:bg-white/30 cursor-pointer transition-all"
               title="Consulter la télémesure & chauffage ViCare"
             >
-              {heatingStatus?.target_temperature != null
-                ? `Chauffage ${heatingStatus.target_temperature}°C${poolStatus?.temperature != null ? ` • Bassin ${poolStatus.temperature}°C` : ''}`
-                : 'Guide & Énergie'}
+              {loadingHeating ? (
+                <span className="inline-flex items-center gap-1.5">
+                  <span className="w-1.5 h-1.5 rounded-full bg-teal-300 animate-pulse"></span>
+                  <span className="opacity-90">Sonde ViCare...</span>
+                </span>
+              ) : heatingStatus?.target_temperature != null ? (
+                <span className="inline-flex items-center gap-1">
+                  <span className="w-1.5 h-1.5 rounded-full bg-emerald-400"></span>
+                  {`Chauffage ${heatingStatus.target_temperature}°C${poolStatus?.temperature != null ? ` • Bassin ${poolStatus.temperature}°C` : ''}`}
+                </span>
+              ) : (
+                'Guide & Énergie'
+              )}
             </span>
           </div>
           <div className="relative z-10 mt-3">
@@ -547,7 +575,7 @@ export default function DashboardPage({
                 arrow_forward
               </span>
             </h3>
-            <p className="font-body-md text-xs leading-relaxed text-teal-100/90 font-medium mt-2 opacity-0 group-hover:opacity-100 transition-opacity duration-200 pointer-events-none group-hover:pointer-events-auto">
+            <p className="font-body-md text-xs leading-relaxed text-teal-100/90 font-medium mt-2">
               Gestion du Chauffage et de la piscine pour le séjour, tâches attribuées et Vademecum
             </p>
           </div>
