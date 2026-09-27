@@ -29,19 +29,12 @@ class TestForgotPassword(unittest.TestCase):
         self.original_member_passwords = {
             m.prenom: m.password for m in self.db.query(Member).all()
         }
-        self.original_user_passwords = {
-            u.username: u.hashed_password for u in self.db.query(User).all() if hasattr(u, "username")
-        }
 
     def tearDown(self):
         for prenom, pwd in self.original_member_passwords.items():
             m = self.db.query(Member).filter(Member.prenom == prenom).first()
             if m:
                 m.password = pwd
-        for username, hpwd in self.original_user_passwords.items():
-            u = self.db.query(User).filter(getattr(User, "username", None) == username).first()
-            if u:
-                u.hashed_password = hpwd
         self.db.commit()
         self.db.close()
 
