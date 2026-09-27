@@ -1,17 +1,28 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useMemo } from 'react';
 import StayBalanceWidget from '../components/common/StayBalanceWidget';
 import HouseUsageChart from '../components/HouseUsageChart';
 import WorkloadDashboard from '../components/WorkloadDashboard';
-import { fetchReservations, fetchStayBalance } from '../api';
+import { fetchReservations } from '../api';
+
+const SCI_MEMBERS = [
+  { name: 'Henri Jamet', prenom: 'Henri', max_days: 35, color: '#004532', bg: 'bg-emerald-50 text-emerald-900 border-emerald-300' },
+  { name: 'Frédéric Jamet', prenom: 'Frédéric', max_days: 60, color: '#0f4c81', bg: 'bg-teal-50 text-teal-900 border-teal-300' },
+  { name: 'Élisabeth Jamet', prenom: 'Élisabeth', max_days: 60, color: '#065f46', bg: 'bg-emerald-50 text-emerald-950 border-emerald-300' },
+  { name: 'Joséphine Jamet', prenom: 'Joséphine', max_days: 35, color: '#15803d', bg: 'bg-green-50 text-green-900 border-green-300' },
+  { name: 'Hortense Jamet', prenom: 'Hortense', max_days: 35, color: '#65a30d', bg: 'bg-lime-50 text-lime-900 border-lime-300' },
+  { name: 'Marguerite Jamet', prenom: 'Marguerite', max_days: 35, color: '#059669', bg: 'bg-emerald-50 text-emerald-900 border-emerald-300' },
+  { name: 'Eugénie Jamet', prenom: 'Eugénie', max_days: 35, color: '#b45309', bg: 'bg-amber-50 text-amber-900 border-amber-300' },
+];
+
+const PERIOD_OPTIONS = [
+  { id: 'all', label: 'Tout' },
+  { id: '1_year', label: 'Dernière année' },
+  { id: '3_months', label: 'Derniers 3 mois' },
+];
 
 export default function StatistiquesPage({ currentUser }) {
-  const [year, setYear] = useState(2026);
-  const [reservations, setReservations] = useState([]);
-  const [podium, setPodium] = useState([]);
-  const [totalDays, setTotalDays] = useState(0);
-  const [totalStays, setTotalStays] = useState(0);
-  const [activeMembersCount, setActiveMembersCount] = useState(0);
-  const [occupancyRate, setOccupancyRate] = useState(0);
+  const [period, setPeriod] = useState('all');
+  const [allReservations, setAllReservations] = useState([]);
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
@@ -19,61 +30,10 @@ export default function StatistiquesPage({ currentUser }) {
     async function loadData() {
       try {
         setLoading(true);
-        const [resData, balData] = await Promise.allSettled([
-          fetchReservations({ year }),
-          fetchStayBalance(year),
-        ]);
-
+        const resData = await fetchReservations();
         if (!isMounted) return;
-
-        if (resData.status === 'fulfilled' && Array.isArray(resData.value)) {
-          setReservations(resData.value);
-        }
-
-        if (balData.status === 'fulfilled' && balData.value?.members) {
-          const members = [...balData.value.members];
-          // Sort members descending by days
-          members.sort((a, b) => (b.days || 0) - (a.days || 0));
-
-          const computedTotalDays = members.reduce((acc, m) => acc + (m.days || 0), 0);
-          const computedTotalStays = members.reduce((acc, m) => acc + (m.stays_count || m.stays || 0), 0);
-          setTotalDays(computedTotalDays);
-          setTotalStays(computedTotalStays);
-
-          const activeCount = members.filter(m => (m.days || 0) > 0 || (m.stays_count || m.stays || 0) > 0).length;
-          setActiveMembersCount(activeCount);
-
-          // Taux d'occupation dynamique basé sur les jours réels réservés
-          const occ = Math.min(100, Math.round((computedTotalDays / 365) * 100));
-          setOccupancyRate(occ);
-
-          const medals = ['🥇', '🥈', '🥉'];
-          const colors = [
-            'from-amber-400 to-amber-600',
-            'from-slate-300 to-slate-500',
-            'from-amber-700 to-amber-900'
-          ];
-          const rings = [
-            'ring-amber-400/40',
-            'ring-slate-300/40',
-            'ring-amber-700/40'
-          ];
-
-          const top3 = members
-            .filter(m => (m.days || 0) > 0)
-            .slice(0, 3)
-            .map((m, idx) => ({
-              rank: idx + 1,
-              medal: medals[idx],
-              name: m.name,
-              days: m.days || 0,
-              stays: m.stays_count || m.stays || 0,
-              max_days: m.max_days || 35,
-              color: colors[idx],
-              ring: rings[idx],
-            }));
-
-          setPodium(top3);
+        if (Array.isArray(resData)) {
+          setAllReservations(resData);
         }
       } catch (err) {
         console.warn('StatistiquesPage data loading warning:', err);
@@ -84,7 +44,129 @@ export default function StatistiquesPage({ currentUser }) {
 
     loadData();
     return () => { isMounted = false; };
-  }, [year]);
+  }, []);
+
+  // Filtrage des réservations selon la période sélectionnée
+  const filteredReservations = useMemo(() => {
+    if (!Array.isArray(allReservations) || allReservations.length === 0) return [];
+
+    const now = new Date();
+    const oneYearAgo = new Date(now.getTime() - 365 * 24 * 60 * 60 * 1000);
+    const threeMonthsAgo = new Date(now.getTime() - 90 * 24 * 60 * 60 * 1000);
+
+    return allReservations.filter((r) => {
+      const st = (r.status || '').toLowerCase();
+      if (!['confirmée', 'confirmee', 'demande en attente'].includes(st)) {
+        return false;
+      }
+      if (!r.start_date) return false;
+
+      if (period === 'all') return true;
+
+      const startDate = new Date(r.start_date);
+      const endDate = r.end_date ? new Date(r.end_date) : startDate;
+
+      if (period === '1_year') {
+        return endDate >= oneYearAgo;
+      }
+      if (period === '3_months') {
+        return endDate >= threeMonthsAgo;
+      }
+      return true;
+    });
+  }, [allReservations, period]);
+
+  // Agrégation des statistiques et répartition par associé
+  const { members, totalDays, totalStays, activeMembersCount, occupancyRate, podium } = useMemo(() => {
+    const memberStats = {};
+    SCI_MEMBERS.forEach(m => {
+      memberStats[m.prenom.toLowerCase()] = {
+        ...m,
+        days: 0,
+        stays: 0,
+      };
+    });
+
+    filteredReservations.forEach((r) => {
+      let days = 7;
+      if (r.start_date && r.end_date) {
+        const d1 = new Date(r.start_date);
+        const d2 = new Date(r.end_date);
+        if (!isNaN(d1) && !isNaN(d2)) {
+          days = Math.max(1, Math.round((d2 - d1) / (1000 * 60 * 60 * 24)) + 1);
+        }
+      }
+
+      const rawName = (r.user_name || '').toLowerCase().trim();
+      let matchedKey = null;
+      for (const m of SCI_MEMBERS) {
+        const pLower = m.prenom.toLowerCase();
+        if (rawName.includes(pLower) || m.name.toLowerCase().includes(rawName)) {
+          matchedKey = pLower;
+          break;
+        }
+        if ((rawName.includes('maman') || rawName.includes('elisabeth')) && pLower === 'élisabeth') {
+          matchedKey = pLower;
+          break;
+        }
+        if ((rawName.includes('papa') || rawName.includes('frederic')) && pLower === 'frédéric') {
+          matchedKey = pLower;
+          break;
+        }
+      }
+
+      if (matchedKey && memberStats[matchedKey]) {
+        memberStats[matchedKey].days += days;
+        memberStats[matchedKey].stays += 1;
+      }
+    });
+
+    const membersList = Object.values(memberStats);
+    const computedTotalDays = membersList.reduce((acc, m) => acc + m.days, 0);
+    const computedTotalStays = membersList.reduce((acc, m) => acc + m.stays, 0);
+    const activeCount = membersList.filter(m => m.days > 0 || m.stays > 0).length;
+
+    const denominatorDays = period === '3_months' ? 90 : 365;
+    const occ = Math.min(100, Math.round((computedTotalDays / denominatorDays) * 100));
+
+    const medals = ['🥇', '🥈', '🥉'];
+    const colors = [
+      'from-amber-400 to-amber-600',
+      'from-slate-300 to-slate-500',
+      'from-amber-700 to-amber-900'
+    ];
+    const rings = [
+      'ring-amber-400/40',
+      'ring-slate-300/40',
+      'ring-amber-700/40'
+    ];
+
+    const sortedByDays = [...membersList].sort((a, b) => b.days - a.days);
+    const top3 = sortedByDays
+      .filter(m => m.days > 0)
+      .slice(0, 3)
+      .map((m, idx) => ({
+        rank: idx + 1,
+        medal: medals[idx],
+        name: m.name,
+        days: m.days,
+        stays: m.stays,
+        max_days: m.max_days,
+        color: colors[idx],
+        ring: rings[idx],
+      }));
+
+    return {
+      members: membersList,
+      totalDays: computedTotalDays,
+      totalStays: computedTotalStays,
+      activeMembersCount: activeCount,
+      occupancyRate: occ,
+      podium: top3,
+    };
+  }, [filteredReservations, period]);
+
+  const periodLabel = period === '3_months' ? '3 derniers mois' : period === '1_year' ? '12 derniers mois' : 'tout';
 
   return (
     <div className="space-y-8 pb-12 animate-in fade-in duration-200">
@@ -100,25 +182,25 @@ export default function StatistiquesPage({ currentUser }) {
             </h1>
           </div>
           <p className="font-body-md text-xs sm:text-sm text-on-surface-variant mt-1.5 max-w-2xl">
-            Suivi des présences, podium annuel d'occupation des chambres et équilibre contributif des charges selon les statuts de la SCI.
+            Suivi des présences, podium d'occupation des chambres et équilibre contributif des charges selon les statuts de la SCI.
           </p>
         </div>
 
-        {/* Year Toggle */}
-        <div className="flex items-center gap-2 self-start md:self-auto bg-surface-container-lowest p-1.5 rounded-2xl border border-border-subtle shadow-xs">
-          <span className="text-xs font-bold text-on-surface-variant px-2.5">Exercice :</span>
-          {[2025, 2026, 2027].map((y) => (
+        {/* Modern Period Selector (Annotation 9) */}
+        <div className="flex items-center gap-1.5 self-start md:self-auto bg-surface-container-lowest p-1.5 rounded-2xl border border-border-subtle shadow-xs">
+          <span className="text-xs font-bold text-on-surface-variant px-2.5">Période :</span>
+          {PERIOD_OPTIONS.map((opt) => (
             <button
-              key={y}
+              key={opt.id}
               type="button"
-              onClick={() => setYear(y)}
-              className={`px-3 py-1 rounded-xl text-xs font-bold transition-all cursor-pointer ${
-                year === y
+              onClick={() => setPeriod(opt.id)}
+              className={`px-3 py-1.5 rounded-xl text-xs font-bold transition-all cursor-pointer ${
+                period === opt.id
                   ? 'bg-primary text-white shadow-xs'
                   : 'text-on-surface-variant hover:text-primary hover:bg-canvas-slate'
               }`}
             >
-              {y}
+              {opt.label}
             </button>
           ))}
         </div>
@@ -147,7 +229,7 @@ export default function StatistiquesPage({ currentUser }) {
             <span className="text-[11px] font-bold uppercase tracking-wider text-on-surface-variant block">Séjours Confirmés</span>
             <div className="flex items-baseline gap-1.5">
               <span className="text-xl sm:text-2xl font-black text-forest-deep">{totalStays}</span>
-              <span className="text-xs text-on-surface-variant font-medium">séjours ({year})</span>
+              <span className="text-xs text-on-surface-variant font-medium">séjour{totalStays > 1 ? 's' : ''} ({periodLabel})</span>
             </div>
           </div>
         </div>
@@ -160,7 +242,7 @@ export default function StatistiquesPage({ currentUser }) {
             <span className="text-[11px] font-bold uppercase tracking-wider text-on-surface-variant block">Taux d'Occupation</span>
             <div className="flex items-baseline gap-1.5">
               <span className="text-xl sm:text-2xl font-black text-forest-deep">{occupancyRate}%</span>
-              <span className="text-xs text-on-surface-variant font-medium">exercice {year}</span>
+              <span className="text-xs text-on-surface-variant font-medium">{periodLabel}</span>
             </div>
           </div>
         </div>
@@ -181,27 +263,21 @@ export default function StatistiquesPage({ currentUser }) {
         </div>
       </div>
 
-      {/* Podium Top 3 des Séjours */}
+      {/* Podium Top 3 des Séjours (Annotations 3, 5, 8) */}
       <section className="bg-surface-container-lowest rounded-2xl p-space-md sm:p-space-lg shadow-sm border border-border-subtle space-y-4">
         <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 border-b border-border-subtle pb-3">
           <div>
             <h2 className="text-base sm:text-lg font-bold font-headline-md text-forest-deep flex items-center gap-2">
               <span className="material-symbols-outlined text-primary text-[20px]">emoji_events</span>
-              Podium des Présences & Séjours ({year})
+              Podium des Présences & Séjours
             </h2>
-            <p className="text-xs text-on-surface-variant mt-0.5">
-              Classement des associés par nombre de nuitées réservées sur l'exercice en cours.
-            </p>
           </div>
-          <span className="text-[11px] font-semibold text-primary bg-sage-soft px-3 py-1 rounded-full self-start sm:self-auto">
-            Règle de rotation estivale respectée
-          </span>
         </div>
 
         <div className="grid grid-cols-1 md:grid-cols-3 gap-4 pt-1">
           {podium.length === 0 ? (
             <div className="col-span-full py-8 text-center text-xs text-on-surface-variant bg-surface-container-lowest rounded-2xl border border-dashed border-border-subtle">
-              Aucun séjour comptabilisé pour l'exercice {year}.
+              Aucun séjour comptabilisé pour la période sélectionnée.
             </div>
           ) : (
             podium.map((item, index) => {
@@ -229,39 +305,39 @@ export default function StatistiquesPage({ currentUser }) {
                     </div>
                   </div>
 
-                <div className="space-y-2 pt-2 border-t border-slate-100">
-                  <div className="flex items-center justify-between text-xs">
-                    <span className="text-on-surface-variant font-medium">Nuitées consommées :</span>
-                    <span className="font-extrabold text-forest-deep">{item.days} jours / {item.max_days}j max</span>
-                  </div>
-                  <div className="flex items-center justify-between text-xs">
-                    <span className="text-on-surface-variant font-medium">Nombre de séjours :</span>
-                    <span className="font-bold text-forest-deep">{item.stays} séjour{item.stays > 1 ? 's' : ''}</span>
-                  </div>
+                  <div className="space-y-2 pt-2 border-t border-slate-100">
+                    <div className="flex items-center justify-between text-xs">
+                      <span className="text-on-surface-variant font-medium">Nuitées consommées :</span>
+                      <span className="font-extrabold text-forest-deep">{item.days} jours / {item.max_days}j max</span>
+                    </div>
+                    <div className="flex items-center justify-between text-xs">
+                      <span className="text-on-surface-variant font-medium">Nombre de séjours :</span>
+                      <span className="font-bold text-forest-deep">{item.stays} séjour{item.stays > 1 ? 's' : ''}</span>
+                    </div>
 
-                  {/* Quota Bar */}
-                  <div className="w-full bg-slate-100 h-2 rounded-full overflow-hidden mt-1">
-                    <div
-                      className={`h-full rounded-full bg-gradient-to-r ${item.color}`}
-                      style={{ width: `${Math.min(100, Math.round((item.days / item.max_days) * 100))}%` }}
-                    ></div>
+                    {/* Quota Bar */}
+                    <div className="w-full bg-slate-100 h-2 rounded-full overflow-hidden mt-1">
+                      <div
+                        className={`h-full rounded-full bg-gradient-to-r ${item.color}`}
+                        style={{ width: `${Math.min(100, Math.round((item.days / item.max_days) * 100))}%` }}
+                      ></div>
+                    </div>
                   </div>
                 </div>
-              </div>
-            );
-          })
-        )}
+              );
+            })
+          )}
         </div>
       </section>
 
       {/* Détail Complet de l'Équilibre des Séjours */}
-      <StayBalanceWidget year={year} />
+      <StayBalanceWidget members={members} />
 
       {/* Projection d'Occupation sur 12 Mois */}
-      <HouseUsageChart reservations={reservations} />
+      <HouseUsageChart reservations={filteredReservations} />
 
-      {/* Jauge de Répartition des Charges & Responsabilités (Annotation 10) */}
-      <WorkloadDashboard currentUser={currentUser} year={year} />
+      {/* Jauge de Répartition des Charges & Responsabilités */}
+      <WorkloadDashboard currentUser={currentUser} period={period} />
     </div>
   );
 }

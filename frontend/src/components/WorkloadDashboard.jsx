@@ -45,38 +45,36 @@ function isTaskCompleted(task) {
   return completedStatuses.includes(normalized);
 }
 
-export default function WorkloadDashboard({ currentUser, year = 2026 }) {
-  const [stayBalance, setStayBalance] = useState(null);
+const PERIOD_OPTIONS = [
+  { id: 'all', label: 'Tout' },
+  { id: '1_year', label: 'Dernière année' },
+  { id: '3_months', label: 'Derniers 3 mois' },
+];
+
+export default function WorkloadDashboard({ currentUser, period: propPeriod = 'all' }) {
   const [realTasks, setRealTasks] = useState([]);
   const [reservations, setReservations] = useState([]);
   const [loading, setLoading] = useState(true);
   const [errorMsg, setErrorMsg] = useState(null);
   const [selectedTask, setSelectedTask] = useState(null);
-  const [selectedYear, setSelectedYear] = useState(year);
+  const [selectedPeriod, setSelectedPeriod] = useState(propPeriod);
 
-  // Synchronisation avec la prop year si elle change
+  // Synchronisation avec la prop period si elle change
   useEffect(() => {
-    if (year) {
-      setSelectedYear(year);
+    if (propPeriod) {
+      setSelectedPeriod(propPeriod);
     }
-  }, [year]);
+  }, [propPeriod]);
 
   const loadData = async () => {
     try {
       setLoading(true);
       setErrorMsg(null);
 
-      const [stayBalanceRes, tasksRes, resDataRes] = await Promise.allSettled([
-        fetchStayBalance(selectedYear),
+      const [tasksRes, resDataRes] = await Promise.allSettled([
         fetchTasks(),
-        fetchReservations({ year: selectedYear }),
+        fetchReservations(),
       ]);
-
-      if (stayBalanceRes.status === 'fulfilled') {
-        setStayBalance(stayBalanceRes.value);
-      } else {
-        throw stayBalanceRes.reason || new Error("Erreur de chargement de l'équilibre des séjours");
-      }
 
       if (tasksRes.status === 'fulfilled' && Array.isArray(tasksRes.value)) {
         setRealTasks(tasksRes.value);
@@ -90,7 +88,6 @@ export default function WorkloadDashboard({ currentUser, year = 2026 }) {
     } catch (err) {
       console.error('Workload API error:', err);
       setErrorMsg(err.message || String(err) || 'Impossible de charger les données statistiques');
-      setStayBalance(null);
       setRealTasks([]);
       setReservations([]);
     } finally {
@@ -100,44 +97,45 @@ export default function WorkloadDashboard({ currentUser, year = 2026 }) {
 
   useEffect(() => {
     loadData();
-  }, [selectedYear]);
+  }, []);
 
-  // Calcul dynamique 100% réel des scores et du ratio gamifié d'implication (Annotation 10)
+  // Calcul dynamique 100% réel des scores et du ratio gamifié d'implication selon la période sélectionnée
   const processedMembers = useMemo(() => {
     const daysByMember = {};
     ALL_7_MEMBERS.forEach((m) => {
       daysByMember[m.prenom] = 0;
     });
 
-    if (stayBalance && Array.isArray(stayBalance.members)) {
-      stayBalance.members.forEach((sm) => {
-        const match = ALL_7_MEMBERS.find((m) => {
-          const pNorm = m.prenom.toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '');
-          const smNorm = (sm.prenom || sm.name || '').toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '');
-          if (pNorm === smNorm || smNorm.includes(pNorm) || pNorm.includes(smNorm)) return true;
-          if (m.aliases && m.aliases.some((al) => smNorm.includes(al.toLowerCase()))) return true;
-          return false;
-        });
-        if (match) {
-          daysByMember[match.prenom] = sm.days || 0;
+    const now = new Date();
+    const oneYearAgo = new Date(now.getTime() - 365 * 24 * 60 * 60 * 1000);
+    const threeMonthsAgo = new Date(now.getTime() - 90 * 24 * 60 * 60 * 1000);
+
+    const filteredRes = (reservations || []).filter((r) => {
+      const st = (r.status || '').toLowerCase();
+      if (!['confirmée', 'confirmee', 'demande en attente'].includes(st)) {
+        return false;
+      }
+      if (!r.start_date) return false;
+      if (selectedPeriod === 'all') return true;
+      const startDate = new Date(r.start_date);
+      const endDate = r.end_date ? new Date(r.end_date) : startDate;
+      if (selectedPeriod === '1_year') return endDate >= oneYearAgo;
+      if (selectedPeriod === '3_months') return endDate >= threeMonthsAgo;
+      return true;
+    });
+
+    filteredRes.forEach((r) => {
+      const d1 = new Date(r.start_date);
+      const d2 = new Date(r.end_date || r.start_date);
+      const diffDays = Math.max(1, Math.round((d2 - d1) / (1000 * 60 * 60 * 24)) + 1);
+      const rUser = (r.user_name || '').toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '');
+      ALL_7_MEMBERS.forEach((m) => {
+        const pNorm = m.prenom.toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '');
+        if (rUser.includes(pNorm) || (m.aliases && m.aliases.some((al) => rUser.includes(al.toLowerCase())))) {
+          daysByMember[m.prenom] += diffDays;
         }
       });
-    } else if (reservations && reservations.length > 0) {
-      reservations.forEach((r) => {
-        if (r.status === 'Confirmée' || r.status === 'Demande en attente') {
-          const d1 = new Date(r.start_date);
-          const d2 = new Date(r.end_date);
-          const diffDays = Math.max(1, Math.round((d2 - d1) / (1000 * 60 * 60 * 24)) + 1);
-          const rUser = (r.user_name || '').toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '');
-          ALL_7_MEMBERS.forEach((m) => {
-            const pNorm = m.prenom.toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '');
-            if (rUser.includes(pNorm) || (m.aliases && m.aliases.some((al) => rUser.includes(al.toLowerCase())))) {
-              daysByMember[m.prenom] += diffDays;
-            }
-          });
-        }
-      });
-    }
+    });
 
     const list = ALL_7_MEMBERS.map((member) => {
       const userMeta = resolveUserMeta({
@@ -226,20 +224,20 @@ export default function WorkloadDashboard({ currentUser, year = 2026 }) {
         </div>
 
         <div className="flex items-center gap-2 self-start sm:self-auto">
-          {/* Année */}
+          {/* Période moderne (Annotation 9) */}
           <div className="flex items-center bg-slate-100 p-1 rounded-xl border border-slate-200 text-xs font-semibold text-slate-700">
-            {[2025, 2026, 2027].map((y) => (
+            {PERIOD_OPTIONS.map((opt) => (
               <button
-                key={y}
+                key={opt.id}
                 type="button"
-                onClick={() => setSelectedYear(y)}
+                onClick={() => setSelectedPeriod(opt.id)}
                 className={`px-2.5 py-1 rounded-lg transition-all cursor-pointer ${
-                  selectedYear === y
+                  selectedPeriod === opt.id
                     ? 'bg-white text-indigo-700 font-black shadow-xs'
                     : 'text-slate-500 hover:text-slate-900'
                 }`}
               >
-                {y}
+                {opt.label}
               </button>
             ))}
           </div>

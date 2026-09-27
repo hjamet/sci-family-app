@@ -181,6 +181,7 @@ export default function TaskDetailModal({
   const [editComplexity, setEditComplexity] = useState('Modérée');
   const [editMembers, setEditMembers] = useState([]);
   const [editChecklist, setEditChecklist] = useState([]);
+  const [editVoteOptions, setEditVoteOptions] = useState([]);
   const [editDocuments, setEditDocuments] = useState([]);
   const [editOnsitePresence, setEditOnsitePresence] = useState(true);
   const [savingEdit, setSavingEdit] = useState(false);
@@ -293,12 +294,13 @@ export default function TaskDetailModal({
       subject: initialTask?.subject || (isVoteInitiative ? 'Presbytère' : 'Rosing'),
       complexity: initialTask?.complexity || (isVoteInitiative ? 'Élevée' : 'Modérée'),
       assigned_members: initialTask?.assigned_members || [currentUserName || 'Henri Jamet'],
-      checklist: parseChecklistItems(initialTask?.checklist),
+      checklist: isNew ? [] : parseChecklistItems(initialTask?.checklist),
+      options: initialTask?.options || (isVoteInitiative ? ['Approuver le projet', 'Rejeter le projet'] : []),
       documents: parseTaskDocuments(initialTask?.documents || initialTask?.completion_docs || initialTask?.document_urls),
     };
 
     setTask(taskObj);
-    syncEditFields(taskObj);
+    syncEditFields(taskObj, isNew);
     setMode(isNew ? 'edit' : (initialMode || 'view'));
 
     let isMounted = true;
@@ -311,7 +313,7 @@ export default function TaskDetailModal({
           ]);
           if (isMounted) {
             setTask(updatedTask);
-            syncEditFields(updatedTask);
+            syncEditFields(updatedTask, false);
             setComments(taskComments || []);
           }
         }
@@ -326,16 +328,32 @@ export default function TaskDetailModal({
     };
   }, [isOpen, initialTask, initialMode, isEditing, isVoteInitiative]);
 
-  const syncEditFields = (t) => {
+  const syncEditFields = (t, isNew = false) => {
     if (!t) return;
     setEditTitle(t.title || '');
     setEditDescription(t.description || '');
     setEditSubject(t.subject || (isVoteInitiative ? 'Presbytère' : 'Rosing'));
     setEditComplexity(t.complexity || (isVoteInitiative ? 'Élevée' : 'Modérée'));
-    setEditMembers(t.assigned_members || (t.assignee ? [t.assignee] : ['Henri Jamet']));
-    setEditChecklist(parseChecklistItems(t.checklist));
+    setEditMembers(isVoteInitiative ? [currentUserName || 'Henri Jamet'] : (t.assigned_members || (t.assignee ? [t.assignee] : ['Henri Jamet'])));
+    setEditChecklist(isNew ? [] : parseChecklistItems(t.checklist));
     setEditDocuments(parseTaskDocuments(t.documents || t.completion_docs || t.document_urls));
     setEditOnsitePresence(t.onsite_presence !== false);
+
+    let parsedOptions = [];
+    if (Array.isArray(t.options)) {
+      parsedOptions = t.options;
+    } else if (typeof t.options === 'string' && t.options.trim()) {
+      try {
+        const parsed = JSON.parse(t.options);
+        if (Array.isArray(parsed)) parsedOptions = parsed;
+      } catch (_) {
+        parsedOptions = t.options.split(',').map((s) => s.trim()).filter(Boolean);
+      }
+    }
+    if (parsedOptions.length === 0 && isVoteInitiative) {
+      parsedOptions = ['Approuver le projet', 'Rejeter le projet'];
+    }
+    setEditVoteOptions(parsedOptions);
   };
 
   if (!isOpen || !task) return null;
@@ -360,7 +378,7 @@ export default function TaskDetailModal({
         if (onTaskUpdated) onTaskUpdated();
       }
     } catch (err) {
-      console.error('Erreur mise à jour jalon:', err);
+      console.error('Erreur mise à jour sous-tâche:', err);
     }
   };
 
@@ -373,17 +391,23 @@ export default function TaskDetailModal({
       }
 
       setSavingEdit(true);
+      const cleanOptions = editVoteOptions.map((o) => (typeof o === 'string' ? o.trim() : '')).filter(Boolean);
       const payload = {
         title: editTitle.trim(),
         description: editDescription.trim(),
         checklist: editChecklist,
+        options: cleanOptions,
         documents: editDocuments,
         onsite_presence: editOnsitePresence,
         subject: editSubject,
         category: editSubject,
-        complexity: editComplexity,
-        assigned_members: editMembers && editMembers.length > 0 ? editMembers : [currentUserName || 'Henri Jamet'],
-        assignee: editMembers?.[0] || currentUserName || 'Henri Jamet',
+        complexity: isVoteInitiative ? 'Modérée' : editComplexity,
+        assigned_members: isVoteInitiative
+          ? [currentUserName || 'Henri Jamet']
+          : (editMembers && editMembers.length > 0 ? editMembers : [currentUserName || 'Henri Jamet']),
+        assignee: isVoteInitiative
+          ? (currentUserName || 'Henri Jamet')
+          : (editMembers?.[0] || currentUserName || 'Henri Jamet'),
         created_by: currentUserName || 'Henri Jamet',
         status: isVoteInitiative ? 'EN_VOTE' : 'EN_COURS',
         progress: 0,
@@ -395,7 +419,7 @@ export default function TaskDetailModal({
         setMode('view');
         if (onTaskUpdated) onTaskUpdated();
       } else {
-        // Création unifiée (Tâche standard ou Initiative de vote - Annotation 2)
+        // Création unifiée (Tâche standard ou Initiative de vote - Annotation 2 & 4)
         try {
           if (isVoteInitiative) {
             await createProject({
@@ -406,6 +430,7 @@ export default function TaskDetailModal({
               submitted_by: currentUserName || 'Henri Jamet',
               status: 'EN_VOTE',
               checklist: editChecklist,
+              options: cleanOptions,
               document_urls: editDocuments.map((d) => d.file_url || d.url || d.filename),
               linked_documents: editDocuments.map((d) => d.name || d.filename).join(', '),
             });
@@ -891,7 +916,7 @@ export default function TaskDetailModal({
 
                   {activeChecklist.length === 0 ? (
                     <p className="text-xs text-on-surface-variant italic py-2">
-                      Aucun jalon ni sous-tâche défini pour cette mission.
+                      Aucune sous-tâche ni étape définie pour cette mission.
                     </p>
                   ) : (
                     <div className="flex flex-col gap-2">
@@ -1053,10 +1078,10 @@ export default function TaskDetailModal({
 
                     <p className="text-xs text-on-surface-variant leading-relaxed">
                       {isProposed
-                        ? "Cette tâche a été proposée par un associé. Les coordinateurs peuvent l'examiner, la compléter (documents, jalons, assignés) puis l'accepter ou la refuser."
+                        ? "Cette tâche a été proposée par un associé. Les coordinateurs peuvent l'examiner, la compléter (documents, sous-tâches, assignés) puis l'accepter ou la refuser."
                         : isPendingValidation
                         ? "Le membre en charge a déclaré la réalisation des travaux. Les coordinateurs statutaires peuvent valider ou rejeter la demande."
-                        : "Une fois tous les jalons accomplis et les justificatifs déposés, demandez la validation formelle des coordinateurs de la SCI."}
+                        : "Une fois toutes les sous-tâches accomplies et les justificatifs déposés, demandez la validation formelle des coordinateurs de la SCI."}
                     </p>
 
                     <div className="pt-2 flex flex-wrap items-center gap-3">
@@ -1168,17 +1193,6 @@ export default function TaskDetailModal({
                   </div>
                 </div>
 
-                {/* Rappel statutaire si initiative de vote */}
-                {isVoteInitiative && (
-                  <div className="p-3.5 bg-amber-50 border border-amber-200 rounded-xl flex items-start gap-2.5 text-xs text-amber-900">
-                    <span className="material-symbols-outlined text-[20px] text-amber-600 shrink-0 mt-0.5">gavel</span>
-                    <div>
-                      <strong className="block font-bold">Règle Statutaire SCI :</strong>
-                      <span>Cette proposition sera soumise à la délibération et au vote statutaire des 7 associés de la famille avec calcul automatique de majorité qualifiée.</span>
-                    </div>
-                  </div>
-                )}
-
                 {/* Section 1 : Gouvernance & Gestion technique (Pour Henri & Joséphine ou Initiative au vote) */}
                 {(isCoordinator || isVoteInitiative) && (
                   <section className="bg-white border-2 border-emerald-600/30 rounded-2xl p-4 sm:p-5 shadow-xs flex flex-col gap-4">
@@ -1191,7 +1205,7 @@ export default function TaskDetailModal({
                       </div>
                     </div>
 
-                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                    <div className={`grid gap-4 ${isVoteInitiative ? 'grid-cols-1' : 'grid-cols-1 sm:grid-cols-2'}`}>
                       <div className="flex flex-col gap-1">
                         <label className="font-label-md text-xs font-semibold text-on-surface">Sujet / Emplacement</label>
                         <CustomSelect
@@ -1202,56 +1216,80 @@ export default function TaskDetailModal({
                         />
                       </div>
 
-                      <div className="flex flex-col gap-1">
-                        <label className="font-label-md text-xs font-semibold text-on-surface">Degré de complexité</label>
-                        <CustomSelect
-                          value={editComplexity}
-                          onChange={(e) => setEditComplexity(e.target.value)}
-                          options={COMPLEXITIES}
-                          className="h-10 text-xs sm:text-sm"
-                        />
-                      </div>
-                    </div>
-
-                    {/* Assigned Members */}
-                    <div className="space-y-1.5">
-                      <label className="font-label-md text-xs font-semibold text-on-surface">
-                        {isVoteInitiative ? 'Rapporteurs / Porteurs du projet' : 'Membres attribués'}
-                      </label>
-                      <div className="flex flex-wrap items-center gap-2 p-2.5 bg-canvas-slate rounded-xl border border-slate-300 min-h-[44px]">
-                        {editMembers.map((m) => (
-                          <span
-                            key={m}
-                            className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full bg-white border border-slate-300 text-xs font-semibold text-on-surface shadow-xs"
-                          >
-                            <span className="w-2 h-2 rounded-full bg-primary"></span>
-                            {m}
-                            <button
-                              type="button"
-                              onClick={() => setEditMembers(editMembers.filter((item) => item !== m))}
-                              className="w-4 h-4 flex items-center justify-center text-slate-400 hover:text-error ml-1 cursor-pointer"
-                            >
-                              ×
-                            </button>
-                          </span>
-                        ))}
-
-                        <div className="inline-block min-w-[170px]">
+                      {/* Annotation 8 : Masquer degré de complexité en mode vote */}
+                      {!isVoteInitiative && (
+                        <div className="flex flex-col gap-1">
+                          <label className="font-label-md text-xs font-semibold text-on-surface">Degré de complexité</label>
                           <CustomSelect
-                            value=""
-                            placeholder="+ Ajouter un membre"
-                            placeholderClassName="text-emerald-800 font-semibold"
-                            options={ALL_MEMBERS.filter((m) => !editMembers.includes(m))}
-                            onChange={(e) => {
-                              if (e.target.value && !editMembers.includes(e.target.value)) {
-                                setEditMembers([...editMembers, e.target.value]);
-                              }
-                            }}
-                            className="min-h-0 h-[28px] py-0 px-2.5 text-xs bg-white border border-dashed border-emerald-600 rounded-full text-emerald-800 font-semibold hover:border-emerald-700 shadow-xs"
+                            value={editComplexity}
+                            onChange={(e) => setEditComplexity(e.target.value)}
+                            options={COMPLEXITIES}
+                            className="h-10 text-xs sm:text-sm"
                           />
                         </div>
-                      </div>
+                      )}
                     </div>
+
+                    {/* Annotation 7 : Porteur exclusif currentUser en mode vote vs sélecteur en mode tâche */}
+                    {isVoteInitiative ? (
+                      <div className="space-y-1.5">
+                        <label className="font-label-md text-xs font-semibold text-on-surface">
+                          Porteur du projet (Rapporteur)
+                        </label>
+                        <div className="flex items-center gap-3 p-3 bg-canvas-slate rounded-xl border border-slate-200">
+                          <div className="w-8 h-8 rounded-full bg-forest-deep text-white flex items-center justify-center font-bold text-xs shrink-0 shadow-xs">
+                            {(currentUserName || 'Henri Jamet').split(' ').map((n) => n[0]).join('').slice(0, 2).toUpperCase()}
+                          </div>
+                          <div className="flex flex-col min-w-0">
+                            <span className="font-label-md text-xs sm:text-sm font-bold text-forest-deep truncate">
+                              {currentUserName || 'Henri Jamet'}
+                            </span>
+                            <span className="text-[11px] text-on-surface-variant font-medium">
+                              Associé déclarant et porteur exclusif de l'initiative au vote
+                            </span>
+                          </div>
+                        </div>
+                      </div>
+                    ) : (
+                      <div className="space-y-1.5">
+                        <label className="font-label-md text-xs font-semibold text-on-surface">
+                          Membres attribués
+                        </label>
+                        <div className="flex flex-wrap items-center gap-2 p-2.5 bg-canvas-slate rounded-xl border border-slate-300 min-h-[44px]">
+                          {editMembers.map((m) => (
+                            <span
+                              key={m}
+                              className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full bg-white border border-slate-300 text-xs font-semibold text-on-surface shadow-xs"
+                            >
+                              <span className="w-2 h-2 rounded-full bg-primary"></span>
+                              {m}
+                              <button
+                                type="button"
+                                onClick={() => setEditMembers(editMembers.filter((item) => item !== m))}
+                                className="w-4 h-4 flex items-center justify-center text-slate-400 hover:text-error ml-1 cursor-pointer"
+                              >
+                                ×
+                              </button>
+                            </span>
+                          ))}
+
+                          <div className="inline-block min-w-[170px]">
+                            <CustomSelect
+                              value=""
+                              placeholder="+ Ajouter un membre"
+                              placeholderClassName="text-emerald-800 font-semibold"
+                              options={ALL_MEMBERS.filter((m) => !editMembers.includes(m))}
+                              onChange={(e) => {
+                                if (e.target.value && !editMembers.includes(e.target.value)) {
+                                  setEditMembers([...editMembers, e.target.value]);
+                                }
+                              }}
+                              className="min-h-0 h-[28px] py-0 px-2.5 text-xs bg-white border border-dashed border-emerald-600 rounded-full text-emerald-800 font-semibold hover:border-emerald-700 shadow-xs"
+                            />
+                          </div>
+                        </div>
+                      </div>
+                    )}
 
                     {/* Presence on site required */}
                     <label className="flex items-center gap-3 p-3 bg-canvas-slate rounded-xl border border-slate-200 select-none cursor-pointer">
@@ -1302,17 +1340,94 @@ export default function TaskDetailModal({
                     />
                   </div>
 
-                  {/* Checklist editor */}
+                  {/* Annotation 4 : Options de vote dynamiques et options statutaires obligatoires */}
+                  {isVoteInitiative && (
+                    <div className="space-y-3 pt-2 border-t border-slate-100">
+                      <div className="flex items-center justify-between">
+                        <div>
+                          <label className="font-label-md text-xs font-semibold text-on-surface block">
+                            Options de vote personnalisées
+                          </label>
+                          <span className="text-[11px] text-on-surface-variant font-medium">
+                            Choix proposés aux associés pour ce scrutin
+                          </span>
+                        </div>
+                        <button
+                          type="button"
+                          onClick={() => setEditVoteOptions([...editVoteOptions, `Option ${editVoteOptions.length + 1}`])}
+                          className="text-xs font-semibold text-emerald-800 bg-white border border-emerald-600 hover:bg-emerald-50 px-2.5 py-1 rounded-full cursor-pointer transition-colors shadow-xs flex items-center gap-1"
+                        >
+                          <span className="material-symbols-outlined text-[14px]">add</span>
+                          Ajouter une option
+                        </button>
+                      </div>
+
+                      <div className="space-y-2">
+                        {editVoteOptions.map((opt, idx) => (
+                          <div key={idx} className="flex items-center gap-2 p-2 bg-canvas-slate rounded-xl border border-slate-200">
+                            <span className="w-5 h-5 rounded-full bg-emerald-100 text-emerald-800 font-bold text-[11px] flex items-center justify-center shrink-0">
+                              {idx + 1}
+                            </span>
+                            <input
+                              type="text"
+                              value={opt}
+                              onChange={(e) => {
+                                const updated = [...editVoteOptions];
+                                updated[idx] = e.target.value;
+                                setEditVoteOptions(updated);
+                              }}
+                              placeholder={`Libellé de l'option ${idx + 1}...`}
+                              className="flex-1 bg-white border border-slate-300 rounded-lg px-2.5 py-1 text-xs text-on-surface focus:outline-none focus:border-emerald-600 font-medium"
+                            />
+                            <button
+                              type="button"
+                              onClick={() => setEditVoteOptions(editVoteOptions.filter((_, i) => i !== idx))}
+                              className="w-7 h-7 flex items-center justify-center text-rose-600 hover:bg-rose-50 rounded-lg cursor-pointer transition-colors"
+                              title="Supprimer cette option"
+                            >
+                              <span className="material-symbols-outlined text-[16px]">delete</span>
+                            </button>
+                          </div>
+                        ))}
+                        {editVoteOptions.length === 0 && (
+                          <p className="text-xs text-on-surface-variant italic py-1">
+                            Aucune option personnalisée définie. Cliquez sur « Ajouter une option ».
+                          </p>
+                        )}
+                      </div>
+
+                      {/* Options statutaires intangibles (lecture seule) */}
+                      <div className="p-3 bg-slate-50 rounded-xl border border-slate-200 space-y-2">
+                        <span className="text-[11px] font-bold text-slate-600 uppercase tracking-wider block">
+                          Options statutaires obligatoires (incluses par défaut) :
+                        </span>
+                        <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+                          <div className="flex items-center gap-2 p-2 bg-white rounded-lg border border-slate-200 text-xs text-slate-700 select-none shadow-xs">
+                            <span className="w-2.5 h-2.5 rounded-full border-2 border-slate-400 bg-white"></span>
+                            <span className="font-semibold">⚪ Voter blanc</span>
+                            <span className="text-[10px] text-slate-400 ml-auto">(Statutaire)</span>
+                          </div>
+                          <div className="flex items-center gap-2 p-2 bg-white rounded-lg border border-slate-200 text-xs text-slate-700 select-none shadow-xs">
+                            <span className="material-symbols-outlined text-[15px] text-slate-500">account_balance</span>
+                            <span className="font-semibold">🏛️ Reporter à l'AG</span>
+                            <span className="text-[10px] text-slate-400 ml-auto">(Statutaire)</span>
+                          </div>
+                        </div>
+                      </div>
+                    </div>
+                  )}
+
+                  {/* Annotation 3 : Sous-tâches & Checklists */}
                   <div className="space-y-2 pt-1">
                     <div className="flex items-center justify-between">
-                      <label className="font-label-md text-xs font-semibold text-on-surface">Jalons &amp; Checklist</label>
+                      <label className="font-label-md text-xs font-semibold text-on-surface">Sous-tâches &amp; Checklists</label>
                       <button
                         type="button"
                         onClick={addChecklistItem}
                         className="text-xs font-semibold text-emerald-800 bg-white border border-emerald-600 hover:bg-emerald-50 px-2.5 py-1 rounded-full cursor-pointer transition-colors shadow-xs flex items-center gap-1"
                       >
                         <span className="material-symbols-outlined text-[14px]">add</span>
-                        Ajouter un jalon
+                        Ajouter une sous-tâche
                       </button>
                     </div>
 
@@ -1333,7 +1448,7 @@ export default function TaskDetailModal({
                             type="text"
                             value={item.text}
                             onChange={(e) => updateChecklistText(idx, e.target.value)}
-                            placeholder="Libellé du jalon..."
+                            placeholder="Libellé de la sous-tâche..."
                             className="flex-1 bg-white border border-slate-300 rounded-lg px-2.5 py-1 text-xs text-on-surface focus:outline-none focus:border-emerald-600"
                           />
                           <button
@@ -1472,8 +1587,8 @@ export default function TaskDetailModal({
                   )}
                 </section>
 
-                {/* Footer formulaire collé au bas (Annotation 2) */}
-                <footer className="pt-5 border-t border-slate-200 flex flex-wrap items-center justify-between gap-3 bg-surface-container-lowest">
+                {/* Footer formulaire fixé / sticky en bas (Annotation 6) */}
+                <footer className="sticky bottom-0 z-20 pt-4 pb-4 px-5 sm:px-7 -mx-5 sm:-mx-7 -mb-5 sm:-mb-7 border-t border-slate-200 flex flex-wrap items-center justify-between gap-3 bg-surface-container-lowest/95 backdrop-blur-sm shadow-md">
                   <p className="text-xs text-on-surface-variant font-medium">
                     {isNewTask ? "Veuillez vérifier l'ensemble des informations saisies avant de soumettre la tâche." : "Enregistrez pour valider les modifications apportées à la tâche."}
                   </p>

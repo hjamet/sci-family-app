@@ -96,6 +96,15 @@ export default function AdminInfoPage({ currentUser }) {
       }
     } catch (err) {
       console.warn('Bank status load notice:', err.message);
+      setBankStatus((prev) => prev || {
+        status: 'error',
+        needs_reauth: true,
+        message: 'Liaison bancaire indisponible : impossible d\'interroger le service bancaire.',
+        raw_error: err.message || 'Impossible d\'interroger le service bancaire.',
+        error_code: err.status || 'NET_ERROR',
+        error_details: err.stack || err.message,
+        last_sync_attempt: new Date().toISOString(),
+      });
     } finally {
       setIsLoadingBank(false);
     }

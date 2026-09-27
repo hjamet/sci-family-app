@@ -162,11 +162,11 @@ export const safeExtractVoterName = (v) => {
   return '';
 };
 
-// Extraction sécurisée du choix de vote (supporte vote, choice, value, et insensibilité casse)
+// Extraction sécurisée du choix de vote (supporte vote, choice, value)
 export const safeExtractVoteChoice = (v) => {
   if (!v) return '';
   const raw = v.vote ?? v.choice ?? v.value ?? (typeof v === 'string' ? v : '');
-  return String(raw || '').trim().toUpperCase();
+  return String(raw || '').trim();
 };
 
 // Extraction sécurisée du prénom pour affichage
@@ -331,13 +331,34 @@ function VoteRoofModalInner({
 
   if (!isOpen) return null;
 
-  // Calculs statistiques en temps réel avec prise en compte du report AG
+  // Options de vote personnalisées du projet (Annotation 4)
+  const projectOptions = (() => {
+    if (Array.isArray(activeProject.options) && activeProject.options.length > 0) {
+      return activeProject.options.filter(Boolean);
+    }
+    if (typeof activeProject.options === 'string' && activeProject.options.trim()) {
+      try {
+        const parsed = JSON.parse(activeProject.options);
+        if (Array.isArray(parsed) && parsed.length > 0) return parsed.filter(Boolean);
+      } catch (_) {
+        const split = activeProject.options.split(',').map((s) => s.trim()).filter(Boolean);
+        if (split.length > 0) return split;
+      }
+    }
+    return [];
+  })();
+
+  // Calculs statistiques en temps réel avec prise en compte du report AG et vote blanc
   const totalAssociates = 7;
   const safeList = Array.isArray(associatesVotes) ? associatesVotes : DEFAULT_ASSOCIATES;
   const pourVotes = safeList.filter(a => ['POUR', 'OUI'].includes(String(a?.vote || '').toUpperCase()));
   const contreVotes = safeList.filter(a => ['CONTRE', 'NON'].includes(String(a?.vote || '').toUpperCase()));
-  const abstentionVotes = safeList.filter(a => String(a?.vote || '').toUpperCase() === 'ABSTENTION');
+  const abstentionVotes = safeList.filter(a => ['ABSTENTION', 'BLANC'].includes(String(a?.vote || '').toUpperCase()));
   const reportAgVotes = safeList.filter(a => ['REPORT_AG', 'REPORT_PROCHAINE_AG', 'DEMANDE_AG', 'REPORT AG'].includes(String(a?.vote || '').toUpperCase()));
+  const customVotesList = safeList.filter(a => {
+    const v = String(a?.vote || '').toUpperCase();
+    return v && !['POUR', 'OUI', 'CONTRE', 'NON', 'ABSTENTION', 'BLANC', 'REPORT_AG', 'REPORT_PROCHAINE_AG', 'DEMANDE_AG', 'REPORT AG', 'EN_ATTENTE'].includes(v);
+  });
   const attenteVotes = safeList.filter(a => !a?.vote || String(a?.vote || '').toUpperCase() === 'EN_ATTENTE');
 
   const pourCount = pourVotes.length;
@@ -345,7 +366,7 @@ function VoteRoofModalInner({
   const abstentionCount = abstentionVotes.length;
   const reportAgCount = reportAgVotes.length;
   const attenteCount = attenteVotes.length;
-  const totalVotesCast = pourCount + contreCount + abstentionCount + reportAgCount;
+  const totalVotesCast = pourCount + contreCount + abstentionCount + reportAgCount + customVotesList.length;
 
   const pourPct = ((pourCount / totalAssociates) * 100).toFixed(1);
   const contrePct = ((contreCount / totalAssociates) * 100).toFixed(1);
@@ -390,6 +411,7 @@ function VoteRoofModalInner({
       POUR: 'Approuvé',
       CONTRE: 'Refusé',
       ABSTENTION: 'Abstention',
+      BLANC: 'Vote blanc',
       REPORT_AG: 'Report en AG demandé'
     };
 
@@ -794,6 +816,12 @@ function VoteRoofModalInner({
                                     Abstention
                                   </span>
                                 )}
+                                {voteStr === 'BLANC' && (
+                                  <span className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full text-[11px] font-bold bg-slate-100 text-slate-800 border border-slate-300">
+                                    <span>⚪</span>
+                                    Vote blanc
+                                  </span>
+                                )}
                                 {['REPORT_AG', 'REPORT_PROCHAINE_AG', 'DEMANDE_AG', 'REPORT AG'].includes(voteStr) && (
                                   <span className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full text-[11px] font-bold bg-purple-100 text-purple-800 border border-purple-200">
                                     <span>🏛️</span>
@@ -804,6 +832,12 @@ function VoteRoofModalInner({
                                   <span className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full text-[11px] font-semibold bg-slate-100 text-slate-600 border border-slate-200">
                                     <span className="material-symbols-outlined text-[14px]">schedule</span>
                                     En attente
+                                  </span>
+                                )}
+                                {!['POUR', 'OUI', 'CONTRE', 'NON', 'ABSTENTION', 'BLANC', 'REPORT_AG', 'REPORT_PROCHAINE_AG', 'DEMANDE_AG', 'REPORT AG', 'EN_ATTENTE', ''].includes(voteStr) && (
+                                  <span className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full text-[11px] font-bold bg-emerald-50 text-emerald-800 border border-emerald-300 max-w-[200px] truncate" title={associate?.vote}>
+                                    <span className="material-symbols-outlined text-[14px]">how_to_vote</span>
+                                    <span className="truncate">{associate?.vote}</span>
                                   </span>
                                 )}
                                 <span className="text-[11px] text-slate-500 whitespace-nowrap">
