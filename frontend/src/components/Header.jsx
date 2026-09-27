@@ -1,5 +1,5 @@
 import React, { useState, useRef, useEffect } from 'react';
-import { fetchTasks, fetchProjects, fetchPiscineStatus } from '../api';
+import { fetchTasks, fetchProjects, fetchPiscineStatus, fetchReservations } from '../api';
 
 // Logo SVG épuré et architectural : Monogramme 'H' surmonté du toit de la bâtisse familiale
 function HouseHLogo({ className = "w-10 h-10" }) {
@@ -157,10 +157,11 @@ export default function Header({
     let isMounted = true;
     async function loadDynamicNotifications() {
       try {
-        const [poolRes, projRes, taskRes] = await Promise.allSettled([
+        const [poolRes, projRes, taskRes, resRes] = await Promise.allSettled([
           fetchPiscineStatus(),
           fetchProjects(),
           fetchTasks(),
+          fetchReservations(),
         ]);
 
         const dynamicNotifs = [];
@@ -223,6 +224,34 @@ export default function Header({
                 tabId: 'taches',
                 time: t.priority === 'URGENT' ? 'Urgent' : 'En cours',
                 icon: 'assignment_ind',
+              });
+            });
+        }
+
+        // 4. Séjours et réservations imminents
+        if (resRes.status === 'fulfilled' && Array.isArray(resRes.value)) {
+          const userFirst = typeof currentUser === 'string' ? currentUser.split(' ')[0] : (currentUser?.prenom || 'Henri');
+          const todayStr = new Date().toISOString().split('T')[0];
+          resRes.value
+            .filter((r) => {
+              if (r.status === 'Refusée' || r.status === 'Annulée') return false;
+              const isUpcoming = (r.end_date && r.end_date >= todayStr) || (r.start_date && r.start_date >= todayStr);
+              if (!isUpcoming) return false;
+              const rUser = (r.user_name || '').toLowerCase();
+              return rUser.includes(userFirst.toLowerCase());
+            })
+            .slice(0, 2)
+            .forEach((r) => {
+              dynamicNotifs.push({
+                id: `stay-booking-${r.id}`,
+                title: `Séjour : ${r.house === 'rosing' ? 'Rosing' : 'Presbytère'}`,
+                description: `Du ${r.start_date} au ${r.end_date} (${r.status || 'Confirmé'}).`,
+                type: 'sejour',
+                path: '/calendrier',
+                tabId: 'calendrier',
+                time: 'Séjour',
+                icon: 'cottage',
+                reservation: r,
               });
             });
         }
