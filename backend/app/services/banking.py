@@ -26,6 +26,25 @@ logger = logging.getLogger("sci_banking")
 # Zero-Trust / Fail-Fast : ZÉRO cache (directive Henri). 100% direct-live vers l'API Enable Banking.
 
 
+class EnableBankingAPIError(RuntimeError):
+    """Exception personnalisée pour capturer les réponses et statuts bruts d'Enable Banking."""
+    def __init__(
+        self,
+        message: str,
+        status_code: Optional[int] = None,
+        details: Any = None,
+        raw_body: Optional[str] = None
+    ):
+        super().__init__(message)
+        self.message = message
+        self.status_code = status_code
+        self.details = details
+        self.raw_body = raw_body
+
+    def __str__(self):
+        return self.message
+
+
 
 class EnableBankingService:
     """Service d'intégration Open Banking DSP2 via l'API Enable Banking.
@@ -281,15 +300,26 @@ class EnableBankingService:
         except urllib.error.HTTPError as e:
             err_body = e.read().decode("utf-8")
             logger.error(f"Erreur API Enable Banking [{e.code}] {url} : {err_body}")
+            err_json = None
             try:
                 err_json = json.loads(err_body)
                 msg = err_json.get("message") or err_json.get("error", {}).get("message") or str(err_json)
             except Exception:
                 msg = err_body
-            raise RuntimeError(f"Erreur Enable Banking ({e.code}) : {msg}")
+            raise EnableBankingAPIError(
+                message=f"Erreur Enable Banking ({e.code}) : {msg}",
+                status_code=e.code,
+                details=err_json,
+                raw_body=err_body
+            )
         except Exception as e:
             logger.error(f"Erreur réseau Enable Banking : {e}")
-            raise RuntimeError(f"Échec de connexion vers Enable Banking : {e}")
+            raise EnableBankingAPIError(
+                message=f"Échec de connexion vers Enable Banking : {e}",
+                status_code=None,
+                details={"error": str(e)},
+                raw_body=str(e)
+            )
 
     def get_aspsps(self, country: str = "FR") -> List[Dict[str, Any]]:
         """Récupère la liste des établissements bancaires (ASPSPs) disponibles."""
@@ -778,31 +808,58 @@ class EnableBankingService:
     def check_connection_status(self, db: Session, force_refresh: bool = False) -> Dict[str, Any]:
         """Vérifie de manière réactive l'état réel de la liaison bancaire Swan via Enable Banking.
         
-        Maintient un cache mémoire TTL de 120s avec verrou thread-safe et repli sur données stale
-        en cas de lenteur réseau ou indisponibilité temporaire d'Enable Banking.
-        
         RÈGLE D'OR DE DÉTECTION (Consigne stricte Henri) :
         Détection purement réactive :
         1. Lorsque l'API / le système n'arrive plus à récupérer les données (erreur HTTP, rejet d'accès,
            jeton expiré, 401/403/404, session expirée ou inaccessible).
         2. Ou lorsque le compte ou la liaison bancaire n'est plus actif/active.
         
-        En temps normal (requêtes réussies) : status='ok', needs_reauth=False.
-        En cas d'échec : status='expired'|'error', needs_reauth=True, URL Tilisy instantanée fournie.
+        En temps normal (requêtes réussies) : is_connected=True, status='ok', needs_reauth=False.
+        En cas d'échec : is_connected=False, status='interrupted', needs_reauth=True, URL Tilisy instantanée fournie.
         Zero-Trust / Fail-Fast : ZÉRO cache (directive Henri). 100% direct-live.
         """
+        now_iso = datetime.utcnow().isoformat()
         accounts = db.query(BankAccount).all()
         total_bal = sum(a.balance for a in accounts) if accounts else 0.0
         latest_sync = max((a.last_synced_at for a in accounts if a.last_synced_at), default=None)
 
-        # Vérification des sessions autorisées en base
+        # 1. Vérification des sessions en base
         active_sessions = db.query(BankAuthSession).filter(BankAuthSession.status == "AUTHORIZED").all()
+        
+        # Auto-guérison : si aucune session AUTHORIZED en base, vérifier si la session la plus récente
+        # est en réalité encore AUTHORIZED sur l'API Enable Banking (pour réparer d'éventuels basculements prématurés)
+        if not active_sessions:
+            recent_sess = db.query(BankAuthSession).order_by(BankAuthSession.created_at.desc()).first()
+            if recent_sess and recent_sess.session_id and not recent_sess.session_id.startswith("sci_"):
+                try:
+                    sess_info = self.get_session(recent_sess.session_id)
+                    if isinstance(sess_info, dict) and sess_info.get("status") in ["AUTHORIZED", "ACTIVE"]:
+                        recent_sess.status = "AUTHORIZED"
+                        if not recent_sess.authorized_at:
+                            recent_sess.authorized_at = datetime.utcnow()
+                        raw_accs = sess_info.get("accounts", [])
+                        if raw_accs:
+                            recent_sess.accounts_data = json.dumps(raw_accs)
+                        db.commit()
+                        active_sessions = [recent_sess]
+                except Exception as ex:
+                    logger.debug(f"Vérification session récente {recent_sess.session_id} : {ex}")
+
+        # Calcul de la validité de la session si active
+        days_left = None
+        valid_until = None
+        if active_sessions:
+            sess_with_expiry = next((s for s in active_sessions if s.expires_at), None)
+            if sess_with_expiry and sess_with_expiry.expires_at:
+                valid_until = sess_with_expiry.expires_at.isoformat()
+                days_left = max(0, (sess_with_expiry.expires_at - datetime.utcnow()).days)
 
         # Si aucune session active et aucun compte synchronisé avec succès
         if not active_sessions and (not accounts or not latest_sync):
             reauth_info = self._get_or_create_reauth_url(db)
             return {
-                "status": "expired",
+                "status": "interrupted",
+                "is_connected": False,
                 "needs_reauth": True,
                 "days_left": None,
                 "valid_until": None,
@@ -811,56 +868,130 @@ class EnableBankingService:
                 "active_accounts_count": len(accounts),
                 "total_balance": round(total_bal, 2),
                 "last_synced_at": latest_sync,
-                "last_successful_sync": latest_sync
+                "last_successful_sync": latest_sync,
+                "raw_error": "Aucune session d'autorisation bancaire active en base de données.",
+                "error_code": "NO_ACTIVE_SESSION",
+                "error_details": {"error": "No active session in database"},
+                "last_sync_attempt": now_iso
             }
+
+        # Construction de la liste ordonnée des comptes candidats à tester
+        candidate_accounts = []
+        # A. Comptes issus des sessions autorisées (priorité absolue car garantis par le consentement actif)
+        if active_sessions:
+            for s in active_sessions:
+                if s.accounts_data:
+                    try:
+                        acc_list = json.loads(s.accounts_data)
+                        if isinstance(acc_list, list):
+                            for acc_item in acc_list:
+                                uid = self._extract_account_id_str(acc_item)
+                                if uid and uid not in candidate_accounts:
+                                    candidate_accounts.append(uid)
+                    except Exception:
+                        pass
+        
+        # B. Comptes en base ayant déjà été synchronisés avec succès (last_synced_at non nul)
+        synced_accounts = [a for a in accounts if a.last_synced_at is not None]
+        for a in synced_accounts:
+            uid = self._extract_account_id_str(a.account_id)
+            if uid and uid not in candidate_accounts:
+                candidate_accounts.append(uid)
+
+        # C. Autres comptes en base
+        for a in accounts:
+            uid = self._extract_account_id_str(a.account_id)
+            if uid and uid not in candidate_accounts:
+                candidate_accounts.append(uid)
 
         # Test réactif effectif de l'API Enable Banking (100% direct sans cache)
         is_query_successful = False
-        error_detail = ""
+        raw_error = None
+        error_code = None
+        error_details = None
         is_auth_error = False
 
-        try:
-            if accounts:
-                target_acc_id = self._extract_account_id_str(accounts[0].account_id)
-                # Tentative d'interrogation réelle du solde (timeout 3.5s)
-                self.get_account_balances(target_acc_id, raise_errors=True)
-                is_query_successful = True
-            elif active_sessions:
-                sess = active_sessions[0]
+        if candidate_accounts:
+            last_err = None
+            for acc_id in candidate_accounts:
+                try:
+                    self.get_account_balances(acc_id, raise_errors=True)
+                    is_query_successful = True
+                    break
+                except Exception as e:
+                    last_err = e
+                    continue
+
+            if not is_query_successful and last_err:
+                if isinstance(last_err, EnableBankingAPIError):
+                    raw_error = last_err.raw_body or str(last_err)
+                    error_code = f"HTTP {last_err.status_code}" if last_err.status_code else "API_ERROR"
+                    error_details = last_err.details or str(last_err)
+                    if last_err.status_code in (401, 403):
+                        is_auth_error = True
+                else:
+                    raw_error = str(last_err)
+                    error_code = "ERROR"
+                    error_details = {"error": str(last_err)}
+        elif active_sessions:
+            sess = active_sessions[0]
+            try:
                 sess_data = self.get_session(sess.session_id)
                 if sess_data and sess_data.get("status") in ["AUTHORIZED", "ACTIVE"]:
                     is_query_successful = True
                 else:
                     is_auth_error = True
-                    error_detail = f"Statut session : {sess_data.get('status') if sess_data else 'inconnu'}"
-            else:
+                    sess_status = sess_data.get("status") if sess_data else "inconnu"
+                    raw_error = f"Statut session Enable Banking : {sess_status}"
+                    error_code = f"SESSION_{sess_status.upper()}"
+                    error_details = sess_data or {}
+            except Exception as e:
+                if isinstance(e, EnableBankingAPIError):
+                    raw_error = e.raw_body or str(e)
+                    error_code = f"HTTP {e.status_code}" if e.status_code else "API_ERROR"
+                    error_details = e.details or str(e)
+                    if e.status_code in (401, 403):
+                        is_auth_error = True
+                else:
+                    raw_error = str(e)
+                    error_code = "ERROR"
+                    error_details = {"error": str(e)}
+        else:
+            try:
                 self.get_accounts()
                 is_query_successful = True
-        except Exception as e:
-            error_str = str(e)
-            logger.warning(f"Échec de l'interrogation réactive Enable Banking Swan : {error_str}")
-            error_detail = error_str
-            lower_err = error_str.lower()
-            if any(term in lower_err for term in ["401", "403", "404", "expired", "not found", "unauthorized", "does_not_exist", "session", "consent"]):
-                is_auth_error = True
-            else:
-                is_auth_error = False
+            except Exception as e:
+                if isinstance(e, EnableBankingAPIError):
+                    raw_error = e.raw_body or str(e)
+                    error_code = f"HTTP {e.status_code}" if e.status_code else "API_ERROR"
+                    error_details = e.details or str(e)
+                    if e.status_code in (401, 403):
+                        is_auth_error = True
+                else:
+                    raw_error = str(e)
+                    error_code = "ERROR"
+                    error_details = {"error": str(e)}
 
         if is_query_successful:
             return {
                 "status": "ok",
+                "is_connected": True,
                 "needs_reauth": False,
-                "days_left": None,
-                "valid_until": None,
+                "days_left": days_left,
+                "valid_until": valid_until,
                 "message": "Liaison bancaire Swan active et opérationnelle.",
                 "reauth_url": None,
                 "active_accounts_count": len(accounts),
                 "total_balance": round(total_bal, 2),
                 "last_synced_at": latest_sync,
-                "last_successful_sync": latest_sync
+                "last_successful_sync": latest_sync,
+                "raw_error": None,
+                "error_code": None,
+                "error_details": None,
+                "last_sync_attempt": now_iso
             }
         else:
-            # Marquer les sessions comme expirées en cas de rejet d'authentification
+            # Marquer les sessions comme expirées EXCLUSIVEMENT en cas de rejet formel d'authentification (401/403)
             if is_auth_error and active_sessions:
                 for s in active_sessions:
                     s.status = "EXPIRED"
@@ -870,14 +1001,18 @@ class EnableBankingService:
                     db.rollback()
 
             reauth_info = self._get_or_create_reauth_url(db)
-            status_code = "expired" if is_auth_error else "error"
-            msg = (
-                "Liaison bancaire interrompue : La ré-authentification DSP2 de sécurité (tous les 180 jours) est requise pour actualiser les données."
-                if is_auth_error
-                else f"Liaison bancaire indisponible : Impossible d'interroger Swan via Enable Banking ({error_detail})."
-            )
+            status_code = "interrupted"
+            
+            # Message clair avec indication de l'erreur brute
+            detail_suffix = f" ({error_code}: {raw_error})" if error_code or raw_error else ""
+            if is_auth_error:
+                msg = f"Liaison bancaire interrompue : La ré-authentification DSP2 de sécurité (tous les 180 jours) est requise pour actualiser les données.{detail_suffix}"
+            else:
+                msg = f"Liaison bancaire indisponible : Impossible d'interroger Swan via Enable Banking{detail_suffix}."
+
             return {
                 "status": status_code,
+                "is_connected": False,
                 "needs_reauth": True,
                 "days_left": None,
                 "valid_until": None,
@@ -886,7 +1021,11 @@ class EnableBankingService:
                 "active_accounts_count": len(accounts),
                 "total_balance": round(total_bal, 2),
                 "last_synced_at": latest_sync,
-                "last_successful_sync": latest_sync
+                "last_successful_sync": latest_sync,
+                "raw_error": raw_error,
+                "error_code": error_code,
+                "error_details": error_details,
+                "last_sync_attempt": now_iso
             }
 
     @classmethod

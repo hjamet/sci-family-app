@@ -117,21 +117,6 @@ def seed_database(db: Session = None, force: bool = False):
             session.commit()
             print("7 Associés statutaires initialisés.")
 
-        # 3. Compte bancaire Swan France officiel
-        swan_acc = session.query(BankAccount).filter(BankAccount.account_id == "f7af9598-108e-4c33-846d-b829a015c149").first()
-        if not swan_acc:
-            new_acc = BankAccount(
-                account_id="f7af9598-108e-4c33-846d-b829a015c149",
-                name="Compte Courant SCI Hellenvilliers (Swan France)",
-                currency="EUR",
-                balance=0.0,
-                balance_type="interimAvailable",
-                aspsp_name="Swan"
-            )
-            session.add(new_acc)
-            session.commit()
-            print("Compte bancaire Swan France initialisé à solde 0,00 €.")
-
         print("Vérification d'initialisation achevée : 100% données réelles, zéro faux élément ré-ensemencé.")
     finally:
         if should_close:

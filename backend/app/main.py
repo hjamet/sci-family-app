@@ -4619,9 +4619,31 @@ def get_banking_status(
     force_refresh: bool = Query(False),
     db: Session = Depends(get_db)
 ):
-    """Retourne l'état réactif de l'intégration Open Banking DSP2 et les soldes consolidés de la SCI."""
+    """Retourne l'état réactif de l'intégration Open Banking DSP2 et les soldes consolidés de la SCI.
+    
+    Garantit une sécurité Zero-Crash : ne lève JAMAIS d'erreur HTTP 500 non gérée,
+    et expose fidèlement l'erreur brute, le code d'erreur et les détails pour diagnostic.
+    """
     is_refresh = refresh or force_refresh
-    status_data = enable_banking_service.check_connection_status(db=db, force_refresh=is_refresh)
+    try:
+        status_data = enable_banking_service.check_connection_status(db=db, force_refresh=is_refresh)
+    except Exception as e:
+        logger.error(f"Erreur inattendue check_connection_status : {e}", exc_info=True)
+        status_data = {
+            "status": "interrupted",
+            "is_connected": False,
+            "needs_reauth": True,
+            "raw_error": str(e),
+            "error_code": "INTERNAL_CHECK_ERROR",
+            "error_details": {"exception": str(e), "type": type(e).__name__},
+            "last_sync_attempt": datetime.utcnow().isoformat(),
+            "message": f"Erreur de communication bancaire : {str(e)}",
+            "active_accounts_count": 0,
+            "total_balance": 0.0,
+            "last_synced_at": None,
+            "last_successful_sync": None,
+            "reauth_url": None
+        }
 
     return BankStatusResponse(
         application_id=enable_banking_service.app_id,
@@ -4634,11 +4656,16 @@ def get_banking_status(
         last_synced_at=status_data.get("last_synced_at"),
         last_successful_sync=status_data.get("last_successful_sync"),
         status=status_data.get("status", "ok"),
+        is_connected=status_data.get("is_connected", status_data.get("status") == "ok" and not status_data.get("needs_reauth")),
         needs_reauth=status_data.get("needs_reauth", False),
         days_left=status_data.get("days_left"),
         valid_until=status_data.get("valid_until"),
         message=status_data.get("message"),
-        reauth_url=status_data.get("reauth_url")
+        reauth_url=status_data.get("reauth_url"),
+        raw_error=status_data.get("raw_error"),
+        error_code=status_data.get("error_code"),
+        error_details=status_data.get("error_details"),
+        last_sync_attempt=status_data.get("last_sync_attempt")
     )
 
 

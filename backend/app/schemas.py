@@ -967,12 +967,18 @@ class BankStatusResponse(BaseModel):
     currency: str = "EUR"
     last_synced_at: Optional[datetime] = None
     last_successful_sync: Optional[datetime] = None
-    status: str = "ok"  # "ok" | "expired" | "error"
+    status: str = "ok"  # "ok" | "expired" | "error" | "interrupted"
+    is_connected: bool = True
     needs_reauth: bool = False
     days_left: Optional[int] = None
     valid_until: Optional[str] = None
     message: Optional[str] = None
     reauth_url: Optional[str] = None
+    raw_error: Optional[str] = None
+    error_code: Optional[Any] = None
+    error_details: Optional[Any] = None
+    last_sync_attempt: Optional[str] = None
+
 
 
 class ProfileUpdateRequest(BaseModel):
