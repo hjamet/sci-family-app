@@ -559,7 +559,7 @@ export default function TaskDetailModal({
               <button
                 type="button"
                 onClick={handleDeleteTask}
-                className="ml-auto px-3.5 py-1.5 h-11 rounded-xl border-2 border-rose-300 dark:border-rose-700 bg-rose-50 dark:bg-rose-950/40 hover:bg-rose-100 dark:hover:bg-rose-900/50 text-rose-700 dark:text-rose-300 text-xs sm:text-sm font-semibold flex items-center gap-1.5 transition-colors shadow-sm cursor-pointer"
+                className="ml-auto px-4 py-2 h-11 rounded-xl border-2 border-rose-300 dark:border-rose-700 bg-rose-50 dark:bg-rose-950/40 hover:bg-rose-100 dark:hover:bg-rose-900/50 text-rose-700 dark:text-rose-300 text-xs sm:text-sm font-semibold flex items-center gap-2 transition-colors shadow-sm cursor-pointer"
                 title="Supprimer la tâche"
               >
                 <span className="material-symbols-outlined text-base">delete</span>

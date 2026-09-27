@@ -124,6 +124,58 @@ const DEFAULT_ASSOCIATES = [
   },
 ];
 
+// Extraction sécurisée et universelle du nom d'utilisateur
+export const resolveUserName = (user) => {
+  if (!user) return 'Henri Jamet';
+  if (typeof user === 'string') return user.trim() || 'Henri Jamet';
+  if (typeof user === 'object') {
+    if (user.name) return String(user.name).trim();
+    if (user.prenom) return `${user.prenom} ${user.nom || ''}`.trim();
+    if (user.first_name) return `${user.first_name} ${user.last_name || ''}`.trim();
+    if (user.username) return String(user.username).trim();
+    if (user.display_name) return String(user.display_name).trim();
+    if (user.email) return String(user.email).split('@')[0].trim();
+    if (typeof user.toString === 'function') {
+      const s = user.toString();
+      if (s && s !== '[object Object]') return s;
+    }
+  }
+  return 'Henri Jamet';
+};
+
+// Extraction sécurisée du nom de votant (supporte string, user_name, author, user object, member object)
+export const safeExtractVoterName = (v) => {
+  if (!v) return '';
+  if (typeof v === 'string') return v.trim();
+  if (typeof v === 'object') {
+    if (typeof v.user_name === 'string') return v.user_name.trim();
+    if (typeof v.author === 'string') return v.author.trim();
+    if (typeof v.name === 'string') return v.name.trim();
+    if (typeof v.user === 'string') return v.user.trim();
+    if (typeof v.user === 'object' && v.user) {
+      return (v.user.name || v.user.prenom || v.user.username || '').trim();
+    }
+    if (typeof v.member === 'object' && v.member) {
+      return (v.member.name || v.member.prenom || '').trim();
+    }
+  }
+  return '';
+};
+
+// Extraction sécurisée du choix de vote (supporte vote, choice, value, et insensibilité casse)
+export const safeExtractVoteChoice = (v) => {
+  if (!v) return '';
+  const raw = v.vote ?? v.choice ?? v.value ?? (typeof v === 'string' ? v : '');
+  return String(raw || '').trim().toUpperCase();
+};
+
+// Extraction sécurisée du prénom pour affichage
+export const formatAssociateFirstName = (a) => {
+  if (!a) return 'Associé';
+  const raw = a.name || a.prenom || a.id || 'Associé';
+  return String(raw).trim().split(' ')[0] || 'Associé';
+};
+
 function VoteRoofModalInner({
   isOpen,
   onClose,
@@ -131,17 +183,6 @@ function VoteRoofModalInner({
   onVoteSubmit,
   project,
 }) {
-  // Extraction sécurisée du nom utilisateur sans risque d'exception .toLowerCase()
-  const resolveUserName = (user) => {
-    if (!user) return 'Henri Jamet';
-    if (typeof user === 'string') return user.trim() || 'Henri Jamet';
-    if (typeof user === 'object') {
-      if (user.name) return String(user.name).trim();
-      if (user.prenom) return `${user.prenom} ${user.nom || ''}`.trim();
-      if (user.username) return String(user.username).trim();
-    }
-    return 'Henri Jamet';
-  };
   const currentUserName = resolveUserName(currentUser);
 
   // Normalisation des propriétés du projet avec fallbacks complets
@@ -149,25 +190,32 @@ function VoteRoofModalInner({
   const projectTitle = activeProject.title || 'Réfection Couverture & Isolation Combles Presbytère';
   const projectDescription = activeProject.description || "Remplacement complet des ardoises vétustes sur le versant Nord du Presbytère, reprise des liteaux et pose d'un isolant en laine de bois haute densité (R=7 m²·K/W). Ce chantier fait suite aux infiltrations constatées lors des pluies d'avril et sécurise la charpente avant les expertises de plâtrerie intérieure.";
   const projectRef = activeProject.ref || (activeProject.id ? `VOTE-2026-${String(activeProject.id).padStart(2, '0')}` : 'VOTE-2026-04');
-  const projectReporter = activeProject.submitted_by || activeProject.reporter?.name || 'Henri Jamet';
-  const projectBudget = activeProject.estimated_cost ? `${Number(activeProject.estimated_cost).toLocaleString('fr-FR')} € TTC` : (activeProject.budgetText || '4 850,00 € TTC');
+  const projectReporter = activeProject.submitted_by || activeProject.reporter?.name || (typeof activeProject.reporter === 'string' ? activeProject.reporter : 'Henri Jamet');
+  const projectBudget = typeof activeProject.estimated_cost === 'number'
+    ? `${activeProject.estimated_cost.toLocaleString('fr-FR')} € TTC`
+    : (activeProject.budgetText || (activeProject.estimated_cost ? String(activeProject.estimated_cost) : '4 850,00 € TTC'));
   const projectSubject = activeProject.category || activeProject.subject || 'Le Presbytère';
   const projectBadgeStatus = activeProject.badgeStatus || (activeProject.status === 'EN_COURS' ? 'Vote formel en cours' : (activeProject.status || 'Chantier Prioritaire 2026'));
 
   // Liste nominative des 7 associés statutaires de la SCI Hellenvilliers
   const [associatesVotes, setAssociatesVotes] = useState(() => {
-    if (project && Array.isArray(project.votes) && project.votes.length > 0) {
+    const votesArr = Array.isArray(project?.votes) ? project.votes : [];
+    if (votesArr.length > 0) {
       return DEFAULT_ASSOCIATES.map(assoc => {
-        const found = project.votes.find(v => {
-          const vName = (v.user_name || v.author || v.user || v.name || '').toLowerCase();
-          return vName.includes(assoc.name.toLowerCase()) || assoc.name.toLowerCase().includes(vName) ||
-            (vName.includes(assoc.id));
+        const assocNameLower = String(assoc.name || '').toLowerCase();
+        const assocIdLower = String(assoc.id || '').toLowerCase();
+        const found = votesArr.find(v => {
+          if (!v) return false;
+          const vName = safeExtractVoterName(v).toLowerCase();
+          return (vName && (vName.includes(assocNameLower) || assocNameLower.includes(vName) || vName.includes(assocIdLower))) ||
+                 (v.user_id && v.user_id === assoc.id) ||
+                 (v.member_id && v.member_id === assoc.id);
         });
         if (found) {
           return {
             ...assoc,
-            vote: (found.vote || '').toUpperCase(),
-            date: found.date || found.created_at || 'Mai 2026'
+            vote: safeExtractVoteChoice(found) || 'EN_ATTENTE',
+            date: found.date || found.created_at || found.voted_at || 'Mai 2026'
           };
         }
         return { ...assoc, vote: 'EN_ATTENTE', date: null };
@@ -178,18 +226,23 @@ function VoteRoofModalInner({
 
   // Synchronisation dynamique si le projet change
   useEffect(() => {
-    if (project && Array.isArray(project.votes) && project.votes.length > 0) {
-      setAssociatesVotes(prev => prev.map(assoc => {
-        const found = project.votes.find(v => {
-          const vName = (v.user_name || v.author || v.user || v.name || '').toLowerCase();
-          return vName.includes(assoc.name.toLowerCase()) || assoc.name.toLowerCase().includes(vName) ||
-            (vName.includes(assoc.id));
+    const votesArr = Array.isArray(project?.votes) ? project.votes : [];
+    if (votesArr.length > 0) {
+      setAssociatesVotes(prev => (prev || DEFAULT_ASSOCIATES).map(assoc => {
+        const assocNameLower = String(assoc.name || '').toLowerCase();
+        const assocIdLower = String(assoc.id || '').toLowerCase();
+        const found = votesArr.find(v => {
+          if (!v) return false;
+          const vName = safeExtractVoterName(v).toLowerCase();
+          return (vName && (vName.includes(assocNameLower) || assocNameLower.includes(vName) || vName.includes(assocIdLower))) ||
+                 (v.user_id && v.user_id === assoc.id) ||
+                 (v.member_id && v.member_id === assoc.id);
         });
         if (found) {
           return {
             ...assoc,
-            vote: (found.vote || '').toUpperCase(),
-            date: found.date || found.created_at || 'Mai 2026'
+            vote: safeExtractVoteChoice(found) || 'EN_ATTENTE',
+            date: found.date || found.created_at || found.voted_at || 'Mai 2026'
           };
         }
         return assoc;
@@ -253,10 +306,10 @@ function VoteRoofModalInner({
   const [showFullTable, setShowFullTable] = useState(true);
 
   // Trouver l'associé connecté avec protections robustes
-  const currentAssociate = associatesVotes.find(a => {
+  const currentAssociate = (associatesVotes || []).find(a => {
     if (!a || !a.name) return false;
-    const aLower = a.name.toLowerCase();
-    const uLower = currentUserName.toLowerCase();
+    const aLower = String(a.name).toLowerCase();
+    const uLower = String(currentUserName).toLowerCase();
     return (
       (uLower && (aLower.includes(uLower) || uLower.includes(aLower))) ||
       (uLower.includes('henri') && a.id === 'henri') ||
@@ -267,7 +320,7 @@ function VoteRoofModalInner({
       (uLower.includes('élisabeth') && a.id === 'elisabeth') ||
       (uLower.includes('frédéric') && a.id === 'frederic')
     );
-  }) || associatesVotes[0] || DEFAULT_ASSOCIATES[0];
+  }) || (associatesVotes && associatesVotes[0]) || DEFAULT_ASSOCIATES[0];
 
   // Synchroniser le vote actuel de l'utilisateur
   useEffect(() => {
@@ -301,11 +354,12 @@ function VoteRoofModalInner({
 
   // Calculs statistiques en temps réel avec prise en compte du report AG
   const totalAssociates = 7;
-  const pourVotes = associatesVotes.filter(a => ['POUR', 'OUI'].includes(a.vote));
-  const contreVotes = associatesVotes.filter(a => ['CONTRE', 'NON'].includes(a.vote));
-  const abstentionVotes = associatesVotes.filter(a => a.vote === 'ABSTENTION');
-  const reportAgVotes = associatesVotes.filter(a => ['REPORT_AG', 'REPORT_PROCHAINE_AG', 'DEMANDE_AG', 'REPORT AG'].includes(a.vote));
-  const attenteVotes = associatesVotes.filter(a => a.vote === 'EN_ATTENTE' || !a.vote);
+  const safeList = Array.isArray(associatesVotes) ? associatesVotes : DEFAULT_ASSOCIATES;
+  const pourVotes = safeList.filter(a => ['POUR', 'OUI'].includes(String(a?.vote || '').toUpperCase()));
+  const contreVotes = safeList.filter(a => ['CONTRE', 'NON'].includes(String(a?.vote || '').toUpperCase()));
+  const abstentionVotes = safeList.filter(a => String(a?.vote || '').toUpperCase() === 'ABSTENTION');
+  const reportAgVotes = safeList.filter(a => ['REPORT_AG', 'REPORT_PROCHAINE_AG', 'DEMANDE_AG', 'REPORT AG'].includes(String(a?.vote || '').toUpperCase()));
+  const attenteVotes = safeList.filter(a => !a?.vote || String(a?.vote || '').toUpperCase() === 'EN_ATTENTE');
 
   const pourCount = pourVotes.length;
   const contreCount = contreVotes.length;
@@ -329,6 +383,8 @@ function VoteRoofModalInner({
     ? activeProject.documents
     : (Array.isArray(activeProject.files) && activeProject.files.length > 0)
     ? activeProject.files
+    : (Array.isArray(activeProject.document_urls) && activeProject.document_urls.length > 0)
+    ? activeProject.document_urls
     : [
         {
           name: 'Devis-2026-Ets-Josse-Couverture-Presbytere.pdf',
@@ -353,8 +409,11 @@ function VoteRoofModalInner({
     const now = new Date();
     const formattedDate = `${now.getDate()} mai 2026, ${now.getHours().toString().padStart(2, '0')}:${now.getMinutes().toString().padStart(2, '0')}`;
 
-    setAssociatesVotes(prev => prev.map(a => {
-      if (a.id === currentAssociate.id) {
+    const assocId = currentAssociate?.id || 'henri';
+    const assocName = currentAssociate?.name || currentUserName || 'Henri Jamet';
+
+    setAssociatesVotes(prev => (prev || []).map(a => {
+      if (a && a.id === assocId) {
         return {
           ...a,
           vote: voteChoice,
@@ -371,28 +430,34 @@ function VoteRoofModalInner({
       REPORT_AG: 'Report en AG demandé'
     };
 
-    setToastMessage(`Vote « ${voteLabels[voteChoice] || voteChoice} » enregistré pour ${currentAssociate.name} !`);
+    setToastMessage(`Vote « ${voteLabels[voteChoice] || voteChoice} » enregistré pour ${assocName} !`);
     setTimeout(() => setToastMessage(null), 3500);
 
     // Synchronisation API si id disponible
-    if (activeProject.id) {
+    if (activeProject?.id) {
       try {
         await castProjectVote(activeProject.id, {
           vote: voteChoice,
-          user_name: currentAssociate.name,
-          user_id: currentAssociate.id
+          choice: voteChoice,
+          user_name: assocName,
+          user_id: assocId
         });
       } catch (err) {
         console.warn('API castProjectVote fallback local:', err.message);
       }
     }
 
-    if (onVoteSubmit) {
-      onVoteSubmit({
-        project: activeProject,
-        associate: currentAssociate.name,
-        vote: voteChoice
-      });
+    if (typeof onVoteSubmit === 'function') {
+      try {
+        onVoteSubmit({
+          project: activeProject,
+          associate: assocName,
+          vote: voteChoice,
+          choice: voteChoice
+        });
+      } catch (err) {
+        console.warn('onVoteSubmit error:', err);
+      }
     }
   };
 
@@ -650,25 +715,25 @@ function VoteRoofModalInner({
               <div className="grid grid-cols-2 sm:grid-cols-4 gap-2 mt-1 text-xs">
                 <div className="flex items-center gap-1.5 text-forest-deep font-medium">
                   <span className="w-2.5 h-2.5 rounded-full bg-forest-deep shrink-0"></span>
-                  <span><strong>{pourCount} Pour :</strong> {pourVotes.map(a => a.name.split(' ')[0]).join(', ') || 'Aucun'}</span>
+                  <span><strong>{pourCount} Pour :</strong> {pourVotes.map(formatAssociateFirstName).join(', ') || 'Aucun'}</span>
                 </div>
                 <div className="flex items-center gap-1.5 text-rose-700 font-medium">
                   <span className="w-2.5 h-2.5 rounded-full bg-rose-600 shrink-0"></span>
-                  <span><strong>{contreCount} Contre :</strong> {contreVotes.map(a => a.name.split(' ')[0]).join(', ') || 'Aucun'}</span>
+                  <span><strong>{contreCount} Contre :</strong> {contreVotes.map(formatAssociateFirstName).join(', ') || 'Aucun'}</span>
                 </div>
                 <div className="flex items-center gap-1.5 text-amber-rich font-medium">
                   <span className="w-2.5 h-2.5 rounded-full bg-amber-rich shrink-0"></span>
-                  <span><strong>{abstentionCount} Abst. :</strong> {abstentionVotes.map(a => a.name.split(' ')[0]).join(', ') || 'Aucune'}</span>
+                  <span><strong>{abstentionCount} Abst. :</strong> {abstentionVotes.map(formatAssociateFirstName).join(', ') || 'Aucune'}</span>
                 </div>
                 {reportAgCount > 0 ? (
                   <div className="flex items-center gap-1.5 text-purple-800 font-medium">
                     <span className="w-2.5 h-2.5 rounded-full bg-purple-700 shrink-0"></span>
-                    <span><strong>{reportAgCount} Report AG :</strong> {reportAgVotes.map(a => a.name.split(' ')[0]).join(', ')}</span>
+                    <span><strong>{reportAgCount} Report AG :</strong> {reportAgVotes.map(formatAssociateFirstName).join(', ')}</span>
                   </div>
                 ) : (
                   <div className="flex items-center gap-1.5 text-slate-500 font-medium">
                     <span className="w-2.5 h-2.5 rounded-full bg-slate-400 shrink-0"></span>
-                    <span><strong>{attenteCount} En attente :</strong> {attenteVotes.map(a => a.name.split(' ')[0]).join(', ') || 'Aucun'}</span>
+                    <span><strong>{attenteCount} En attente :</strong> {attenteVotes.map(formatAssociateFirstName).join(', ') || 'Aucun'}</span>
                   </div>
                 )}
               </div>
@@ -706,7 +771,8 @@ function VoteRoofModalInner({
                     </thead>
                     <tbody className="divide-y divide-border-subtle">
                       {associatesVotes.map((associate) => {
-                        const isUserRow = associate.id === currentAssociate.id;
+                        const isUserRow = Boolean(associate?.id && currentAssociate?.id && associate.id === currentAssociate.id);
+                        const voteStr = String(associate?.vote || '').toUpperCase();
                         return (
                           <tr 
                             key={associate.id} 
@@ -719,41 +785,41 @@ function VoteRoofModalInner({
                                 <div className={`w-7 h-7 rounded-full flex items-center justify-center text-[11px] font-bold shrink-0 ${
                                   associate.isGerance ? 'bg-sage-soft text-forest-deep' : 'bg-surface-container-highest text-on-surface'
                                 }`}>
-                                  {associate.initials}
+                                  {associate.initials || 'AJ'}
                                 </div>
                                 <span className="font-semibold text-slate-900 truncate">
-                                  {associate.name}
+                                  {associate.name || 'Associé'}
                                   {isUserRow && <span className="ml-1.5 text-[10px] text-primary font-bold">(Vous)</span>}
                                 </span>
                               </div>
                             </td>
                             <td className="py-2.5 px-4 text-right">
                               <div className="flex flex-col sm:flex-row items-end sm:items-center justify-end gap-1.5 sm:gap-3">
-                                {associate.vote === 'POUR' && (
+                                {['POUR', 'OUI'].includes(voteStr) && (
                                   <span className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full text-[11px] font-bold bg-emerald-100 text-emerald-800 border border-emerald-200">
                                     <span className="material-symbols-outlined text-[14px]">check_circle</span>
                                     Approuvé
                                   </span>
                                 )}
-                                {associate.vote === 'CONTRE' && (
+                                {['CONTRE', 'NON'].includes(voteStr) && (
                                   <span className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full text-[11px] font-bold bg-rose-100 text-rose-800 border border-rose-200">
                                     <span className="material-symbols-outlined text-[14px]">cancel</span>
                                     Refusé
                                   </span>
                                 )}
-                                {associate.vote === 'ABSTENTION' && (
+                                {voteStr === 'ABSTENTION' && (
                                   <span className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full text-[11px] font-bold bg-amber-100 text-amber-800 border border-amber-200">
                                     <span className="material-symbols-outlined text-[14px]">pause_circle</span>
                                     Abstention
                                   </span>
                                 )}
-                                {['REPORT_AG', 'REPORT_PROCHAINE_AG', 'DEMANDE_AG', 'REPORT AG'].includes(associate.vote) && (
+                                {['REPORT_AG', 'REPORT_PROCHAINE_AG', 'DEMANDE_AG', 'REPORT AG'].includes(voteStr) && (
                                   <span className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full text-[11px] font-bold bg-purple-100 text-purple-800 border border-purple-200">
                                     <span>🏛️</span>
                                     Report AG
                                   </span>
                                 )}
-                                {(associate.vote === 'EN_ATTENTE' || !associate.vote) && (
+                                {(voteStr === 'EN_ATTENTE' || !voteStr) && (
                                   <span className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full text-[11px] font-semibold bg-slate-100 text-slate-600 border border-slate-200">
                                     <span className="material-symbols-outlined text-[14px]">schedule</span>
                                     En attente
@@ -883,8 +949,9 @@ function VoteRoofModalInner({
 }
 
 export default function VoteRoofModal(props) {
+  if (!props?.isOpen) return null;
   return (
-    <VoteErrorBoundary onClose={props.onClose}>
+    <VoteErrorBoundary onClose={props?.onClose}>
       <VoteRoofModalInner {...props} />
     </VoteErrorBoundary>
   );

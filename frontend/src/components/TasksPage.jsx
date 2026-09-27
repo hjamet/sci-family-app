@@ -130,12 +130,13 @@ export default function TasksPage({ currentUser = 'Henri Jamet' }) {
       return [];
     }
     return projects.map((p, idx) => {
-      const votes = p.votes || [];
-      const pourVotes = votes.filter(v => ['OUI', 'POUR'].includes((v.vote || '').toUpperCase()));
-      const absVotes = votes.filter(v => (v.vote || '').toUpperCase() === 'ABSTENTION');
-      const contreVotes = votes.filter(v => ['NON', 'CONTRE'].includes((v.vote || '').toUpperCase()));
+      const votes = Array.isArray(p.votes) ? p.votes : [];
+      const pourVotes = votes.filter(v => v && ['OUI', 'POUR'].includes(String(v.vote || v.choice || '').toUpperCase()));
+      const absVotes = votes.filter(v => v && String(v.vote || v.choice || '').toUpperCase() === 'ABSTENTION');
+      const contreVotes = votes.filter(v => v && ['NON', 'CONTRE'].includes(String(v.vote || v.choice || '').toUpperCase()));
       const reportAgVotes = votes.filter(v => {
-        const voteStr = (v.vote || '').toUpperCase();
+        if (!v) return false;
+        const voteStr = String(v.vote || v.choice || '').toUpperCase();
         return voteStr === 'REPORT_AG' || voteStr === 'DEMANDE_AG' || voteStr === 'REPORT_PROCHAINE_AG' || voteStr === 'REPORT AG';
       });
       const pourCount = pourVotes.length;
@@ -145,15 +146,18 @@ export default function TasksPage({ currentUser = 'Henri Jamet' }) {
       const reportAgPct = Math.round((reportAgVotes.length / 7) * 100);
       const contrePct = Math.round((contreVotes.length / 7) * 100);
       const attentePct = Math.max(0, 100 - pourPct - absPct - reportAgPct - contrePct);
-      const isRoof = p.title && p.title.toLowerCase().includes('toiture');
+      const isRoof = p.title && String(p.title).toLowerCase().includes('toiture');
 
       return {
+        ...p,
         id: p.id,
         number: `${idx + 1} sur ${projects.length}`,
         badgeStatus: p.status === 'EN_COURS' ? 'Vote formel en cours' : (p.status || 'Consultation'),
         budgetText: `Enveloppe budgétaire : ${(p.estimated_cost || 0).toLocaleString('fr-FR')} € TTC`,
         title: p.title,
         description: p.description || '',
+        votes: votes,
+        documents: p.documents || p.files || p.document_urls || [],
         participationText: `Participation : ${totalCast}/7 voix exprimées (${Math.round((totalCast / 7) * 100)}%)`,
         quorumText: reportAgVotes.length > 0 ? 'Débat en AG sollicité' : (pourCount >= 4 ? 'Majorité qualifiée acquise' : 'En cours d\'instruction'),
         pourWidth: `${pourPct}%`,
@@ -170,7 +174,7 @@ export default function TasksPage({ currentUser = 'Henri Jamet' }) {
         deadline: 'Consultation active',
         reporter: {
           name: p.submitted_by || 'Henri Jamet',
-          initials: (p.submitted_by || 'Henri Jamet').split(' ').map(n => n[0]).join('').slice(0, 2).toUpperCase(),
+          initials: String(p.submitted_by || 'Henri Jamet').split(' ').map(n => n[0]).join('').slice(0, 2).toUpperCase(),
           role: p.submitted_by === 'Henri Jamet' ? 'Rapporteur du dossier' : 'Porteur du projet',
         },
         isRoofVote: isRoof,
@@ -370,7 +374,15 @@ export default function TasksPage({ currentUser = 'Henri Jamet' }) {
     return openVotes.filter(p => {
       const votes = Array.isArray(p.votes) ? p.votes : [];
       const hasVoted = votes.some(v => {
-        const voter = (v.user_name || v.author || v.user || v.name || '').toLowerCase();
+        const voter = (typeof v?.user_name === 'string'
+          ? v.user_name
+          : (typeof v?.author === 'string'
+            ? v.author
+            : (typeof v?.name === 'string'
+              ? v.name
+              : (typeof v?.user === 'string'
+                ? v.user
+                : (v?.user?.name || v?.user?.prenom || ''))))).toLowerCase();
         return (
           (userMeta.lowerName && voter.includes(userMeta.lowerName)) ||
           (userMeta.lowerPrenom && voter.includes(userMeta.lowerPrenom)) ||

@@ -5,6 +5,7 @@ import TaskDetailModal from './TaskDetailModal';
 import VoteRoofModal from './VoteRoofModal';
 import { extractParticipants } from '../pages/CalendarPage';
 import { VoteCardSkeleton, CompactStaySkeleton, CardSkeleton } from './SkeletonLoaders';
+import { isTaskAssignedToUser, isTaskOpen, isTaskPendingValidation } from '../utils/taskAssignment';
 
 export function formatLiteraryStayDates(startDateStr, endDateStr) {
   if (!startDateStr && !endDateStr) return 'Dates à confirmer';
@@ -37,6 +38,8 @@ export function formatLiteraryStayDates(startDateStr, endDateStr) {
     'juillet', 'août', 'septembre', 'octobre', 'novembre', 'décembre'
   ];
 
+  const formatDayNum = (day) => (day === 1 ? '1er' : String(day));
+
   if (startParts && endParts) {
     const startDate = new Date(startParts.year, startParts.month, startParts.day, 12, 0, 0);
     const endDate = new Date(endParts.year, endParts.month, endParts.day, 12, 0, 0);
@@ -46,14 +49,17 @@ export function formatLiteraryStayDates(startDateStr, endDateStr) {
     const startMonthName = months[startParts.month];
     const endMonthName = months[endParts.month];
 
-    return `Du ${startDayName} ${startParts.day} ${startMonthName} au ${endDayName} ${endParts.day} ${endMonthName} ${endParts.year}`;
+    if (startParts.year !== endParts.year) {
+      return `Du ${startDayName} ${formatDayNum(startParts.day)} ${startMonthName} ${startParts.year} au ${endDayName} ${formatDayNum(endParts.day)} ${endMonthName} ${endParts.year}`;
+    }
+    return `Du ${startDayName} ${formatDayNum(startParts.day)} ${startMonthName} au ${endDayName} ${formatDayNum(endParts.day)} ${endMonthName} ${endParts.year}`;
   }
 
   if (startParts) {
     const startDate = new Date(startParts.year, startParts.month, startParts.day, 12, 0, 0);
     const startDayName = daysOfWeek[startDate.getDay()];
     const startMonthName = months[startParts.month];
-    return `À partir du ${startDayName} ${startParts.day} ${startMonthName} ${startParts.year}`;
+    return `À partir du ${startDayName} ${formatDayNum(startParts.day)} ${startMonthName} ${startParts.year}`;
   }
 
   return 'Dates à confirmer';
@@ -181,12 +187,13 @@ export default function DashboardPage({
   // Find active project or null
   const activeVote = projects.find(p => p.status === 'EN_VOTE' || p.status === 'SOUMIS' || p.status === 'EN_COURS') || (projects.length > 0 ? projects[0] : null);
 
-  const activeVoteVotes = activeVote?.votes || [];
-  const activeVotePour = activeVoteVotes.filter(v => ['OUI', 'POUR'].includes((v.vote || '').toUpperCase()));
-  const activeVoteAbs = activeVoteVotes.filter(v => (v.vote || '').toUpperCase() === 'ABSTENTION');
-  const activeVoteContre = activeVoteVotes.filter(v => ['NON', 'CONTRE'].includes((v.vote || '').toUpperCase()));
+  const activeVoteVotes = Array.isArray(activeVote?.votes) ? activeVote.votes : [];
+  const activeVotePour = activeVoteVotes.filter(v => v && ['OUI', 'POUR'].includes(String(v.vote || v.choice || '').toUpperCase()));
+  const activeVoteAbs = activeVoteVotes.filter(v => v && String(v.vote || v.choice || '').toUpperCase() === 'ABSTENTION');
+  const activeVoteContre = activeVoteVotes.filter(v => v && ['NON', 'CONTRE'].includes(String(v.vote || v.choice || '').toUpperCase()));
   const activeVoteReportAg = activeVoteVotes.filter(v => {
-    const voteStr = (v.vote || '').toUpperCase();
+    if (!v) return false;
+    const voteStr = String(v.vote || v.choice || '').toUpperCase();
     return voteStr === 'REPORT_AG' || voteStr === 'DEMANDE_AG' || voteStr === 'REPORT_PROCHAINE_AG' || voteStr === 'REPORT AG';
   });
   const activeVoteCastCount = activeVotePour.length + activeVoteAbs.length + activeVoteContre.length + activeVoteReportAg.length;
@@ -241,14 +248,11 @@ export default function DashboardPage({
     return isMatch(assignee) || members.some(isMatch);
   };
 
-  // Filtrage : Tâches assignées à l'utilisateur + (si coordinateur) toutes les tâches en attente de validation
+  // Filtrage synchronisé avec /taches : Tâches ouvertes assignées + (si coordinateur) tâches en attente de validation
   const myTasks = tasks.filter((t) => {
-    const st = (t.status || '').toUpperCase();
-    const isCompleted = st === 'TERMINÉE' || st === 'TERMINEE' || st === 'ARCHIVÉE' || st === 'ARCHIVEE' || st === 'COMPLETED';
-    if (isCompleted) return false;
-
+    if (!isTaskOpen(t)) return false;
     if (isCoordinator && isTaskPendingValidation(t)) return true;
-    return isTaskAssignedToMe(t);
+    return isTaskAssignedToUser(t, currentUser);
   });
 
   const displayedTasks = myTasks && myTasks.length > 0
@@ -572,7 +576,7 @@ export default function DashboardPage({
             <div className="pt-2 border-t border-outline-variant/20 flex flex-col sm:flex-row sm:items-center justify-between gap-3">
               <div className="flex items-center gap-2">
                 <div className="w-8 h-8 rounded-full bg-[#065f46] text-white flex items-center justify-center font-bold text-xs">
-                  {(activeVote.submitted_by || 'Henri Jamet').split(' ').map(n => n[0]).join('').slice(0, 2).toUpperCase()}
+                  {String(activeVote.submitted_by || 'Henri Jamet').split(' ').map(n => n[0]).join('').slice(0, 2).toUpperCase()}
                 </div>
                 <div className="flex flex-col leading-tight">
                   <span className="text-xs font-semibold text-on-surface">Rapporteur : {activeVote.submitted_by || 'Henri Jamet'}</span>

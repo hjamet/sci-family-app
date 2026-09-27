@@ -20,6 +20,7 @@ import BookingModal from '../components/BookingModal';
 import { ThermalMetricSkeleton, StayCardSkeleton } from '../components/SkeletonLoaders';
 import CustomSelect from '../components/CustomSelect';
 import { extractParticipants } from './CalendarPage';
+import { isTaskAssignedToUser, isTaskOpen, isTaskPendingValidation, resolveUserMeta } from '../utils/taskAssignment';
 
 function resolveCurrentUserFullName(user) {
   if (typeof user === 'string' && user.trim()) return user.trim();
@@ -134,6 +135,21 @@ export default function VademecumPage({ properties, currentUser }) {
   const [poolTarget, setPoolTarget] = useState(14.0);
   const [poolPumpMode, setPoolPumpMode] = useState('Automatique'); // 'Automatique' | 'Marche forcée' | 'Arrêt'
   const [savingThermal, setSavingThermal] = useState(false);
+
+  // Horaires programmés pour le séjour (Annotation 8 Stitch 2c313f81e4f5499abb218f5b1dc25c68)
+  const [stayPreheatTime, setStayPreheatTime] = useState('10:00');
+  const [stayShutdownTime, setStayShutdownTime] = useState('11:00');
+
+  useEffect(() => {
+    if (currentStay) {
+      const arr = currentStay.arrival_time || '15:00';
+      const arrH = parseInt(arr.split(':')[0], 10);
+      const preH = isNaN(arrH) ? 10 : Math.max(0, arrH - 5);
+      const minStr = arr.split(':')[1] || '00';
+      setStayPreheatTime(`${String(preH).padStart(2, '0')}:${minStr}`);
+      setStayShutdownTime(currentStay.departure_time || '11:00');
+    }
+  }, [currentStay]);
 
   // Real Tasks loaded from Database (Annotation 7)
   const [tasks, setTasks] = useState([]);
@@ -279,7 +295,11 @@ export default function VademecumPage({ properties, currentUser }) {
         console.warn('API heating mode update:', err.message);
       }
 
-      showToast(`Consignes enregistrées : Chauffage ${heatingTarget.toFixed(1)}°C (${heatingMode}), Piscine ${poolTarget.toFixed(1)}°C (${poolPumpMode}). Notification envoyée.`);
+      if (currentPageIndex > 0 && currentStay) {
+        showToast(`Consignes du séjour enregistrées : Chauffage ${heatingTarget.toFixed(1)}°C (démarrage à ${stayPreheatTime}, coupure à ${stayShutdownTime}), ECS ${dhwTarget.toFixed(1)}°C, Bassin ${poolTarget.toFixed(1)}°C. Notification envoyée.`);
+      } else {
+        showToast(`Consignes par défaut enregistrées : Chauffage ${heatingTarget.toFixed(1)}°C (${heatingMode}), Piscine ${poolTarget.toFixed(1)}°C (${poolPumpMode}). Notification envoyée.`);
+      }
     } catch (err) {
       showToast(`Erreur : ${err.message}`);
     } finally {
@@ -405,11 +425,11 @@ export default function VademecumPage({ properties, currentUser }) {
     }
   };
 
-  // Tâches filtrées sous la responsabilité de l'utilisateur + (si coordinateur) tâches en attente de validation
+  // Tâches filtrées synchronisées rigoureusement avec /taches : Tâches ouvertes assignées + (si coordinateur) en attente de validation
   const displayedTasks = tasks.filter((t) => {
-    const isPendingVal = isTaskPendingValidation(t);
-    if (isCoordinator && isPendingVal) return true;
-    return isTaskAssignedToMe(t);
+    if (!isTaskOpen(t)) return false;
+    if (isCoordinator && isTaskPendingValidation(t)) return true;
+    return isTaskAssignedToUser(t, currentUser);
   });
 
   // WiFi password copy
@@ -755,7 +775,7 @@ export default function VademecumPage({ properties, currentUser }) {
                 </div>
               </div>
 
-              {/* Capacity & Occupants breakdown (Annotation 6 : Badges nominatifs distincts Membres émeraude vs Invités ambre) */}
+              {/* Capacity & Occupants breakdown (Annotation 6 : Badges nominatifs individuels dédiés, zéro badge aggloméré 'deux personnes', teinte ambre pour les invités) */}
               {(() => {
                 const { members: rawMembers = [], guests: rawGuests = [] } = currentStay
                   ? extractParticipants(currentStay)
@@ -773,12 +793,54 @@ export default function VademecumPage({ properties, currentUser }) {
                   membersList.unshift(currentStay.user_name);
                 }
 
-                let guestsList = [...rawGuests];
-                const totalDeclared = currentStay?.guest_count || (membersList.length + guestsList.length) || 1;
-                const unnamedGuestsCount = Math.max(0, totalDeclared - membersList.length - guestsList.length);
-                if (unnamedGuestsCount > 0 && guestsList.length === 0) {
-                  for (let i = 1; i <= unnamedGuestsCount; i++) {
-                    guestsList.push(`Invité ${i}`);
+                // Dépistage et suppression catégorique de tout badge aggloméré ('deux personnes', '2 personnes', etc.)
+                const parseAggregatedCount = (str) => {
+                  if (!str || typeof str !== 'string') return 0;
+                  const lower = str.toLowerCase().trim();
+                  const wordMap = {
+                    un: 1, une: 1, deux: 2, trois: 3, quatre: 4,
+                    cinq: 5, six: 6, sept: 7, huit: 8
+                  };
+                  const mWord = lower.match(/^(un|une|deux|trois|quatre|cinq|six|sept|huit)\s*personnes?$/);
+                  if (mWord) return wordMap[mWord[1]] || 1;
+                  const mDigit = lower.match(/^(\d+)\s*personnes?$/);
+                  if (mDigit) return parseInt(mDigit[1], 10) || 1;
+                  return 0;
+                };
+
+                let individualGuests = [];
+                let aggregatedExtraCount = 0;
+
+                for (const g of rawGuests) {
+                  const cnt = parseAggregatedCount(g);
+                  if (cnt > 0) {
+                    aggregatedExtraCount += cnt;
+                  } else if (g && !g.toLowerCase().includes('personne')) {
+                    individualGuests.push(g);
+                  }
+                }
+
+                if (Array.isArray(currentStay?.guests)) {
+                  for (const g of currentStay.guests) {
+                    const cnt = parseAggregatedCount(g);
+                    if (cnt > 0) {
+                      aggregatedExtraCount += cnt;
+                    } else if (g && typeof g === 'string' && !g.toLowerCase().includes('personne') && !individualGuests.includes(g)) {
+                      individualGuests.push(g);
+                    }
+                  }
+                }
+
+                const totalDeclared = currentStay?.guest_count || (membersList.length + individualGuests.length + aggregatedExtraCount) || 1;
+                const missingGuests = Math.max(
+                  aggregatedExtraCount,
+                  totalDeclared - membersList.length - individualGuests.length
+                );
+
+                if (missingGuests > 0) {
+                  const existingCount = individualGuests.length;
+                  for (let i = 1; i <= missingGuests; i++) {
+                    individualGuests.push(`Invité ${existingCount + i}`);
                   }
                 }
 
@@ -798,8 +860,8 @@ export default function VademecumPage({ properties, currentUser }) {
                       </div>
                     ))}
 
-                    {/* Invités extérieurs dédiés (Teinte ambre / ocre raffinée) */}
-                    {guestsList.map((guest, gIdx) => (
+                    {/* Invités extérieurs individuels nominatifs (Teinte ambre / ocre raffinée) */}
+                    {individualGuests.map((guest, gIdx) => (
                       <div
                         key={`gst-${gIdx}`}
                         className="inline-flex items-center gap-1.5 px-3 py-1 rounded-xl bg-amber-50 dark:bg-amber-950/40 border border-amber-200 dark:border-amber-800/50 text-amber-900 dark:text-amber-200 shadow-2xs font-label-sm text-xs font-semibold"
@@ -905,21 +967,48 @@ export default function VademecumPage({ properties, currentUser }) {
                 </div>
               </div>
 
-              {/* Consigne et Horaires prévus pour le séjour (Annotation 8 Stitch) */}
+              {/* Consigne et Horaires prévus pour le séjour (Annotation 8 Stitch 2c313f81e4f5499abb218f5b1dc25c68) */}
               {currentPageIndex > 0 && currentStay && (
-                <div className="p-3 bg-emerald-50/90 dark:bg-emerald-950/30 rounded-xl border border-emerald-200/80 dark:border-emerald-800/50 flex items-center justify-between gap-2 shadow-2xs">
-                  <div className="flex items-center gap-2 min-w-0">
-                    <span className="material-symbols-outlined text-primary text-[18px] shrink-0">schedule</span>
-                    <div className="flex flex-col min-w-0">
-                      <span className="text-[10px] uppercase font-bold text-on-surface-variant leading-none">Horaires séjour</span>
-                      <span className="text-xs font-bold text-forest-deep dark:text-emerald-200 truncate mt-0.5">
-                        Démarrage prévu {formatThermalTimeSlot(currentStay.start_date, currentStay.arrival_time || '15:00', -5)} • Arrêt {formatThermalTimeSlot(currentStay.end_date, currentStay.departure_time || '11:00', 0)}
-                      </span>
+                <div className="p-3 bg-emerald-50/90 dark:bg-emerald-950/30 rounded-xl border border-emerald-200/80 dark:border-emerald-800/50 flex flex-col gap-2.5 shadow-2xs">
+                  <div className="flex items-center justify-between gap-2">
+                    <div className="flex items-center gap-2">
+                      <span className="material-symbols-outlined text-primary text-[18px]">schedule</span>
+                      <span className="text-[11px] uppercase font-bold text-on-surface-variant">Programmation asservie au séjour</span>
+                    </div>
+                    <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-bold bg-emerald-100 text-emerald-800 dark:bg-emerald-900/60 dark:text-emerald-200">
+                      <span className="w-1.5 h-1.5 rounded-full bg-emerald-600 animate-pulse"></span>
+                      Asservi
+                    </span>
+                  </div>
+
+                  <div className="grid grid-cols-2 gap-2 text-xs">
+                    <div className="p-2 rounded-lg bg-white dark:bg-slate-900 border border-emerald-200/60 flex flex-col gap-1">
+                      <span className="text-[10px] text-on-surface-variant font-medium">Démarrage préchauffage :</span>
+                      <div className="flex items-center gap-1">
+                        <span className="font-bold text-forest-deep dark:text-emerald-200">{formatDateReadable(currentStay.start_date)}</span>
+                        <input
+                          type="time"
+                          value={stayPreheatTime}
+                          onChange={(e) => setStayPreheatTime(e.target.value)}
+                          className="px-1.5 py-0.5 text-xs font-bold rounded bg-canvas-slate border border-outline-variant/40 text-primary w-20 text-center cursor-pointer"
+                          title="Modifier l'heure de préchauffage"
+                        />
+                      </div>
+                    </div>
+                    <div className="p-2 rounded-lg bg-white dark:bg-slate-900 border border-emerald-200/60 flex flex-col gap-1">
+                      <span className="text-[10px] text-on-surface-variant font-medium">Arrêt & Hors-gel :</span>
+                      <div className="flex items-center gap-1">
+                        <span className="font-bold text-forest-deep dark:text-emerald-200">{formatDateReadable(currentStay.end_date)}</span>
+                        <input
+                          type="time"
+                          value={stayShutdownTime}
+                          onChange={(e) => setStayShutdownTime(e.target.value)}
+                          className="px-1.5 py-0.5 text-xs font-bold rounded bg-canvas-slate border border-outline-variant/40 text-primary w-20 text-center cursor-pointer"
+                          title="Modifier l'heure de coupure"
+                        />
+                      </div>
                     </div>
                   </div>
-                  <span className="px-2 py-1 rounded-md bg-white dark:bg-slate-900 border border-emerald-200 dark:border-emerald-800/50 text-primary font-bold text-xs shrink-0 tabular-nums">
-                    {heatingTarget.toFixed(1)}°C
-                  </span>
                 </div>
               )}
 
@@ -975,26 +1064,39 @@ export default function VademecumPage({ properties, currentUser }) {
                 </div>
               </div>
 
-              {/* Direct Mode Controls (Annotation 2) */}
-              <div className="space-y-1.5">
-                <span className="text-[11px] font-bold text-on-surface-variant uppercase tracking-wider block">Mode de chauffage</span>
-                <div className="grid grid-cols-3 gap-1.5 bg-white p-1 rounded-xl border border-border-subtle">
-                  {['Normal', 'Éco', 'Arrêt'].map((mode) => (
-                    <button
-                      key={mode}
-                      type="button"
-                      onClick={() => setHeatingMode(mode)}
-                      className={`py-2 px-1 rounded-lg text-xs font-bold transition-all cursor-pointer text-center ${
-                        heatingMode === mode
-                          ? 'bg-primary text-white shadow-xs'
-                          : 'text-on-surface-variant hover:text-on-surface hover:bg-canvas-slate'
-                      }`}
-                    >
-                      {mode}
-                    </button>
-                  ))}
+              {/* Direct Mode Controls (Annotation 8: réservé à la vue Domaine hors séjour) */}
+              {currentPageIndex === 0 ? (
+                <div className="space-y-1.5">
+                  <div className="flex items-center justify-between">
+                    <span className="text-[11px] font-bold text-on-surface-variant uppercase tracking-wider block">Commande manuelle hors séjour</span>
+                    <span className="text-[10px] text-amber-700 bg-amber-50 px-1.5 py-0.5 rounded font-semibold">Hors séjour</span>
+                  </div>
+                  <div className="grid grid-cols-3 gap-1.5 bg-white p-1 rounded-xl border border-border-subtle">
+                    {['Normal', 'Éco', 'Arrêt'].map((mode) => (
+                      <button
+                        key={mode}
+                        type="button"
+                        onClick={() => setHeatingMode(mode)}
+                        className={`py-2 px-1 rounded-lg text-xs font-bold transition-all cursor-pointer text-center ${
+                          heatingMode === mode
+                            ? 'bg-primary text-white shadow-xs'
+                            : 'text-on-surface-variant hover:text-on-surface hover:bg-canvas-slate'
+                        }`}
+                      >
+                        {mode}
+                      </button>
+                    ))}
+                  </div>
                 </div>
-              </div>
+              ) : (
+                <div className="p-2.5 rounded-xl bg-canvas-slate/80 border border-border-subtle/60 flex items-center justify-between text-xs text-on-surface-variant">
+                  <span className="flex items-center gap-1.5 font-medium">
+                    <span className="material-symbols-outlined text-primary text-[16px]">thermostat_auto</span>
+                    Régulation asservie au séjour
+                  </span>
+                  <span className="font-semibold text-primary">Confort {heatingTarget.toFixed(1)}°C</span>
+                </div>
+              )}
 
               {/* Fuel Gauge (Annotation 1) */}
               {(() => {
@@ -1058,21 +1160,30 @@ export default function VademecumPage({ properties, currentUser }) {
                 </div>
               </div>
 
-              {/* Consigne et Horaires prévus pour le séjour (Annotation 8 Stitch) */}
+              {/* Consigne et Horaires prévus pour le séjour (Annotation 8 Stitch 2c313f81e4f5499abb218f5b1dc25c68) */}
               {currentPageIndex > 0 && currentStay && (
-                <div className="p-3 bg-emerald-50/90 dark:bg-emerald-950/30 rounded-xl border border-emerald-200/80 dark:border-emerald-800/50 flex items-center justify-between gap-2 shadow-2xs">
-                  <div className="flex items-center gap-2 min-w-0">
-                    <span className="material-symbols-outlined text-primary text-[18px] shrink-0">schedule</span>
-                    <div className="flex flex-col min-w-0">
-                      <span className="text-[10px] uppercase font-bold text-on-surface-variant leading-none">Horaires séjour</span>
-                      <span className="text-xs font-bold text-forest-deep dark:text-emerald-200 truncate mt-0.5">
-                        Relance ECS dès {formatThermalTimeSlot(currentStay.start_date, currentStay.arrival_time || '15:00', -5)} • Arrêt {formatThermalTimeSlot(currentStay.end_date, currentStay.departure_time || '11:00', 0)}
-                      </span>
+                <div className="p-3 bg-emerald-50/90 dark:bg-emerald-950/30 rounded-xl border border-emerald-200/80 dark:border-emerald-800/50 flex flex-col gap-2.5 shadow-2xs">
+                  <div className="flex items-center justify-between gap-2">
+                    <div className="flex items-center gap-2">
+                      <span className="material-symbols-outlined text-primary text-[18px]">schedule</span>
+                      <span className="text-[11px] uppercase font-bold text-on-surface-variant">Relance ECS asservie au séjour</span>
+                    </div>
+                    <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-bold bg-emerald-100 text-emerald-800 dark:bg-emerald-900/60 dark:text-emerald-200">
+                      <span className="w-1.5 h-1.5 rounded-full bg-emerald-600 animate-pulse"></span>
+                      Asservi
+                    </span>
+                  </div>
+
+                  <div className="grid grid-cols-2 gap-2 text-xs">
+                    <div className="p-2 rounded-lg bg-white dark:bg-slate-900 border border-emerald-200/60 flex flex-col gap-1">
+                      <span className="text-[10px] text-on-surface-variant font-medium">Relance ballon :</span>
+                      <span className="font-bold text-forest-deep dark:text-emerald-200">Dès {stayPreheatTime} le {formatDateReadable(currentStay.start_date)}</span>
+                    </div>
+                    <div className="p-2 rounded-lg bg-white dark:bg-slate-900 border border-emerald-200/60 flex flex-col gap-1">
+                      <span className="text-[10px] text-on-surface-variant font-medium">Bascule veille :</span>
+                      <span className="font-bold text-forest-deep dark:text-emerald-200">À {stayShutdownTime} le {formatDateReadable(currentStay.end_date)}</span>
                     </div>
                   </div>
-                  <span className="px-2 py-1 rounded-md bg-white dark:bg-slate-900 border border-emerald-200 dark:border-emerald-800/50 text-primary font-bold text-xs shrink-0 tabular-nums">
-                    {dhwTarget.toFixed(1)}°C
-                  </span>
                 </div>
               )}
 
@@ -1104,26 +1215,39 @@ export default function VademecumPage({ properties, currentUser }) {
                 </div>
               </div>
 
-              {/* Direct Mode ECS */}
-              <div className="space-y-1.5">
-                <span className="text-[11px] font-bold text-on-surface-variant uppercase tracking-wider block">Mode Ballon ECS</span>
-                <div className="grid grid-cols-3 gap-1.5 bg-white p-1 rounded-xl border border-border-subtle">
-                  {['Normal', 'Éco', 'Arrêt'].map((mode) => (
-                    <button
-                      key={mode}
-                      type="button"
-                      onClick={() => setDhwMode(mode)}
-                      className={`py-2 px-1 rounded-lg text-xs font-bold transition-all cursor-pointer text-center ${
-                        dhwMode === mode
-                          ? 'bg-primary text-white shadow-xs'
-                          : 'text-on-surface-variant hover:text-on-surface hover:bg-canvas-slate'
-                      }`}
-                    >
-                      {mode}
-                    </button>
-                  ))}
+              {/* Direct Mode ECS (Annotation 8: réservé à la vue Domaine hors séjour) */}
+              {currentPageIndex === 0 ? (
+                <div className="space-y-1.5">
+                  <div className="flex items-center justify-between">
+                    <span className="text-[11px] font-bold text-on-surface-variant uppercase tracking-wider block">Commande manuelle ballon</span>
+                    <span className="text-[10px] text-amber-700 bg-amber-50 px-1.5 py-0.5 rounded font-semibold">Hors séjour</span>
+                  </div>
+                  <div className="grid grid-cols-3 gap-1.5 bg-white p-1 rounded-xl border border-border-subtle">
+                    {['Normal', 'Éco', 'Arrêt'].map((mode) => (
+                      <button
+                        key={mode}
+                        type="button"
+                        onClick={() => setDhwMode(mode)}
+                        className={`py-2 px-1 rounded-lg text-xs font-bold transition-all cursor-pointer text-center ${
+                          dhwMode === mode
+                            ? 'bg-primary text-white shadow-xs'
+                            : 'text-on-surface-variant hover:text-on-surface hover:bg-canvas-slate'
+                        }`}
+                      >
+                        {mode}
+                      </button>
+                    ))}
+                  </div>
                 </div>
-              </div>
+              ) : (
+                <div className="p-2.5 rounded-xl bg-canvas-slate/80 border border-border-subtle/60 flex items-center justify-between text-xs text-on-surface-variant">
+                  <span className="flex items-center gap-1.5 font-medium">
+                    <span className="material-symbols-outlined text-primary text-[16px]">water_heater</span>
+                    Chauffe-eau asservi au séjour
+                  </span>
+                  <span className="font-semibold text-primary">{dhwTarget.toFixed(1)}°C (250L)</span>
+                </div>
+              )}
 
             </div>
           </div>
@@ -1218,26 +1342,39 @@ export default function VademecumPage({ properties, currentUser }) {
                 </div>
               </div>
 
-              {/* Filtration Pump Mode (Annotation 2: Automatique, Marche forcée, Arrêt) */}
-              <div className="space-y-1.5">
-                <span className="text-[11px] font-bold text-on-surface-variant uppercase tracking-wider block">Mode Pompe Filtration</span>
-                <div className="grid grid-cols-3 gap-1.5 bg-white p-1 rounded-xl border border-border-subtle">
-                  {['Automatique', 'Marche forcée', 'Arrêt'].map((mode) => (
-                    <button
-                      key={mode}
-                      type="button"
-                      onClick={() => setPoolPumpMode(mode)}
-                      className={`py-2 px-1 rounded-lg text-xs font-bold transition-all cursor-pointer text-center ${
-                        poolPumpMode === mode
-                          ? 'bg-primary text-white shadow-xs'
-                          : 'text-on-surface-variant hover:text-on-surface hover:bg-canvas-slate'
-                      }`}
-                    >
-                      {mode}
-                    </button>
-                  ))}
+              {/* Filtration Pump Mode (Annotation 8: réservé à la vue Domaine hors séjour) */}
+              {currentPageIndex === 0 ? (
+                <div className="space-y-1.5">
+                  <div className="flex items-center justify-between">
+                    <span className="text-[11px] font-bold text-on-surface-variant uppercase tracking-wider block">Commande pompe filtration</span>
+                    <span className="text-[10px] text-amber-700 bg-amber-50 px-1.5 py-0.5 rounded font-semibold">Hors séjour</span>
+                  </div>
+                  <div className="grid grid-cols-3 gap-1.5 bg-white p-1 rounded-xl border border-border-subtle">
+                    {['Automatique', 'Marche forcée', 'Arrêt'].map((mode) => (
+                      <button
+                        key={mode}
+                        type="button"
+                        onClick={() => setPoolPumpMode(mode)}
+                        className={`py-2 px-1 rounded-lg text-xs font-bold transition-all cursor-pointer text-center ${
+                          poolPumpMode === mode
+                            ? 'bg-primary text-white shadow-xs'
+                            : 'text-on-surface-variant hover:text-on-surface hover:bg-canvas-slate'
+                        }`}
+                      >
+                        {mode}
+                      </button>
+                    ))}
+                  </div>
                 </div>
-              </div>
+              ) : (
+                <div className="p-2.5 rounded-xl bg-canvas-slate/80 border border-border-subtle/60 flex items-center justify-between text-xs text-on-surface-variant">
+                  <span className="flex items-center gap-1.5 font-medium">
+                    <span className="material-symbols-outlined text-primary text-[16px]">pool</span>
+                    Filtration asservie au séjour
+                  </span>
+                  <span className="font-semibold text-primary">Automatique ({poolTarget.toFixed(1)}°C)</span>
+                </div>
+              )}
 
               {/* Indicators */}
               <div className="pt-2.5 border-t border-border-subtle flex flex-wrap items-center gap-1.5">
@@ -1424,6 +1561,20 @@ export default function VademecumPage({ properties, currentUser }) {
                     </div>
 
                     <div className="flex items-center gap-2 flex-wrap">
+                      {/* Bouton universel Consulter la tâche (Annotation 9) */}
+                      <button
+                        type="button"
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          handleOpenTaskDetail(task);
+                        }}
+                        className="inline-flex items-center gap-1.5 px-3 py-2 rounded-xl bg-canvas-slate hover:bg-surface-container border border-border-subtle text-on-surface font-label-sm text-xs font-semibold transition-colors shadow-2xs cursor-pointer"
+                        title="Consulter le détail de la tâche et ouvrir le modal"
+                      >
+                        <span className="material-symbols-outlined text-[16px] text-primary">visibility</span>
+                        <span>Consulter</span>
+                      </button>
+
                       {isValidationTask ? (
                         <>
                           <button
@@ -1432,7 +1583,7 @@ export default function VademecumPage({ properties, currentUser }) {
                               e.stopPropagation();
                               handleValidateTask(task.id);
                             }}
-                            className="px-3 py-1.5 rounded-lg bg-emerald-600 hover:bg-emerald-700 text-white text-xs font-semibold flex items-center gap-1 shadow-xs transition-colors cursor-pointer"
+                            className="px-3 py-2 rounded-xl bg-emerald-600 hover:bg-emerald-700 text-white text-xs font-semibold flex items-center gap-1 shadow-xs transition-colors cursor-pointer"
                             title="Valider la tâche"
                           >
                             <span className="material-symbols-outlined text-xs">check</span>
@@ -1444,58 +1595,31 @@ export default function VademecumPage({ properties, currentUser }) {
                               e.stopPropagation();
                               handleInvalidateTask(task.id);
                             }}
-                            className="px-3 py-1.5 rounded-lg bg-rose-50 hover:bg-rose-100 text-rose-700 border border-rose-200 text-xs font-semibold flex items-center gap-1 shadow-xs transition-colors cursor-pointer"
+                            className="px-3 py-2 rounded-xl bg-rose-50 hover:bg-rose-100 text-rose-700 border border-rose-200 text-xs font-semibold flex items-center gap-1 shadow-xs transition-colors cursor-pointer"
                             title="Invalider la tâche"
                           >
                             <span className="material-symbols-outlined text-xs">close</span>
                             <span>Invalider</span>
                           </button>
-                          <button
-                            type="button"
-                            onClick={(e) => {
-                              e.stopPropagation();
-                              handleOpenTaskDetail(task);
-                            }}
-                            className="inline-flex items-center gap-1 px-2.5 py-1.5 rounded-lg bg-white border border-purple-200 text-purple-900 hover:bg-purple-100 text-xs font-semibold transition-colors cursor-pointer shadow-2xs"
-                            title="Consulter le détail"
-                          >
-                            <span className="material-symbols-outlined text-[15px]">visibility</span>
-                            <span>Détail</span>
-                          </button>
                         </>
                       ) : (
-                        <>
-                          <button
-                            type="button"
-                            onClick={(e) => {
-                              e.stopPropagation();
-                              handleOpenTaskDetail(task);
-                            }}
-                            className="inline-flex items-center gap-1.5 px-3 py-2 rounded-xl bg-canvas-slate hover:bg-surface-container border border-border-subtle text-on-surface font-label-sm text-xs font-semibold transition-colors shadow-2xs cursor-pointer"
-                            title="Consulter le détail de la tâche"
-                          >
-                            <span className="material-symbols-outlined text-[16px] text-primary">visibility</span>
-                            <span>Consulter</span>
-                          </button>
-
-                          <button
-                            onClick={(e) => {
-                              e.stopPropagation();
-                              handleToggleTaskComplete(task.id);
-                            }}
-                            className={`inline-flex items-center gap-1.5 px-3.5 py-2 rounded-xl border-2 font-label-sm text-xs font-bold transition-colors shadow-sm cursor-pointer ${
-                              isCompleted
-                                ? 'bg-sage-soft border-primary text-primary hover:bg-emerald-100'
-                                : 'bg-white border-primary text-primary hover:bg-sage-soft'
-                            }`}
-                            type="button"
-                          >
-                            <span className="material-symbols-outlined text-[16px]">
-                              {isCompleted ? 'verified' : 'check_circle'}
-                            </span>
-                            <span>{isCompleted ? 'Validée ✅' : 'Valider'}</span>
-                          </button>
-                        </>
+                        <button
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            handleToggleTaskComplete(task.id);
+                          }}
+                          className={`inline-flex items-center gap-1.5 px-3.5 py-2 rounded-xl border-2 font-label-sm text-xs font-bold transition-colors shadow-sm cursor-pointer ${
+                            isCompleted
+                              ? 'bg-sage-soft border-primary text-primary hover:bg-emerald-100'
+                              : 'bg-white border-primary text-primary hover:bg-sage-soft'
+                          }`}
+                          type="button"
+                        >
+                          <span className="material-symbols-outlined text-[16px]">
+                            {isCompleted ? 'verified' : 'check_circle'}
+                          </span>
+                          <span>{isCompleted ? 'Validée ✅' : 'Valider'}</span>
+                        </button>
                       )}
                     </div>
                   </div>
