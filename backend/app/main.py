@@ -1892,7 +1892,16 @@ def process_vote_submission(
     if not db_proj:
         raise HTTPException(status_code=404, detail="Projet non trouvé")
 
-    if db_proj.status not in ["EN_VOTE", "SOUMIS"]:
+    existing_vote = db.query(ProjectVote).filter(
+        ProjectVote.project_id == project_id,
+        ProjectVote.user_name == user_name
+    ).first()
+
+    allowed_vote_statuses = [
+        "EN_VOTE", "SOUMIS", "VOTE_EN_COURS", "OUVERT", "OUVERTE",
+        "EN_COURS", "REPORT_AG", "APPROUVE", "REFUSE"
+    ]
+    if db_proj.status in ["ARCHIVE", "ARCHIVEE", "ANNULE", "ANNULEE"] or db_proj.status not in allowed_vote_statuses:
         raise HTTPException(status_code=400, detail="Ce projet n'est pas ouvert au vote actuellement.")
 
     vote_str = vote_val.value.upper() if hasattr(vote_val, 'value') else str(vote_val).upper()
@@ -1904,11 +1913,6 @@ def process_vote_submission(
     if vote_str == "REPORT_PROCHAINE_AG":
         db_proj.status = "REPORT_AG"
         db_proj.add_to_ag_agenda = True
-
-    existing_vote = db.query(ProjectVote).filter(
-        ProjectVote.project_id == project_id,
-        ProjectVote.user_name == user_name
-    ).first()
 
     if existing_vote:
         existing_vote.vote = vote_str
@@ -1931,8 +1935,17 @@ def process_vote_submission(
     distinct_voters = {v.user_name.strip().lower() for v in all_project_votes if v.user_name}
     total_associates = db.query(Member).count() or 7
 
+    # Check if any vote requests report to AG
+    has_report_ag_vote = any(
+        (v.vote or "").upper() in ("REPORT_PROCHAINE_AG", "REPORT_AG", "DEMANDE_AG")
+        for v in all_project_votes
+    )
+    if not has_report_ag_vote and db_proj.status == "REPORT_AG":
+        db_proj.status = "EN_VOTE"
+        db_proj.add_to_ag_agenda = False
+
     # If all members have expressed their vote, finalize decision and trigger final email
-    if len(distinct_voters) >= total_associates and db_proj.status in ["EN_VOTE", "SOUMIS", "REPORT_AG"]:
+    if len(distinct_voters) >= total_associates and db_proj.status in ["EN_VOTE", "SOUMIS", "REPORT_AG", "APPROUVE", "REFUSE"]:
         votes_summary = {"pour": 0, "contre": 0, "abstention": 0, "report_prochaine_ag": 0}
         for v in all_project_votes:
             v_s = (v.vote or "").upper()

@@ -11,6 +11,7 @@ import AdminPage from './components/AdminPage';
 import VademecumPage from './components/VademecumPage';
 import HeatingPage from './pages/HeatingPage';
 import SettingsPage from './pages/SettingsPage';
+import StatistiquesPage from './pages/StatistiquesPage';
 import BookingModal from './components/BookingModal';
 import { fetchProperties, getCachedData } from './api';
 import GlobalErrorAlert from './components/GlobalErrorAlert';
@@ -31,6 +32,7 @@ export default function App() {
     if (path === '/vademecum' || path === '/sejour') return 'sejour';
     if (path === '/energie' || path === '/chauffage') return 'energie';
     if (path === '/parametres' || path === '/settings') return 'parametres';
+    if (path === '/statistiques' || path === '/stats') return 'statistiques';
     return 'home';
   };
 
@@ -60,6 +62,8 @@ export default function App() {
       chauffage: '/energie',
       parametres: '/parametres',
       settings: '/parametres',
+      statistiques: '/statistiques',
+      stats: '/statistiques',
     };
     const targetPath = routeMap[tabId] || (typeof tabId === 'string' && tabId.startsWith('/') ? tabId : '/');
     navigate(targetPath);
@@ -198,6 +202,15 @@ export default function App() {
             }
           />
           <Route path="/settings" element={<Navigate to="/parametres" replace />} />
+          <Route
+            path="/statistiques"
+            element={
+              <StatistiquesPage
+                currentUser={currentUser}
+              />
+            }
+          />
+          <Route path="/stats" element={<Navigate to="/statistiques" replace />} />
           <Route path="/login" element={<Navigate to="/" replace />} />
           <Route path="*" element={<Navigate to="/" replace />} />
         </Routes>

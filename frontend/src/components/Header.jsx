@@ -43,7 +43,7 @@ const NAV_ITEMS = [
   { id: 'home', label: 'Tableau de bord', path: '/', icon: 'dashboard' },
   { id: 'sejour', label: 'Séjour', path: '/sejour', icon: 'cottage' },
   { id: 'calendrier', label: 'Calendrier', path: '/calendrier', icon: 'calendar_month' },
-  { id: 'taches', label: 'Tâches & Chantiers', path: '/taches', icon: 'checklist' },
+  { id: 'taches', label: 'Tâches', path: '/taches', icon: 'checklist' },
   { id: 'admin', label: 'Administratif', path: '/admin', icon: 'folder_shared' },
 ];
 
@@ -452,18 +452,18 @@ export default function Header({
           <button
             type="button"
             onClick={() => {
-              if (setActiveTab) setActiveTab('admin');
-              if (onNavigate) onNavigate('/admin', 'admin');
+              if (setActiveTab) setActiveTab('statistiques');
+              if (onNavigate) onNavigate('/statistiques', 'statistiques');
               setIsUserMenuOpen(false);
               setIsNotifOpen(false);
             }}
             className={`w-9 h-9 rounded-full flex items-center justify-center transition-all cursor-pointer ${
-              activeTab === 'statistiques' || activeTab === 'admin'
+              activeTab === 'statistiques'
                 ? 'bg-sage-soft text-primary ring-2 ring-primary/40 shadow-xs font-bold'
                 : 'bg-canvas-slate hover:bg-sage-soft/70 text-on-surface-variant hover:text-primary border border-border-subtle shadow-xs'
             }`}
-            title="Statistiques & Finances"
-            aria-label="Statistiques & Finances"
+            title="Statistiques & Équilibre"
+            aria-label="Statistiques & Équilibre"
           >
             <span className="material-symbols-outlined text-[19px]">bar_chart</span>
           </button>
@@ -603,16 +603,16 @@ export default function Header({
               type="button"
               onClick={() => {
                 setIsMobileMenuOpen(false);
-                if (setActiveTab) setActiveTab('admin');
-                if (onNavigate) onNavigate('/admin', 'admin');
+                if (setActiveTab) setActiveTab('statistiques');
+                if (onNavigate) onNavigate('/statistiques', 'statistiques');
               }}
               className={`p-3 rounded-xl text-left font-label-md text-xs font-semibold flex items-center gap-2 transition-all cursor-pointer ${
-                activeTab === 'admin'
+                activeTab === 'statistiques'
                   ? 'bg-sage-soft text-primary font-bold shadow-xs'
                   : 'text-on-surface hover:bg-canvas-slate'
               }`}
             >
-              <span className={`material-symbols-outlined text-[18px] ${activeTab === 'admin' ? 'text-primary' : 'text-outline'}`}>
+              <span className={`material-symbols-outlined text-[18px] ${activeTab === 'statistiques' ? 'text-primary' : 'text-outline'}`}>
                 bar_chart
               </span>
               <span className="truncate">Statistiques</span>

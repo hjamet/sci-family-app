@@ -17,6 +17,7 @@ import {
 import SejourCutoffMapModal from '../components/sejour/SejourCutoffMapModal';
 import SejourDepartureChecklistModal from '../components/sejour/SejourDepartureChecklistModal';
 import TaskDetailModal from '../components/TaskDetailModal';
+import TaskCard from '../components/TaskCard';
 import BookingModal from '../components/BookingModal';
 import { ThermalMetricSkeleton, StayCardSkeleton } from '../components/SkeletonLoaders';
 import CustomSelect from '../components/CustomSelect';
@@ -1453,173 +1454,14 @@ export default function VademecumPage({ properties, currentUser }) {
               <p className="text-sm font-semibold text-forest-deep">Aucune tâche assignée pour ce séjour</p>
             </div>
           ) : (
-            displayedTasks.map((task, idx) => {
-              const isPendingVal = isTaskPendingValidation(task);
-              const isValidationTask = isCoordinator && isPendingVal;
-              const isCompleted =
-                task.status === 'completed' ||
-                task.status === 'TERMINE' ||
-                task.status === 'TERMINÉE' ||
-                task.status === 'TERMINEE' ||
-                task.status === 'VALIDÉ' ||
-                task.status === 'VALIDE';
-              const isHigh = task.priorityType === 'high' || task.priority === 'Critique' || task.priority === 'Haute';
-              const assigneeName = task.assignee || (Array.isArray(task.assigned_members) && task.assigned_members[0]) || resolveCurrentUserFullName(currentUser);
-              const initials = assigneeName.split(' ').map(n => n[0]).join('').substring(0, 2).toUpperCase() || 'HJ';
-              const partner = (task.partner && task.partner !== 'Autonomie')
-                ? task.partner
-                : (Array.isArray(task.assigned_members) && task.assigned_members.length > 1
-                    ? `Avec ${task.assigned_members.slice(1).join(', ')}`
-                    : null);
-              const budgetText = task.budget_label || (task.budget ? `${task.budget} € TTC` : 'Inclus SCI');
-
-              return (
-                <article
-                  key={task.id || idx}
-                  onClick={() => handleOpenTaskDetail(task)}
-                  className={`rounded-xl p-5 shadow-sm flex flex-col justify-between gap-4 transition-all hover:shadow-md cursor-pointer group ${
-                    isValidationTask
-                      ? 'bg-purple-50/80 dark:bg-purple-950/40 border-2 border-purple-300 dark:border-purple-700/60 shadow-sm'
-                      : isCompleted
-                      ? 'bg-sage-soft/30 border border-sage-border'
-                      : isHigh
-                      ? 'bg-amber-soft/30 border-2 border-amber-rich/40'
-                      : 'bg-white border border-outline-variant/40'
-                  }`}
-                >
-                  <div className="flex flex-col gap-3">
-                    <div className="flex items-center justify-between gap-2 flex-wrap">
-                      <div className="flex items-center gap-2 flex-wrap">
-                        {isValidationTask && (
-                          <span className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full text-xs font-semibold bg-purple-100 text-purple-800 dark:bg-purple-900/60 dark:text-purple-200 border border-purple-200 dark:border-purple-800">
-                            <span className="material-symbols-outlined text-xs">verified</span> À valider
-                          </span>
-                        )}
-                        <span className={`inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full text-[11px] font-bold uppercase tracking-wider ${
-                          isValidationTask
-                            ? 'bg-purple-200/80 text-purple-900 dark:bg-purple-800 dark:text-purple-100'
-                            : isCompleted
-                            ? 'bg-primary text-white'
-                            : isHigh
-                            ? 'bg-amber-rich text-white'
-                            : 'bg-sage-soft text-primary'
-                        }`}>
-                          <span className="material-symbols-outlined text-[14px]">
-                            {isValidationTask ? 'fact_check' : isCompleted ? 'check' : isHigh ? 'warning' : 'construction'}
-                          </span>
-                          {isValidationTask ? 'À valider' : isCompleted ? 'Validée' : (task.priority || 'Priorité Normale')}
-                        </span>
-                        <span className={`text-xs font-semibold ${isValidationTask ? 'text-purple-700 dark:text-purple-300' : 'text-secondary'}`}>
-                          {task.date || task.deadline || 'Sous 10 jours'}
-                        </span>
-                      </div>
-                      <div className="text-right">
-                        <span className="text-xs text-on-surface-variant font-medium block">{task.budgetType || 'Budget prévisionnel'}</span>
-                        <span className={`font-headline-sm font-bold text-sm ${isValidationTask ? 'text-purple-900 dark:text-purple-200' : 'text-forest-deep'}`}>
-                          {budgetText}
-                        </span>
-                      </div>
-                    </div>
-
-                    <div>
-                      <h3 className={`font-headline-sm text-headline-sm font-bold transition-colors ${
-                        isValidationTask
-                          ? 'text-purple-950 dark:text-purple-100 group-hover:text-purple-700'
-                          : 'text-forest-deep group-hover:text-primary'
-                      }`}>
-                        {task.title}
-                      </h3>
-                      <p className="font-body-md text-on-surface-variant text-xs leading-relaxed mt-1">
-                        {task.description}
-                      </p>
-                    </div>
-                  </div>
-
-                  <div className={`pt-3 border-t flex items-center justify-between gap-3 flex-wrap ${
-                    isValidationTask ? 'border-purple-200 dark:border-purple-800' : 'border-outline-variant/20'
-                  }`}>
-                    <div className="flex items-center gap-2">
-                      <div className={`w-7 h-7 rounded-full flex items-center justify-center font-bold text-xs text-white ${
-                        isValidationTask ? 'bg-purple-700' : 'bg-primary'
-                      }`}>
-                        {initials}
-                      </div>
-                      <div className="flex flex-col leading-tight">
-                        <span className="text-xs font-semibold text-on-surface">
-                          {isValidationTask ? `Soumis par : ${task.created_by || assigneeName}` : `En charge : ${assigneeName}`}
-                        </span>
-                        {partner && (
-                          <span className="text-[11px] text-on-surface-variant">{partner}</span>
-                        )}
-                      </div>
-                    </div>
-
-                    <div className="flex items-center gap-2 flex-wrap">
-                      {/* Bouton universel Consulter la tâche (Annotation 9) */}
-                      <button
-                        type="button"
-                        onClick={(e) => {
-                          e.stopPropagation();
-                          handleOpenTaskDetail(task);
-                        }}
-                        className="inline-flex items-center gap-1.5 px-3 py-2 rounded-xl bg-canvas-slate hover:bg-surface-container border border-border-subtle text-on-surface font-label-sm text-xs font-semibold transition-colors shadow-2xs cursor-pointer"
-                        title="Consulter le détail de la tâche et ouvrir le modal"
-                      >
-                        <span className="material-symbols-outlined text-[16px] text-primary">visibility</span>
-                        <span>Consulter</span>
-                      </button>
-
-                      {isValidationTask ? (
-                        <>
-                          <button
-                            type="button"
-                            onClick={(e) => {
-                              e.stopPropagation();
-                              handleValidateTask(task.id);
-                            }}
-                            className="px-3 py-2 rounded-xl bg-emerald-600 hover:bg-emerald-700 text-white text-xs font-semibold flex items-center gap-1 shadow-xs transition-colors cursor-pointer"
-                            title="Valider la tâche"
-                          >
-                            <span className="material-symbols-outlined text-xs">check</span>
-                            <span>Valider</span>
-                          </button>
-                          <button
-                            type="button"
-                            onClick={(e) => {
-                              e.stopPropagation();
-                              handleInvalidateTask(task.id);
-                            }}
-                            className="px-3 py-2 rounded-xl bg-rose-50 hover:bg-rose-100 text-rose-700 border border-rose-200 text-xs font-semibold flex items-center gap-1 shadow-xs transition-colors cursor-pointer"
-                            title="Invalider la tâche"
-                          >
-                            <span className="material-symbols-outlined text-xs">close</span>
-                            <span>Invalider</span>
-                          </button>
-                        </>
-                      ) : (
-                        <button
-                          onClick={(e) => {
-                            e.stopPropagation();
-                            handleToggleTaskComplete(task.id);
-                          }}
-                          className={`inline-flex items-center gap-1.5 px-3.5 py-2 rounded-xl border-2 font-label-sm text-xs font-bold transition-colors shadow-sm cursor-pointer ${
-                            isCompleted
-                              ? 'bg-sage-soft border-primary text-primary hover:bg-emerald-100'
-                              : 'bg-white border-primary text-primary hover:bg-sage-soft'
-                          }`}
-                          type="button"
-                        >
-                          <span className="material-symbols-outlined text-[16px]">
-                            {isCompleted ? 'verified' : 'check_circle'}
-                          </span>
-                          <span>{isCompleted ? 'Validée ✅' : 'Valider'}</span>
-                        </button>
-                      )}
-                    </div>
-                  </div>
-                </article>
-              );
-            })
+            displayedTasks.map((task, idx) => (
+              <TaskCard
+                key={task.id || idx}
+                task={task}
+                currentUser={currentUser}
+                onOpen={handleOpenTaskDetail}
+              />
+            ))
           )}
         </div>
 

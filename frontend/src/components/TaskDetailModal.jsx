@@ -6,11 +6,14 @@ import {
   createProject,
   closeTask,
   deleteTask,
+  validateTask,
+  invalidateTask,
   fetchTaskComments,
   addTaskComment,
   reactToTaskComment,
   uploadTaskDocuments,
 } from '../api';
+import { isTaskPendingValidation } from '../utils/taskAssignment';
 import CustomSelect from './CustomSelect';
 import DocumentViewerModal from './DocumentViewerModal';
 import FamilyChat from './common/FamilyChat';
@@ -363,6 +366,35 @@ export default function TaskDetailModal({
     }
   };
 
+  // Validation / Invalidation directes depuis la modale (Annotation 8 & 6)
+  const handleValidateModalTask = async () => {
+    try {
+      if (task?.id) {
+        await validateTask(task.id);
+      }
+      if (onTaskUpdated) onTaskUpdated();
+      onClose();
+    } catch (err) {
+      console.error('Erreur validation tâche:', err);
+      alert(err.message || 'Erreur lors de la validation de la tâche.');
+    }
+  };
+
+  const handleInvalidateModalTask = async () => {
+    const reason = window.prompt("Motif d'invalidation (optionnel) :", "");
+    if (reason === null) return;
+    try {
+      if (task?.id) {
+        await invalidateTask(task.id, reason);
+      }
+      if (onTaskUpdated) onTaskUpdated();
+      onClose();
+    } catch (err) {
+      console.error('Erreur invalidation tâche:', err);
+      alert(err.message || "Erreur lors de l'invalidation de la tâche.");
+    }
+  };
+
   // Background server sync for Optimistic Chat (Annotation 13 & 3)
   const sendCommentToServer = async (tempId, textToSend, authorName) => {
     try {
@@ -541,17 +573,40 @@ export default function TaskDetailModal({
               </button>
             )}
 
-            {/* Close Task Button (Annotation 10: Visible uniquement pour Henri & Joséphine sur tâche existante) */}
+            {/* Actions superviseur : Valider / Invalider violets si tâche à valider (Annotation 8), sinon Clôturer */}
             {!isNewTask && isCoordinator && (
-              <button
-                type="button"
-                onClick={() => setIsClosingModalOpen(true)}
-                title="Clôturer la tâche"
-                className="inline-flex items-center gap-1.5 h-11 px-4 rounded-xl border-2 font-label-md text-xs sm:text-sm font-bold shadow-sm transition-colors bg-white border-primary text-primary hover:bg-sage-soft cursor-pointer"
-              >
-                <span className="material-symbols-outlined text-[18px] text-primary">check_circle</span>
-                <span>Clôturer</span>
-              </button>
+              isTaskPendingValidation(task) ? (
+                <div className="flex items-center gap-2">
+                  <button
+                    type="button"
+                    onClick={handleValidateModalTask}
+                    title="Valider la tâche"
+                    className="inline-flex items-center gap-1.5 h-11 px-4 rounded-xl border-2 font-label-md text-xs sm:text-sm font-bold shadow-sm transition-colors bg-purple-700 hover:bg-purple-800 text-white border-purple-700 cursor-pointer"
+                  >
+                    <span className="material-symbols-outlined text-[18px]">check</span>
+                    <span>Valider</span>
+                  </button>
+                  <button
+                    type="button"
+                    onClick={handleInvalidateModalTask}
+                    title="Invalider la tâche"
+                    className="inline-flex items-center gap-1.5 h-11 px-4 rounded-xl border-2 font-label-md text-xs sm:text-sm font-bold shadow-sm transition-colors bg-purple-50 hover:bg-purple-100 text-purple-800 border-purple-300 dark:border-purple-600 dark:bg-purple-950/60 dark:text-purple-200 cursor-pointer"
+                  >
+                    <span className="material-symbols-outlined text-[18px]">close</span>
+                    <span>Invalider</span>
+                  </button>
+                </div>
+              ) : (
+                <button
+                  type="button"
+                  onClick={() => setIsClosingModalOpen(true)}
+                  title="Clôturer la tâche"
+                  className="inline-flex items-center gap-1.5 h-11 px-4 rounded-xl border-2 font-label-md text-xs sm:text-sm font-bold shadow-sm transition-colors bg-white border-primary text-primary hover:bg-sage-soft cursor-pointer"
+                >
+                  <span className="material-symbols-outlined text-[18px] text-primary">check_circle</span>
+                  <span>Clôturer</span>
+                </button>
+              )
             )}
 
             {/* Delete Task Button: Harmonisation border-2 et alignement droite ml-auto (Annotation 3) */}
@@ -842,20 +897,19 @@ export default function TaskDetailModal({
                           </span>
                         ))}
 
-                        <select
-                          onChange={(e) => {
-                            if (e.target.value && !editMembers.includes(e.target.value)) {
-                              setEditMembers([...editMembers, e.target.value]);
-                            }
-                            e.target.value = '';
-                          }}
-                          className="text-xs bg-white border border-dashed border-emerald-600 rounded-full px-2.5 py-1 text-emerald-800 font-semibold cursor-pointer focus:outline-none"
-                        >
-                          <option value="">+ Ajouter un membre</option>
-                          {ALL_MEMBERS.map((m) => (
-                            <option key={m} value={m}>{m}</option>
-                          ))}
-                        </select>
+                        <div className="inline-block min-w-[170px]">
+                          <CustomSelect
+                            value=""
+                            placeholder="+ Ajouter un membre"
+                            options={ALL_MEMBERS.filter((m) => !editMembers.includes(m))}
+                            onChange={(e) => {
+                              if (e.target.value && !editMembers.includes(e.target.value)) {
+                                setEditMembers([...editMembers, e.target.value]);
+                              }
+                            }}
+                            className="h-[30px] py-1 px-3 text-xs bg-white border border-dashed border-emerald-600 rounded-full text-emerald-800 font-semibold hover:border-emerald-700 shadow-xs"
+                          />
+                        </div>
                       </div>
                     </div>
 

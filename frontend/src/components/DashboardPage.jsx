@@ -14,6 +14,8 @@ import {
 } from '../api';
 import TaskDetailModal from './TaskDetailModal';
 import VoteRoofModal from './VoteRoofModal';
+import BookingModal from './BookingModal';
+import TaskCard from './TaskCard';
 import { extractParticipants } from '../pages/CalendarPage';
 import { VoteCardSkeleton, CompactStaySkeleton, CardSkeleton } from './SkeletonLoaders';
 import { isTaskAssignedToUser, isTaskOpen, isTaskPendingValidation } from '../utils/taskAssignment';
@@ -103,6 +105,9 @@ export default function DashboardPage({
   const [isTaskModalOpen, setIsTaskModalOpen] = useState(false);
   const [isTaskEditingDirect, setIsTaskEditingDirect] = useState(false);
   const [isRoofVoteModalOpen, setIsRoofVoteModalOpen] = useState(false);
+  const [selectedStay, setSelectedStay] = useState(null);
+  const [isStayModalOpen, setIsStayModalOpen] = useState(false);
+  const [properties, setProperties] = useState(() => getCachedData('properties') || []);
 
   const handleOpenCreateTask = () => {
     setInspectingTask({
@@ -208,6 +213,10 @@ export default function DashboardPage({
       .catch(() => null);
 
     const propPromise = fetchProperties(options)
+      .then((data) => {
+        if (Array.isArray(data)) setProperties(data);
+        return data;
+      })
       .catch(() => null);
 
     await Promise.allSettled([
@@ -593,7 +602,7 @@ export default function DashboardPage({
             </div>
 
             {/* Participation bar */}
-            <div className="bg-canvas-slate rounded-xl p-space-sm border border-outline-variant/30 space-y-2">
+            <div className="bg-canvas-slate rounded-DEFAULT p-space-sm border border-outline-variant/30 space-y-2">
               <div className="flex items-center justify-between text-xs">
                 <span className="font-bold text-forest-deep flex items-center gap-1.5">
                   <span className="material-symbols-outlined text-[16px] text-primary">poll</span>
@@ -806,7 +815,10 @@ export default function DashboardPage({
 
                       <button
                         type="button"
-                        onClick={() => navigateTo('/calendrier')}
+                        onClick={() => {
+                          setSelectedStay(stay.rawReservation || stay);
+                          setIsStayModalOpen(true);
+                        }}
                         className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-DEFAULT bg-white border-2 border-primary text-primary font-label-sm text-xs font-semibold hover:bg-sage-soft transition-colors shadow-sm whitespace-nowrap cursor-pointer"
                       >
                         <span className="material-symbols-outlined text-[16px]">visibility</span>
@@ -877,160 +889,18 @@ export default function DashboardPage({
             </div>
           ) : displayedTasks.length > 0 ? (
             <div className="flex flex-col space-y-space-sm">
-              {displayedTasks.map((t, idx) => {
-                const isPendingVal = isTaskPendingValidation(t);
-                const isValidationTask = isCoordinator && isPendingVal;
-                const isHigh = t.priority === 'Critique' || t.priority === 'Haute';
-                const category = t.category || 'Domaine';
-                const deadline = t.deadline || t.timeline || 'Sous 10 jours';
-                const budgetText = t.budget
-                  ? `Devis ~${t.budget} €`
-                  : (t.cost_estimate ? `~${t.cost_estimate} €` : 'Inclus SCI');
-                const assignee = (Array.isArray(t.assigned_members) && t.assigned_members.length > 0 ? t.assigned_members[0] : null) || t.assignee || 'Henri Jamet';
-                const initials = assignee.split(' ').map(n => n[0]).join('').substring(0, 2).toUpperCase() || 'HJ';
-                const secondaries = Array.isArray(t.assigned_members) && t.assigned_members.length > 1
-                  ? `Avec ${t.assigned_members.slice(1).join(', ')}`
-                  : (t.subject ? `Emplacement : ${t.subject}` : 'Chantier domaine');
-
-                return (
-                  <article
-                    key={t.id || idx}
-                    className={`rounded-xl p-space-md shadow-sm flex flex-col gap-3 transition-all hover:shadow-md ${
-                      isValidationTask
-                        ? 'bg-purple-50/80 dark:bg-purple-950/40 border-2 border-purple-300 dark:border-purple-700/60 shadow-sm'
-                        : isHigh
-                        ? 'bg-amber-soft/30 border-2 border-amber-rich/40'
-                        : 'bg-white border border-outline-variant/30'
-                    }`}
-                  >
-                    <div className="flex items-center justify-between gap-2 flex-wrap">
-                      <div className="flex items-center gap-2 flex-wrap">
-                        {isValidationTask && (
-                          <span className="px-2 py-0.5 rounded-full text-xs font-bold bg-purple-100 text-purple-800 dark:bg-purple-900/60 dark:text-purple-200 border border-purple-300 flex items-center gap-1">
-                            <span className="material-symbols-outlined text-xs">verified</span> À valider
-                          </span>
-                        )}
-                        <span className={`inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full text-[11px] font-bold uppercase tracking-wider ${
-                          isValidationTask
-                            ? 'bg-purple-200/80 text-purple-900 dark:bg-purple-800 dark:text-purple-100'
-                            : isHigh
-                            ? 'bg-amber-rich text-white'
-                            : 'bg-emerald-100 text-emerald-900'
-                        }`}>
-                          <span className="material-symbols-outlined text-[14px]">
-                            {isValidationTask ? 'fact_check' : isHigh ? 'warning' : 'assignment'}
-                          </span>
-                          {isHigh ? `Priorité ${t.priority} • ${category}` : `Normal • ${category}`}
-                        </span>
-                        <span className={`text-xs font-semibold ${isValidationTask ? 'text-purple-700 dark:text-purple-300' : isHigh ? 'text-amber-rich' : 'text-on-surface-variant'}`}>
-                          {deadline}
-                        </span>
-                      </div>
-                      {t.budget ? (
-                        <div className="text-right">
-                          <span className="text-xs text-on-surface-variant font-medium block">Budget devis</span>
-                          <span className={`font-headline-sm font-bold text-sm ${isValidationTask ? 'text-purple-900 dark:text-purple-200' : isHigh ? 'text-amber-rich' : 'text-forest-deep'}`}>
-                            ~{t.budget} €
-                          </span>
-                        </div>
-                      ) : null}
-                    </div>
-
-                    <div>
-                      <h3 className={`font-headline-sm text-headline-sm font-bold ${isValidationTask ? 'text-purple-950 dark:text-purple-100' : 'text-forest-deep'}`}>
-                        {t.title}
-                      </h3>
-                      <p className="font-body-md text-on-surface-variant text-xs leading-relaxed mt-1 line-clamp-2">
-                        {t.description}
-                      </p>
-                    </div>
-
-                    <div className={`pt-2 border-t flex items-center justify-between gap-3 flex-wrap ${
-                      isValidationTask ? 'border-purple-200 dark:border-purple-800' : 'border-amber-rich/20'
-                    }`}>
-                      <div className="flex items-center gap-2">
-                        <div className={`w-7 h-7 rounded-full text-white flex items-center justify-center font-bold text-xs ${
-                          isValidationTask ? 'bg-purple-700' : isHigh ? 'bg-amber-rich' : 'bg-[#065f46]'
-                        }`}>
-                          {initials}
-                        </div>
-                        <div className="flex flex-col leading-tight">
-                          <span className="text-xs font-semibold text-on-surface">
-                            {isValidationTask ? `Soumis par : ${t.created_by || assignee}` : `En charge : ${assignee}`}
-                          </span>
-                          <span className="text-[11px] text-on-surface-variant">{secondaries}</span>
-                        </div>
-                      </div>
-
-                      {isValidationTask ? (
-                        <div className="flex items-center gap-2 flex-wrap">
-                          <button
-                            type="button"
-                            onClick={(e) => {
-                              e.stopPropagation();
-                              handleValidateTask(t.id);
-                            }}
-                            className="px-3 py-1.5 rounded-lg bg-emerald-600 hover:bg-emerald-700 text-white text-xs font-semibold flex items-center gap-1 shadow-xs transition-colors cursor-pointer"
-                            title="Valider la tâche"
-                          >
-                            <span className="material-symbols-outlined text-xs">check</span>
-                            <span>Valider</span>
-                          </button>
-                          <button
-                            type="button"
-                            onClick={(e) => {
-                              e.stopPropagation();
-                              handleInvalidateTask(t.id);
-                            }}
-                            className="px-3 py-1.5 rounded-lg bg-rose-50 hover:bg-rose-100 text-rose-700 border border-rose-200 text-xs font-semibold flex items-center gap-1 shadow-xs transition-colors cursor-pointer"
-                            title="Invalider la tâche"
-                          >
-                            <span className="material-symbols-outlined text-xs">close</span>
-                            <span>Invalider</span>
-                          </button>
-                          <button
-                            type="button"
-                            onClick={() => {
-                              if (t.link) navigateTo(t.link);
-                              else if (t.category?.toLowerCase().includes('énergie') || t.category?.toLowerCase().includes('energie') || t.title?.toLowerCase().includes('pompe à chaleur')) {
-                                navigateTo('/energie');
-                              } else {
-                                navigateTo('/taches');
-                              }
-                            }}
-                            className="inline-flex items-center gap-1 px-2.5 py-1.5 rounded-lg bg-white border border-purple-200 text-purple-900 hover:bg-purple-100 text-xs font-semibold transition-colors cursor-pointer shadow-2xs"
-                          >
-                            <span className="material-symbols-outlined text-[15px]">visibility</span>
-                            <span>Détail</span>
-                          </button>
-                        </div>
-                      ) : (
-                        <button
-                          type="button"
-                          onClick={() => {
-                            if (t.link) navigateTo(t.link);
-                            else if (t.category?.toLowerCase().includes('énergie') || t.category?.toLowerCase().includes('energie') || t.title?.toLowerCase().includes('pompe à chaleur')) {
-                              navigateTo('/energie');
-                            } else {
-                              navigateTo('/taches');
-                            }
-                          }}
-                          className={`inline-flex items-center gap-2 px-4 py-2 rounded-DEFAULT bg-white border-2 font-label-sm text-xs font-bold transition-colors shadow-sm cursor-pointer ${
-                            isHigh
-                              ? 'border-amber-rich text-amber-rich hover:bg-amber-soft'
-                              : 'border-primary text-primary hover:bg-sage-soft'
-                          }`}
-                        >
-                          <span className="material-symbols-outlined text-[16px]">
-                            {isHigh ? 'construction' : 'visibility'}
-                          </span>
-                          Consulter la tâche
-                        </button>
-                      )}
-                    </div>
-                  </article>
-                );
-              })}
+              {displayedTasks.map((t, idx) => (
+                <TaskCard
+                  key={t.id || idx}
+                  task={t}
+                  currentUser={currentUser}
+                  onOpen={(taskToOpen) => {
+                    setInspectingTask(taskToOpen);
+                    setIsTaskEditingDirect(false);
+                    setIsTaskModalOpen(true);
+                  }}
+                />
+              ))}
             </div>
           ) : (
             <div className="rounded-xl bg-white p-space-lg border border-outline-variant/30 flex flex-col items-center justify-center text-center py-10 space-y-2">
@@ -1087,6 +957,23 @@ export default function DashboardPage({
         project={activeVote}
         onVoteSubmit={() => {
           loadDashboardData({ forceRefresh: true });
+        }}
+      />
+
+      {/* Modale de Réservation / Consultation Séjour (Annotation 3) */}
+      <BookingModal
+        isOpen={isStayModalOpen}
+        onClose={() => {
+          setIsStayModalOpen(false);
+          setSelectedStay(null);
+        }}
+        initialReservation={selectedStay}
+        properties={properties}
+        currentUser={currentUser}
+        onBooked={async () => {
+          setIsStayModalOpen(false);
+          setSelectedStay(null);
+          await loadDashboardData({ forceRefresh: true });
         }}
       />
 

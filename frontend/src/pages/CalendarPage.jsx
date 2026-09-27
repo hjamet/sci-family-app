@@ -805,17 +805,6 @@ export default function CalendarPage({ properties, currentUser = 'Henri Jamet' }
                           setEditingReservation(stay.rawReservation || stay);
                           setIsBookingOpen(true);
                         }}
-                        className="px-3 py-1.5 bg-white text-on-surface-variant hover:text-forest-deep text-xs font-semibold rounded-xl border border-slate-300 hover:bg-canvas-slate transition-colors flex items-center gap-1 cursor-pointer"
-                      >
-                        <span className="material-symbols-outlined text-[16px]">visibility</span>
-                        Détails
-                      </button>
-                      <button
-                        type="button"
-                        onClick={() => {
-                          setEditingReservation(stay.rawReservation || stay);
-                          setIsBookingOpen(true);
-                        }}
                         className="px-3 py-1.5 bg-white text-forest-deep hover:bg-sage-soft text-xs font-bold rounded-xl border-2 border-emerald-600 transition-colors flex items-center gap-1 cursor-pointer shadow-xs"
                       >
                         <span className="material-symbols-outlined text-[16px]">edit</span>
