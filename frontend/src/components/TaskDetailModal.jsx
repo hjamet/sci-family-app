@@ -8,13 +8,21 @@ import {
   deleteTask,
   validateTask,
   invalidateTask,
+  acceptTask,
+  rejectTask,
   requestTaskValidation,
   fetchTaskComments,
   addTaskComment,
   reactToTaskComment,
   uploadTaskDocuments,
 } from '../api';
-import { isTaskPendingValidation, isTaskAssignedToUser, isTaskOpen } from '../utils/taskAssignment';
+import {
+  isTaskPendingValidation,
+  isTaskProposed,
+  getTaskColorCategory,
+  isTaskAssignedToUser,
+  isTaskOpen,
+} from '../utils/taskAssignment';
 import CustomSelect from './CustomSelect';
 import DocumentViewerModal from './DocumentViewerModal';
 import FamilyChat from './common/FamilyChat';
@@ -67,6 +75,37 @@ function parseTaskDocuments(raw) {
   return [];
 }
 
+function normalizeDocItem(docItem, idx = 0) {
+  if (!docItem) return null;
+  if (typeof docItem === 'string') {
+    const isUploadOrHttp = docItem.startsWith('/uploads/') || docItem.startsWith('http') || docItem.startsWith('/api/');
+    const url = isUploadOrHttp ? docItem : `/api/documents/${encodeURIComponent(docItem)}/download`;
+    const cleanBasename = docItem.split('/').pop().replace(/^[a-f0-9]{32}_/, '') || docItem;
+    return {
+      id: docItem,
+      name: cleanBasename,
+      filename: cleanBasename,
+      file_url: url,
+      url: url,
+      type: docItem.toLowerCase().endsWith('.pdf') ? 'PDF' : (docItem.match(/\.(png|jpe?g|webp|gif|svg)$/i) ? 'Image' : 'Document'),
+      size: '',
+    };
+  }
+  const url = docItem.file_url || docItem.url || (docItem.id ? `/api/documents/${docItem.id}/download` : (docItem.filename?.startsWith('/uploads/') ? docItem.filename : ''));
+  const rawName = docItem.name || docItem.filename || (url ? url.split('/').pop() : `Document_${idx + 1}`);
+  const cleanName = String(rawName).replace(/^[a-f0-9]{32}_/, '');
+  return {
+    ...docItem,
+    id: docItem.id || url || `doc-${idx}`,
+    name: cleanName,
+    filename: cleanName,
+    file_url: url,
+    url: url,
+    type: docItem.type || (cleanName.toLowerCase().endsWith('.pdf') ? 'PDF' : (cleanName.match(/\.(png|jpe?g|webp|gif|svg)$/i) ? 'Image' : 'Document')),
+    size: docItem.size || '',
+  };
+}
+
 export default function TaskDetailModal({
   isOpen,
   task: initialTask,
@@ -104,28 +143,17 @@ export default function TaskDetailModal({
   const [isViewerOpen, setIsViewerOpen] = useState(false);
 
   const handleViewDocument = (docItem) => {
-    let resolved = null;
-    if (typeof docItem === 'string') {
-      resolved = {
-        filename: docItem,
-        file_url: `/api/documents/${encodeURIComponent(docItem)}/download`
-      };
-    } else if (docItem) {
-      resolved = {
-        ...docItem,
-        filename: docItem.filename || docItem.name || 'document.pdf',
-        file_url: docItem.file_url || docItem.url || (docItem.id ? `/api/documents/${docItem.id}/download` : '')
-      };
-    }
-    if (resolved) {
-      setViewerDoc(resolved);
+    const norm = normalizeDocItem(docItem);
+    if (norm) {
+      setViewerDoc(norm);
       setIsViewerOpen(true);
     }
   };
 
   const handleDownloadDoc = (docItem) => {
-    const targetUrl = docItem?.file_url || docItem?.url || (docItem?.id ? `/api/documents/${docItem.id}/download` : '');
-    const targetName = docItem?.filename || docItem?.name || 'document.pdf';
+    const norm = normalizeDocItem(docItem);
+    const targetUrl = norm?.file_url || norm?.url;
+    const targetName = norm?.filename || norm?.name || 'document.pdf';
     if (targetUrl) {
       const a = document.createElement('a');
       a.href = targetUrl;
@@ -151,14 +179,15 @@ export default function TaskDetailModal({
   const [editDescription, setEditDescription] = useState('');
   const [editSubject, setEditSubject] = useState('Rosing');
   const [editComplexity, setEditComplexity] = useState('Modérée');
-  const [editBudget, setEditBudget] = useState(0);
   const [editMembers, setEditMembers] = useState([]);
   const [editChecklist, setEditChecklist] = useState([]);
+  const [editDocuments, setEditDocuments] = useState([]);
   const [editOnsitePresence, setEditOnsitePresence] = useState(true);
   const [savingEdit, setSavingEdit] = useState(false);
 
-  // Document Upload State
+  // Document Upload & Drag-and-drop State
   const [uploadingDoc, setUploadingDoc] = useState(false);
+  const [dragOver, setDragOver] = useState(false);
 
   // Close Protocol Modal State
   const [isClosingModalOpen, setIsClosingModalOpen] = useState(false);
@@ -166,26 +195,67 @@ export default function TaskDetailModal({
   const [closingSubmitting, setClosingSubmitting] = useState(false);
 
   const fileUploadRef = useRef(null);
+  const fileUploadEditRef = useRef(null);
   const validationSectionRef = useRef(null);
 
-  const handleFileUpload = async (e) => {
-    const files = e.target.files;
+  const handleUploadFiles = async (files) => {
     if (!files || files.length === 0) return;
     try {
       setUploadingDoc(true);
-      await uploadTaskDocuments(Array.from(files));
+      const fileList = Array.from(files);
+      const res = await uploadTaskDocuments(fileList);
+      const uploadedUrls = res?.document_urls || [];
+
+      const newDocItems = uploadedUrls.map((url) => {
+        const cleanName = url.split('/').pop().replace(/^[a-f0-9]{32}_/, '');
+        return {
+          name: cleanName,
+          filename: cleanName,
+          file_url: url,
+          url: url,
+          type: url.toLowerCase().endsWith('.pdf') ? 'PDF' : (url.match(/\.(png|jpe?g|webp|gif|svg)$/i) ? 'Image' : 'Document'),
+          uploaded_at: new Date().toISOString(),
+        };
+      });
+
+      // Mettre à jour la liste des documents en édition
+      const updatedEditDocs = [...editDocuments, ...newDocItems];
+      setEditDocuments(updatedEditDocs);
+
+      // Mettre à jour l'objet tâche
+      const currentTaskDocs = parseTaskDocuments(task?.documents || task?.completion_docs);
+      const mergedTaskDocs = [...currentTaskDocs, ...newDocItems];
+      setTask((prev) => ({ ...prev, documents: mergedTaskDocs }));
+
+      // Si la tâche existe déjà en base, persistance immédiate
       if (task?.id) {
-        const refreshed = await fetchTaskById(task.id).catch(() => null);
-        if (refreshed) setTask(refreshed);
+        await updateTask(task.id, { documents: mergedTaskDocs });
+        if (onTaskUpdated) onTaskUpdated();
       }
-      if (onTaskUpdated) onTaskUpdated();
     } catch (err) {
       console.error('Erreur téléversement document:', err);
       alert(err.message || 'Erreur lors du téléversement du document.');
     } finally {
       setUploadingDoc(false);
-      if (fileUploadRef.current) {
-        fileUploadRef.current.value = '';
+      if (fileUploadRef.current) fileUploadRef.current.value = '';
+      if (fileUploadEditRef.current) fileUploadEditRef.current.value = '';
+    }
+  };
+
+  const handleRemoveDocument = async (indexToRemove) => {
+    const currentDocs = mode === 'edit' ? editDocuments : parseTaskDocuments(task?.documents || task?.completion_docs);
+    const updatedDocs = currentDocs.filter((_, idx) => idx !== indexToRemove);
+
+    setEditDocuments(updatedDocs);
+    setTask((prev) => ({ ...prev, documents: updatedDocs }));
+
+    if (task?.id) {
+      try {
+        await updateTask(task.id, { documents: updatedDocs });
+        if (onTaskUpdated) onTaskUpdated();
+      } catch (err) {
+        console.error('Erreur détachement document:', err);
+        alert('Erreur lors de la suppression du document.');
       }
     }
   };
@@ -221,9 +291,9 @@ export default function TaskDetailModal({
       description: initialTask?.description || '',
       subject: initialTask?.subject || (isVoteInitiative ? 'Presbytère' : 'Rosing'),
       complexity: initialTask?.complexity || (isVoteInitiative ? 'Élevée' : 'Modérée'),
-      budget: initialTask?.budget || (isVoteInitiative ? 1500 : 0),
       assigned_members: initialTask?.assigned_members || [currentUserName || 'Henri Jamet'],
-      checklist: parseChecklistItems(initialTask?.checklist)
+      checklist: parseChecklistItems(initialTask?.checklist),
+      documents: parseTaskDocuments(initialTask?.documents || initialTask?.completion_docs || initialTask?.document_urls),
     };
 
     setTask(taskObj);
@@ -261,9 +331,9 @@ export default function TaskDetailModal({
     setEditDescription(t.description || '');
     setEditSubject(t.subject || (isVoteInitiative ? 'Presbytère' : 'Rosing'));
     setEditComplexity(t.complexity || (isVoteInitiative ? 'Élevée' : 'Modérée'));
-    setEditBudget(t.budget || t.estimated_cost || (isVoteInitiative ? 1500 : 0));
     setEditMembers(t.assigned_members || (t.assignee ? [t.assignee] : ['Henri Jamet']));
     setEditChecklist(parseChecklistItems(t.checklist));
+    setEditDocuments(parseTaskDocuments(t.documents || t.completion_docs || t.document_urls));
     setEditOnsitePresence(t.onsite_presence !== false);
   };
 
@@ -306,11 +376,11 @@ export default function TaskDetailModal({
         title: editTitle.trim(),
         description: editDescription.trim(),
         checklist: editChecklist,
+        documents: editDocuments,
         onsite_presence: editOnsitePresence,
         subject: editSubject,
         category: editSubject,
         complexity: editComplexity,
-        budget: parseFloat(editBudget) || 0,
         assigned_members: editMembers && editMembers.length > 0 ? editMembers : [currentUserName || 'Henri Jamet'],
         assignee: editMembers?.[0] || currentUserName || 'Henri Jamet',
         created_by: currentUserName || 'Henri Jamet',
@@ -330,12 +400,13 @@ export default function TaskDetailModal({
             await createProject({
               title: editTitle.trim(),
               description: editDescription.trim(),
-              estimated_cost: parseFloat(editBudget) || 0,
               category: editSubject,
               property_id: 1,
               submitted_by: currentUserName || 'Henri Jamet',
               status: 'EN_VOTE',
               checklist: editChecklist,
+              document_urls: editDocuments.map((d) => d.file_url || d.url || d.filename),
+              linked_documents: editDocuments.map((d) => d.name || d.filename).join(', '),
             });
           } else {
             await createTask(payload);
@@ -594,19 +665,19 @@ export default function TaskDetailModal({
         {/* ========================================== */}
         <header className="bg-surface-container-low px-4 sm:px-6 py-3.5 flex flex-wrap items-center justify-between gap-3 shrink-0 border-b border-border-subtle">
           <div className="flex flex-wrap items-center gap-2.5">
-            {/* Financial & Status Context Pill */}
+            {/* Status & Context Pill */}
             <div className={`flex items-center gap-1.5 px-3.5 py-1.5 rounded-full font-label-md text-xs sm:text-sm font-bold ${
-              isVoteInitiative ? 'bg-sage-soft text-forest-deep' : 'bg-amber-soft text-amber-rich'
+              isVoteInitiative ? 'bg-sage-soft text-forest-deep' : 'bg-emerald-50 text-emerald-800 border border-emerald-200'
             }`}>
               <span className="material-symbols-outlined text-[18px]">
-                {isNewTask ? (isVoteInitiative ? 'how_to_vote' : 'add_task') : (isVoteInitiative ? 'how_to_vote' : 'savings')}
+                {isVoteInitiative ? 'how_to_vote' : (isNewTask ? 'add_task' : 'task_alt')}
               </span>
               <span>
                 {isNewTask
-                  ? (isVoteInitiative ? 'Initiative statutaire — Soumission au vote' : 'Nouvelle tâche — Proposition')
+                  ? (isVoteInitiative ? 'Initiative statutaire — Soumission au vote' : 'Nouvelle tâche — Création')
                   : (isVoteInitiative
-                    ? `Scrutin statutaire — Budget : ${(task.budget || task.estimated_cost || 0).toLocaleString('fr-FR')} € TTC`
-                    : `Budget alloué : ${(task.budget || task.estimated_cost ? `${(task.budget || task.estimated_cost).toLocaleString('fr-FR')} €` : '3 900 €')}`)}
+                    ? `Scrutin statutaire — ${task.status || 'En délibération'}`
+                    : `Mission SCI — ${task.status || 'En cours'}`)}
               </span>
             </div>
           </div>
@@ -824,7 +895,7 @@ export default function TaskDetailModal({
                     <div>
                       <h2 className="font-headline-sm text-sm sm:text-base font-bold text-on-surface flex items-center gap-2">
                         <span className="material-symbols-outlined text-primary text-[20px]">folder_open</span>
-                        Documents & Justificatifs
+                        Documents &amp; Justificatifs
                       </h2>
                       <p className="font-body-md text-xs text-on-surface-variant">
                         Pièces contractuelles, factures et photos
@@ -836,9 +907,10 @@ export default function TaskDetailModal({
                       <span>{uploadingDoc ? 'Envoi en cours...' : '+ Ajouter un document'}</span>
                       <input
                         type="file"
+                        multiple
                         className="hidden"
                         ref={fileUploadRef}
-                        onChange={handleFileUpload}
+                        onChange={(e) => handleUploadFiles(e.target.files)}
                       />
                     </label>
                   </div>
@@ -850,26 +922,28 @@ export default function TaskDetailModal({
                       </p>
                     ) : (
                       parseTaskDocuments(task?.documents || task?.completion_docs).map((docItem, idx) => {
-                        const docName = docItem.filename || docItem.name || (typeof docItem === 'string' ? docItem : `Document_${idx + 1}.pdf`);
+                        const norm = normalizeDocItem(docItem, idx);
                         return (
-                          <div key={idx} className="p-3 bg-canvas-slate rounded-xl flex items-center justify-between gap-3 shadow-xs border border-slate-200">
+                          <div key={norm.id || idx} className="p-3 bg-canvas-slate rounded-xl flex items-center justify-between gap-3 shadow-xs border border-slate-200">
                             <div className="flex items-center gap-3 min-w-0">
                               <div className="w-10 h-10 rounded-xl bg-error-container/40 text-error flex items-center justify-center shrink-0">
-                                <span className="material-symbols-outlined text-[20px]">picture_as_pdf</span>
+                                <span className="material-symbols-outlined text-[20px]">
+                                  {norm.type === 'Image' ? 'image' : 'picture_as_pdf'}
+                                </span>
                               </div>
                               <div className="min-w-0">
-                                <p className="font-label-md text-xs font-semibold text-on-surface truncate">
-                                  {docName}
+                                <p className="font-label-md text-xs font-semibold text-on-surface truncate" title={norm.name}>
+                                  {norm.name}
                                 </p>
                                 <p className="font-body-md text-[11px] text-outline">
-                                  {docItem.type || 'Document'} {docItem.size ? `• ${docItem.size}` : ''}
+                                  {norm.type || 'Document'} {norm.size ? `• ${norm.size}` : ''}
                                 </p>
                               </div>
                             </div>
                             <div className="flex items-center gap-1.5 shrink-0">
                               <button
                                 type="button"
-                                onClick={() => handleViewDocument(docItem)}
+                                onClick={() => handleViewDocument(norm)}
                                 className="h-8 px-2.5 rounded-lg bg-surface-container-lowest border border-primary text-primary text-xs font-semibold hover:bg-sage-soft transition-colors flex items-center gap-1 cursor-pointer"
                                 title="Consulter sans télécharger"
                               >
@@ -878,12 +952,20 @@ export default function TaskDetailModal({
                               </button>
                               <button
                                 type="button"
-                                onClick={() => handleDownloadDoc(docItem)}
+                                onClick={() => handleDownloadDoc(norm)}
                                 className="h-8 px-2.5 rounded-lg bg-primary text-white text-xs font-semibold hover:bg-forest-deep transition-colors flex items-center gap-1 cursor-pointer shadow-xs"
                                 title="Télécharger une copie"
                               >
                                 <span className="material-symbols-outlined text-[15px]">download</span>
                                 <span>Télécharger</span>
+                              </button>
+                              <button
+                                type="button"
+                                onClick={() => handleRemoveDocument(idx)}
+                                className="h-8 w-8 rounded-lg bg-rose-50 border border-rose-300 text-rose-700 hover:bg-rose-100 transition-colors flex items-center justify-center cursor-pointer shadow-xs"
+                                title="Détacher / Supprimer ce document"
+                              >
+                                <span className="material-symbols-outlined text-[16px]">delete</span>
                               </button>
                             </div>
                           </div>
@@ -974,39 +1056,22 @@ export default function TaskDetailModal({
             {/* MODE ÉDITION */}
             {mode === 'edit' && (
               <div className="space-y-6 animate-in fade-in duration-150">
-                {/* Sticky Edit Bar */}
-                <div className="bg-white border-b border-slate-200 p-3 rounded-xl flex items-center justify-between shadow-xs">
-                  <div className="flex items-center gap-2">
-                    <span className="material-symbols-outlined text-primary text-[20px]">
+                {/* Header d'édition (Sans boutons en haut - Annotation 2) */}
+                <div className="bg-canvas-slate/60 border border-slate-200 p-3.5 rounded-xl flex items-center justify-between shadow-xs">
+                  <div className="flex items-center gap-2.5">
+                    <span className="material-symbols-outlined text-primary text-[22px]">
                       {isNewTask ? (isVoteInitiative ? 'how_to_vote' : 'add_task') : 'edit_document'}
                     </span>
-                    <span className="font-bold text-xs sm:text-sm text-forest-deep">
-                      {isNewTask 
-                        ? (isVoteInitiative ? 'Proposer une initiative au vote' : 'Nouvelle tâche') 
-                        : `Mode Édition — Tâche #${task.ref || task.id}`}
-                    </span>
-                  </div>
-                  <div className="flex items-center gap-2">
-                    <button
-                      type="button"
-                      onClick={() => (isNewTask ? onClose() : setMode('view'))}
-                      className="px-3 py-1.5 rounded-lg bg-white border border-slate-300 text-slate-700 text-xs font-semibold hover:bg-slate-100 cursor-pointer"
-                    >
-                      Annuler
-                    </button>
-                    <button
-                      type="button"
-                      disabled={savingEdit}
-                      onClick={handleSaveEdit}
-                      className="px-4 py-1.5 rounded-lg bg-emerald-600 text-white hover:bg-emerald-700 text-xs font-bold transition-all shadow-xs flex items-center gap-1 cursor-pointer"
-                    >
-                      <span className="material-symbols-outlined text-[16px]">
-                        {isNewTask ? (isVoteInitiative ? 'how_to_vote' : 'add_circle') : 'check'}
+                    <div>
+                      <span className="font-bold text-xs sm:text-sm text-forest-deep block">
+                        {isNewTask 
+                          ? (isVoteInitiative ? 'Proposer une initiative au vote' : 'Nouvelle tâche — Saisie des informations') 
+                          : `Mode Édition — Tâche #${task.ref || task.id}`}
                       </span>
-                      <span>
-                        {isNewTask ? (isVoteInitiative ? "Soumettre l'initiative au vote" : "Créer la tâche") : "Enregistrer"}
+                      <span className="text-[11px] text-on-surface-variant font-medium">
+                        {isNewTask ? 'Remplissez le formulaire ci-dessous puis validez en bas de page' : 'Modifiez les champs nécessaires puis enregistrez en bas'}
                       </span>
-                    </button>
+                    </div>
                   </div>
                 </div>
 
@@ -1015,7 +1080,7 @@ export default function TaskDetailModal({
                   <div className="p-3.5 bg-amber-50 border border-amber-200 rounded-xl flex items-start gap-2.5 text-xs text-amber-900">
                     <span className="material-symbols-outlined text-[20px] text-amber-600 shrink-0 mt-0.5">gavel</span>
                     <div>
-                      <strong className="block font-bold">Règle Statutaire SCI (Engagement &gt; 300 €) :</strong>
+                      <strong className="block font-bold">Règle Statutaire SCI :</strong>
                       <span>Cette proposition sera soumise à la délibération et au vote statutaire des 7 associés de la famille avec calcul automatique de majorité qualifiée.</span>
                     </div>
                   </div>
@@ -1028,7 +1093,7 @@ export default function TaskDetailModal({
                       <div className="flex items-center gap-2">
                         <span className="material-symbols-outlined text-forest-deep text-[22px]">admin_panel_settings</span>
                         <h3 className="font-headline-sm text-sm sm:text-base font-bold text-forest-deep">
-                          {isVoteInitiative ? 'Paramètres du Scrutin & Budget' : 'Gouvernance & Gestion technique'}
+                          {isVoteInitiative ? 'Paramètres du Scrutin' : 'Gouvernance & Gestion technique'}
                         </h3>
                       </div>
                     </div>
@@ -1095,19 +1160,6 @@ export default function TaskDetailModal({
                       </div>
                     </div>
 
-                    {/* Budget alloué */}
-                    <div className="flex flex-col gap-1">
-                      <label className="font-label-md text-xs font-semibold text-on-surface">
-                        {isVoteInitiative ? 'Enveloppe budgétaire estimée (€ TTC)' : 'Budget alloué (€ TTC)'}
-                      </label>
-                      <input
-                        type="number"
-                        value={editBudget}
-                        onChange={(e) => setEditBudget(e.target.value)}
-                        className="bg-canvas-slate rounded-xl p-2.5 text-xs sm:text-sm border border-slate-300 focus:outline-none focus:ring-2 focus:ring-primary font-bold text-forest-deep"
-                      />
-                    </div>
-
                     {/* Presence on site required */}
                     <label className="flex items-center gap-3 p-3 bg-canvas-slate rounded-xl border border-slate-200 select-none cursor-pointer">
                       <input
@@ -1152,7 +1204,7 @@ export default function TaskDetailModal({
                       rows={3}
                       value={editDescription}
                       onChange={(e) => setEditDescription(e.target.value)}
-                      placeholder={isVoteInitiative ? "Expliquez l'urgence, les devis obtenus, l'impact sur la propriété et l'intérêt pour la SCI..." : "Description..."}
+                      placeholder={isVoteInitiative ? "Expliquez l'urgence, le contexte, l'impact sur la propriété et l'intérêt pour la SCI..." : "Description..."}
                       className="bg-canvas-slate rounded-xl p-2.5 text-xs sm:text-sm border border-slate-300 focus:outline-none focus:ring-2 focus:ring-primary leading-relaxed resize-none"
                     />
                   </div>
@@ -1204,6 +1256,158 @@ export default function TaskDetailModal({
                   </div>
                 </section>
 
+                {/* Section 3 : Documents & Pièces jointes (Annotation 3) */}
+                <section className="bg-white border border-slate-200 rounded-2xl p-4 sm:p-5 shadow-xs flex flex-col gap-4">
+                  <div className="flex flex-wrap items-center justify-between gap-2 border-b border-slate-100 pb-3">
+                    <div>
+                      <h3 className="font-headline-sm text-sm sm:text-base font-bold text-on-surface flex items-center gap-2">
+                        <span className="material-symbols-outlined text-primary text-[20px]">folder_open</span>
+                        <span>Documents &amp; Pièces jointes</span>
+                      </h3>
+                      <p className="font-body-md text-xs text-on-surface-variant">
+                        Plans, factures, justificatifs ou photos (PDF, PNG, JPG)
+                      </p>
+                    </div>
+                    <span className="text-xs font-semibold px-2.5 py-1 rounded-full bg-slate-100 text-slate-700">
+                      {editDocuments.length} document(s) joint(s)
+                    </span>
+                  </div>
+
+                  {/* Zone de téléversement Drag & Drop */}
+                  <div
+                    onDragOver={(e) => { e.preventDefault(); setDragOver(true); }}
+                    onDragLeave={() => setDragOver(false)}
+                    onDrop={(e) => {
+                      e.preventDefault();
+                      setDragOver(false);
+                      if (e.dataTransfer.files && e.dataTransfer.files.length > 0) {
+                        handleUploadFiles(e.dataTransfer.files);
+                      }
+                    }}
+                    className={`border-2 border-dashed rounded-xl p-4 text-center transition-all bg-canvas-slate/50 ${
+                      dragOver ? 'border-primary bg-sage-soft/30' : 'border-slate-300 hover:border-primary/60'
+                    }`}
+                  >
+                    <input
+                      type="file"
+                      multiple
+                      ref={fileUploadEditRef}
+                      className="hidden"
+                      onChange={(e) => handleUploadFiles(e.target.files)}
+                      disabled={uploadingDoc}
+                    />
+                    <div
+                      onClick={() => fileUploadEditRef.current?.click()}
+                      className="cursor-pointer flex flex-col items-center justify-center gap-1.5 py-1 select-none"
+                    >
+                      {uploadingDoc ? (
+                        <div className="flex items-center gap-2 text-xs font-bold text-primary">
+                          <span className="material-symbols-outlined animate-spin text-[20px]">progress_activity</span>
+                          <span>Téléversement des documents en cours...</span>
+                        </div>
+                      ) : (
+                        <>
+                          <span className="material-symbols-outlined text-[26px] text-primary">cloud_upload</span>
+                          <p className="text-xs font-bold text-on-surface">
+                            Glissez-déposez vos fichiers ici ou <span className="text-primary underline">parcourez</span>
+                          </p>
+                          <p className="text-[11px] text-outline">
+                            Supports acceptés : PDF, PNG, JPG, WEBP
+                          </p>
+                        </>
+                      )}
+                    </div>
+                  </div>
+
+                  {/* Liste des documents attachés avec Consulter, Télécharger et Supprimer */}
+                  {editDocuments.length > 0 && (
+                    <div className="flex flex-col gap-2 pt-1">
+                      {editDocuments.map((docItem, idx) => {
+                        const norm = normalizeDocItem(docItem, idx);
+                        return (
+                          <div
+                            key={norm.id || idx}
+                            className="p-3 bg-canvas-slate rounded-xl flex items-center justify-between gap-3 shadow-xs border border-slate-200"
+                          >
+                            <div className="flex items-center gap-3 min-w-0">
+                              <div className="w-10 h-10 rounded-xl bg-error-container/40 text-error flex items-center justify-center shrink-0">
+                                <span className="material-symbols-outlined text-[20px]">
+                                  {norm.type === 'Image' ? 'image' : 'picture_as_pdf'}
+                                </span>
+                              </div>
+                              <div className="min-w-0">
+                                <p className="font-label-md text-xs font-semibold text-on-surface truncate" title={norm.name}>
+                                  {norm.name}
+                                </p>
+                                <p className="font-body-md text-[11px] text-outline">
+                                  {norm.type || 'Document'} {norm.size ? `• ${norm.size}` : ''}
+                                </p>
+                              </div>
+                            </div>
+                            <div className="flex items-center gap-1.5 shrink-0">
+                              <button
+                                type="button"
+                                onClick={() => handleViewDocument(norm)}
+                                className="h-8 px-2.5 rounded-lg bg-surface-container-lowest border border-primary text-primary text-xs font-semibold hover:bg-sage-soft transition-colors flex items-center gap-1 cursor-pointer"
+                                title="Consulter sans télécharger"
+                              >
+                                <span className="material-symbols-outlined text-[15px]">visibility</span>
+                                <span className="hidden sm:inline">Consulter</span>
+                              </button>
+                              <button
+                                type="button"
+                                onClick={() => handleDownloadDoc(norm)}
+                                className="h-8 px-2.5 rounded-lg bg-primary text-white text-xs font-semibold hover:bg-forest-deep transition-colors flex items-center gap-1 cursor-pointer shadow-xs"
+                                title="Télécharger une copie"
+                              >
+                                <span className="material-symbols-outlined text-[15px]">download</span>
+                                <span className="hidden sm:inline">Télécharger</span>
+                              </button>
+                              <button
+                                type="button"
+                                onClick={() => handleRemoveDocument(idx)}
+                                className="h-8 w-8 rounded-lg bg-rose-50 border border-rose-300 text-rose-700 hover:bg-rose-100 transition-colors flex items-center justify-center cursor-pointer shadow-xs"
+                                title="Détacher / Supprimer ce document"
+                              >
+                                <span className="material-symbols-outlined text-[16px]">delete</span>
+                              </button>
+                            </div>
+                          </div>
+                        );
+                      })}
+                    </div>
+                  )}
+                </section>
+
+                {/* Footer formulaire collé au bas (Annotation 2) */}
+                <footer className="pt-5 border-t border-slate-200 flex flex-wrap items-center justify-between gap-3 bg-surface-container-lowest">
+                  <p className="text-xs text-on-surface-variant font-medium">
+                    {isNewTask ? "Veuillez vérifier l'ensemble des informations saisies avant de soumettre la tâche." : "Enregistrez pour valider les modifications apportées à la tâche."}
+                  </p>
+                  <div className="flex items-center gap-2.5 ml-auto">
+                    <button
+                      type="button"
+                      onClick={() => (isNewTask ? onClose() : setMode('view'))}
+                      className="px-4 py-2.5 rounded-xl bg-white border border-slate-300 text-slate-700 text-xs sm:text-sm font-semibold hover:bg-slate-100 transition-colors cursor-pointer shadow-xs"
+                    >
+                      Annuler
+                    </button>
+                    <button
+                      type="button"
+                      disabled={savingEdit}
+                      onClick={handleSaveEdit}
+                      className="px-5 py-2.5 rounded-xl bg-emerald-600 hover:bg-emerald-700 text-white text-xs sm:text-sm font-bold transition-all shadow-md flex items-center gap-2 cursor-pointer disabled:opacity-50"
+                    >
+                      <span className="material-symbols-outlined text-[18px]">
+                        {isNewTask ? (isVoteInitiative ? 'how_to_vote' : 'add_circle') : 'check_circle'}
+                      </span>
+                      <span>
+                        {isNewTask ? (isVoteInitiative ? "Soumettre l'initiative au vote" : "Créer la tâche") : "Enregistrer"}
+                      </span>
+                    </button>
+                  </div>
+                </footer>
+
               </div>
             )}
 
@@ -1222,7 +1426,7 @@ export default function TaskDetailModal({
               title="Fil de discussion familial"
               placeholder="Votre message à la famille..."
               onRetryMessage={handleRetryComment}
-              onAttachClick={() => fileUploadRef.current?.click()}
+              onAttachClick={() => (fileUploadEditRef.current || fileUploadRef.current)?.click()}
               className="h-full"
             />
           </section>
@@ -1257,13 +1461,13 @@ export default function TaskDetailModal({
 
             <div className="space-y-2">
               <label className="text-xs font-semibold text-on-surface block">
-                Synthèse des travaux réalisés & bilan financier :
+                Synthèse des travaux réalisés :
               </label>
               <textarea
                 rows={4}
                 value={closeNotes}
                 onChange={(e) => setCloseNotes(e.target.value)}
-                placeholder="Précisez le résultat final, le respect du devis, la date d'achèvement et les éventuelles réserves..."
+                placeholder="Précisez le résultat final, la date d'achèvement et les éventuelles réserves..."
                 className="w-full bg-canvas-slate rounded-xl p-3 text-xs sm:text-sm border border-slate-300 focus:outline-none focus:ring-2 focus:ring-primary"
               />
             </div>
