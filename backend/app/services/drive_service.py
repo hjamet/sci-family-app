@@ -1,11 +1,20 @@
 import os
 import io
 import json
+import time
+import threading
 import logging
 from typing import Optional, List, Tuple, Dict, Any
 from fastapi import HTTPException
 
 logger = logging.getLogger(__name__)
+
+# Cache mémoire pour list_files Google Drive (TTL: 120s, Stale-While-Revalidate)
+_DRIVE_FILES_CACHE: Dict[str, Any] = {}
+_DRIVE_FILES_CACHE_TIMESTAMP: float = 0.0
+DRIVE_FILES_CACHE_TTL: int = 120
+_DRIVE_CACHE_LOCK = threading.Lock()
+
 
 try:
     from google.oauth2.credentials import Credentials
@@ -149,34 +158,56 @@ class GoogleDriveJailService:
                 fields="id, name, parents, mimeType, size, createdTime, modifiedTime, webViewLink, webContentLink"
             ).execute()
             logger.info(f"Fichier créé avec succès dans le dossier {self.folder_id} : {file.get('id')} ({filename})")
+            self.clear_cache()
             return file
         except HttpError as err:
             logger.error(f"Erreur API Google Drive lors de l'upload : {err}")
             raise HTTPException(status_code=err.resp.status, detail=f"Google Drive Error: {err._get_reason()}")
 
-    def list_files(self, query_filter: Optional[str] = None, page_size: int = 100) -> List[Dict[str, Any]]:
+    def list_files(self, query_filter: Optional[str] = None, page_size: int = 100, force_refresh: bool = False) -> List[Dict[str, Any]]:
         """Liste uniquement les fichiers présents dans ALLOWED_FOLDER_ID.
         Clause de confinement obligatoire : '{ALLOWED_FOLDER_ID}' in parents and trashed = false.
+        Maintient un cache en mémoire TTL de 120s avec verrou thread-safe.
         """
-        service = self._get_client()
+        global _DRIVE_FILES_CACHE, _DRIVE_FILES_CACHE_TIMESTAMP
+        cache_key = f"{self.folder_id}_{query_filter or ''}_{page_size}"
+        now = time.time()
 
-        # CONFINEMENT STRICT : La condition d'appartenance au dossier est inviolable
-        jail_clause = f"'{self.folder_id}' in parents and trashed = false"
-        if query_filter:
-            q = f"{jail_clause} and ({query_filter})"
-        else:
-            q = jail_clause
+        if not force_refresh and (cache_key in _DRIVE_FILES_CACHE) and (now - _DRIVE_FILES_CACHE_TIMESTAMP < DRIVE_FILES_CACHE_TTL):
+            return _DRIVE_FILES_CACHE[cache_key].copy()
 
-        try:
-            results = service.files().list(
-                q=q,
-                pageSize=page_size,
-                fields="nextPageToken, files(id, name, parents, mimeType, size, createdTime, modifiedTime, webViewLink, webContentLink)"
-            ).execute()
-            return results.get("files", [])
-        except HttpError as err:
-            logger.error(f"Erreur API Google Drive lors du listage : {err}")
-            raise HTTPException(status_code=err.resp.status, detail=f"Google Drive Error: {err._get_reason()}")
+        with _DRIVE_CACHE_LOCK:
+            now = time.time()
+            if not force_refresh and (cache_key in _DRIVE_FILES_CACHE) and (now - _DRIVE_FILES_CACHE_TIMESTAMP < DRIVE_FILES_CACHE_TTL):
+                return _DRIVE_FILES_CACHE[cache_key].copy()
+
+            service = self._get_client()
+
+            # CONFINEMENT STRICT : La condition d'appartenance au dossier est inviolable
+            jail_clause = f"'{self.folder_id}' in parents and trashed = false"
+            if query_filter:
+                q = f"{jail_clause} and ({query_filter})"
+            else:
+                q = jail_clause
+
+            try:
+                results = service.files().list(
+                    q=q,
+                    pageSize=page_size,
+                    fields="nextPageToken, files(id, name, parents, mimeType, size, createdTime, modifiedTime, webViewLink, webContentLink)"
+                ).execute()
+                files = results.get("files", [])
+                _DRIVE_FILES_CACHE[cache_key] = files
+                _DRIVE_FILES_CACHE_TIMESTAMP = time.time()
+                return files.copy()
+            except Exception as err:
+                logger.error(f"Erreur API Google Drive lors du listage : {err}")
+                if cache_key in _DRIVE_FILES_CACHE:
+                    logger.warning(f"[DRIVE] Renvoi du cache stale pour les fichiers Google Drive suite à: {err}")
+                    return _DRIVE_FILES_CACHE[cache_key].copy()
+                if isinstance(err, HttpError):
+                    raise HTTPException(status_code=err.resp.status, detail=f"Google Drive Error: {err._get_reason()}")
+                raise
 
     def get_file_metadata(self, file_id: str) -> Dict[str, Any]:
         """Récupère les métadonnées d'un fichier et vérifie impérativement son confinement (Jail Check)."""
@@ -234,6 +265,7 @@ class GoogleDriveJailService:
                 fields="id, name, parents, mimeType, size, createdTime, modifiedTime, webViewLink, webContentLink"
             ).execute()
             logger.info(f"Fichier {file_id} renommé en '{clean_name}' avec succès sur Google Drive.")
+            self.clear_cache()
             return updated_file
         except HttpError as err:
             logger.error(f"Erreur API Google Drive lors du renommage de {file_id} : {err}")
@@ -248,10 +280,20 @@ class GoogleDriveJailService:
         try:
             service.files().delete(fileId=file_id).execute()
             logger.info(f"Fichier {file_id} supprimé avec succès de Google Drive.")
+            self.clear_cache()
             return True
         except HttpError as err:
             logger.error(f"Erreur API Google Drive lors de la suppression de {file_id} : {err}")
             raise HTTPException(status_code=err.resp.status, detail=f"Google Drive Error: {err._get_reason()}")
+
+    @classmethod
+    def clear_cache(cls):
+        """Réinitialise le cache mémoire du listage Google Drive."""
+        global _DRIVE_FILES_CACHE, _DRIVE_FILES_CACHE_TIMESTAMP
+        with _DRIVE_CACHE_LOCK:
+            _DRIVE_FILES_CACHE.clear()
+            _DRIVE_FILES_CACHE_TIMESTAMP = 0.0
+
 
 
 # Instance singleton exportée pour l'application

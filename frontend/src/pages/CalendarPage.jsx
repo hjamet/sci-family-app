@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useRef } from 'react';
-import { fetchReservations } from '../api';
+import { fetchReservations, getCachedData } from '../api';
 import BookingModal from '../components/BookingModal';
 import { StayCardSkeleton } from '../components/SkeletonLoaders';
 
@@ -138,8 +138,8 @@ export default function CalendarPage({ properties, currentUser = 'Henri Jamet' }
   const [memberFilter, setMemberFilter] = useState('all');
   const [isMemberDropdownOpen, setIsMemberDropdownOpen] = useState(false);
   const memberDropdownRef = useRef(null);
-  const [reservations, setReservations] = useState([]);
-  const [loading, setLoading] = useState(true);
+  const [reservations, setReservations] = useState(() => getCachedData('reservations') || []);
+  const [loading, setLoading] = useState(() => !getCachedData('reservations'));
   const [isBookingOpen, setIsBookingOpen] = useState(false);
   const [editingReservation, setEditingReservation] = useState(null);
 
@@ -164,7 +164,7 @@ export default function CalendarPage({ properties, currentUser = 'Henri Jamet' }
 
   const loadReservations = async () => {
     try {
-      setLoading(true);
+      if (!reservations || reservations.length === 0) setLoading(true);
       const params = selectedYear ? { year: selectedYear } : {};
       const data = await fetchReservations(params);
       setReservations(data || []);

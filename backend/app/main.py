@@ -13,7 +13,7 @@ from fastapi import FastAPI, Depends, HTTPException, Query, UploadFile, File, Fo
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 from fastapi.responses import FileResponse, Response, RedirectResponse
-from sqlalchemy.orm import Session
+from sqlalchemy.orm import Session, selectinload, joinedload
 from sqlalchemy import func, or_
 
 from .database import engine, Base, get_db
@@ -1344,7 +1344,7 @@ def list_reservations(
     if status_filter and status_filter != "Tous":
         query = query.filter(Reservation.status == status_filter)
 
-    return query.order_by(Reservation.year.asc(), Reservation.week_number.asc()).all()
+    return query.options(joinedload(Reservation.property)).order_by(Reservation.year.asc(), Reservation.week_number.asc()).all()
 
 @app.get("/api/reservations/{reservation_id}", response_model=ReservationResponse)
 def get_reservation(reservation_id: int, db: Session = Depends(get_db)):
@@ -1656,7 +1656,7 @@ def list_projects(
     if status_filter and status_filter != "Tous":
         query = query.filter(Project.status == status_filter)
 
-    projects = query.order_by(Project.created_at.desc()).all()
+    projects = query.options(selectinload(Project.votes), selectinload(Project.comments)).order_by(Project.created_at.desc()).all()
     return [format_project_response(p) for p in projects]
 
 @app.post("/api/projects", status_code=status.HTTP_201_CREATED)
@@ -2453,7 +2453,7 @@ def list_tasks(
             Task.subject.ilike(s)
         )
 
-    tasks = query.order_by(Task.id.asc()).all()
+    tasks = query.options(selectinload(Task.comments), selectinload(Task.assignee)).order_by(Task.id.asc()).all()
     return [format_task_response(t) for t in tasks]
 
 
@@ -4223,9 +4223,9 @@ def update_pool_settings(
 # --- Open Banking DSP2 (Enable Banking & Swan France) Endpoints ---
 
 @app.get("/api/banking/status", response_model=BankStatusResponse, tags=["Banking"])
-def get_banking_status(db: Session = Depends(get_db)):
+def get_banking_status(force_refresh: bool = Query(False), db: Session = Depends(get_db)):
     """Retourne l'état réactif de l'intégration Open Banking DSP2 et les soldes consolidés de la SCI."""
-    status_data = enable_banking_service.check_connection_status(db=db)
+    status_data = enable_banking_service.check_connection_status(db=db, force_refresh=force_refresh)
 
     return BankStatusResponse(
         application_id=enable_banking_service.app_id,
@@ -4350,6 +4350,7 @@ def banking_callback_redirect(
 
         # Synchronisation immédiate des soldes et transactions
         enable_banking_service.sync_database(db=db, session_id=session_id)
+        enable_banking_service.clear_status_cache()
 
         return RedirectResponse(url="/admin?banking=success")
     except Exception as e:
@@ -4364,6 +4365,7 @@ def banking_callback_post(payload: BankAuthCallbackRequest, db: Session = Depend
     try:
         session_info = enable_banking_service.authorize_session(code=payload.code)
         sync_result = enable_banking_service.sync_database(db=db, session_id=payload.session_id)
+        enable_banking_service.clear_status_cache()
         return {
             "success": True,
             "session": session_info,
@@ -4400,6 +4402,7 @@ def trigger_banking_sync(db: Session = Depends(get_db)):
     """Déclenche la synchronisation manuelle des comptes et transactions bancaires."""
     try:
         result = enable_banking_service.sync_database(db=db)
+        enable_banking_service.clear_status_cache()
         return BankSyncResponse(
             success=result.get("success", True),
             accounts_synced=result.get("accounts_synced", 0),

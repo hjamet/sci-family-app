@@ -12,7 +12,7 @@ import VademecumPage from './components/VademecumPage';
 import HeatingPage from './pages/HeatingPage';
 import SettingsPage from './pages/SettingsPage';
 import BookingModal from './components/BookingModal';
-import { fetchProperties } from './api';
+import { fetchProperties, getCachedData } from './api';
 import GlobalErrorAlert from './components/GlobalErrorAlert';
 
 export default function App() {
@@ -20,7 +20,7 @@ export default function App() {
   const navigate = useNavigate();
   const location = useLocation();
 
-  const [properties, setProperties] = useState([]);
+  const [properties, setProperties] = useState(() => getCachedData('properties') || []);
   const [isBookingOpen, setIsBookingOpen] = useState(false);
 
   // Sync active tab with current location pathname

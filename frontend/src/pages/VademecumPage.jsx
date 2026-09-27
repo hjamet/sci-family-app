@@ -11,7 +11,8 @@ import {
   setHeatingTemperature,
   setHeatingMode as apiSetHeatingMode,
   validateTask,
-  invalidateTask
+  invalidateTask,
+  getCachedData
 } from '../api';
 import SejourCutoffMapModal from '../components/sejour/SejourCutoffMapModal';
 import SejourDepartureChecklistModal from '../components/sejour/SejourDepartureChecklistModal';
@@ -122,10 +123,10 @@ export default function VademecumPage({ properties, currentUser }) {
   };
 
   // Live Telemetry State & Fail-fast (Annotation 4 & 6)
-  const [heatingStatus, setHeatingStatus] = useState(null);
+  const [heatingStatus, setHeatingStatus] = useState(() => getCachedData('heating_status') || null);
   const [heatingError, setHeatingError] = useState(null);
-  const [piscineStatus, setPiscineStatus] = useState(null);
-  const [telemetryLoading, setTelemetryLoading] = useState(true);
+  const [piscineStatus, setPiscineStatus] = useState(() => getCachedData('pool_status') || null);
+  const [telemetryLoading, setTelemetryLoading] = useState(() => !getCachedData('heating_status') && !getCachedData('pool_status'));
 
   // Thermal controls state (Annotation 2: Contrôles directs réels)
   const [heatingTarget, setHeatingTarget] = useState(19.5);
@@ -152,32 +153,25 @@ export default function VademecumPage({ properties, currentUser }) {
   }, [currentStay]);
 
   // Real Tasks loaded from Database (Annotation 7)
-  const [tasks, setTasks] = useState([]);
+  const [tasks, setTasks] = useState(() => getCachedData('tasks') || []);
 
   // Load initial data
   const loadInitialData = async () => {
     try {
-      setTelemetryLoading(true);
-      setStayLoading(true);
+      if (!heatingStatus && !piscineStatus) setTelemetryLoading(true);
+      if (!reservations || reservations.length === 0) setStayLoading(true);
 
-      const [heatRes, poolRes, taskRes, reservationsRes] = await Promise.all([
-        fetchHeatingStatus().catch(err => {
-          console.warn('ViCare telemetry failure:', err.message);
-          return { error: err.message || 'Liaison ViCare indisponible : impossible d\'interroger la chaudière' };
-        }),
-        fetchPiscineStatus().catch(err => {
-          console.warn('Piscine telemetry failure:', err.message);
-          return null;
-        }),
-        fetchTasks().catch(err => {
-          console.warn('Tasks load fallback:', err.message);
-          return [];
-        }),
-        fetchReservations().catch(err => {
-          console.warn('Reservations load fallback:', err.message);
-          return [];
-        }),
+      const [heatResResult, poolResResult, taskResResult, reservationsResResult] = await Promise.allSettled([
+        fetchHeatingStatus(),
+        fetchPiscineStatus(),
+        fetchTasks(),
+        fetchReservations(),
       ]);
+
+      const heatRes = heatResResult.status === 'fulfilled' ? heatResResult.value : { error: 'Liaison ViCare indisponible' };
+      const poolRes = poolResResult.status === 'fulfilled' ? poolResResult.value : null;
+      const taskRes = taskResResult.status === 'fulfilled' ? (taskResResult.value || []) : [];
+      const reservationsRes = reservationsResResult.status === 'fulfilled' ? (reservationsResResult.value || []) : [];
 
       // ViCare Telemetry & Fail-fast
       if (heatRes && !heatRes.error) {

@@ -193,7 +193,7 @@ export default function Header({
     return () => {
       isMounted = false;
     };
-  }, [currentUser]);
+  }, [typeof currentUser === 'object' ? (currentUser?.id || currentUser?.prenom || 'Henri') : (currentUser || 'Henri')]);
 
   useEffect(() => {
     function handleClickOutside(event) {

@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useMemo } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { fetchTasks, createTask, fetchProjects, validateTask, invalidateTask } from '../api';
+import { fetchTasks, createTask, fetchProjects, validateTask, invalidateTask, getCachedData } from '../api';
 import TaskDetailModal from './TaskDetailModal';
 import VoteRoofModal from './VoteRoofModal';
 import { CardSkeleton, TasksContainerSkeleton, VoteCardSkeleton } from './SkeletonLoaders';
@@ -33,10 +33,10 @@ import {
 export default function TasksPage({ currentUser = 'Henri Jamet' }) {
   const navigate = useNavigate();
 
-  // Tasks state
-  const [tasks, setTasks] = useState([]);
-  const [projects, setProjects] = useState([]);
-  const [loading, setLoading] = useState(true);
+  // Tasks state initialisé instantanément depuis le cache SWR (< 16ms)
+  const [tasks, setTasks] = useState(() => getCachedData('tasks') || []);
+  const [projects, setProjects] = useState(() => getCachedData('projects') || []);
+  const [loading, setLoading] = useState(() => !getCachedData('tasks'));
 
   // Search & Filter state
   const [searchTerm, setSearchTerm] = useState('');
@@ -184,25 +184,21 @@ export default function TasksPage({ currentUser = 'Henri Jamet' }) {
 
   const currentVote = votesList.length > 0 ? (votesList[activeVoteIndex] || votesList[0]) : null;
 
-  const loadTasks = async () => {
+  const loadTasks = async (options = {}) => {
     try {
-      setLoading(true);
-      const [taskData, projData] = await Promise.all([
-        fetchTasks().catch(err => {
-          console.warn('API fetchTasks fallback:', err);
-          return [];
-        }),
-        fetchProjects().catch(err => {
-          console.warn('API fetchProjects fallback:', err);
-          return [];
-        }),
+      if (!tasks || tasks.length === 0) setLoading(true);
+      const [taskResult, projResult] = await Promise.allSettled([
+        fetchTasks({}, options),
+        fetchProjects({}, options),
       ]);
-      setTasks(Array.isArray(taskData) ? taskData : []);
-      setProjects(Array.isArray(projData) ? projData : []);
+      if (taskResult.status === 'fulfilled' && Array.isArray(taskResult.value)) {
+        setTasks(taskResult.value);
+      }
+      if (projResult.status === 'fulfilled' && Array.isArray(projResult.value)) {
+        setProjects(projResult.value);
+      }
     } catch (err) {
-      console.warn('API loadTasks fallback:', err);
-      setTasks([]);
-      setProjects([]);
+      console.warn('API loadTasks notice:', err);
     } finally {
       setLoading(false);
     }

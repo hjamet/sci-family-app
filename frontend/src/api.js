@@ -106,6 +106,122 @@ function getAuthJsonHeaders(extraHeaders = {}) {
   return getAuthHeaders({ 'Content-Type': 'application/json', ...extraHeaders });
 }
 
+// ==================== COUCHE SWR & DÉDUPLICATION DES REQUÊTES EN VOL ====================
+// Map de requêtes en vol : cacheKey -> Promise (évite de lancer N requêtes identiques simultanément)
+const inFlightRequests = new Map();
+
+// Cache mémoire SWR : cacheKey -> { data, timestamp, expiresAt }
+const memoryCache = new Map();
+const SWR_STORAGE_PREFIX = 'sci_swr_cache_';
+
+/**
+ * Récupère immédiatement une donnée en cache (mémoire d'abord, puis sessionStorage)
+ * Permet un affichage instantané (< 16ms) dès l'arrivée sur la page
+ */
+export function getCachedData(key) {
+  if (memoryCache.has(key)) {
+    return memoryCache.get(key).data;
+  }
+  if (typeof window !== 'undefined' && window.sessionStorage) {
+    try {
+      const raw = sessionStorage.getItem(SWR_STORAGE_PREFIX + key);
+      if (raw) {
+        const item = JSON.parse(raw);
+        memoryCache.set(key, item);
+        return item.data;
+      }
+    } catch (_) {}
+  }
+  return null;
+}
+
+/**
+ * Enregistre une donnée dans le cache mémoire et sessionStorage
+ */
+export function setCachedData(key, data, ttlMs = 30000) {
+  const item = {
+    data,
+    timestamp: Date.now(),
+    expiresAt: Date.now() + ttlMs,
+  };
+  memoryCache.set(key, item);
+  if (typeof window !== 'undefined' && window.sessionStorage) {
+    try {
+      sessionStorage.setItem(SWR_STORAGE_PREFIX + key, JSON.stringify(item));
+    } catch (_) {}
+  }
+}
+
+/**
+ * Invalide sélectivement ou globalement le cache SWR et les promesses en vol
+ */
+export function invalidateApiCache(prefixOrKey = '') {
+  if (!prefixOrKey) {
+    memoryCache.clear();
+    inFlightRequests.clear();
+    if (typeof window !== 'undefined' && window.sessionStorage) {
+      try {
+        const keys = Object.keys(sessionStorage).filter(k => k.startsWith(SWR_STORAGE_PREFIX));
+        keys.forEach(k => sessionStorage.removeItem(k));
+      } catch (_) {}
+    }
+    return;
+  }
+
+  for (const k of memoryCache.keys()) {
+    if (k.startsWith(prefixOrKey) || k.includes(prefixOrKey)) {
+      memoryCache.delete(k);
+    }
+  }
+  for (const k of inFlightRequests.keys()) {
+    if (k.startsWith(prefixOrKey) || k.includes(prefixOrKey)) {
+      inFlightRequests.delete(k);
+    }
+  }
+  if (typeof window !== 'undefined' && window.sessionStorage) {
+    try {
+      for (let i = sessionStorage.length - 1; i >= 0; i--) {
+        const k = sessionStorage.key(i);
+        if (k && k.startsWith(SWR_STORAGE_PREFIX) && k.includes(prefixOrKey)) {
+          sessionStorage.removeItem(k);
+        }
+      }
+    } catch (_) {}
+  }
+}
+
+/**
+ * Exécute un fetch avec déduplication de requêtes en vol et cache SWR
+ */
+export async function swrFetch(cacheKey, fetcher, { ttl = 30000, forceRefresh = false } = {}) {
+  // Si rafraîchissement non forcé, vérifier la fraîcheur du cache
+  if (!forceRefresh) {
+    const cached = getCachedData(cacheKey);
+    const entry = memoryCache.get(cacheKey);
+    if (cached !== null && entry && entry.expiresAt > Date.now()) {
+      return cached;
+    }
+  }
+
+  // Déduplication : si une requête identique est déjà en vol, mutualiser la Promise existante
+  if (inFlightRequests.has(cacheKey)) {
+    return inFlightRequests.get(cacheKey);
+  }
+
+  const promise = (async () => {
+    try {
+      const data = await fetcher();
+      setCachedData(cacheKey, data, ttl);
+      return data;
+    } finally {
+      inFlightRequests.delete(cacheKey);
+    }
+  })();
+
+  inFlightRequests.set(cacheKey, promise);
+  return promise;
+}
+
 // Auth & Users
 export async function loginUser(prenom, password) {
   const cleanPrenom = (typeof prenom === 'string' && prenom.trim()) ? prenom.trim() : '';
@@ -118,6 +234,7 @@ export async function loginUser(prenom, password) {
     const err = await res.json().catch(() => ({}));
     throw new Error(err.detail || 'Erreur lors de la connexion');
   }
+  invalidateApiCache();
   return res.json();
 }
 
@@ -135,20 +252,24 @@ export async function requestPasswordReset(prenom) {
   return res.json();
 }
 
-export async function fetchUsers() {
-  const res = await fetch(`${API_BASE}/users`, {
-    headers: getAuthHeaders()
-  });
-  if (!res.ok) throw new Error('Erreur lors du chargement des utilisateurs');
-  return res.json();
+export async function fetchUsers(options = {}) {
+  return swrFetch('users', async () => {
+    const res = await fetch(`${API_BASE}/users`, {
+      headers: getAuthHeaders()
+    });
+    if (!res.ok) throw new Error('Erreur lors du chargement des utilisateurs');
+    return res.json();
+  }, { ttl: 300000, forceRefresh: options?.forceRefresh });
 }
 
-export async function fetchProperties() {
-  const res = await fetch(`${API_BASE}/properties`, {
-    headers: getAuthHeaders()
-  });
-  if (!res.ok) throw new Error('Erreur lors du chargement des propriétés');
-  return res.json();
+export async function fetchProperties(options = {}) {
+  return swrFetch('properties', async () => {
+    const res = await fetch(`${API_BASE}/properties`, {
+      headers: getAuthHeaders()
+    });
+    if (!res.ok) throw new Error('Erreur lors du chargement des propriétés');
+    return res.json();
+  }, { ttl: 300000, forceRefresh: options?.forceRefresh });
 }
 
 
@@ -230,17 +351,21 @@ export async function addIssueComment(issueId, data) {
 
 
 // Reservations
-export async function fetchReservations(params = {}) {
+export async function fetchReservations(params = {}, options = {}) {
   const query = new URLSearchParams();
   if (params.property_id) query.append('property_id', params.property_id);
   if (params.year) query.append('year', params.year);
   if (params.status && params.status !== 'Tous') query.append('status', params.status);
+  const qStr = query.toString();
+  const cacheKey = `reservations${qStr ? `?${qStr}` : ''}`;
 
-  const res = await fetch(`${API_BASE}/reservations?${query.toString()}`, {
-    headers: getAuthHeaders()
-  });
-  if (!res.ok) throw new Error('Erreur lors de la récupération des réservations');
-  return res.json();
+  return swrFetch(cacheKey, async () => {
+    const res = await fetch(`${API_BASE}/reservations?${qStr}`, {
+      headers: getAuthHeaders()
+    });
+    if (!res.ok) throw new Error('Erreur lors de la récupération des réservations');
+    return res.json();
+  }, { ttl: 30000, forceRefresh: options?.forceRefresh });
 }
 
 export async function createReservation(data) {
@@ -253,6 +378,7 @@ export async function createReservation(data) {
     const err = await res.json().catch(() => ({}));
     throw new Error(err.detail || 'Erreur lors de la réservation');
   }
+  invalidateApiCache('reservations');
   return res.json();
 }
 
@@ -263,6 +389,7 @@ export async function updateReservation(resId, data) {
     body: JSON.stringify(data),
   });
   if (!res.ok) throw new Error('Erreur lors de la mise à jour de la réservation');
+  invalidateApiCache('reservations');
   return res.json();
 }
 
@@ -272,21 +399,26 @@ export async function deleteReservation(resId) {
     headers: getAuthHeaders()
   });
   if (!res.ok) throw new Error('Erreur lors de la suppression de la réservation');
+  invalidateApiCache('reservations');
   return true;
 }
 
 
 // Projects & Voting System
-export async function fetchProjects(params = {}) {
+export async function fetchProjects(params = {}, options = {}) {
   const query = new URLSearchParams();
   if (params.property_id) query.append('property_id', params.property_id);
   if (params.status && params.status !== 'Tous') query.append('status', params.status);
+  const qStr = query.toString();
+  const cacheKey = `projects${qStr ? `?${qStr}` : ''}`;
 
-  const res = await fetch(`${API_BASE}/projects?${query.toString()}`, {
-    headers: getAuthHeaders()
-  });
-  if (!res.ok) throw new Error('Erreur lors de la récupération des projets');
-  return res.json();
+  return swrFetch(cacheKey, async () => {
+    const res = await fetch(`${API_BASE}/projects?${qStr}`, {
+      headers: getAuthHeaders()
+    });
+    if (!res.ok) throw new Error('Erreur lors de la récupération des projets');
+    return res.json();
+  }, { ttl: 25000, forceRefresh: options?.forceRefresh });
 }
 
 export async function createProject(data) {
@@ -299,6 +431,7 @@ export async function createProject(data) {
     const err = await res.json().catch(() => ({}));
     throw new Error(err.detail || 'Erreur lors de la création du projet');
   }
+  invalidateApiCache('projects');
   return res.json();
 }
 
@@ -312,6 +445,7 @@ export async function reviewProject(projectId, data) {
     const err = await res.json().catch(() => ({}));
     throw new Error(err.detail || 'Erreur lors de la révision du projet');
   }
+  invalidateApiCache('projects');
   return res.json();
 }
 
@@ -356,6 +490,7 @@ export async function approveProjectByCoordinator(projectId, approvalData) {
     const err = await res.json().catch(() => ({}));
     throw new Error(err.detail || 'Erreur lors de l\'approbation du projet par le coordinateur');
   }
+  invalidateApiCache('projects');
   return res.json();
 }
 
@@ -369,6 +504,7 @@ export async function castProjectVote(projectId, data) {
     const err = await res.json().catch(() => ({}));
     throw new Error(err.detail || 'Erreur lors de l\'enregistrement du vote');
   }
+  invalidateApiCache('projects');
   return res.json();
 }
 
@@ -402,6 +538,7 @@ export async function deleteProject(projectId) {
     const err = await res.json().catch(() => ({}));
     throw new Error(err.detail || 'Erreur lors de la suppression du projet');
   }
+  invalidateApiCache('projects');
   return true;
 }
 
@@ -639,17 +776,21 @@ export async function fetchMemberCurrentStayTasks(userName) {
   return res.json();
 }
 
-export async function fetchTasks(params = {}) {
+export async function fetchTasks(params = {}, options = {}) {
   const query = new URLSearchParams();
   if (params.user_name) query.append('user_name', params.user_name);
   if (params.property_id) query.append('property_id', params.property_id);
   if (params.category) query.append('category', params.category);
+  const qStr = query.toString();
+  const cacheKey = `tasks${qStr ? `?${qStr}` : ''}`;
 
-  const res = await fetch(`${API_BASE}/tasks?${query.toString()}`, {
-    headers: getAuthHeaders()
-  });
-  if (!res.ok) throw new Error('Erreur lors du chargement des tâches');
-  return res.json();
+  return swrFetch(cacheKey, async () => {
+    const res = await fetch(`${API_BASE}/tasks?${qStr}`, {
+      headers: getAuthHeaders()
+    });
+    if (!res.ok) throw new Error('Erreur lors du chargement des tâches');
+    return res.json();
+  }, { ttl: 20000, forceRefresh: options?.forceRefresh });
 }
 
 export async function createTask(taskData) {
@@ -662,6 +803,7 @@ export async function createTask(taskData) {
     const err = await res.json().catch(() => ({}));
     throw new Error(err.detail || 'Erreur lors de la création de la tâche');
   }
+  invalidateApiCache('tasks');
   return res.json();
 }
 
@@ -714,15 +856,17 @@ export async function deleteVademecumItem(itemId) {
 
 
 // Heating & ViCare System
-export async function fetchHeatingStatus() {
-  const res = await fetch(`${API_BASE}/heating/status`, {
-    headers: getAuthHeaders()
-  });
-  if (!res.ok) {
-    const err = await res.json().catch(() => ({}));
-    throw new Error(err.detail || 'Erreur lors de la récupération du statut du chauffage ViCare');
-  }
-  return res.json();
+export async function fetchHeatingStatus(options = {}) {
+  return swrFetch('heating_status', async () => {
+    const res = await fetch(`${API_BASE}/heating/status`, {
+      headers: getAuthHeaders()
+    });
+    if (!res.ok) {
+      const err = await res.json().catch(() => ({}));
+      throw new Error(err.detail || 'Erreur lors de la récupération du statut du chauffage ViCare');
+    }
+    return res.json();
+  }, { ttl: 30000, forceRefresh: options?.forceRefresh });
 }
 
 export async function setHeatingMode(mode) {
@@ -735,6 +879,7 @@ export async function setHeatingMode(mode) {
     const err = await res.json().catch(() => ({}));
     throw new Error(err.detail || 'Erreur lors du changement de mode de chauffage ViCare');
   }
+  invalidateApiCache('heating');
   return res.json();
 }
 
@@ -748,6 +893,7 @@ export async function setHeatingTemperature(target_temperature) {
     const err = await res.json().catch(() => ({}));
     throw new Error(err.detail || 'Erreur lors du changement de température ViCare');
   }
+  invalidateApiCache('heating');
   return res.json();
 }
 
@@ -761,12 +907,14 @@ export async function fetchStats() {
 }
 
 // Auth Current User
-export async function fetchCurrentUser() {
-  const res = await fetch(`${API_BASE}/auth/me`, {
-    headers: getAuthHeaders()
-  });
-  if (!res.ok) throw new Error('Erreur lors de la récupération du profil');
-  return res.json();
+export async function fetchCurrentUser(options = {}) {
+  return swrFetch('current_user', async () => {
+    const res = await fetch(`${API_BASE}/auth/me`, {
+      headers: getAuthHeaders()
+    });
+    if (!res.ok) throw new Error('Erreur lors de la récupération du profil');
+    return res.json();
+  }, { ttl: 60000, forceRefresh: options?.forceRefresh });
 }
 
 // Rooms
@@ -806,6 +954,7 @@ export async function updateTask(taskId, data) {
     const err = await res.json().catch(() => ({}));
     throw new Error(err.detail || 'Erreur lors de la mise à jour de la tâche');
   }
+  invalidateApiCache('tasks');
   return res.json();
 }
 
@@ -819,6 +968,7 @@ export async function closeTask(taskId, completionData) {
     const err = await res.json().catch(() => ({}));
     throw new Error(err.detail || 'Erreur lors de la clôture de la tâche');
   }
+  invalidateApiCache('tasks');
   return res.json();
 }
 
@@ -831,6 +981,7 @@ export async function validateTask(taskId) {
     const err = await res.json().catch(() => ({}));
     throw new Error(err.detail || 'Erreur lors de la validation de la tâche');
   }
+  invalidateApiCache('tasks');
   return res.json();
 }
 
@@ -844,6 +995,7 @@ export async function invalidateTask(taskId, explanation = '') {
     const err = await res.json().catch(() => ({}));
     throw new Error(err.detail || 'Erreur lors de l\'invalidation de la tâche');
   }
+  invalidateApiCache('tasks');
   return res.json();
 }
 
@@ -853,6 +1005,7 @@ export async function deleteTask(taskId) {
     headers: getAuthHeaders()
   });
   if (!res.ok) throw new Error('Erreur lors de la suppression de la tâche');
+  invalidateApiCache('tasks');
   return true;
 }
 
@@ -895,36 +1048,40 @@ export const fetchTaskMessages = fetchTaskComments;
 export const addTaskMessage = addTaskComment;
 
 // Piscine Telemetry
-export async function fetchPiscineStatus() {
-  try {
-    const res = await fetch(`${API_BASE}/pool/status`, {
+export async function fetchPiscineStatus(options = {}) {
+  return swrFetch('pool_status', async () => {
+    try {
+      const res = await fetch(`${API_BASE}/pool/status`, {
+        headers: getAuthHeaders()
+      });
+      if (res.ok) return await res.json();
+    } catch (_) {}
+    const res = await fetch(`${API_BASE}/piscine/status?live=true`, {
       headers: getAuthHeaders()
     });
-    if (res.ok) return await res.json();
-  } catch (_) {}
-  const res = await fetch(`${API_BASE}/piscine/status?live=true`, {
-    headers: getAuthHeaders()
-  });
-  if (!res.ok) throw new Error('Erreur lors de la récupération du statut piscine');
-  return res.json();
+    if (!res.ok) throw new Error('Erreur lors de la récupération du statut piscine');
+    return res.json();
+  }, { ttl: 30000, forceRefresh: options?.forceRefresh });
 }
 
 // Open Banking DSP2 (Enable Banking & Swan France)
-export async function fetchBankStatus() {
-  const res = await fetch(`${API_BASE}/banking/status`, {
-    headers: getAuthHeaders()
-  });
-  if (!res.ok) {
-    let detail = '';
-    try {
-      const err = await res.json();
-      detail = err.detail || err.message;
-    } catch {
-      try { detail = (await res.text()).slice(0, 150); } catch {}
+export async function fetchBankStatus(options = {}) {
+  return swrFetch('bank_status', async () => {
+    const res = await fetch(`${API_BASE}/banking/status`, {
+      headers: getAuthHeaders()
+    });
+    if (!res.ok) {
+      let detail = '';
+      try {
+        const err = await res.json();
+        detail = err.detail || err.message;
+      } catch {
+        try { detail = (await res.text()).slice(0, 150); } catch {}
+      }
+      throw new Error(detail || `Erreur lors de la récupération du statut bancaire (HTTP ${res.status})`);
     }
-    throw new Error(detail || `Erreur lors de la récupération du statut bancaire (HTTP ${res.status})`);
-  }
-  return res.json();
+    return res.json();
+  }, { ttl: 60000, forceRefresh: options?.forceRefresh });
 }
 
 export async function fetchBankAccounts() {

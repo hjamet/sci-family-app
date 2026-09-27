@@ -8,13 +8,13 @@ import {
   CheckCircle2, AlertTriangle, RefreshCw, Droplets, X,
   Minus, Plus, Lock, ShieldCheck, Waves, Info, Gauge, Activity, Radio
 } from 'lucide-react';
-import { fetchHeatingStatus, setHeatingMode, setHeatingTemperature, saveHeatingSettings, fetchPiscineStatus } from '../api';
+import { fetchHeatingStatus, setHeatingMode, setHeatingTemperature, saveHeatingSettings, fetchPiscineStatus, getCachedData } from '../api';
 import { ThermalMetricSkeleton } from '../components/SkeletonLoaders';
 
 export default function HeatingPage({ currentUser }) {
-  const [status, setStatus] = useState(null);
-  const [poolStatus, setPoolStatus] = useState(null);
-  const [loading, setLoading] = useState(true);
+  const [status, setStatus] = useState(() => getCachedData('heating_status') || null);
+  const [poolStatus, setPoolStatus] = useState(() => getCachedData('pool_status') || null);
+  const [loading, setLoading] = useState(() => !getCachedData('heating_status'));
   const [errorMsg, setErrorMsg] = useState(null);
   const [updating, setUpdating] = useState(false);
 
@@ -23,37 +23,45 @@ export default function HeatingPage({ currentUser }) {
   const isCoordinator = Boolean(currentUser?.is_coordinator);
 
   // Target temperature slider/stepper state (12°C - 24°C)
-  const [sliderTemp, setSliderTemp] = useState(19.0);
+  const [sliderTemp, setSliderTemp] = useState(() => {
+    const cached = getCachedData('heating_status');
+    return cached?.target_temperature != null ? cached.target_temperature : 19.0;
+  });
 
   // Confirmation Modal State for ViCare API calls
   const [pendingAction, setPendingAction] = useState(null);
 
   const loadStatus = async () => {
     try {
-      setLoading(true);
+      if (!status) setLoading(true);
       setErrorMsg(null);
-      const [data, pData] = await Promise.all([
-        fetchHeatingStatus().catch(err => { throw err; }),
-        fetchPiscineStatus().catch(err => {
-          console.warn('Piscine telemetry load error:', err);
-          return null;
-        })
+      const [heatResult, poolResult] = await Promise.allSettled([
+        fetchHeatingStatus(),
+        fetchPiscineStatus(),
       ]);
-      if (data && data.error) {
-        throw new Error(data.error);
+
+      if (heatResult.status === 'fulfilled' && heatResult.value && !heatResult.value.error) {
+        setStatus(heatResult.value);
+        if (heatResult.value?.target_temperature != null) {
+          const clamped = Math.min(24.0, Math.max(12.0, heatResult.value.target_temperature));
+          setSliderTemp(clamped);
+        }
+      } else {
+        const errVal = heatResult.status === 'rejected' ? heatResult.reason : heatResult.value?.error;
+        console.warn('Notice chauffage ViCare:', errVal);
+        if (!status) {
+          setErrorMsg(errVal?.message || String(errVal) || 'Impossible de contacter la chaudière ViCare');
+        }
       }
-      setStatus(data);
-      if (pData) {
-        setPoolStatus(pData);
-      }
-      if (data?.target_temperature != null) {
-        const clamped = Math.min(24.0, Math.max(12.0, data.target_temperature));
-        setSliderTemp(clamped);
+
+      if (poolResult.status === 'fulfilled' && poolResult.value) {
+        setPoolStatus(poolResult.value);
       }
     } catch (err) {
       console.error('Error fetching heating status:', err);
-      setErrorMsg(err.message || String(err) || 'Impossible de contacter la chaudière ViCare');
-      setStatus(null);
+      if (!status) {
+        setErrorMsg(err.message || String(err) || 'Impossible de contacter la chaudière ViCare');
+      }
     } finally {
       setLoading(false);
     }

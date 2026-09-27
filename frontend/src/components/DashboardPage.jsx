@@ -1,6 +1,17 @@
 import React, { useState, useEffect, useCallback } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { fetchProjects, fetchReservations, fetchTasks, validateTask, invalidateTask } from '../api';
+import {
+  fetchProjects,
+  fetchReservations,
+  fetchTasks,
+  fetchProperties,
+  fetchPiscineStatus,
+  fetchHeatingStatus,
+  fetchBankStatus,
+  validateTask,
+  invalidateTask,
+  getCachedData,
+} from '../api';
 import TaskDetailModal from './TaskDetailModal';
 import VoteRoofModal from './VoteRoofModal';
 import { extractParticipants } from '../pages/CalendarPage';
@@ -72,10 +83,22 @@ export default function DashboardPage({
   onOpenBooking,
 }) {
   const navigate = useNavigate();
-  const [projects, setProjects] = useState([]);
-  const [reservations, setReservations] = useState([]);
-  const [tasks, setTasks] = useState([]);
-  const [loading, setLoading] = useState(true);
+
+  // Cache local SWR (Stale-While-Revalidate) : affichage instantané dès l'arrivée (< 16ms)
+  const [projects, setProjects] = useState(() => getCachedData('projects') || []);
+  const [reservations, setReservations] = useState(() => getCachedData('reservations') || []);
+  const [tasks, setTasks] = useState(() => getCachedData('tasks') || []);
+  const [poolStatus, setPoolStatus] = useState(() => getCachedData('pool_status') || null);
+  const [heatingStatus, setHeatingStatus] = useState(() => getCachedData('heating_status') || null);
+  const [bankStatus, setBankStatus] = useState(() => getCachedData('bank_status') || null);
+
+  // États de chargement progressifs et indépendants par bloc fonctionnel
+  const [loadingProjects, setLoadingProjects] = useState(() => !getCachedData('projects'));
+  const [loadingReservations, setLoadingReservations] = useState(() => !getCachedData('reservations'));
+  const [loadingTasks, setLoadingTasks] = useState(() => !getCachedData('tasks'));
+
+  const loading = loadingProjects && loadingReservations && loadingTasks;
+
   const [inspectingTask, setInspectingTask] = useState(null);
   const [isTaskModalOpen, setIsTaskModalOpen] = useState(false);
   const [isTaskEditingDirect, setIsTaskEditingDirect] = useState(false);
@@ -124,22 +147,78 @@ export default function DashboardPage({
     ? (currentUser?.prenom || 'Henri')
     : (currentUser ? currentUser.split(' ')[0] : 'Henri');
 
-  const loadDashboardData = useCallback(async () => {
-    try {
-      setLoading(true);
-      const [projData, resData, taskData] = await Promise.all([
-        fetchProjects().catch(() => []),
-        fetchReservations().catch(() => []),
-        fetchTasks().catch(() => []),
-      ]);
-      setProjects(projData || []);
-      setReservations(resData || []);
-      setTasks(taskData || []);
-    } catch (err) {
-      console.error('Erreur chargement dashboard:', err);
-    } finally {
-      setLoading(false);
-    }
+  const loadDashboardData = useCallback(async (options = {}) => {
+    // Parallélisation stricte Promise.allSettled
+    // Affichage progressif non-bloquant : chaque promesse peuple sa vue dès réception
+    const projPromise = fetchProjects({}, options)
+      .then((data) => {
+        setProjects(Array.isArray(data) ? data : []);
+        setLoadingProjects(false);
+        return data;
+      })
+      .catch((err) => {
+        console.warn('Erreur chargement projets:', err);
+        setLoadingProjects(false);
+        return [];
+      });
+
+    const resPromise = fetchReservations({}, options)
+      .then((data) => {
+        setReservations(Array.isArray(data) ? data : []);
+        setLoadingReservations(false);
+        return data;
+      })
+      .catch((err) => {
+        console.warn('Erreur chargement réservations:', err);
+        setLoadingReservations(false);
+        return [];
+      });
+
+    const taskPromise = fetchTasks({}, options)
+      .then((data) => {
+        setTasks(Array.isArray(data) ? data : []);
+        setLoadingTasks(false);
+        return data;
+      })
+      .catch((err) => {
+        console.warn('Erreur chargement tâches:', err);
+        setLoadingTasks(false);
+        return [];
+      });
+
+    const poolPromise = fetchPiscineStatus(options)
+      .then((data) => {
+        setPoolStatus(data || null);
+        return data;
+      })
+      .catch(() => null);
+
+    const heatPromise = fetchHeatingStatus(options)
+      .then((data) => {
+        setHeatingStatus(data || null);
+        return data;
+      })
+      .catch(() => null);
+
+    const bankPromise = fetchBankStatus(options)
+      .then((data) => {
+        setBankStatus(data || null);
+        return data;
+      })
+      .catch(() => null);
+
+    const propPromise = fetchProperties(options)
+      .catch(() => null);
+
+    await Promise.allSettled([
+      projPromise,
+      resPromise,
+      taskPromise,
+      poolPromise,
+      heatPromise,
+      bankPromise,
+      propPromise,
+    ]);
   }, []);
 
   useEffect(() => {
@@ -212,7 +291,7 @@ export default function DashboardPage({
   const handleValidateTask = async (taskId) => {
     try {
       await validateTask(taskId);
-      await loadDashboardData();
+      await loadDashboardData({ forceRefresh: true });
     } catch (err) {
       console.error('Erreur validation tâche:', err);
       alert(err.message || 'Erreur lors de la validation');
@@ -224,7 +303,7 @@ export default function DashboardPage({
     if (reason === null) return;
     try {
       await invalidateTask(taskId, reason);
-      await loadDashboardData();
+      await loadDashboardData({ forceRefresh: true });
     } catch (err) {
       console.error('Erreur invalidation tâche:', err);
       alert(err.message || "Erreur lors de l'invalidation");
@@ -384,7 +463,9 @@ export default function DashboardPage({
               <span className="material-symbols-outlined text-[28px]">folder_shared</span>
             </div>
             <span className="opacity-0 group-hover:opacity-100 transition-opacity duration-200 pointer-events-none group-hover:pointer-events-auto inline-flex items-center gap-1 text-[11px] font-semibold uppercase tracking-wider px-2.5 py-1 rounded-full bg-white/15 backdrop-blur-sm text-blue-100">
-              Statuts & CCA
+              {bankStatus?.total_balance !== undefined && bankStatus?.total_balance !== null
+                ? `Trésorerie : ${Math.round(bankStatus.total_balance).toLocaleString('fr-FR')} €`
+                : 'Statuts & CCA'}
             </span>
           </div>
           <div className="relative z-10 mt-3">
@@ -445,7 +526,9 @@ export default function DashboardPage({
               className="opacity-0 group-hover:opacity-100 transition-opacity duration-200 pointer-events-none group-hover:pointer-events-auto inline-flex items-center gap-1 text-[11px] font-semibold uppercase tracking-wider px-2.5 py-1 rounded-full bg-white/15 backdrop-blur-sm text-teal-100 hover:bg-white/30 cursor-pointer"
               title="Consulter la télémesure & chauffage ViCare"
             >
-              Guide & Énergie
+              {heatingStatus?.target_temperature != null
+                ? `Chauffage ${heatingStatus.target_temperature}°C${poolStatus?.temperature != null ? ` • Bassin ${poolStatus.temperature}°C` : ''}`
+                : 'Guide & Énergie'}
             </span>
           </div>
           <div className="relative z-10 mt-3">
@@ -488,12 +571,12 @@ export default function DashboardPage({
               onClick={() => navigateTo('/taches')}
               className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-DEFAULT bg-white border-2 border-outline-variant text-on-surface-variant font-label-sm text-xs font-semibold hover:border-outline hover:bg-canvas-slate transition-colors shadow-sm cursor-pointer"
             >
-              Tous les votes {loading ? '' : `(${projects.length})`}
+              Tous les votes {loadingProjects ? '' : `(${projects.length})`}
             </button>
           </div>
         </div>
 
-        {loading ? (
+        {loadingProjects ? (
           <VoteCardSkeleton />
         ) : activeVote ? (
           <article
@@ -638,7 +721,7 @@ export default function DashboardPage({
             </p>
           </div>
 
-          {loading ? (
+          {loadingReservations ? (
             <CompactStaySkeleton count={3} />
           ) : displayedStays.length > 0 ? (
             <div className="flex flex-col space-y-3 max-h-[390px] overflow-y-auto pr-1">
@@ -772,7 +855,7 @@ export default function DashboardPage({
               </div>
               <span className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full bg-sage-soft text-primary font-label-sm text-xs font-semibold">
                 <span className="w-1.5 h-1.5 rounded-full bg-primary animate-pulse"></span>
-                {loading ? (
+                {loadingTasks ? (
                   <span className="w-16 h-3 bg-primary/20 rounded animate-pulse inline-block"></span>
                 ) : (
                   `${myTasks.length} Tâche${myTasks.length > 1 ? 's' : ''} active${myTasks.length > 1 ? 's' : ''}`
@@ -787,7 +870,7 @@ export default function DashboardPage({
             </p>
           </div>
 
-          {loading ? (
+          {loadingTasks ? (
             <div className="flex flex-col space-y-space-sm">
               <CardSkeleton className="p-4" />
               <CardSkeleton className="p-4" />
@@ -991,7 +1074,7 @@ export default function DashboardPage({
           }}
           currentUser={currentUser}
           onTaskUpdated={() => {
-            loadDashboardData();
+            loadDashboardData({ forceRefresh: true });
           }}
         />
       )}
@@ -1003,7 +1086,7 @@ export default function DashboardPage({
         currentUser={currentUser}
         project={activeVote}
         onVoteSubmit={() => {
-          loadDashboardData();
+          loadDashboardData({ forceRefresh: true });
         }}
       />
 
