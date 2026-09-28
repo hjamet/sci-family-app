@@ -413,6 +413,7 @@ class ProjectCreate(BaseModel):
     decision_mode: Optional[str] = None
     status: Optional[str] = None
     options: Optional[List[str]] = []
+    allow_multiple_choices: Optional[bool] = False
 
 class ProjectApprove(BaseModel):
     estimated_cost: Optional[float] = 0.0
@@ -444,10 +445,11 @@ class ProjectReview(BaseModel):
     completion_notes: Optional[str] = None
     completion_docs: Optional[List[str]] = None
     options: Optional[List[str]] = None
+    allow_multiple_choices: Optional[bool] = None
 
 class ProjectVoteCreate(BaseModel):
     user_name: str
-    vote: str  # OUI, NON, ABSTENTION, BLANC, REPORT_PROCHAINE_AG, POUR, CONTRE, or custom option text
+    vote: Union[str, List[str]]  # OUI, NON, ABSTENTION, BLANC, REPORT_PROCHAINE_AG, POUR, CONTRE, custom option text, or list of options
     comment: Optional[str] = None
 
 class ProjectVoteResponse(BaseModel):
@@ -485,6 +487,7 @@ class ProjectResponse(BaseModel):
     completion_notes: Optional[str] = None
     completion_docs: Optional[List[str]] = []
     options: Optional[List[str]] = []
+    allow_multiple_choices: Optional[bool] = False
     created_at: datetime
     updated_at: datetime
     property: Optional[PropertyResponse] = None

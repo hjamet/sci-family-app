@@ -44,6 +44,47 @@ export const extractVoteChoice = (v) => {
 };
 
 /**
+ * Extraction et normalisation en tableau des choix de vote (support choix unique & multiple)
+ */
+export const parseVotesArray = (raw) => {
+  if (!raw || raw === 'EN_ATTENTE') return [];
+  if (Array.isArray(raw)) return raw.filter(Boolean);
+  if (typeof raw === 'object' && raw !== null) {
+    const val = raw.vote ?? raw.choice ?? raw.value;
+    return parseVotesArray(val);
+  }
+  if (typeof raw === 'string') {
+    const trimmed = raw.trim();
+    if (!trimmed || trimmed === 'EN_ATTENTE') return [];
+    if (trimmed.startsWith('[') && trimmed.endsWith(']')) {
+      try {
+        const parsed = JSON.parse(trimmed);
+        if (Array.isArray(parsed)) return parsed.filter(Boolean);
+      } catch (_) {}
+    }
+    return [trimmed];
+  }
+  return [];
+};
+
+/**
+ * Vérifie si un vote (unique ou tableau) contient une option donnée
+ */
+export const hasVotedForOption = (associateVote, optValue) => {
+  const votes = parseVotesArray(associateVote);
+  const target = String(optValue).trim().toUpperCase();
+  return votes.some(v => {
+    const vStr = String(v).trim().toUpperCase();
+    if (vStr === target) return true;
+    if (['POUR', 'OUI'].includes(target) && ['POUR', 'OUI'].includes(vStr)) return true;
+    if (['CONTRE', 'NON'].includes(target) && ['CONTRE', 'NON'].includes(vStr)) return true;
+    if (['BLANC', 'ABSTENTION'].includes(target) && ['BLANC', 'ABSTENTION'].includes(vStr)) return true;
+    if (['REPORT_AG', 'REPORT_PROCHAINE_AG', 'DEMANDE_AG', 'REPORT AG'].includes(target) && ['REPORT_AG', 'REPORT_PROCHAINE_AG', 'DEMANDE_AG', 'REPORT AG'].includes(vStr)) return true;
+    return false;
+  });
+};
+
+/**
  * Résolution de l'associé statutaire correspondant à un votant
  */
 export const matchAssociate = (voterIdentifier) => {
@@ -157,6 +198,7 @@ const REPORT_AG_COLOR_PALETTE = {
 /**
  * Composant Sondage Style WhatsApp
  * Affiche chaque option avec barre de progression proportionnelle, nombre de voix et avatars des votants.
+ * Conforme aux annotations 2, 3 et 11.
  */
 export default function WhatsAppPollView({
   project,
@@ -165,13 +207,14 @@ export default function WhatsAppPollView({
   onCastVote = null,
   isVotingDisabled = false,
   compact = false,
-  showPendingVoters = true,
-  showQuorumNotice = true,
 }) {
   const currentUserName = typeof currentUser === 'string'
     ? currentUser
     : (currentUser?.name || currentUser?.prenom || 'Henri Jamet');
   const currentUserLower = currentUserName.toLowerCase();
+
+  // Mode choix unique vs choix multiples (Annotation 11)
+  const allowMultipleChoices = Boolean(project?.allow_multiple_choices);
 
   // 1. Extraire les votes réels
   const rawVotesList = Array.isArray(project?.votes) ? project.votes : [];
@@ -218,14 +261,12 @@ export default function WhatsAppPollView({
     return { ...assoc, vote: 'EN_ATTENTE', date: null };
   });
 
-  // Associe connecté
+  // Associé connecté
   const currentAssociate = associatesWithVotes.find(a => {
     const aName = a.name.toLowerCase();
     const aFirst = a.firstName.toLowerCase();
     return currentUserLower.includes(aFirst) || currentUserLower.includes(aName) || aName.includes(currentUserLower);
   }) || associatesWithVotes[0];
-
-  const currentUserVoteChoice = currentAssociate?.vote !== 'EN_ATTENTE' ? currentAssociate?.vote : null;
 
   // 3. Définir les options du scrutin
   const customOptions = (() => {
@@ -252,10 +293,7 @@ export default function WhatsAppPollView({
   if (isCustom) {
     customOptions.forEach((optText, idx) => {
       const palette = OPTION_COLOR_PALETTES[idx % OPTION_COLOR_PALETTES.length];
-      const voters = associatesWithVotes.filter(a => {
-        const v = String(a.vote || '').trim();
-        return v && v.toUpperCase() === String(optText).trim().toUpperCase();
-      });
+      const voters = associatesWithVotes.filter(a => hasVotedForOption(a.vote, optText));
       pollOptions.push({
         id: optText,
         voteValue: optText,
@@ -267,8 +305,8 @@ export default function WhatsAppPollView({
       });
     });
 
-    // Options statutaires complémentaires pour scrutin à choix multiple
-    const blancVoters = associatesWithVotes.filter(a => ['BLANC', 'ABSTENTION'].includes(String(a.vote || '').toUpperCase()));
+    // Options statutaires complémentaires pour scrutin à options
+    const blancVoters = associatesWithVotes.filter(a => hasVotedForOption(a.vote, 'BLANC'));
     pollOptions.push({
       id: 'BLANC',
       voteValue: 'BLANC',
@@ -279,9 +317,7 @@ export default function WhatsAppPollView({
       count: blancVoters.length,
     });
 
-    const reportAgVoters = associatesWithVotes.filter(a =>
-      ['REPORT_AG', 'REPORT_PROCHAINE_AG', 'DEMANDE_AG', 'REPORT AG'].includes(String(a.vote || '').toUpperCase())
-    );
+    const reportAgVoters = associatesWithVotes.filter(a => hasVotedForOption(a.vote, 'REPORT_AG'));
     pollOptions.push({
       id: 'REPORT_AG',
       voteValue: 'REPORT_AG',
@@ -294,7 +330,7 @@ export default function WhatsAppPollView({
     });
   } else {
     // Scrutin standard Pour / Contre / Abstention / Report AG
-    const pourVoters = associatesWithVotes.filter(a => ['POUR', 'OUI'].includes(String(a.vote || '').toUpperCase()));
+    const pourVoters = associatesWithVotes.filter(a => hasVotedForOption(a.vote, 'POUR'));
     pollOptions.push({
       id: 'POUR',
       voteValue: 'POUR',
@@ -305,7 +341,7 @@ export default function WhatsAppPollView({
       count: pourVoters.length,
     });
 
-    const contreVoters = associatesWithVotes.filter(a => ['CONTRE', 'NON'].includes(String(a.vote || '').toUpperCase()));
+    const contreVoters = associatesWithVotes.filter(a => hasVotedForOption(a.vote, 'CONTRE'));
     pollOptions.push({
       id: 'CONTRE',
       voteValue: 'CONTRE',
@@ -316,7 +352,7 @@ export default function WhatsAppPollView({
       count: contreVoters.length,
     });
 
-    const absVoters = associatesWithVotes.filter(a => ['ABSTENTION', 'BLANC'].includes(String(a.vote || '').toUpperCase()));
+    const absVoters = associatesWithVotes.filter(a => hasVotedForOption(a.vote, 'ABSTENTION'));
     pollOptions.push({
       id: 'ABSTENTION',
       voteValue: 'ABSTENTION',
@@ -327,9 +363,7 @@ export default function WhatsAppPollView({
       count: absVoters.length,
     });
 
-    const reportAgVoters = associatesWithVotes.filter(a =>
-      ['REPORT_AG', 'REPORT_PROCHAINE_AG', 'DEMANDE_AG', 'REPORT AG'].includes(String(a.vote || '').toUpperCase())
-    );
+    const reportAgVoters = associatesWithVotes.filter(a => hasVotedForOption(a.vote, 'REPORT_AG'));
     pollOptions.push({
       id: 'REPORT_AG',
       voteValue: 'REPORT_AG',
@@ -342,32 +376,48 @@ export default function WhatsAppPollView({
     });
   }
 
-  // 4. Statistiques globales
+  // Total des associés statutaires
   const totalAssociates = 7;
-  const totalVotesCast = pollOptions.reduce((acc, opt) => acc + opt.count, 0);
-  const participationPct = Math.round((totalVotesCast / totalAssociates) * 100);
 
-  // Associés encore en attente
-  const pendingAssociates = associatesWithVotes.filter(a => !a.vote || a.vote === 'EN_ATTENTE');
+  // Gestion du clic de vote (Annotation 11 : Choix unique vs Choix multiples)
+  const handleOptionClick = (clickedOptValue) => {
+    if (isVotingDisabled || typeof onCastVote !== 'function') return;
 
-  // Détection du quorum et du report AG
-  const reportAgCount = pollOptions.find(o => o.id === 'REPORT_AG')?.count || 0;
-  const pourCount = pollOptions.find(o => o.id === 'POUR')?.count || 0;
-  const isAgRequested = reportAgCount > 0;
-  const isMajorityReached = pourCount >= 4;
+    if (!allowMultipleChoices) {
+      // Choix unique : sélectionne cette option exclusivement
+      onCastVote(clickedOptValue);
+    } else {
+      // Choix multiples : toggle de l'option cliquée
+      const currentChoices = parseVotesArray(currentAssociate?.vote);
+      const isAlreadySelected = currentChoices.some(
+        c => String(c).trim().toUpperCase() === String(clickedOptValue).trim().toUpperCase()
+      );
+      let updatedChoices;
+      if (isAlreadySelected) {
+        updatedChoices = currentChoices.filter(
+          c => String(c).trim().toUpperCase() !== String(clickedOptValue).trim().toUpperCase()
+        );
+      } else {
+        updatedChoices = [...currentChoices, clickedOptValue];
+      }
+      onCastVote(updatedChoices);
+    }
+  };
 
   return (
-    <div className={`flex flex-col gap-3 w-full ${compact ? 'text-xs' : 'text-sm'}`}>
+    <div className={`flex flex-col gap-2.5 w-full ${compact ? 'text-xs' : 'text-sm'}`}>
+      {/* Indication subtile du mode de réponse si choix multiples */}
+      {allowMultipleChoices && (
+        <div className="flex items-center gap-1.5 text-[11px] text-slate-500 dark:text-slate-400 font-medium px-1">
+          <span className="material-symbols-outlined text-[15px] text-emerald-600">checklist</span>
+          <span>Sélectionnez une ou plusieurs options</span>
+        </div>
+      )}
+
       {/* Liste des options style Sondage WhatsApp */}
       <div className="flex flex-col gap-2.5">
         {pollOptions.map((opt) => {
-          const isSelectedByCurrentUser = currentUserVoteChoice && (
-            currentUserVoteChoice.toUpperCase() === opt.voteValue.toUpperCase() ||
-            (['POUR', 'OUI'].includes(currentUserVoteChoice.toUpperCase()) && ['POUR', 'OUI'].includes(opt.voteValue.toUpperCase())) ||
-            (['CONTRE', 'NON'].includes(currentUserVoteChoice.toUpperCase()) && ['CONTRE', 'NON'].includes(opt.voteValue.toUpperCase())) ||
-            (['BLANC', 'ABSTENTION'].includes(currentUserVoteChoice.toUpperCase()) && ['BLANC', 'ABSTENTION'].includes(opt.voteValue.toUpperCase())) ||
-            (['REPORT_AG', 'REPORT_PROCHAINE_AG', 'DEMANDE_AG'].includes(currentUserVoteChoice.toUpperCase()) && ['REPORT_AG', 'REPORT_PROCHAINE_AG'].includes(opt.voteValue.toUpperCase()))
-          );
+          const isSelectedByCurrentUser = hasVotedForOption(currentAssociate?.vote, opt.voteValue);
 
           // Pourcentage de cette option sur le total statutaire (7 voix)
           const optionPct = Math.round((opt.count / totalAssociates) * 100);
@@ -375,11 +425,7 @@ export default function WhatsAppPollView({
           return (
             <div
               key={opt.id}
-              onClick={() => {
-                if (!isVotingDisabled && typeof onCastVote === 'function') {
-                  onCastVote(opt.voteValue);
-                }
-              }}
+              onClick={() => handleOptionClick(opt.voteValue)}
               className={`relative overflow-hidden rounded-2xl border p-3 sm:p-3.5 transition-all duration-200 select-none ${
                 isSelectedByCurrentUser
                   ? `${opt.palette.selectedBorder} ${opt.palette.lightBg} shadow-xs`
@@ -394,12 +440,14 @@ export default function WhatsAppPollView({
 
               {/* Contenu premier-plan */}
               <div className="relative z-10 flex flex-col gap-2">
-                {/* Ligne 1 : Radio / Coche WhatsApp + Titre + Nombre de voix */}
+                {/* Ligne 1 : Coche WhatsApp + Titre + Nombre de voix */}
                 <div className="flex items-center justify-between gap-3">
                   <div className="flex items-center gap-2.5 min-w-0">
-                    {/* Coche / Radio style WhatsApp */}
+                    {/* Coche style WhatsApp : cercle si choix unique, carré arrondi si choix multiples */}
                     <div
-                      className={`w-5 h-5 rounded-full flex items-center justify-center shrink-0 transition-colors ${
+                      className={`w-5 h-5 flex items-center justify-center shrink-0 transition-colors ${
+                        allowMultipleChoices ? 'rounded-md' : 'rounded-full'
+                      } ${
                         isSelectedByCurrentUser
                           ? opt.palette.radioActive
                           : 'border-2 border-slate-300 dark:border-slate-600 bg-white dark:bg-slate-800'
@@ -417,12 +465,7 @@ export default function WhatsAppPollView({
                       {opt.label}
                     </span>
 
-                    {/* Badge Votre choix */}
-                    {isSelectedByCurrentUser && (
-                      <span className="shrink-0 px-2 py-0.5 rounded-full bg-emerald-100 dark:bg-emerald-950/80 text-emerald-800 dark:text-emerald-300 text-[10px] font-bold border border-emerald-300 dark:border-emerald-700">
-                        Votre choix
-                      </span>
-                    )}
+                    {/* Annotation 2 : Le badge textuel « Votre choix » est définitivement supprimé, la coche verte suffit */}
                   </div>
 
                   {/* Nombre de voix & Pourcentage */}
@@ -468,7 +511,7 @@ export default function WhatsAppPollView({
                   {/* Action interactive rapide */}
                   {!isVotingDisabled && typeof onCastVote === 'function' && !isSelectedByCurrentUser && (
                     <span className="text-[11px] font-semibold text-emerald-700 dark:text-emerald-400 opacity-0 group-hover:opacity-100 transition-opacity flex items-center gap-0.5">
-                      <span>Choisir</span>
+                      <span>{allowMultipleChoices ? 'Ajouter' : 'Choisir'}</span>
                       <span className="material-symbols-outlined text-[13px]">arrow_forward</span>
                     </span>
                   )}
@@ -479,61 +522,7 @@ export default function WhatsAppPollView({
         })}
       </div>
 
-      {/* Pied du sondage : Participation globale & Associés en attente */}
-      <div className="bg-canvas-slate dark:bg-slate-900/60 rounded-xl p-3 border border-border-subtle flex flex-col gap-2 mt-1">
-        <div className="flex flex-wrap items-center justify-between gap-2 text-xs">
-          <span className="font-bold text-slate-800 dark:text-slate-200 flex items-center gap-1.5">
-            <span className="material-symbols-outlined text-[16px] text-primary">poll</span>
-            Participation : {totalVotesCast} / {totalAssociates} voix exprimées ({participationPct}%)
-          </span>
-
-          {showQuorumNotice && (
-            <span
-              className={`font-bold px-2 py-0.5 rounded-full text-[11px] ${
-                isAgRequested
-                  ? 'bg-purple-100 text-purple-800 dark:bg-purple-950/60 dark:text-purple-300 border border-purple-200 dark:border-purple-800'
-                  : isMajorityReached
-                  ? 'bg-emerald-100 text-emerald-800 dark:bg-emerald-950/60 dark:text-emerald-300 border border-emerald-200 dark:border-emerald-800'
-                  : 'bg-amber-100 text-amber-800 dark:bg-amber-950/60 dark:text-amber-300 border border-amber-200 dark:border-amber-800'
-              }`}
-            >
-              {isAgRequested
-                ? '🏛️ Débat en AG sollicité (Veto suspensif)'
-                : isMajorityReached
-                ? '✓ Majorité qualifiée acquise (≥ 4/7)'
-                : 'En cours de délibération'}
-            </span>
-          )}
-        </div>
-
-        {/* Associés en attente de vote */}
-        {showPendingVoters && (
-          <div className="flex flex-wrap items-center gap-2 pt-1 border-t border-slate-200/60 dark:border-slate-800/60 text-xs">
-            <span className="text-slate-500 dark:text-slate-400 font-medium flex items-center gap-1">
-              <span className="material-symbols-outlined text-[14px]">hourglass_empty</span>
-              En attente ({pendingAssociates.length}) :
-            </span>
-            {pendingAssociates.length > 0 ? (
-              <div className="flex items-center gap-1.5 flex-wrap">
-                {pendingAssociates.map(assoc => (
-                  <span
-                    key={assoc.id}
-                    title={`${assoc.name} n'a pas encore voté`}
-                    className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full bg-slate-200/70 dark:bg-slate-800 text-slate-700 dark:text-slate-300 text-[11px] font-medium"
-                  >
-                    <span className="w-1.5 h-1.5 rounded-full bg-slate-400"></span>
-                    {assoc.firstName}
-                  </span>
-                ))}
-              </div>
-            ) : (
-              <span className="text-emerald-700 dark:text-emerald-400 font-semibold text-[11px]">
-                Tous les 7 associés ont voté !
-              </span>
-            )}
-          </div>
-        )}
-      </div>
+      {/* Annotation 3 : Le bloc gris de participation div.bg-canvas-slate.dark:bg-slate-900/60 est supprimé, redondant avec le design WhatsApp */}
     </div>
   );
 }

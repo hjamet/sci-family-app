@@ -218,6 +218,7 @@ class Project(Base):
     completion_notes = Column(Text, nullable=True)
     completion_docs = Column(Text, nullable=True)
     options = Column(Text, nullable=True)  # JSON-encoded array of custom vote options
+    allow_multiple_choices = Column(Boolean, default=False, nullable=True)
     created_at = Column(DateTime, default=datetime.utcnow)
     updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
 

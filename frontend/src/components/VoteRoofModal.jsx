@@ -2,7 +2,7 @@ import React, { useState, useEffect, useRef, useMemo } from 'react';
 import { MarkdownContent } from './common/RichTextEditor';
 import DocumentViewerModal from './DocumentViewerModal';
 import FamilyChat from './common/FamilyChat';
-import WhatsAppPollView, { STATUTORY_ASSOCIATES } from './common/WhatsAppPollView';
+import WhatsAppPollView, { STATUTORY_ASSOCIATES, parseVotesArray, hasVotedForOption } from './common/WhatsAppPollView';
 import { castProjectVote, updateProject, deleteProject } from '../api';
 
 // Error Boundary de protection intégrée pour empêcher tout écran blanc
@@ -88,7 +88,7 @@ export const resolveUserName = (user) => {
   return 'Henri Jamet';
 };
 
-// Extraction sécurisée du nom de votant (supporte string, user_name, author, user object, member object)
+// Extraction sécurisée du nom de votant
 export const safeExtractVoterName = (v) => {
   if (!v) return '';
   if (typeof v === 'string') return v.trim();
@@ -107,18 +107,67 @@ export const safeExtractVoterName = (v) => {
   return '';
 };
 
-// Extraction sécurisée du choix de vote (supporte vote, choice, value)
+// Extraction sécurisée du choix de vote
 export const safeExtractVoteChoice = (v) => {
   if (!v) return '';
   const raw = v.vote ?? v.choice ?? v.value ?? (typeof v === 'string' ? v : '');
   return String(raw || '').trim();
 };
 
-// Extraction sécurisée du prénom pour affichage
-export const formatAssociateFirstName = (a) => {
-  if (!a) return 'Associé';
-  const raw = a.name || a.prenom || a.firstName || a.id || 'Associé';
-  return String(raw).trim().split(' ')[0] || 'Associé';
+// Résolution universelle du titre et de l'URL d'un document (Annotation 6 : Zéro chemin bizarre)
+export const resolveDocumentInfo = (doc, project = null) => {
+  if (!doc) return { title: 'Document justificatif.pdf', filename: 'Document justificatif.pdf', url: '', file_type: 'application/pdf', isPdf: true, isImage: false };
+
+  let rawUrl = '';
+  let rawTitle = '';
+  let fileType = '';
+
+  if (typeof doc === 'string') {
+    rawUrl = doc;
+    const parts = doc.split('/');
+    rawTitle = decodeURIComponent(parts[parts.length - 1] || doc);
+  } else if (typeof doc === 'object' && doc !== null) {
+    rawUrl = doc.url || doc.file_url || (doc.id ? `/api/documents/${doc.id}/download` : '');
+    rawTitle = doc.title || doc.name || doc.filename || doc.file_name || doc.original_filename || '';
+    fileType = doc.file_type || doc.mime_type || '';
+  }
+
+  let cleanTitle = rawTitle;
+  if (cleanTitle.includes('/')) {
+    cleanTitle = cleanTitle.split('/').pop();
+  }
+
+  // Nettoyage si le titre est "download" ou juste un ID numérique d'API
+  if (cleanTitle.toLowerCase() === 'download' || /^\d+$/.test(cleanTitle)) {
+    if (doc?.title && doc.title.toLowerCase() !== 'download') {
+      cleanTitle = doc.title;
+    } else {
+      cleanTitle = project?.title ? `Document - ${project.title}.pdf` : 'Document justificatif.pdf';
+    }
+  }
+
+  // Suppression du préfixe UUID (32 caractères hexadécimaux + underscore)
+  const uuidMatch = cleanTitle.match(/^[0-9a-fA-F]{32}_(.*)$/);
+  if (uuidMatch && uuidMatch[1]) {
+    cleanTitle = uuidMatch[1];
+  }
+
+  if (!cleanTitle || cleanTitle.trim() === '') {
+    cleanTitle = 'Document justificatif.pdf';
+  }
+
+  const ext = (cleanTitle.split('.').pop() || '').toLowerCase();
+  const isPdf = ext === 'pdf' || fileType.includes('pdf') || (!fileType && !cleanTitle.includes('.'));
+  const isImg = ['png', 'jpg', 'jpeg', 'webp', 'gif', 'svg'].includes(ext) || fileType.startsWith('image/');
+
+  return {
+    title: cleanTitle,
+    filename: cleanTitle,
+    url: rawUrl,
+    isPdf,
+    isImage: isImg,
+    file_type: isPdf ? 'application/pdf' : (isImg ? `image/${ext}` : 'application/octet-stream')
+  };
 };
 
 function VoteRoofModalInner({
@@ -131,7 +180,7 @@ function VoteRoofModalInner({
   const currentUserName = resolveUserName(currentUser);
   const currentUserLower = currentUserName.toLowerCase();
 
-  // État local réactif du projet pour mise à jour instantanée sans F5 (Annotation 4 & 5)
+  // État local réactif du projet pour mise à jour instantanée sans F5
   const [localProject, setLocalProject] = useState(project || {});
 
   useEffect(() => {
@@ -148,7 +197,7 @@ function VoteRoofModalInner({
   const projectReporter = activeProject.submitted_by || activeProject.reporter?.name || (typeof activeProject.reporter === 'string' ? activeProject.reporter : 'Non assigné');
   const projectSubject = activeProject.category || activeProject.subject || 'SCI Familiale';
 
-  // Annotation 8 : Harmoniser le badge SOUMIS pour qu'il soit sobre et élégant
+  // Badge de statut harmonisé et sobre
   const formatBadgeStatus = (status) => {
     const s = String(status || '').toUpperCase();
     if (s === 'EN_VOTE') return 'Scrutin ouvert';
@@ -160,9 +209,10 @@ function VoteRoofModalInner({
   };
   const projectBadgeStatus = formatBadgeStatus(activeProject.status);
 
+  // Ref vers la section de vote pour défilement fluide
   const voteSectionRef = useRef(null);
 
-  // Droits de gouvernance (Coordinateur ou Porteur) - Annotation 12
+  // Droits de gouvernance (Coordinateur ou Porteur)
   const isCoordinator = Boolean(
     currentUser?.is_coordinator === true ||
     currentUser?.is_coordinator === 'true' ||
@@ -177,7 +227,7 @@ function VoteRoofModalInner({
   );
   const canManageVote = isCoordinator || isOwner;
 
-  // Mode Édition du vote (Annotation 12)
+  // Mode Édition du vote
   const [isEditing, setIsEditing] = useState(false);
   const [editTitle, setEditTitle] = useState(projectTitle);
   const [editDescription, setEditDescription] = useState(projectDescription);
@@ -194,6 +244,8 @@ function VoteRoofModalInner({
     }
     return [];
   });
+  // Annotation 11 : Toggle choix multiples
+  const [editAllowMultipleChoices, setEditAllowMultipleChoices] = useState(Boolean(activeProject.allow_multiple_choices));
   const [newOptionInput, setNewOptionInput] = useState('');
   const [isSubmittingEdit, setIsSubmittingEdit] = useState(false);
 
@@ -215,6 +267,7 @@ function VoteRoofModalInner({
       return [];
     })();
     setEditOptions(opts);
+    setEditAllowMultipleChoices(Boolean(activeProject.allow_multiple_choices));
   }, [activeProject, isEditing]);
 
   // Liste nominative des 7 associés avec leurs votes réels synchronisés
@@ -295,8 +348,7 @@ function VoteRoofModalInner({
     }
   }, [activeProject.comments]);
 
-  // Formulaire de vote interactif direct
-  const [selectedVote, setSelectedVote] = useState(null);
+  // Toast de notification
   const [toastMessage, setToastMessage] = useState(null);
 
   // Trouver l'associé connecté avec protections robustes
@@ -317,13 +369,6 @@ function VoteRoofModalInner({
     }) || (associatesVotes && associatesVotes[0]) || DEFAULT_ASSOCIATES[0];
   }, [associatesVotes, currentUserLower]);
 
-  // Synchroniser le vote actuel de l'utilisateur
-  useEffect(() => {
-    if (currentAssociate && currentAssociate.vote !== 'EN_ATTENTE') {
-      setSelectedVote(currentAssociate.vote);
-    }
-  }, [currentAssociate]);
-
   // Verrouillage du scroll en arrière-plan
   useEffect(() => {
     if (isOpen) {
@@ -341,54 +386,50 @@ function VoteRoofModalInner({
     }
   }, [isOpen, onClose]);
 
-  // État de la visionneuse intégrée
+  // Visionneuse universelle intégrée (Annotation 6)
   const [viewerDoc, setViewerDoc] = useState(null);
   const [isViewerOpen, setIsViewerOpen] = useState(false);
 
   if (!isOpen) return null;
 
-  // Options de vote personnalisées du projet
-  const projectOptions = (() => {
-    if (Array.isArray(activeProject.options) && activeProject.options.length > 0) {
-      return activeProject.options.filter(Boolean);
-    }
-    if (typeof activeProject.options === 'string' && activeProject.options.trim()) {
-      try {
-        const parsed = JSON.parse(activeProject.options);
-        if (Array.isArray(parsed) && parsed.length > 0) return parsed.filter(Boolean);
-      } catch (_) {
-        const split = activeProject.options.split(',').map((s) => s.trim()).filter(Boolean);
-        if (split.length > 0) return split;
-      }
-    }
-    return [];
-  })();
+  // Documents justificatifs rattachés dédupliqués
+  const documentsList = useMemo(() => {
+    const list = [];
+    const seen = new Set();
 
-  // Documents justificatifs sécurisés
-  const documentsList = (Array.isArray(activeProject.documents) && activeProject.documents.length > 0)
-    ? activeProject.documents
-    : (Array.isArray(activeProject.files) && activeProject.files.length > 0)
-    ? activeProject.files
-    : (Array.isArray(activeProject.document_urls) && activeProject.document_urls.length > 0)
-    ? activeProject.document_urls
-    : [];
+    const addDoc = (d) => {
+      if (!d) return;
+      const key = typeof d === 'string' ? d : (d.url || d.file_url || d.filename || d.title || JSON.stringify(d));
+      if (seen.has(key)) return;
+      seen.add(key);
+      list.push(d);
+    };
 
-  // Enregistrement direct du vote en 1 clic avec réactivité instantanée (Annotation 4 & 5)
+    if (Array.isArray(activeProject.documents)) activeProject.documents.forEach(addDoc);
+    if (Array.isArray(activeProject.files)) activeProject.files.forEach(addDoc);
+    if (Array.isArray(activeProject.document_urls)) activeProject.document_urls.forEach(addDoc);
+    if (activeProject.devis_url) addDoc({ url: activeProject.devis_url, title: `Devis Prestataire - ${projectTitle}.pdf` });
+
+    return list;
+  }, [activeProject.documents, activeProject.files, activeProject.document_urls, activeProject.devis_url, projectTitle]);
+
+  // Enregistrement direct du vote (Annotation 11 : support choix unique et multiple)
   const handleCastVote = async (voteChoice) => {
-    if (!voteChoice) return;
-    setSelectedVote(voteChoice);
+    if (!voteChoice && voteChoice !== '') return;
     const now = new Date();
     const formattedDate = `${now.getDate()} mai 2026, ${now.getHours().toString().padStart(2, '0')}:${now.getMinutes().toString().padStart(2, '0')}`;
 
     const assocId = currentAssociate?.id || 'henri';
     const assocName = currentAssociate?.name || currentUserName || 'Henri Jamet';
 
+    const votePayload = Array.isArray(voteChoice) ? JSON.stringify(voteChoice) : String(voteChoice);
+
     // 1. Mise à jour optimiste immédiate dans associatesVotes
     const updatedAssociatesVotes = (associatesVotes || []).map(a => {
       if (a && a.id === assocId) {
         return {
           ...a,
-          vote: voteChoice,
+          vote: votePayload,
           date: formattedDate
         };
       }
@@ -406,8 +447,8 @@ function VoteRoofModalInner({
     const newVoteEntry = {
       user_name: assocName,
       user_id: assocId,
-      vote: voteChoice,
-      choice: voteChoice,
+      vote: votePayload,
+      choice: votePayload,
       date: formattedDate,
       created_at: new Date().toISOString()
     };
@@ -432,7 +473,11 @@ function VoteRoofModalInner({
       REPORT_AG: 'Report en AG demandé'
     };
 
-    setToastMessage(`Vote « ${voteLabels[voteChoice] || voteChoice} » enregistré pour ${assocName} !`);
+    if (Array.isArray(voteChoice)) {
+      setToastMessage(voteChoice.length > 0 ? `${voteChoice.length} option${voteChoice.length > 1 ? 's' : ''} sélectionnée${voteChoice.length > 1 ? 's' : ''} pour ${assocName} !` : `Sélection réinitialisée pour ${assocName}`);
+    } else {
+      setToastMessage(`Vote « ${voteLabels[voteChoice] || voteChoice} » enregistré pour ${assocName} !`);
+    }
     setTimeout(() => setToastMessage(null), 3500);
 
     // 3. Appel API et synchronisation
@@ -440,8 +485,8 @@ function VoteRoofModalInner({
     if (activeProject?.id) {
       try {
         const res = await castProjectVote(activeProject.id, {
-          vote: voteChoice,
-          choice: voteChoice,
+          vote: votePayload,
+          choice: votePayload,
           user_name: assocName,
           user_id: assocId
         });
@@ -454,7 +499,7 @@ function VoteRoofModalInner({
       }
     }
 
-    // 4. Propagation au parent avec le projet à jour complet (Annotation 4 & 5)
+    // 4. Propagation au parent avec le projet à jour complet
     if (typeof onVoteSubmit === 'function') {
       try {
         onVoteSubmit(serverUpdatedProject);
@@ -464,7 +509,7 @@ function VoteRoofModalInner({
     }
   };
 
-  // Suppression du vote (Annotation 12)
+  // Suppression du vote
   const handleDeleteVote = async () => {
     if (!activeProject?.id) return;
     const ok = window.confirm(`Êtes-vous sûr de vouloir supprimer définitivement le scrutin « ${projectTitle} » ? Cette action est irréversible.`);
@@ -484,7 +529,7 @@ function VoteRoofModalInner({
     }
   };
 
-  // Sauvegarde des modifications du vote (Annotation 12)
+  // Sauvegarde des modifications du vote (Annotation 11 : allow_multiple_choices)
   const handleSaveEdit = async () => {
     if (!editTitle.trim()) {
       alert('Veuillez renseigner un titre pour le vote.');
@@ -496,7 +541,8 @@ function VoteRoofModalInner({
         title: editTitle.trim(),
         description: editDescription.trim(),
         category: editCategory.trim(),
-        options: editOptions.filter(Boolean)
+        options: editOptions.filter(Boolean),
+        allow_multiple_choices: editAllowMultipleChoices
       };
 
       const updated = await updateProject(activeProject.id, payload);
@@ -559,30 +605,34 @@ function VoteRoofModalInner({
     }));
   };
 
-  // Consultation dans la visionneuse sans téléchargement
-  const handleViewDoc = (docName, desc) => {
-    const content = `SCI FAMILIALE HELLENVILLIERS — DIRECTION DU DOMAINE\n\nDocument certifié : ${docName}\nObjet : ${desc}\nProjet : ${projectTitle}\nDate d'émission : Mai 2026\nStatut : Pièce certifiée conforme déposée au registre des délibérations.`;
+  // Consultation universelle dans DocumentViewerModal (Annotation 6)
+  const handleViewDocument = (doc) => {
+    const info = resolveDocumentInfo(doc, activeProject);
     setViewerDoc({
-      filename: docName,
-      title: docName,
-      content: content,
-      file_type: 'text/plain'
+      title: info.title,
+      filename: info.filename,
+      file_url: info.url,
+      url: info.url,
+      file_type: info.file_type
     });
     setIsViewerOpen(true);
   };
 
-  // Téléchargement d'un document
-  const handleDownloadDoc = (docName, desc) => {
-    const content = `SCI FAMILIALE HELLENVILLIERS\n\nDocument certifié : ${docName}\nObjet : ${desc}\nProjet : ${projectTitle}\nDate d'émission : Mai 2026\nStatut : Validé pour consultation des 7 associés.`;
-    const blob = new Blob([content], { type: 'text/plain;charset=utf-8' });
-    const url = URL.createObjectURL(blob);
-    const link = document.createElement('a');
-    link.href = url;
-    link.download = docName.replace('.pdf', '.txt');
-    document.body.appendChild(link);
-    link.click();
-    document.body.removeChild(link);
-    URL.revokeObjectURL(url);
+  // Téléchargement authentique d'un document (Annotation 6)
+  const handleDownloadDocument = (doc) => {
+    const info = resolveDocumentInfo(doc, activeProject);
+    const targetUrl = info.url;
+    const targetName = info.filename;
+    if (targetUrl) {
+      const a = document.createElement('a');
+      a.href = targetUrl;
+      a.download = targetName;
+      document.body.appendChild(a);
+      a.click();
+      document.body.removeChild(a);
+    } else {
+      alert("Le fichier lié n'a pas pu être localisé.");
+    }
   };
 
   return (
@@ -606,7 +656,7 @@ function VoteRoofModalInner({
           </div>
         )}
 
-        {/* 1. EN-TÊTE ÉPURÉ DE LA MODALE AVEC ACTIONS ÉDITER ET SUPPRIMER (Annotation 12) */}
+        {/* 1. EN-TÊTE ÉPURÉ DE LA MODALE AVEC ACTIONS ÉDITER ET SUPPRIMER */}
         <header className="w-full bg-canvas-slate px-4 py-3 sm:px-space-lg sm:py-space-md flex items-center justify-between gap-space-sm border-b border-border-subtle shrink-0">
           <div className="flex items-center gap-2">
             <span className="material-symbols-outlined text-forest-deep text-xl">how_to_vote</span>
@@ -614,7 +664,7 @@ function VoteRoofModalInner({
           </div>
 
           <div className="flex items-center gap-2">
-            {/* Boutons Éditer et Supprimer pour coordinateurs / porteur (Annotation 12) */}
+            {/* Boutons Éditer et Supprimer pour coordinateurs / porteur */}
             {canManageVote && !isEditing && (
               <div className="flex items-center gap-1.5 mr-2">
                 <button
@@ -653,10 +703,10 @@ function VoteRoofModalInner({
         {/* 2. CORPS DE LA MODALE : 2 COLONNES (7 cols gauche / 5 cols droite sur lg) */}
         <div className="grid grid-cols-1 lg:grid-cols-12 flex-1 overflow-y-auto min-h-0 divide-y lg:divide-y-0 lg:divide-x divide-border-subtle">
           
-          {/* COLONNE GAUCHE (7 cols) : Détails, Sondage WhatsApp & Vote */}
+          {/* COLONNE GAUCHE (7 cols) */}
           <section className="lg:col-span-7 p-4 sm:p-space-lg flex flex-col gap-5 bg-surface-container-lowest overflow-y-auto">
             
-            {/* MODE ÉDITION DU VOTE (Annotation 12) */}
+            {/* ANNOTATION 10 : EN MODE MODIFICATION, AFFICHER UNIQUEMENT LE FORMULAIRE D'ÉDITION */}
             {isEditing ? (
               <div className="flex flex-col gap-4 bg-slate-50 dark:bg-slate-900/60 p-4 sm:p-5 rounded-2xl border border-slate-200 dark:border-slate-800">
                 <div className="flex items-center justify-between border-b border-slate-200 dark:border-slate-800 pb-3">
@@ -669,7 +719,7 @@ function VoteRoofModalInner({
                   <button
                     type="button"
                     onClick={() => setIsEditing(false)}
-                    className="text-xs text-slate-500 hover:text-slate-700 font-semibold"
+                    className="text-xs text-slate-500 hover:text-slate-700 font-semibold cursor-pointer"
                   >
                     Annuler
                   </button>
@@ -689,7 +739,7 @@ function VoteRoofModalInner({
                   />
                 </div>
 
-                {/* Description */}
+                {/* Description avec arrondi sobre rounded-lg (Annotation 9) */}
                 <div className="flex flex-col gap-1.5">
                   <label className="text-xs font-bold text-slate-700 dark:text-slate-300">
                     Description &amp; Enjeux
@@ -699,7 +749,7 @@ function VoteRoofModalInner({
                     value={editDescription}
                     onChange={(e) => setEditDescription(e.target.value)}
                     placeholder="Précisez le contexte, les devis et les arbitrages soumis au vote..."
-                    className="w-full px-3.5 py-2 text-xs sm:text-sm rounded-xl border border-slate-300 dark:border-slate-700 bg-white dark:bg-slate-800 focus:ring-2 focus:ring-emerald-500 font-normal leading-relaxed"
+                    className="w-full px-3.5 py-2 text-xs sm:text-sm rounded-lg border border-slate-300 dark:border-slate-700 bg-white dark:bg-slate-800 focus:ring-2 focus:ring-emerald-500 font-normal leading-relaxed"
                   />
                 </div>
 
@@ -717,11 +767,37 @@ function VoteRoofModalInner({
                   />
                 </div>
 
-                {/* Options de vote personnalisées */}
+                {/* ANNOTATION 11 : Toggle choix unique vs choix multiples (comme WhatsApp) */}
+                <div className="flex items-center justify-between p-3.5 bg-white dark:bg-slate-800 rounded-xl border border-slate-200 dark:border-slate-700 shadow-2xs">
+                  <div className="flex flex-col gap-0.5">
+                    <span className="text-xs font-bold text-slate-800 dark:text-slate-200">
+                      Autoriser plusieurs réponses
+                    </span>
+                    <span className="text-[11px] text-slate-500 dark:text-slate-400">
+                      Permettre aux associés de cocher plusieurs options (comme sur WhatsApp)
+                    </span>
+                  </div>
+                  <button
+                    type="button"
+                    role="switch"
+                    aria-checked={editAllowMultipleChoices}
+                    onClick={() => setEditAllowMultipleChoices(!editAllowMultipleChoices)}
+                    className={`relative inline-flex h-6 w-11 shrink-0 cursor-pointer rounded-full border-2 border-transparent transition-colors duration-200 ease-in-out focus:outline-none ${
+                      editAllowMultipleChoices ? 'bg-emerald-600' : 'bg-slate-300 dark:bg-slate-600'
+                    }`}
+                  >
+                    <span
+                      className={`pointer-events-none inline-block h-5 w-5 transform rounded-full bg-white shadow-sm ring-0 transition duration-200 ease-in-out ${
+                        editAllowMultipleChoices ? 'translate-x-5' : 'translate-x-0'
+                      }`}
+                    />
+                  </button>
+                </div>
+
+                {/* Options de vote personnalisées (Annotation 8 : aide supprimée) */}
                 <div className="flex flex-col gap-2 pt-2 border-t border-slate-200 dark:border-slate-800">
-                  <label className="text-xs font-bold text-slate-700 dark:text-slate-300 flex items-center justify-between">
-                    <span>Options personnalisées (Optionnel)</span>
-                    <span className="text-[11px] text-slate-400 font-normal">Laissez vide pour le scrutin standard Pour/Contre</span>
+                  <label className="text-xs font-bold text-slate-700 dark:text-slate-300">
+                    Options personnalisées (Optionnel)
                   </label>
 
                   <div className="flex items-center gap-2">
@@ -741,7 +817,7 @@ function VoteRoofModalInner({
                     <button
                       type="button"
                       onClick={handleAddOption}
-                      className="px-3.5 py-2 rounded-xl bg-emerald-600 hover:bg-emerald-700 text-white text-xs font-bold cursor-pointer"
+                      className="px-3.5 py-2 rounded-xl bg-emerald-600 hover:bg-emerald-700 text-white text-xs font-bold cursor-pointer transition-colors"
                     >
                       + Ajouter
                     </button>
@@ -771,7 +847,7 @@ function VoteRoofModalInner({
                   <button
                     type="button"
                     onClick={() => setIsEditing(false)}
-                    className="px-4 py-2 rounded-xl bg-slate-200 hover:bg-slate-300 text-slate-700 text-xs font-bold cursor-pointer"
+                    className="px-4 py-2 rounded-xl bg-slate-200 hover:bg-slate-300 text-slate-700 text-xs font-bold cursor-pointer transition-colors"
                   >
                     Annuler
                   </button>
@@ -779,308 +855,150 @@ function VoteRoofModalInner({
                     type="button"
                     disabled={isSubmittingEdit}
                     onClick={handleSaveEdit}
-                    className="px-5 py-2 rounded-xl bg-emerald-600 hover:bg-emerald-700 text-white text-xs font-bold shadow-sm transition-all cursor-pointer disabled:opacity-50"
+                    className="px-5 py-2 rounded-xl bg-emerald-600 hover:bg-emerald-700 text-white text-xs font-bold shadow-xs transition-all cursor-pointer disabled:opacity-50"
                   >
                     {isSubmittingEdit ? 'Enregistrement...' : 'Enregistrer les modifications'}
                   </button>
                 </div>
               </div>
-            ) : null}
-
-            {/* Titre & Contexte du scrutin (Purge budget Annotation 7 & Badge sobre Annotation 8) */}
-            <div className="flex flex-col gap-2">
-              <div className="flex flex-wrap items-center gap-2">
-                <span className="px-2.5 py-0.5 rounded-full bg-surface-container text-on-surface-variant font-label-sm text-xs font-medium">
-                  Bâti &amp; Travaux
-                </span>
-                <span className="px-2.5 py-0.5 rounded-full bg-surface-container text-on-surface-variant font-label-sm text-xs font-medium">
-                  {projectSubject}
-                </span>
-                {/* Annotation 8 : Badge harmonisé et sobre */}
-                <span className="px-2.5 py-0.5 rounded-full bg-slate-100 dark:bg-slate-800 text-slate-700 dark:text-slate-300 border border-slate-200 dark:border-slate-700 font-label-sm text-xs font-semibold">
-                  {projectBadgeStatus}
-                </span>
-              </div>
-
-              <h1 id="modal-roof-title" className="font-headline-lg text-xl sm:text-2xl text-on-surface tracking-tight font-bold text-slate-900 dark:text-slate-100 mt-1">
-                {projectTitle}
-              </h1>
-
-              {/* Annotation 7 : Supprimer définitivement la mention du budget dans la tuile */}
-              <div className="flex flex-wrap items-center gap-2 text-on-surface-variant text-xs sm:text-sm">
-                <span className="font-semibold text-slate-600 dark:text-slate-400">Réf. {projectRef}</span>
-                <span>•</span>
-                <span className="flex items-center gap-1 text-slate-700 dark:text-slate-300">
-                  <span className="material-symbols-outlined text-[18px] text-primary">account_circle</span>
-                  Soumis par <strong>{projectReporter}</strong> (SCI)
-                </span>
-              </div>
-            </div>
-
-            {/* ANNOTATION 9 : BANDEAU "VOTER DIRECTEMENT" PLEINE LARGEUR ÉLÉGANT SOUS LE TITRE */}
-            <button
-              type="button"
-              onClick={() => voteSectionRef.current?.scrollIntoView({ behavior: 'smooth' })}
-              className="w-full py-2.5 px-4 bg-emerald-50 dark:bg-emerald-950/40 border border-emerald-200 dark:border-emerald-800 text-emerald-800 dark:text-emerald-200 rounded-xl flex items-center justify-between font-medium text-xs sm:text-sm hover:bg-emerald-100 dark:hover:bg-emerald-900/50 transition-all cursor-pointer shadow-xs group"
-            >
-              <div className="flex items-center gap-2">
-                <span className="text-base group-hover:translate-y-0.5 transition-transform">👇</span>
-                <span>Exprimez votre voix : les boutons de vote se trouvent en bas du scrutin</span>
-              </div>
-              <div className="flex items-center gap-1 font-semibold text-emerald-700 dark:text-emerald-300 shrink-0">
-                <span>Voter en bas</span>
-                <span className="material-symbols-outlined text-[18px] group-hover:translate-y-0.5 transition-transform">arrow_downward</span>
-              </div>
-            </button>
-
-            {/* Description & Objectifs */}
-            <div className="flex flex-col gap-3 bg-canvas-slate dark:bg-slate-900/50 rounded-[14px] p-4 border border-border-subtle">
-              <h2 className="font-headline-sm text-sm sm:text-base font-bold text-on-surface flex items-center gap-2">
-                <span className="material-symbols-outlined text-forest-deep text-xl">description</span>
-                Description des travaux &amp; Enjeux
-              </h2>
-              <div className="text-xs sm:text-sm text-on-surface-variant leading-relaxed text-slate-700 dark:text-slate-300">
-                <MarkdownContent content={projectDescription} />
-              </div>
-            </div>
-
-            {/* Documents & Justificatifs rattachés */}
-            <div className="flex flex-col gap-2.5">
-              <div className="flex items-center justify-between">
-                <h2 className="font-headline-sm text-sm sm:text-base font-bold text-on-surface flex items-center gap-2">
-                  <span className="material-symbols-outlined text-forest-deep text-xl">folder_open</span>
-                  Documents &amp; Justificatifs rattachés
-                </h2>
-                <span className="text-xs text-on-surface-variant font-medium">
-                  {documentsList.length} pièce{documentsList.length > 1 ? 's' : ''} certifiée{documentsList.length > 1 ? 's' : ''}
-                </span>
-              </div>
-
-              <div className="flex flex-col gap-2">
-                {documentsList.length === 0 ? (
-                  <div className="p-3.5 bg-canvas-slate dark:bg-slate-900/40 rounded-xl text-center text-xs text-on-surface-variant border border-dashed border-border-subtle">
-                    Aucune pièce jointe ou devis téléversé pour ce projet.
+            ) : (
+              /* MODE CONSULTATION & VOTE (Annotation 10 : masqué en mode édition) */
+              <>
+                {/* Titre & Contexte du scrutin */}
+                <div className="flex flex-col gap-2">
+                  <div className="flex flex-wrap items-center gap-2">
+                    <span className="px-2.5 py-0.5 rounded-full bg-surface-container text-on-surface-variant font-label-sm text-xs font-medium">
+                      Bâti &amp; Travaux
+                    </span>
+                    <span className="px-2.5 py-0.5 rounded-full bg-surface-container text-on-surface-variant font-label-sm text-xs font-medium">
+                      {projectSubject}
+                    </span>
+                    <span className="px-2.5 py-0.5 rounded-full bg-slate-100 dark:bg-slate-800 text-slate-700 dark:text-slate-300 border border-slate-200 dark:border-slate-700 font-label-sm text-xs font-semibold">
+                      {projectBadgeStatus}
+                    </span>
                   </div>
-                ) : (
-                  documentsList.map((doc, idx) => {
-                    const docName = typeof doc === 'string' ? doc : (doc.name || doc.filename || `Document_${idx + 1}.pdf`);
-                    const docDesc = typeof doc === 'object' ? (doc.desc || doc.description || doc.details || 'Pièce certifiée') : 'Pièce certifiée';
-                    const docDetails = typeof doc === 'object' ? (doc.details || doc.name || docName) : docName;
-                    return (
-                      <div key={idx} className="flex items-center justify-between p-3 bg-canvas-slate dark:bg-slate-900/50 hover:bg-surface-container transition-colors rounded-xl border border-border-subtle">
-                        <div className="flex items-center gap-3 min-w-0">
-                          <div className="w-10 h-10 rounded-lg bg-rose-100 text-rose-700 dark:bg-rose-950/60 dark:text-rose-400 flex items-center justify-center shrink-0">
-                            <span className="material-symbols-outlined text-xl">picture_as_pdf</span>
-                          </div>
-                          <div className="flex flex-col min-w-0">
-                            <span className="text-xs sm:text-sm font-semibold text-on-surface truncate">
-                              {docName}
-                            </span>
-                            <span className="text-[11px] text-on-surface-variant truncate">
-                              {docDesc}
-                            </span>
-                          </div>
-                        </div>
-                        <div className="flex items-center gap-1.5 shrink-0 ml-2">
-                          <button 
-                            onClick={() => handleViewDoc(docName, docDetails)}
-                            className="px-2.5 py-1.5 rounded-lg bg-surface-container-lowest text-primary hover:bg-sage-soft text-xs font-semibold flex items-center gap-1 shadow-xs border border-primary transition-all cursor-pointer" 
-                            type="button"
-                            title="Consulter sans télécharger"
-                          >
-                            <span className="material-symbols-outlined text-[15px]">visibility</span>
-                            <span>Consulter</span>
-                          </button>
-                          <button 
-                            onClick={() => handleDownloadDoc(docName, docDetails)}
-                            className="px-2.5 py-1.5 rounded-lg bg-primary text-white hover:bg-forest-deep text-xs font-semibold flex items-center gap-1 shadow-xs transition-all cursor-pointer" 
-                            type="button"
-                            title="Télécharger une copie"
-                          >
-                            <span className="material-symbols-outlined text-[15px]">download</span>
-                            <span>Télécharger</span>
-                          </button>
-                        </div>
-                      </div>
-                    );
-                  })
-                )}
-              </div>
-            </div>
 
-            {/* ANNOTATION 13 & 11 : SONDAGE STYLE WHATSAPP FIDÈLE & MODERNE */}
-            <div className="flex flex-col gap-2.5">
-              <div className="flex items-center justify-between">
-                <div className="flex items-center gap-2">
-                  <span className="material-symbols-outlined text-forest-deep text-xl">poll</span>
-                  <h2 className="font-headline-sm text-sm sm:text-base font-bold text-on-surface">
-                    Résultats du scrutin en direct (Style Sondage WhatsApp)
+                  <h1 id="modal-roof-title" className="font-headline-lg text-xl sm:text-2xl text-on-surface tracking-tight font-bold text-slate-900 dark:text-slate-100 mt-1">
+                    {projectTitle}
+                  </h1>
+
+                  <div className="flex flex-wrap items-center gap-2 text-on-surface-variant text-xs sm:text-sm">
+                    <span className="font-semibold text-slate-600 dark:text-slate-400">Réf. {projectRef}</span>
+                    <span>•</span>
+                    <span className="flex items-center gap-1 text-slate-700 dark:text-slate-300">
+                      <span className="material-symbols-outlined text-[18px] text-primary">account_circle</span>
+                      Soumis par <strong>{projectReporter}</strong> (SCI)
+                    </span>
+                  </div>
+                </div>
+
+                {/* Description & Objectifs */}
+                <div className="flex flex-col gap-3 bg-canvas-slate dark:bg-slate-900/50 rounded-[14px] p-4 border border-border-subtle">
+                  <h2 className="font-headline-sm text-sm sm:text-base font-bold text-on-surface flex items-center gap-2">
+                    <span className="material-symbols-outlined text-forest-deep text-xl">description</span>
+                    Description des travaux &amp; Enjeux
                   </h2>
+                  <div className="text-xs sm:text-sm text-on-surface-variant leading-relaxed text-slate-700 dark:text-slate-300">
+                    <MarkdownContent content={projectDescription} />
+                  </div>
                 </div>
-                <span className="text-xs text-slate-500 dark:text-slate-400 font-medium">
-                  7 associés statutaires
-                </span>
-              </div>
 
-              {/* Rendu dynamique du sondage WhatsApp */}
-              <WhatsAppPollView
-                project={activeProject}
-                associatesVotes={associatesVotes}
-                currentUser={currentUserName}
-                onCastVote={handleCastVote}
-                isVotingDisabled={false}
-                compact={false}
-                showPendingVoters={true}
-                showQuorumNotice={true}
-              />
-            </div>
+                {/* ANNOTATION 7 : BOUTON "👇 Voter 👇" DÉPLACÉ SOUS LA DESCRIPTION */}
+                <button
+                  type="button"
+                  onClick={() => voteSectionRef.current?.scrollIntoView({ behavior: 'smooth' })}
+                  className="w-full py-2.5 px-4 bg-emerald-50 dark:bg-emerald-950/40 border border-emerald-200 dark:border-emerald-800 text-emerald-800 dark:text-emerald-200 rounded-xl flex items-center justify-center font-bold text-xs sm:text-sm hover:bg-emerald-100 dark:hover:bg-emerald-900/50 transition-all cursor-pointer shadow-xs gap-2"
+                >
+                  <span>👇 Voter 👇</span>
+                </button>
 
-            {/* SECTION DE VOTE DIRECTE EN 1 CLIC (Annotation 6 : Zéro "1 voix statutaire") */}
-            <div ref={voteSectionRef} id="section-vote" className="p-4 rounded-xl bg-surface-container-low dark:bg-slate-900/80 border border-border-subtle flex flex-col gap-3 shadow-sm scroll-mt-6">
-              <div className="flex items-center justify-between">
-                <span className="text-xs font-bold text-slate-700 dark:text-slate-300 uppercase tracking-wider">
-                  Votre vote en tant que {currentAssociate.name} :
-                </span>
-                {/* Annotation 6 : La mention "1 voix statutaire" est définitivement supprimée */}
-              </div>
-
-              {/* Choix de vote interactif */}
-              {projectOptions.length > 0 ? (
+                {/* Documents & Justificatifs rattachés (Annotation 6 : Vrais noms & visionneuse universelle) */}
                 <div className="flex flex-col gap-2.5">
-                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5">
-                    {projectOptions.map((opt, idx) => {
-                      const isSelected = selectedVote === opt;
-                      return (
-                        <button
-                          key={idx}
-                          type="button"
-                          onClick={() => handleCastVote(opt)}
-                          className={`group relative flex items-center justify-start gap-2.5 py-3 px-4 rounded-xl border text-xs sm:text-sm font-semibold transition-all cursor-pointer text-left ${
-                            isSelected
-                              ? 'bg-emerald-600 text-white border-emerald-600 shadow-md ring-2 ring-emerald-500/30 font-bold'
-                              : 'bg-white dark:bg-slate-800 hover:bg-emerald-50 dark:hover:bg-slate-700 text-slate-800 dark:text-slate-200 border-slate-200 dark:border-slate-700 shadow-sm'
-                          }`}
-                        >
-                          <span className={`w-5 h-5 rounded-full flex items-center justify-center text-xs font-bold shrink-0 ${
-                            isSelected ? 'bg-white text-emerald-800' : 'bg-emerald-100 text-emerald-800'
-                          }`}>
-                            {idx + 1}
-                          </span>
-                          <span className="flex-1 truncate">{opt}</span>
-                          {isSelected && (
-                            <span className="material-symbols-outlined text-[18px] text-white shrink-0">check_circle</span>
-                          )}
-                        </button>
-                      );
-                    })}
+                  <div className="flex items-center justify-between">
+                    <h2 className="font-headline-sm text-sm sm:text-base font-bold text-on-surface flex items-center gap-2">
+                      <span className="material-symbols-outlined text-forest-deep text-xl">folder_open</span>
+                      Documents &amp; Justificatifs rattachés
+                    </h2>
+                    <span className="text-xs text-on-surface-variant font-medium">
+                      {documentsList.length} pièce{documentsList.length > 1 ? 's' : ''}
+                    </span>
                   </div>
 
-                  {/* Options statutaires : Blanc & Report AG */}
-                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5 pt-2 border-t border-slate-200/80 dark:border-slate-700/80">
-                    <button
-                      type="button"
-                      onClick={() => handleCastVote('BLANC')}
-                      className={`py-2.5 px-4 rounded-xl border text-xs font-semibold flex items-center justify-center gap-2 transition-all cursor-pointer ${
-                        selectedVote === 'BLANC'
-                          ? 'bg-slate-700 text-white border-slate-700 shadow-md ring-2 ring-slate-400/30 font-bold'
-                          : 'bg-white dark:bg-slate-800 hover:bg-slate-100 text-slate-700 dark:text-slate-300 border-slate-200 dark:border-slate-700 shadow-sm'
-                      }`}
-                    >
-                      <span className="w-2.5 h-2.5 rounded-full border-2 border-slate-400 bg-white"></span>
-                      <span>⚪ Voter blanc</span>
-                      {selectedVote === 'BLANC' && (
-                        <span className="material-symbols-outlined text-[16px] text-white ml-1">check</span>
-                      )}
-                    </button>
-
-                    <button
-                      type="button"
-                      onClick={() => handleCastVote('REPORT_AG')}
-                      className={`py-2.5 px-4 rounded-xl border text-xs font-semibold flex items-center justify-center gap-2 transition-all cursor-pointer ${
-                        selectedVote === 'REPORT_AG'
-                          ? 'bg-purple-700 text-white border-purple-700 shadow-md ring-2 ring-purple-400/30 font-bold'
-                          : 'bg-white dark:bg-slate-800 hover:bg-purple-50 text-slate-700 dark:text-slate-300 border-slate-200 dark:border-slate-700 shadow-sm'
-                      }`}
-                    >
-                      <span className="text-base">🏛️</span>
-                      <span>Reporter à la prochaine AG</span>
-                      {selectedVote === 'REPORT_AG' && (
-                        <span className="material-symbols-outlined text-[16px] text-white ml-1">check</span>
-                      )}
-                    </button>
+                  <div className="flex flex-col gap-2">
+                    {documentsList.length === 0 ? (
+                      <div className="p-3.5 bg-canvas-slate dark:bg-slate-900/40 rounded-xl text-center text-xs text-on-surface-variant border border-dashed border-border-subtle">
+                        Aucune pièce jointe ou devis téléversé pour ce projet.
+                      </div>
+                    ) : (
+                      documentsList.map((doc, idx) => {
+                        const docInfo = resolveDocumentInfo(doc, activeProject);
+                        return (
+                          <div key={idx} className="flex items-center justify-between p-3 bg-canvas-slate dark:bg-slate-900/50 hover:bg-surface-container transition-colors rounded-xl border border-border-subtle">
+                            <div className="flex items-center gap-3 min-w-0">
+                              <div className="w-10 h-10 rounded-lg bg-rose-100 text-rose-700 dark:bg-rose-950/60 dark:text-rose-400 flex items-center justify-center shrink-0">
+                                <span className="material-symbols-outlined text-xl">
+                                  {docInfo.isImage ? 'image' : 'picture_as_pdf'}
+                                </span>
+                              </div>
+                              <div className="flex flex-col min-w-0">
+                                <span className="text-xs sm:text-sm font-semibold text-on-surface truncate" title={docInfo.title}>
+                                  {docInfo.title}
+                                </span>
+                                {/* Annotation 6 : Le sous-titre "Pièce certifiée" est supprimé */}
+                              </div>
+                            </div>
+                            <div className="flex items-center gap-1.5 shrink-0 ml-2">
+                              <button 
+                                onClick={() => handleViewDocument(doc)}
+                                className="px-2.5 py-1.5 rounded-lg bg-surface-container-lowest text-primary hover:bg-sage-soft text-xs font-semibold flex items-center gap-1 shadow-xs border border-primary transition-all cursor-pointer" 
+                                type="button"
+                                title="Consulter sans télécharger"
+                              >
+                                <span className="material-symbols-outlined text-[15px]">visibility</span>
+                                <span>Consulter</span>
+                              </button>
+                              <button 
+                                onClick={() => handleDownloadDocument(doc)}
+                                className="px-2.5 py-1.5 rounded-lg bg-primary text-white hover:bg-forest-deep text-xs font-semibold flex items-center gap-1 shadow-xs transition-all cursor-pointer" 
+                                type="button"
+                                title="Télécharger une copie"
+                              >
+                                <span className="material-symbols-outlined text-[15px]">download</span>
+                                <span>Télécharger</span>
+                              </button>
+                            </div>
+                          </div>
+                        );
+                      })
+                    )}
                   </div>
                 </div>
-              ) : (
-                <>
-                  {/* Les 3 boutons principaux de vote direct en 1 clic */}
-                  <div aria-label="Choix du vote direct" className="grid grid-cols-1 sm:grid-cols-3 gap-2.5" role="group">
-                    {/* 1. Approuver */}
-                    <button
-                      type="button"
-                      onClick={() => handleCastVote('POUR')}
-                      className={`group relative flex items-center justify-center gap-2 py-3 px-4 rounded-xl border text-xs sm:text-sm font-semibold transition-all cursor-pointer ${
-                        ['POUR', 'OUI'].includes(String(selectedVote || '').toUpperCase())
-                          ? 'bg-emerald-600 text-white border-emerald-600 shadow-md ring-2 ring-emerald-500/30 font-bold'
-                          : 'bg-white dark:bg-slate-800 hover:bg-emerald-50 text-slate-700 dark:text-slate-200 border-slate-200 dark:border-slate-700 shadow-sm'
-                      }`}
-                    >
-                      <span className="material-symbols-outlined text-[20px] shrink-0">check_circle</span>
-                      <span>Approuver</span>
-                    </button>
 
-                    {/* 2. Refuser */}
-                    <button
-                      type="button"
-                      onClick={() => handleCastVote('CONTRE')}
-                      className={`group relative flex items-center justify-center gap-2 py-3 px-4 rounded-xl border text-xs sm:text-sm font-semibold transition-all cursor-pointer ${
-                        ['CONTRE', 'NON'].includes(String(selectedVote || '').toUpperCase())
-                          ? 'bg-rose-600 text-white border-rose-600 shadow-md ring-2 ring-rose-500/30 font-bold'
-                          : 'bg-white dark:bg-slate-800 hover:bg-rose-50 text-slate-700 dark:text-slate-200 border-slate-200 dark:border-slate-700 shadow-sm'
-                      }`}
-                    >
-                      <span className="material-symbols-outlined text-[20px] shrink-0">cancel</span>
-                      <span>Refuser</span>
-                    </button>
-
-                    {/* 3. S'abstenir */}
-                    <button
-                      type="button"
-                      onClick={() => handleCastVote('ABSTENTION')}
-                      className={`group relative flex items-center justify-center gap-2 py-3 px-4 rounded-xl border text-xs sm:text-sm font-semibold transition-all cursor-pointer ${
-                        ['ABSTENTION', 'BLANC'].includes(String(selectedVote || '').toUpperCase())
-                          ? 'bg-slate-700 text-white border-slate-700 shadow-md ring-2 ring-slate-400/30 font-bold'
-                          : 'bg-white dark:bg-slate-800 hover:bg-slate-100 text-slate-700 dark:text-slate-200 border-slate-200 dark:border-slate-700 shadow-sm'
-                      }`}
-                    >
-                      <span className="material-symbols-outlined text-[20px] shrink-0">pause_circle</span>
-                      <span>S'abstenir</span>
-                    </button>
+                {/* ANNOTATIONS 4 & 5 : TITRE ÉPURÉ "Voter" & SONDAGE STYLE WHATSAPP */}
+                <div ref={voteSectionRef} id="section-sondage-whatsapp" className="flex flex-col gap-2.5 scroll-mt-6">
+                  <div className="flex items-center justify-between">
+                    <div className="flex items-center gap-2">
+                      <span className="material-symbols-outlined text-forest-deep text-xl">poll</span>
+                      <h2 className="font-headline-sm text-sm sm:text-base font-bold text-on-surface">
+                        Voter
+                      </h2>
+                    </div>
                   </div>
 
-                  {/* Option statutaire : Demander un débat en AG */}
-                  <div className="pt-3 border-t border-slate-200/80 dark:border-slate-700/80 flex flex-col gap-2">
-                    <button
-                      type="button"
-                      onClick={() => handleCastVote('REPORT_AG')}
-                      className={`w-full py-2.5 px-4 rounded-xl border text-xs font-semibold flex items-center justify-center gap-2 transition-all cursor-pointer ${
-                        ['REPORT_AG', 'REPORT_PROCHAINE_AG', 'DEMANDE_AG', 'REPORT AG'].includes(String(selectedVote || '').toUpperCase())
-                          ? 'bg-purple-700 text-white border-purple-700 shadow-md ring-2 ring-purple-400/30 font-bold'
-                          : 'bg-white dark:bg-slate-800 hover:bg-purple-50 text-slate-700 dark:text-slate-200 border-slate-200 dark:border-slate-700 shadow-sm'
-                      }`}
-                    >
-                      <span className="text-base">🏛️</span>
-                      <span>Demander un débat en Assemblée Générale</span>
-                      {['REPORT_AG', 'REPORT_PROCHAINE_AG', 'DEMANDE_AG', 'REPORT AG'].includes(String(selectedVote || '').toUpperCase()) && (
-                        <span className="material-symbols-outlined text-[16px] text-white ml-1">check</span>
-                      )}
-                    </button>
-                    <p className="text-[11px] text-slate-500 dark:text-slate-400 italic leading-relaxed px-1">
-                      Conformément aux statuts de la SCI, dès lors qu'un associé sollicite un débat en AG, la décision à distance est suspendue. Les votes exprimés restent visibles à titre indicatif et la résolution sera portée à l'ordre du jour de la prochaine AG.
-                    </p>
-                  </div>
-                </>
-              )}
-            </div>
+                  {/* Rendu dynamique du sondage WhatsApp (Annotations 2, 3 & 11) */}
+                  <WhatsAppPollView
+                    project={activeProject}
+                    associatesVotes={associatesVotes}
+                    currentUser={currentUserName}
+                    onCastVote={handleCastVote}
+                    isVotingDisabled={false}
+                    compact={false}
+                  />
+                </div>
+
+                {/* ANNOTATION 1 : L'ancien bloc div#section-vote redondant est définitivement supprimé */}
+              </>
+            )}
 
           </section>
 
@@ -1099,7 +1017,7 @@ function VoteRoofModalInner({
         </div>
       </div>
 
-      {/* Visionneuse universelle intégrée pour les justificatifs du vote */}
+      {/* Visionneuse universelle intégrée pour les justificatifs du vote (Annotation 6) */}
       <DocumentViewerModal
         isOpen={isViewerOpen}
         onClose={() => {
@@ -1107,7 +1025,7 @@ function VoteRoofModalInner({
           setViewerDoc(null);
         }}
         document={viewerDoc}
-        onDownload={(doc) => handleDownloadDoc(doc.filename, 'Justificatif de vote SCI')}
+        onDownload={handleDownloadDocument}
       />
     </div>
   );

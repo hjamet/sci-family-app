@@ -153,11 +153,14 @@ def run_project_migrations():
                         conn.execute(text("ALTER TABLE projects ADD COLUMN task_weight VARCHAR DEFAULT 'MOYEN'"))
                     if "options" not in column_names:
                         conn.execute(text("ALTER TABLE projects ADD COLUMN options TEXT"))
+                    if "allow_multiple_choices" not in column_names:
+                        conn.execute(text("ALTER TABLE projects ADD COLUMN allow_multiple_choices BOOLEAN DEFAULT 0"))
                     conn.commit()
             else:
                 conn.execute(text("ALTER TABLE projects ADD COLUMN IF NOT EXISTS document_urls TEXT;"))
                 conn.execute(text("ALTER TABLE projects ADD COLUMN IF NOT EXISTS task_weight VARCHAR DEFAULT 'MOYEN';"))
                 conn.execute(text("ALTER TABLE projects ADD COLUMN IF NOT EXISTS options TEXT;"))
+                conn.execute(text("ALTER TABLE projects ADD COLUMN IF NOT EXISTS allow_multiple_choices BOOLEAN DEFAULT FALSE;"))
                 conn.commit()
     except Exception as e:
         logger.warning(f"Notice: run_project_migrations: {e}")
@@ -407,10 +410,23 @@ def format_project_response(project: Project) -> dict:
         except Exception:
             options_list = [o.strip() for o in str(raw_options).split(",") if o.strip()]
 
-    options_counts = {
-        opt: sum(1 for v in votes if str(v.vote).strip().lower() == opt.strip().lower())
-        for opt in options_list
-    }
+    options_counts = {}
+    for opt in options_list:
+        count = 0
+        opt_lower = opt.strip().lower()
+        for v in votes:
+            v_str = str(v.vote or "").strip()
+            if v_str.startswith("[") and v_str.endswith("]"):
+                try:
+                    parsed_multi = json.loads(v_str)
+                    if isinstance(parsed_multi, list) and any(str(p).strip().lower() == opt_lower for p in parsed_multi):
+                        count += 1
+                        continue
+                except Exception:
+                    pass
+            if v_str.lower() == opt_lower:
+                count += 1
+        options_counts[opt] = count
 
     return {
         "id": project.id,
@@ -434,6 +450,7 @@ def format_project_response(project: Project) -> dict:
         "status": project.status,
         "decision_mode": project.decision_mode,
         "options": options_list,
+        "allow_multiple_choices": bool(getattr(project, "allow_multiple_choices", False) or False),
         "coordinator_notes": project.coordinator_notes,
         "created_at": project.created_at,
         "updated_at": project.updated_at,
@@ -1775,7 +1792,8 @@ def create_project(proj: ProjectCreate, db: Session = Depends(get_db)):
         photo_url=first_photo,
         photo_urls=photo_urls_str,
         status="EN_VOTE" if proj.decision_mode == "SOUMETTRE_AU_VOTE" else "SOUMIS",
-        options=options_str
+        options=options_str,
+        allow_multiple_choices=bool(proj.allow_multiple_choices) if proj.allow_multiple_choices is not None else False
     )
     db.add(db_proj)
     db.commit()
@@ -1937,6 +1955,8 @@ def review_project(project_id: int, review: ProjectReview, db: Session = Depends
         db_proj.responsible = review.responsible
     if review.options is not None:
         db_proj.options = json.dumps(review.options)
+    if review.allow_multiple_choices is not None:
+        db_proj.allow_multiple_choices = bool(review.allow_multiple_choices)
 
     db_proj.updated_at = datetime.utcnow()
     db.commit()
@@ -2013,8 +2033,25 @@ def process_vote_submission(
     if proj_status in closed_or_archived or (not existing_vote and proj_status not in allowed_vote_statuses):
         raise HTTPException(status_code=400, detail="Ce projet n'est pas ouvert au vote actuellement.")
 
-    raw_vote = vote_val.value if hasattr(vote_val, 'value') else str(vote_val)
-    vote_upper = raw_vote.upper().strip()
+    # Support choix unique vs choix multiples (Annotation 11)
+    is_multi_vote = False
+    multi_vote_choices = []
+
+    if isinstance(vote_val, list):
+        is_multi_vote = True
+        multi_vote_choices = [str(x).strip() for x in vote_val if str(x).strip()]
+    elif hasattr(vote_val, 'value') and isinstance(vote_val.value, list):
+        is_multi_vote = True
+        multi_vote_choices = [str(x).strip() for x in vote_val.value if str(x).strip()]
+    elif isinstance(vote_val, str) and vote_val.strip().startswith("[") and vote_val.strip().endswith("]"):
+        try:
+            parsed = json.loads(vote_val)
+            if isinstance(parsed, list):
+                is_multi_vote = True
+                multi_vote_choices = [str(x).strip() for x in parsed if str(x).strip()]
+        except Exception:
+            pass
+
     valid_votes = ["OUI", "NON", "ABSTENTION", "BLANC", "REPORT_PROCHAINE_AG", "REPORT_AG", "POUR", "CONTRE"]
 
     project_options = []
@@ -2026,19 +2063,51 @@ def process_vote_submission(
         except Exception:
             pass
 
-    is_custom_option = any(vote_upper == opt.upper() for opt in project_options)
-    matched_custom_option = next((opt for opt in project_options if vote_upper == opt.upper()), None)
+    if is_multi_vote:
+        if not multi_vote_choices:
+            if existing_vote:
+                db.delete(existing_vote)
+                db.commit()
+                db.refresh(db_proj)
+                return format_project_response(db_proj)
+            return format_project_response(db_proj)
 
-    if vote_upper not in valid_votes and not is_custom_option:
-        accepted_list = (project_options + ["BLANC", "REPORT_AG"]) if project_options else valid_votes
-        raise HTTPException(status_code=400, detail=f"Le vote doit être l'un de : {', '.join(accepted_list)}.")
+        validated_choices = []
+        has_ag_report = False
+        for choice in multi_vote_choices:
+            choice_upper = choice.upper()
+            matched = next((opt for opt in project_options if choice_upper == opt.upper()), None)
+            if matched:
+                validated_choices.append(matched)
+            elif choice_upper in valid_votes:
+                validated_choices.append(choice_upper)
+                if choice_upper in ("REPORT_PROCHAINE_AG", "REPORT_AG"):
+                    has_ag_report = True
+            else:
+                accepted_list = (project_options + ["BLANC", "REPORT_AG"]) if project_options else valid_votes
+                raise HTTPException(status_code=400, detail=f"Choix « {choice} » invalide. Doit être l'un de : {', '.join(accepted_list)}.")
 
-    vote_str = matched_custom_option if is_custom_option else vote_upper
+        if has_ag_report:
+            db_proj.status = "REPORT_AG"
+            db_proj.add_to_ag_agenda = True
 
-    # Single-Veto AG Rule: If vote is REPORT_PROCHAINE_AG or REPORT_AG, status updates to REPORT_AG and add_to_ag_agenda = True
-    if vote_str in ("REPORT_PROCHAINE_AG", "REPORT_AG"):
-        db_proj.status = "REPORT_AG"
-        db_proj.add_to_ag_agenda = True
+        vote_str = json.dumps(validated_choices)
+    else:
+        raw_vote = vote_val.value if hasattr(vote_val, 'value') else str(vote_val)
+        vote_upper = raw_vote.upper().strip()
+
+        is_custom_option = any(vote_upper == opt.upper() for opt in project_options)
+        matched_custom_option = next((opt for opt in project_options if vote_upper == opt.upper()), None)
+
+        if vote_upper not in valid_votes and not is_custom_option:
+            accepted_list = (project_options + ["BLANC", "REPORT_AG"]) if project_options else valid_votes
+            raise HTTPException(status_code=400, detail=f"Le vote doit être l'un de : {', '.join(accepted_list)}.")
+
+        vote_str = matched_custom_option if is_custom_option else vote_upper
+
+        if vote_str in ("REPORT_PROCHAINE_AG", "REPORT_AG"):
+            db_proj.status = "REPORT_AG"
+            db_proj.add_to_ag_agenda = True
 
     if existing_vote:
         existing_vote.vote = vote_str
