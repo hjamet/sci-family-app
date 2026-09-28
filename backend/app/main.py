@@ -4012,7 +4012,10 @@ def list_documents(
         doc_title = getattr(doc, "title", "Document") or "Document"
         doc_filename = getattr(doc, "file_name", None) or (os.path.basename(doc.file_url) if getattr(doc, "file_url", None) else doc_title)
         doc_cat = getattr(doc, "category", "Actes & Statuts") or "Actes & Statuts"
-        doc_type = getattr(doc, "file_type", "application/pdf") or "application/pdf"
+        doc_type = getattr(doc, "file_type", None)
+        if not doc_type or doc_type in ("application/pdf", "application/octet-stream"):
+            guessed_type, _ = mimetypes.guess_type(doc_filename)
+            doc_type = guessed_type or doc_type or "application/pdf"
 
         results.append({
             "id": effective_id,
@@ -4080,7 +4083,8 @@ async def upload_document_canonical(
     # Lecture du contenu binaire
     file_bytes = await file.read()
     file_size = len(file_bytes)
-    mimetype = file.content_type or "application/pdf"
+    guessed_mime, _ = mimetypes.guess_type(canonical_filename)
+    mimetype = (file.content_type if (file.content_type and file.content_type != "application/octet-stream") else None) or guessed_mime or "application/pdf"
 
     # Déduplication Intelligente par Empreinte SHA-256 (Annotation 4)
     file_hash = hashlib.sha256(file_bytes).hexdigest()
@@ -4458,7 +4462,9 @@ def download_document(doc_id: str, db: Session = Depends(get_db)):
         try:
             content, metadata = drive_jail_service.download_file(target_drive_id)
             filename = (doc.file_name if doc else None) or metadata.get("name") or f"document_{doc_id}.pdf"
-            mimetype = metadata.get("mimeType") or (doc.file_type if doc else "application/pdf")
+            guessed_type, _ = mimetypes.guess_type(filename)
+            drive_mime = metadata.get("mimeType")
+            mimetype = guessed_type or (drive_mime if drive_mime and drive_mime != "application/octet-stream" else None) or (doc.file_type if doc and doc.file_type != "application/octet-stream" else None) or "application/octet-stream"
             return Response(
                 content=content,
                 media_type=mimetype,
@@ -4470,7 +4476,8 @@ def download_document(doc_id: str, db: Session = Depends(get_db)):
     # 2. Secours base de données si contenu binaire présent
     if doc and getattr(doc, "file_data", None):
         filename = doc.file_name or f"document_{doc_id}.pdf"
-        mimetype = doc.file_type or "application/pdf"
+        guessed_type, _ = mimetypes.guess_type(filename)
+        mimetype = guessed_type or (doc.file_type if doc.file_type != "application/octet-stream" else None) or "application/octet-stream"
         return Response(
             content=doc.file_data,
             media_type=mimetype,
@@ -4481,10 +4488,12 @@ def download_document(doc_id: str, db: Session = Depends(get_db)):
     if doc and doc.file_name:
         fpath = os.path.join(DOCUMENTS_DIR, doc.file_name)
         if os.path.exists(fpath):
+            guessed_type, _ = mimetypes.guess_type(fpath)
+            media_type = guessed_type or (doc.file_type if doc.file_type != "application/octet-stream" else None) or "application/octet-stream"
             return FileResponse(
                 path=fpath,
                 filename=doc.file_name,
-                media_type=doc.file_type or "application/pdf"
+                media_type=media_type
             )
 
     raise HTTPException(status_code=404, detail="Document non trouvé ou indisponible.")
@@ -4694,7 +4703,8 @@ def download_drive_file(file_id: str):
     """Télécharge un fichier avec contrôle de sécurité infranchissable (Strict Drive Jail)."""
     content, metadata = drive_jail_service.download_file(file_id)
     filename = metadata.get("name", f"file_{file_id}")
-    mimetype = metadata.get("mimeType", "application/octet-stream")
+    guessed_type, _ = mimetypes.guess_type(filename)
+    mimetype = guessed_type or metadata.get("mimeType", "application/octet-stream")
     return Response(
         content=content,
         media_type=mimetype,
