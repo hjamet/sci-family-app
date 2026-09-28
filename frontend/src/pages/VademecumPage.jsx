@@ -166,7 +166,7 @@ export default function VademecumPage({ properties, currentUser, reservations = 
   const [dhwTarget, setDhwTarget] = useState(55.0);
   const [dhwFrostTarget, setDhwFrostTarget] = useState(10.0);
 
-  const [poolTarget, setPoolTarget] = useState(14.0);
+  const [poolTarget, setPoolTarget] = useState(28.0);
   const [isPoolPumpActive, setIsPoolPumpActive] = useState(true);
   const [isPoolHeatingActive, setIsPoolHeatingActive] = useState(false);
   const [savingThermal, setSavingThermal] = useState(false);
@@ -262,8 +262,13 @@ export default function VademecumPage({ properties, currentUser, reservations = 
       // Piscine Telemetry
       if (poolRes) {
         setPiscineStatus(poolRes);
-        if (poolRes.frost_protection_target != null) setPoolTarget(poolRes.frost_protection_target);
-        else if (poolRes.target_temperature != null) setPoolTarget(poolRes.target_temperature);
+        if (poolRes.target_temperature != null && poolRes.target_temperature >= 15.0) {
+          setPoolTarget(poolRes.target_temperature);
+        } else if (poolRes.frost_protection_target != null && poolRes.frost_protection_target >= 15.0) {
+          setPoolTarget(poolRes.frost_protection_target);
+        } else {
+          setPoolTarget(28.0);
+        }
 
         const pumpActive = poolRes.filtration_state
           ? !poolRes.filtration_state.toLowerCase().includes('arrêt') && !poolRes.filtration_state.toLowerCase().includes('arret') && !poolRes.filtration_state.toLowerCase().includes('off')
@@ -369,13 +374,17 @@ export default function VademecumPage({ properties, currentUser, reservations = 
 
   const handleDhwFrostChange = (delta) => {
     const nextVal = Math.round((dhwFrostTarget + delta) * 10) / 10;
-    if (nextVal < 5.0 || nextVal > 25.0) return;
+    if (nextVal < 10.0) {
+      showToast('10.0°C est le plancher minimal de coupure Vitotronic & protection cuve ViCare.');
+      return;
+    }
+    if (nextVal > 25.0) return;
     setDhwFrostTarget(nextVal);
   };
 
   const handlePoolChange = (delta) => {
     const nextVal = Math.round((poolTarget + delta) * 10) / 10;
-    if (nextVal < 10.0 || nextVal > 30.0) return;
+    if (nextVal < 15.0 || nextVal > 32.0) return;
     setPoolTarget(nextVal);
   };
 
@@ -1189,21 +1198,20 @@ export default function VademecumPage({ properties, currentUser, reservations = 
       )}
 
       {/* ===================================================================== */}
-      {/* 3. RÉGULATION & CONFORT ÉNERGÉTIQUE                                   */}
+      {/* 3. CHAUFFAGE ET PISCINE (Annotation 4)                                */}
       {/* ===================================================================== */}
       <section className="bg-surface-container-lowest rounded-lg p-6 sm:p-8 lg:p-10 shadow-sm border border-border-subtle mb-10 flex flex-col gap-6 w-full max-w-full">
         <div className="flex flex-wrap items-center justify-between gap-4 border-b border-border-subtle pb-5">
           <div className="flex items-center gap-3">
             <div className="w-11 h-11 rounded-2xl bg-sage-soft text-primary flex items-center justify-center shrink-0">
-              <span className="material-symbols-outlined text-[26px]">thermostat_auto</span>
+              <span className="material-symbols-outlined text-[26px]">thermostat</span>
             </div>
             <div>
               <div className="flex items-center gap-2">
                 <h2 className="font-headline-md text-headline-md text-primary tracking-tight font-bold">
-                  Régulation &amp; Confort Énergétique
+                  Chauffage et Piscine
                 </h2>
               </div>
-              {/* ANNOTATION 3 : SOUS-TITRE VERBEUX SUPPRIMÉ */}
             </div>
           </div>
         </div>
@@ -1556,7 +1564,7 @@ export default function VademecumPage({ properties, currentUser, reservations = 
                     </div>
                   </div>
 
-                  {/* 2. Température à l'arrêt (Veille / Maintien minimal) */}
+                  {/* 2. Température à l'arrêt (Seuil de veille Vitotronic & Protection cuve) */}
                   <div className="p-3.5 bg-white dark:bg-slate-900 rounded-xl border border-border-subtle flex flex-col gap-2 shadow-2xs">
                     <div className="flex items-center justify-between gap-2">
                       <div className="flex items-center gap-2.5 min-w-0 pr-1">
@@ -1565,7 +1573,7 @@ export default function VademecumPage({ properties, currentUser, reservations = 
                         </div>
                         <div className="flex flex-col min-w-0">
                           <span className="text-xs font-bold text-on-surface leading-tight">À l'arrêt</span>
-                          <span className="text-[10px] text-on-surface-variant">Veille &amp; maintien minimal ballon</span>
+                          <span className="text-[10px] text-on-surface-variant">Seuil de veille Vitotronic (extinction chauffe &amp; protection cuve)</span>
                         </div>
                       </div>
                       <div className="flex items-center gap-1.5 shrink-0 bg-canvas-slate p-1 rounded-full border border-border-subtle">
@@ -1590,10 +1598,10 @@ export default function VademecumPage({ properties, currentUser, reservations = 
                         </button>
                       </div>
                     </div>
-                    {/* Callout de protection permanente */}
+                    {/* Callout de protection permanente et plancher de coupure */}
                     <div className="flex items-center gap-1.5 px-2.5 py-1 rounded-lg bg-sky-50/90 dark:bg-sky-950/40 border border-sky-200/60 text-[11px] text-sky-800 dark:text-sky-200 font-medium">
                       <span>🛡️</span>
-                      <span>Maintien en veille permanent actif (sécurité anti-gel du ballon).</span>
+                      <span>Seuil de veille Vitotronic (extinction chauffe &amp; protection cuve). Plancher de coupure ViCare à 10.0°C.</span>
                     </div>
                   </div>
                 </div>
@@ -1609,15 +1617,28 @@ export default function VademecumPage({ properties, currentUser, reservations = 
                   <span className="material-symbols-outlined text-primary text-[22px]">pool</span>
                   <h3 className="font-headline-sm text-headline-sm text-on-surface font-semibold truncate">Piscine (Klereo)</h3>
                 </div>
-                <div className="flex items-center gap-1 px-2.5 py-1 rounded-full bg-white dark:bg-slate-900 border border-border-subtle shrink-0">
-                  <span className="font-label-sm text-xs text-outline">Eau :</span>
-                  <span className="font-headline-sm text-xs text-on-surface font-bold tabular-nums">
+              </div>
+
+              {/* Sondes réelles Klereo : Température Eau & Température Air (Annotation 2) */}
+              <div className="grid grid-cols-2 gap-3">
+                <div className="p-3 bg-white dark:bg-slate-900 rounded-xl border border-border-subtle flex flex-col gap-0.5 shadow-2xs">
+                  <div className="flex items-center gap-1.5 text-[11px] text-on-surface-variant font-medium">
+                    <span className="material-symbols-outlined text-[16px] text-sky-600">water</span>
+                    <span>Température Eau</span>
+                  </div>
+                  <span className="font-headline-md text-base sm:text-lg font-bold text-on-surface tabular-nums">
                     {piscineStatus?.water_temperature != null ? `${piscineStatus.water_temperature.toFixed(1)}°C` : '--°C'}
                   </span>
-                  <span className="text-xs text-outline mx-0.5">•</span>
-                  <span className="font-label-sm text-xs text-outline">Air :</span>
-                  <span className="font-headline-sm text-xs text-on-surface font-bold tabular-nums">
-                    {piscineStatus?.outside_temperature != null ? `${piscineStatus.outside_temperature.toFixed(1)}°C` : (piscineStatus?.air_temperature != null ? `${piscineStatus.air_temperature.toFixed(1)}°C` : '--°C')}
+                </div>
+                <div className="p-3 bg-white dark:bg-slate-900 rounded-xl border border-border-subtle flex flex-col gap-0.5 shadow-2xs">
+                  <div className="flex items-center gap-1.5 text-[11px] text-on-surface-variant font-medium">
+                    <span className="material-symbols-outlined text-[16px] text-emerald-600">air</span>
+                    <span>Température Air</span>
+                  </div>
+                  <span className="font-headline-md text-base sm:text-lg font-bold text-on-surface tabular-nums">
+                    {piscineStatus?.outside_temperature != null
+                      ? `${piscineStatus.outside_temperature.toFixed(1)}°C`
+                      : (piscineStatus?.air_temperature != null ? `${piscineStatus.air_temperature.toFixed(1)}°C` : '--°C')}
                   </span>
                 </div>
               </div>
@@ -1669,9 +1690,15 @@ export default function VademecumPage({ properties, currentUser, reservations = 
                       </span>
                     </div>
                   </div>
-                  <span className="px-2 py-1 rounded-md bg-white dark:bg-slate-900 border border-emerald-200 dark:border-emerald-800/50 text-primary font-bold text-xs shrink-0 tabular-nums">
-                    {poolTarget.toFixed(1)}°C
-                  </span>
+                  {isPoolHeatingActive ? (
+                    <span className="px-2 py-1 rounded-md bg-white dark:bg-slate-900 border border-emerald-200 dark:border-emerald-800/50 text-primary font-bold text-xs shrink-0 tabular-nums">
+                      {poolTarget.toFixed(1)}°C
+                    </span>
+                  ) : (
+                    <span className="px-2 py-0.5 rounded-md bg-sky-100 text-sky-900 dark:bg-sky-950/80 dark:text-sky-200 font-bold text-[10px] shrink-0">
+                      Hors-gel Klereo
+                    </span>
+                  )}
                 </div>
               )}
 
@@ -1698,32 +1725,51 @@ export default function VademecumPage({ properties, currentUser, reservations = 
                 </div>
               )}
 
-              {/* Target Temperature Control */}
-              <div className="p-3.5 bg-white dark:bg-slate-900 rounded-xl border border-border-subtle flex items-center justify-between gap-2 shadow-sm">
-                <div className="flex flex-col min-w-0 pr-1">
-                  <span className="font-label-md text-label-md text-on-surface font-semibold leading-tight">Consigne eau bassin</span>
-                </div>
-                <div className="flex items-center gap-1.5 shrink-0 bg-canvas-slate p-1 rounded-full border border-border-subtle">
-                  <button
-                    aria-label="Diminuer consigne piscine"
-                    className="w-8 h-8 rounded-full bg-white dark:bg-slate-800 border border-outline-variant hover:bg-surface-container flex items-center justify-center text-on-surface active:scale-95 transition-transform shadow-sm cursor-pointer"
-                    type="button"
-                    onClick={() => handlePoolChange(-0.5)}
-                  >
-                    <span className="material-symbols-outlined text-[16px]">remove</span>
-                  </button>
-                  <span className="font-headline-md text-[18px] text-primary font-bold tabular-nums w-12 text-center">
-                    {poolTarget.toFixed(1)}<span className="text-xs text-outline font-normal">°C</span>
-                  </span>
-                  <button
-                    aria-label="Augmenter consigne piscine"
-                    className="w-8 h-8 rounded-full bg-primary text-white hover:bg-forest-deep flex items-center justify-center font-bold active:scale-95 transition-transform shadow-sm cursor-pointer"
-                    type="button"
-                    onClick={() => handlePoolChange(0.5)}
-                  >
-                    <span className="material-symbols-outlined text-[16px]">add</span>
-                  </button>
-                </div>
+              {/* Consigne de baignade (si PAC en marche) OU Mention Hors-gel garanti (si PAC à l'arrêt) (Annotation 1) */}
+              <div className="flex flex-col gap-2.5">
+                <span className="text-[11px] font-bold text-on-surface-variant uppercase tracking-wider block">
+                  Consigne Chauffage Bassin
+                </span>
+
+                {isPoolHeatingActive ? (
+                  <div className="p-3.5 bg-white dark:bg-slate-900 rounded-xl border border-border-subtle flex items-center justify-between gap-2 shadow-2xs">
+                    <div className="flex items-center gap-2.5 min-w-0 pr-1">
+                      <div className="w-8 h-8 rounded-lg bg-emerald-50 dark:bg-emerald-950/50 text-emerald-700 dark:text-emerald-300 flex items-center justify-center shrink-0">
+                        <span className="material-symbols-outlined text-[20px]">local_fire_department</span>
+                      </div>
+                      <div className="flex flex-col min-w-0">
+                        <span className="text-xs font-bold text-on-surface leading-tight">Consigne de baignade</span>
+                        <span className="text-[10px] text-on-surface-variant">Chauffe PAC active</span>
+                      </div>
+                    </div>
+                    <div className="flex items-center gap-1.5 shrink-0 bg-canvas-slate p-1 rounded-full border border-border-subtle">
+                      <button
+                        aria-label="Diminuer consigne piscine"
+                        className="w-7 h-7 rounded-full bg-white dark:bg-slate-800 border border-outline-variant hover:bg-surface-container flex items-center justify-center text-on-surface active:scale-95 transition-transform shadow-2xs cursor-pointer"
+                        type="button"
+                        onClick={() => handlePoolChange(-0.5)}
+                      >
+                        <span className="material-symbols-outlined text-[15px]">remove</span>
+                      </button>
+                      <span className="font-headline-md text-sm sm:text-base text-primary font-bold tabular-nums w-12 text-center">
+                        {poolTarget.toFixed(1)}<span className="text-xs text-outline font-normal">°C</span>
+                      </span>
+                      <button
+                        aria-label="Augmenter consigne piscine"
+                        className="w-7 h-7 rounded-full bg-primary text-white hover:bg-forest-deep flex items-center justify-center font-bold active:scale-95 transition-transform shadow-2xs cursor-pointer"
+                        type="button"
+                        onClick={() => handlePoolChange(0.5)}
+                      >
+                        <span className="material-symbols-outlined text-[15px]">add</span>
+                      </button>
+                    </div>
+                  </div>
+                ) : (
+                  <div className="p-3.5 bg-sky-50/90 dark:bg-sky-950/40 border border-sky-200/60 rounded-xl flex items-center gap-2.5 text-xs text-sky-800 dark:text-sky-200 font-medium shadow-2xs">
+                    <span className="text-base shrink-0">🛡️</span>
+                    <span>Hors-gel garanti par circulation continue Klereo (PAC coupée)</span>
+                  </div>
+                )}
               </div>
 
               {/* Indicators */}
