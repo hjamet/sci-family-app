@@ -8,6 +8,7 @@ import {
   invalidateTask,
   acceptTask,
   rejectTask,
+  deleteProject,
   getCachedData,
 } from '../api';
 import TaskDetailModal from './TaskDetailModal';
@@ -71,6 +72,7 @@ export default function TasksPage({ currentUser = 'Henri Jamet' }) {
   const [isTaskEditingDirect, setIsTaskEditingDirect] = useState(false);
   const [isRoofVoteModalOpen, setIsRoofVoteModalOpen] = useState(false);
   const [selectedVoteForModal, setSelectedVoteForModal] = useState(null);
+  const [isVoteModalInitialEditing, setIsVoteModalInitialEditing] = useState(false);
 
   const handleOpenCreateTask = () => {
     setInspectingTask({
@@ -101,6 +103,7 @@ export default function TasksPage({ currentUser = 'Henri Jamet' }) {
       options: ['Approuver le projet', 'Rejeter le projet'],
       allow_multiple_choices: false,
     });
+    setIsVoteModalInitialEditing(true);
     setIsRoofVoteModalOpen(true);
   };
 
@@ -252,6 +255,39 @@ export default function TasksPage({ currentUser = 'Henri Jamet' }) {
     String(currentUser?.name || currentUser?.prenom || currentUser || '').toLowerCase().includes('josephine') ||
     String(currentUser?.name || currentUser?.prenom || currentUser || '').toLowerCase().includes('joséphine')
   );
+
+  const currentUserName = typeof currentUser === 'object'
+    ? (currentUser?.name || currentUser?.prenom || '')
+    : (currentUser || '');
+  const currentUserLower = currentUserName.toLowerCase();
+
+  const canManageCurrentVote = Boolean(
+    currentVote && (
+      isCoordinator ||
+      currentUserLower === 'henri jamet' ||
+      (currentVote.submitted_by && currentUserLower.includes(String(currentVote.submitted_by).toLowerCase().split(' ')[0])) ||
+      (currentVote.created_by && (String(currentVote.created_by).toLowerCase() === currentUserLower || currentUserLower.includes(String(currentVote.created_by).toLowerCase())))
+    )
+  );
+
+  const handleEditVote = (vote) => {
+    setSelectedVoteForModal(vote);
+    setIsVoteModalInitialEditing(true);
+    setIsRoofVoteModalOpen(true);
+  };
+
+  const handleDeleteVote = async (vote) => {
+    if (!vote?.id) return;
+    const ok = window.confirm(`Êtes-vous sûr de vouloir supprimer définitivement le scrutin « ${vote.title} » ? Cette action est irréversible.`);
+    if (!ok) return;
+    try {
+      await deleteProject(vote.id);
+      setProjects(prev => prev.filter(p => p.id !== vote.id));
+      await loadTasks({ forceRefresh: true });
+    } catch (err) {
+      alert(`Erreur lors de la suppression du scrutin : ${err.message}`);
+    }
+  };
 
   const handleValidateTask = async (taskId) => {
     try {
@@ -707,9 +743,39 @@ export default function TasksPage({ currentUser = 'Henri Jamet' }) {
               </div>
 
               <div className="flex items-center gap-2">
+                {canManageCurrentVote && (
+                  <>
+                    <button
+                      type="button"
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        handleEditVote(currentVote);
+                      }}
+                      className="h-[44px] px-3.5 rounded-DEFAULT bg-white dark:bg-slate-800 border border-slate-300 dark:border-slate-600 text-slate-700 dark:text-slate-200 font-label-md text-xs sm:text-sm font-semibold hover:bg-slate-50 transition-all flex items-center gap-1.5 cursor-pointer shadow-2xs"
+                      title="Modifier les paramètres du scrutin"
+                    >
+                      <span className="material-symbols-outlined text-[17px]">edit</span>
+                      <span>Modifier</span>
+                    </button>
+                    <button
+                      type="button"
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        handleDeleteVote(currentVote);
+                      }}
+                      className="h-[44px] px-3.5 rounded-DEFAULT bg-rose-50 border border-rose-200 text-rose-700 hover:bg-rose-100 font-label-md text-xs sm:text-sm font-semibold transition-all flex items-center gap-1.5 cursor-pointer shadow-2xs"
+                      title="Supprimer définitivement ce scrutin"
+                    >
+                      <span className="material-symbols-outlined text-[17px]">delete</span>
+                      <span>Supprimer</span>
+                    </button>
+                  </>
+                )}
                 <button
                   onClick={(e) => {
                     e.stopPropagation();
+                    setSelectedVoteForModal(currentVote);
+                    setIsVoteModalInitialEditing(false);
                     setIsRoofVoteModalOpen(true);
                   }}
                   className="h-[44px] px-5 rounded-DEFAULT bg-surface-container-lowest border-2 border-primary-container text-primary-container font-label-md text-label-md hover:bg-sage-soft transition-all flex items-center gap-2 font-bold cursor-pointer"
@@ -961,8 +1027,10 @@ export default function TasksPage({ currentUser = 'Henri Jamet' }) {
         onClose={() => {
           setIsRoofVoteModalOpen(false);
           setSelectedVoteForModal(null);
+          setIsVoteModalInitialEditing(false);
         }}
         currentUser={currentUser}
+        initialEditing={isVoteModalInitialEditing}
         project={selectedVoteForModal || currentVote}
         onVoteSubmit={handleVoteRoofSubmit}
       />

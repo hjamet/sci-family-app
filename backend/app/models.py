@@ -59,6 +59,7 @@ class AdminDocument(Base):
     file_size = Column(Integer, nullable=True)
     file_data = Column(LargeBinary, nullable=True)
     drive_file_id = Column(String(255), nullable=True, index=True)
+    file_hash = Column(String(64), nullable=True, index=True)
     source_type = Column(String, nullable=True)  # TASK, ISSUE, PROJECT, MANUAL
     source_id = Column(Integer, nullable=True)
     task_id = Column(Integer, ForeignKey("tasks.id", ondelete="SET NULL"), nullable=True, index=True)

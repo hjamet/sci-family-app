@@ -1,4 +1,5 @@
 import os
+import hashlib
 import json
 import shutil
 import uuid
@@ -30,7 +31,7 @@ from .schemas import (
     ReservationCreate, ReservationUpdate, ReservationResponse,
     ProjectCreate, ProjectReview, ProjectApprove, ProjectVoteCreate, ProjectVoteResponse, ProjectResponse, VoteEnum,
     ProjectCommentCreate, ProjectCommentResponse,
-    AdminDocumentCreate, AdminDocumentUpdate, AdminDocumentResponse,
+    AdminDocumentCreate, AdminDocumentUpdate, AdminDocumentResponse, DocumentAttachRequest,
     DocumentCategoryCreate, DocumentCategoryUpdate, DocumentCategoryResponse,
     ClassificationEnum, TaskWeightEnum,
     AvailabilitySet, AvailabilityBatchCreate, AvailabilityResponse, SmartMatchItem,
@@ -235,11 +236,14 @@ def run_document_migrations():
                         conn.execute(text("ALTER TABLE admin_documents ADD COLUMN file_data BLOB"))
                     if "task_id" not in column_names:
                         conn.execute(text("ALTER TABLE admin_documents ADD COLUMN task_id INTEGER"))
+                    if "file_hash" not in column_names:
+                        conn.execute(text("ALTER TABLE admin_documents ADD COLUMN file_hash VARCHAR(64)"))
                     conn.commit()
             else:
                 conn.execute(text("ALTER TABLE admin_documents ADD COLUMN IF NOT EXISTS drive_file_id VARCHAR(255);"))
                 conn.execute(text("ALTER TABLE admin_documents ADD COLUMN IF NOT EXISTS file_data BYTEA;"))
                 conn.execute(text("ALTER TABLE admin_documents ADD COLUMN IF NOT EXISTS task_id INTEGER;"))
+                conn.execute(text("ALTER TABLE admin_documents ADD COLUMN IF NOT EXISTS file_hash VARCHAR(64);"))
                 conn.commit()
     except Exception as e:
         logger.warning(f"Notice: run_document_migrations: {e}")
@@ -4064,34 +4068,55 @@ async def upload_document_canonical(
     file_size = len(file_bytes)
     mimetype = file.content_type or "application/pdf"
 
-    # 1. Téléversement DIRECT dans Google Drive avec Strict Drive Jail (si configuré)
+    # Déduplication Intelligente par Empreinte SHA-256 (Annotation 4)
+    file_hash = hashlib.sha256(file_bytes).hexdigest()
+    existing_doc = db.query(AdminDocument).filter(AdminDocument.file_hash == file_hash).first()
+    if not existing_doc:
+        # Recherche défensive si documents antérieurs sans file_hash
+        existing_doc = db.query(AdminDocument).filter(AdminDocument.file_data == file_bytes).first()
+        if existing_doc and not existing_doc.file_hash:
+            existing_doc.file_hash = file_hash
+            db.commit()
+
+    is_reused = False
     drive_file_id = None
-    try:
-        if drive_jail_service.is_configured():
-            drive_file = drive_jail_service.upload_file(
-                filename=canonical_filename,
-                content=file_bytes,
-                mimetype=mimetype,
-                description=f"SCI Hellenvilliers - {category} - Déposé par {uploaded_by}"
+
+    if existing_doc:
+        # Document physique existant détecté : réutilisation immédiate sans ré-upload physique
+        is_reused = True
+        drive_file_id = existing_doc.drive_file_id
+        canonical_filename = existing_doc.file_name or canonical_filename
+        mimetype = existing_doc.file_type or mimetype
+        file_size = existing_doc.file_size or file_size
+        logger.info(f"[DEDUPLICATION SHA-256] Document existant réutilisé (hash={file_hash[:12]}..., id_source={existing_doc.id})")
+    else:
+        # 1. Téléversement DIRECT dans Google Drive avec Strict Drive Jail (si configuré)
+        try:
+            if drive_jail_service.is_configured():
+                drive_file = drive_jail_service.upload_file(
+                    filename=canonical_filename,
+                    content=file_bytes,
+                    mimetype=mimetype,
+                    description=f"SCI Hellenvilliers - {category} - Déposé par {uploaded_by}"
+                )
+                drive_file_id = drive_file.get("id") if drive_file else None
+            else:
+                logger.warning("Google Drive non configuré sur cet environnement, persistance documentaire locale/base assurée")
+        except Exception as drive_err:
+            logger.warning(
+                f"Google Drive non configuré sur cet environnement, persistance documentaire locale/base assurée ({drive_err})"
             )
-            drive_file_id = drive_file.get("id") if drive_file else None
-        else:
-            logger.warning("Google Drive non configuré sur cet environnement, persistance documentaire locale/base assurée")
-    except Exception as drive_err:
-        logger.warning(
-            f"Google Drive non configuré sur cet environnement, persistance documentaire locale/base assurée ({drive_err})"
-        )
-        drive_file_id = None
+            drive_file_id = None
 
-    # 2. Sauvegarde de secours / cache local
-    dest_path = os.path.join(DOCUMENTS_DIR, canonical_filename)
-    try:
-        with open(dest_path, "wb") as f:
-            f.write(file_bytes)
-    except Exception as e:
-        logger.warning(f"Erreur écriture cache local {canonical_filename}: {e}")
+        # 2. Sauvegarde de secours / cache local
+        dest_path = os.path.join(DOCUMENTS_DIR, canonical_filename)
+        try:
+            with open(dest_path, "wb") as f:
+                f.write(file_bytes)
+        except Exception as e:
+            logger.warning(f"Erreur écriture cache local {canonical_filename}: {e}")
 
-    # 3. Enregistrement en base de données
+    # 3. Enregistrement en base de données du nouveau référencement
     effective_source_type = "PROJECT" if project_id else ("TASK" if task_id else "MANUAL")
     effective_source_id = project_id if project_id else task_id
 
@@ -4102,7 +4127,8 @@ async def upload_document_canonical(
         file_name=canonical_filename,
         file_type=mimetype,
         file_size=file_size,
-        file_data=file_bytes,
+        file_data=existing_doc.file_data if (is_reused and existing_doc.file_data) else file_bytes,
+        file_hash=file_hash,
         drive_file_id=drive_file_id,
         source_type=effective_source_type,
         source_id=effective_source_id,
@@ -4200,6 +4226,8 @@ async def upload_document_canonical(
         "file_name": db_doc.file_name,
         "file_type": db_doc.file_type,
         "file_size": db_doc.file_size,
+        "file_hash": db_doc.file_hash,
+        "reused": is_reused,
         "drive_file_id": db_doc.drive_file_id,
         "source_type": db_doc.source_type,
         "source_id": db_doc.source_id,
@@ -4284,6 +4312,114 @@ def get_task_documents(task_id: str, db: Session = Depends(get_db)):
                 })
 
     return formatted_docs
+
+@app.post("/api/tasks/{task_id}/documents/attach", tags=["Tasks"])
+def attach_documents_to_task(
+    task_id: str,
+    payload: DocumentAttachRequest,
+    db: Session = Depends(get_db)
+):
+    """
+    Associe un ou plusieurs documents administratifs existants à une tâche (Annotation 6).
+    """
+    task = resolve_task_by_id_or_ref(task_id, db)
+    existing_docs = []
+    if task.documents:
+        try:
+            existing_docs = json.loads(task.documents) if isinstance(task.documents, str) else task.documents
+        except Exception:
+            existing_docs = []
+    if not isinstance(existing_docs, list):
+        existing_docs = []
+
+    attached = []
+    for doc_id in payload.document_ids:
+        doc = db.query(AdminDocument).filter(AdminDocument.id == doc_id).first()
+        if not doc:
+            continue
+        download_url = doc.file_url or f"/api/documents/{doc.id}/download"
+        doc_entry = {
+            "id": doc.id,
+            "name": doc.title,
+            "title": doc.title,
+            "filename": doc.file_name or doc.title,
+            "file_url": download_url,
+            "url": download_url,
+            "type": "PDF" if (doc.file_name or "").lower().endswith(".pdf") else "Image" if (doc.file_type or "").startswith("image/") else "Document",
+            "file_type": doc.file_type,
+            "size": f"{round((doc.file_size or 0) / 1024, 1)} Ko" if doc.file_size else "",
+            "category": doc.category,
+            "uploaded_by": doc.uploaded_by,
+            "created_at": doc.created_at.isoformat() if hasattr(doc.created_at, "isoformat") else str(doc.created_at)
+        }
+        if not any(d.get("id") == doc.id or d.get("url") == download_url for d in existing_docs if isinstance(d, dict)):
+            existing_docs.append(doc_entry)
+            attached.append(doc_entry)
+
+    task.documents = json.dumps(existing_docs)
+    db.commit()
+    db.refresh(task)
+    return {
+        "success": True,
+        "task_id": task.id,
+        "attached_count": len(attached),
+        "documents": existing_docs
+    }
+
+@app.post("/api/projects/{project_id}/documents/attach", tags=["Projects"])
+def attach_documents_to_project(
+    project_id: int,
+    payload: DocumentAttachRequest,
+    db: Session = Depends(get_db)
+):
+    """
+    Associe un ou plusieurs documents administratifs existants à un projet / scrutin (Annotation 6).
+    """
+    project = db.query(Project).filter(Project.id == project_id).first()
+    if not project:
+        raise HTTPException(status_code=404, detail="Projet non trouvé")
+    existing_docs = []
+    if project.document_urls:
+        try:
+            existing_docs = json.loads(project.document_urls) if isinstance(project.document_urls, str) else project.document_urls
+        except Exception:
+            existing_docs = []
+    if not isinstance(existing_docs, list):
+        existing_docs = []
+
+    attached = []
+    for doc_id in payload.document_ids:
+        doc = db.query(AdminDocument).filter(AdminDocument.id == doc_id).first()
+        if not doc:
+            continue
+        download_url = doc.file_url or f"/api/documents/{doc.id}/download"
+        doc_entry = {
+            "id": doc.id,
+            "name": doc.title,
+            "title": doc.title,
+            "filename": doc.file_name or doc.title,
+            "file_url": download_url,
+            "url": download_url,
+            "type": "PDF" if (doc.file_name or "").lower().endswith(".pdf") else "Image" if (doc.file_type or "").startswith("image/") else "Document",
+            "file_type": doc.file_type,
+            "size": f"{round((doc.file_size or 0) / 1024, 1)} Ko" if doc.file_size else "",
+            "category": doc.category,
+            "uploaded_by": doc.uploaded_by,
+            "created_at": doc.created_at.isoformat() if hasattr(doc.created_at, "isoformat") else str(doc.created_at)
+        }
+        if not any(d.get("id") == doc.id or d.get("url") == download_url for d in existing_docs if isinstance(d, dict)):
+            existing_docs.append(doc_entry)
+            attached.append(doc_entry)
+
+    project.document_urls = json.dumps(existing_docs)
+    db.commit()
+    db.refresh(project)
+    return {
+        "success": True,
+        "project_id": project.id,
+        "attached_count": len(attached),
+        "documents": existing_docs
+    }
 
 @app.get("/api/documents/{doc_id}/download", tags=["Documents"])
 @app.get("/api/admin-documents/{doc_id}/download", tags=["Documents"])

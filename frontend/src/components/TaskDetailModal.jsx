@@ -26,6 +26,7 @@ import {
 import CustomSelect from './CustomSelect';
 import DocumentViewerModal from './DocumentViewerModal';
 import UploadDocumentModal from './UploadDocumentModal';
+import SelectExistingDocumentModal from './SelectExistingDocumentModal';
 import FamilyChat from './common/FamilyChat';
 
 const SUBJECTS = [
@@ -189,6 +190,7 @@ export default function TaskDetailModal({
 
   // Document Upload & Drag-and-drop State (Universal Upload Modal)
   const [isUploadDocModalOpen, setIsUploadDocModalOpen] = useState(false);
+  const [isSelectExistingDocModalOpen, setIsSelectExistingDocModalOpen] = useState(false);
   const [droppedFileForUpload, setDroppedFileForUpload] = useState(null);
   const [uploadingDoc, setUploadingDoc] = useState(false);
   const [dragOver, setDragOver] = useState(false);
@@ -201,6 +203,50 @@ export default function TaskDetailModal({
   const fileUploadRef = useRef(null);
   const fileUploadEditRef = useRef(null);
   const validationSectionRef = useRef(null);
+
+  // Handler d'association de documents existants déjà uploadés (Annotation 6)
+  const handleAttachExistingDocs = async (attachedDocs) => {
+    if (!Array.isArray(attachedDocs) || attachedDocs.length === 0) return;
+    const newItems = attachedDocs.map((doc, idx) => ({
+      id: doc.id,
+      name: doc.title || doc.name || doc.filename,
+      title: doc.title || doc.name || doc.filename,
+      filename: doc.filename || doc.file_name || doc.title,
+      file_url: doc.file_url || doc.url || `/api/documents/${doc.id}/download`,
+      url: doc.file_url || doc.url || `/api/documents/${doc.id}/download`,
+      type: doc.type || ((doc.filename || doc.file_name || '').toLowerCase().endsWith('.pdf') ? 'PDF' : (doc.filename?.match(/\.(png|jpe?g|webp|gif|svg)$/i) ? 'Image' : 'Document')),
+      size: doc.file_size ? `${Math.round(doc.file_size / 1024)} Ko` : (doc.size || ''),
+      category: doc.category,
+      uploaded_at: doc.created_at || new Date().toISOString()
+    }));
+
+    setEditDocuments((prev) => [...prev, ...newItems]);
+    const currentTaskDocs = parseTaskDocuments(task?.documents || task?.completion_docs);
+    const mergedTaskDocs = [...currentTaskDocs, ...newItems];
+    setTask((prev) => ({ ...prev, documents: mergedTaskDocs }));
+    if (onTaskUpdated) onTaskUpdated();
+
+    // Notification automatique dans le fil de discussion de la tâche
+    if (task?.id) {
+      try {
+        const docNames = newItems.map((d) => `[${d.title}](${d.file_url})`).join(', ');
+        const currentSender = typeof currentUser === 'string'
+          ? currentUser
+          : (currentUser?.name || currentUser?.prenom || 'Henri Jamet');
+        await addTaskComment(task.id, {
+          content: `📎 Documents associés depuis la bibliothèque SCI : ${docNames}`,
+          author_name: currentSender,
+          author_role: 'Associé'
+        });
+        const updatedComments = await fetchTaskComments(task.id);
+        if (Array.isArray(updatedComments)) {
+          setComments(updatedComments);
+        }
+      } catch (chatErr) {
+        console.warn('Erreur post chat association documents:', chatErr);
+      }
+    }
+  };
 
   // Handler universel d'upload de document conforme à l'onglet administratif (Annotation 10 & 11)
   const handleUniversalUploadSuccess = async (newDoc) => {
@@ -810,71 +856,93 @@ export default function TaskDetailModal({
               </button>
             )}
 
-            {/* Boutons de saut direct vers la section de validation (Annotation 6) */}
-            {!isNewTask && isCoordinator && (
-              <button
-                type="button"
-                onClick={() => validationSectionRef.current?.scrollIntoView({ behavior: 'smooth' })}
-                className="inline-flex items-center gap-1.5 h-11 px-3.5 rounded-xl border border-purple-300 bg-purple-50 hover:bg-purple-100 text-purple-900 font-bold text-xs sm:text-sm shadow-xs transition-colors cursor-pointer"
-                title="Faire défiler jusqu'à la section de validation"
-              >
-                <span>👇</span>
-                <span>Valider la tâche</span>
-              </button>
-            )}
-            {!isNewTask && !isCoordinator && isOpenTask && isAssignedToCurrentUser && (
-              <button
-                type="button"
-                onClick={() => validationSectionRef.current?.scrollIntoView({ behavior: 'smooth' })}
-                className="inline-flex items-center gap-1.5 h-11 px-3.5 rounded-xl border border-emerald-300 bg-emerald-50 hover:bg-emerald-100 text-emerald-900 font-bold text-xs sm:text-sm shadow-xs transition-colors cursor-pointer"
-                title="Faire défiler jusqu'à la demande de validation"
-              >
-                <span>👇</span>
-                <span>Demander la validation</span>
-              </button>
-            )}
-
-            {/* Actions superviseur et membres : Valider / Invalider si en attente de validation, Demander validation pour le membre assigné (Annotation 2) */}
+            {/* CLARIFICATION RADICALE DU CYCLE DE VIE DES TÂCHES (ANNOTATION 8) */}
             {!isNewTask && (
-              isPendingValidation ? (
+              isProposed ? (
+                /* 1. Tâche Proposée (Orange) : Boutons d'arbitrage pour les coordinateurs */
+                isCoordinator ? (
+                  <div className="flex items-center gap-2">
+                    <button
+                      type="button"
+                      onClick={handleAcceptModalTask}
+                      title="Approuver la tâche et la faire passer en active (bleue)"
+                      className="inline-flex items-center gap-1.5 h-11 px-4 rounded-xl border-2 font-label-md text-xs sm:text-sm font-bold shadow-sm transition-colors bg-emerald-600 hover:bg-emerald-700 text-white border-emerald-600 cursor-pointer"
+                    >
+                      <span className="material-symbols-outlined text-[18px]">check</span>
+                      <span>Approuver la tâche</span>
+                    </button>
+                    <button
+                      type="button"
+                      onClick={handleRejectModalTask}
+                      title="Refuser la tâche proposée"
+                      className="inline-flex items-center gap-1.5 h-11 px-3.5 rounded-xl border-2 font-label-md text-xs sm:text-sm font-bold shadow-sm transition-colors bg-rose-50 hover:bg-rose-100 text-rose-700 border-rose-300 dark:border-rose-700 cursor-pointer"
+                    >
+                      <span className="material-symbols-outlined text-[18px]">close</span>
+                      <span>Rejeter</span>
+                    </button>
+                  </div>
+                ) : (
+                  <span className="inline-flex items-center gap-1.5 px-3.5 py-1.5 rounded-xl font-label-md text-xs sm:text-sm font-bold bg-amber-100 text-amber-900 border border-amber-300">
+                    <span className="material-symbols-outlined text-[18px]">pending</span>
+                    <span>Proposition à l'étude par les coordinateurs</span>
+                  </span>
+                )
+              ) : isPendingValidation ? (
+                /* 3. Tâche À Valider (Vert) : Décision finale de clôture ou renvoi pour corrections */
                 isCoordinator ? (
                   <div className="flex items-center gap-2">
                     <button
                       type="button"
                       onClick={handleValidateModalTask}
-                      title="Valider la tâche"
-                      className="inline-flex items-center gap-1.5 h-11 px-4 rounded-xl border-2 font-label-md text-xs sm:text-sm font-bold shadow-sm transition-colors bg-purple-700 hover:bg-purple-800 text-white border-purple-700 cursor-pointer"
+                      title="Confirmer la bonne réalisation des travaux et archiver la tâche"
+                      className="inline-flex items-center gap-1.5 h-11 px-4 rounded-xl border-2 font-label-md text-xs sm:text-sm font-bold shadow-sm transition-colors bg-emerald-700 hover:bg-emerald-800 text-white border-emerald-700 cursor-pointer"
                     >
-                      <span className="material-symbols-outlined text-[18px]">check</span>
-                      <span>Valider</span>
+                      <span className="material-symbols-outlined text-[18px]">check_circle</span>
+                      <span>Confirmer la réalisation &amp; Clôturer</span>
                     </button>
                     <button
                       type="button"
                       onClick={handleInvalidateModalTask}
-                      title="Invalider la tâche"
-                      className="inline-flex items-center gap-1.5 h-11 px-4 rounded-xl border-2 font-label-md text-xs sm:text-sm font-bold shadow-sm transition-colors bg-purple-50 hover:bg-purple-100 text-purple-800 border-purple-300 dark:border-purple-600 dark:bg-purple-950/60 dark:text-purple-200 cursor-pointer"
+                      title="Renvoyer la tâche en cours pour corrections requises"
+                      className="inline-flex items-center gap-1.5 h-11 px-3.5 rounded-xl border-2 font-label-md text-xs sm:text-sm font-bold shadow-sm transition-colors bg-amber-50 hover:bg-amber-100 text-amber-900 border-amber-300 cursor-pointer"
                     >
-                      <span className="material-symbols-outlined text-[18px]">close</span>
-                      <span>Invalider</span>
+                      <span className="material-symbols-outlined text-[18px]">undo</span>
+                      <span>Renvoyer en cours (corrections requises)</span>
                     </button>
                   </div>
                 ) : (
-                  <span className="inline-flex items-center gap-1.5 px-3.5 py-1.5 rounded-xl font-label-md text-xs sm:text-sm font-bold bg-purple-100 text-purple-800 dark:bg-purple-900/60 dark:text-purple-200 border border-purple-300">
-                    <span className="material-symbols-outlined text-[18px]">verified</span>
-                    <span>En attente de validation</span>
+                  <span className="inline-flex items-center gap-1.5 px-3.5 py-1.5 rounded-xl font-label-md text-xs sm:text-sm font-bold bg-emerald-100 text-emerald-800 border border-emerald-300">
+                    <span className="material-symbols-outlined text-[18px]">hourglass_top</span>
+                    <span>En attente de vérification par les coordinateurs</span>
                   </span>
                 )
-              ) : (isOpenTask && isAssignedToCurrentUser ? (
-                <button
-                  type="button"
-                  onClick={handleRequestValidation}
-                  title="Demander la validation"
-                  className="inline-flex items-center gap-1.5 h-11 px-4 rounded-xl border-2 font-label-md text-xs sm:text-sm font-bold shadow-sm transition-colors bg-white border-primary text-primary hover:bg-sage-soft cursor-pointer"
-                >
-                  <span className="material-symbols-outlined text-[18px] text-primary">check_circle</span>
-                  <span>Demander la validation</span>
-                </button>
-              ) : null)
+              ) : (
+                /* 2. Tâche En Cours (Bleu) : Demande de vérification pour le membre OU clôture directe pour le coordinateur */
+                <div className="flex items-center gap-2">
+                  {isOpenTask && (isAssignedToCurrentUser || !isCoordinator) && (
+                    <button
+                      type="button"
+                      onClick={handleRequestValidation}
+                      title="Demander aux coordinateurs de vérifier la bonne exécution des travaux"
+                      className="inline-flex items-center gap-1.5 h-11 px-4 rounded-xl border-2 font-label-md text-xs sm:text-sm font-bold shadow-sm transition-colors bg-emerald-50 hover:bg-emerald-100 border-emerald-600 text-emerald-800 cursor-pointer"
+                    >
+                      <span className="material-symbols-outlined text-[18px] text-emerald-700">send</span>
+                      <span>Demander la vérification</span>
+                    </button>
+                  )}
+                  {isOpenTask && isCoordinator && (
+                    <button
+                      type="button"
+                      onClick={handleValidateModalTask}
+                      title="Clôturer immédiatement la tâche en tant que coordinateur"
+                      className="inline-flex items-center gap-1.5 h-11 px-4 rounded-xl border-2 font-label-md text-xs sm:text-sm font-bold shadow-sm transition-colors bg-slate-800 hover:bg-slate-900 text-white border-slate-800 cursor-pointer"
+                    >
+                      <span className="material-symbols-outlined text-[18px]">check</span>
+                      <span>Clôturer directement</span>
+                    </button>
+                  )}
+                </div>
+              )
             )}
 
             {/* Delete Task Button: Harmonisation border-2 et alignement droite ml-auto (Annotation 3) */}
@@ -1015,17 +1083,28 @@ export default function TaskDetailModal({
                       </p>
                     </div>
 
-                    <button
-                      type="button"
-                      onClick={() => {
-                        setDroppedFileForUpload(null);
-                        setIsUploadDocModalOpen(true);
-                      }}
-                      className="inline-flex items-center gap-2 h-10 px-4 rounded-full bg-white border-2 border-emerald-600 text-emerald-800 font-label-lg text-xs font-semibold shadow-sm hover:bg-emerald-50 transition-colors cursor-pointer"
-                    >
-                      <span className="material-symbols-outlined text-[18px]">add_circle</span>
-                      <span>+ Ajouter un document</span>
-                    </button>
+                    <div className="flex flex-wrap items-center gap-2">
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setDroppedFileForUpload(null);
+                          setIsUploadDocModalOpen(true);
+                        }}
+                        className="inline-flex items-center gap-2 h-10 px-4 rounded-full bg-white border-2 border-emerald-600 text-emerald-800 font-label-lg text-xs font-semibold shadow-sm hover:bg-emerald-50 transition-colors cursor-pointer"
+                      >
+                        <span className="material-symbols-outlined text-[18px]">add_circle</span>
+                        <span>Ajouter un document</span>
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => setIsSelectExistingDocModalOpen(true)}
+                        className="inline-flex items-center gap-2 h-10 px-4 rounded-full bg-white border-2 border-slate-300 text-slate-700 hover:border-emerald-600 hover:text-emerald-800 font-label-lg text-xs font-semibold shadow-sm hover:bg-emerald-50 transition-colors cursor-pointer"
+                        title="Sélectionner parmi les documents déjà enregistrés dans la SCI"
+                      >
+                        <span className="material-symbols-outlined text-[18px]">search</span>
+                        <span>Associer un document existant</span>
+                      </button>
+                    </div>
                   </div>
 
                   <div className="flex flex-col gap-2">
@@ -1149,7 +1228,7 @@ export default function TaskDetailModal({
                             className="inline-flex items-center gap-2 px-5 py-2.5 rounded-xl bg-emerald-600 hover:bg-emerald-700 text-white font-bold text-xs sm:text-sm shadow-md transition-all cursor-pointer"
                           >
                             <span className="material-symbols-outlined text-[18px]">check</span>
-                            <span>Accepter et activer la tâche</span>
+                            <span>Approuver la tâche</span>
                           </button>
                           <button
                             type="button"
@@ -1157,7 +1236,7 @@ export default function TaskDetailModal({
                             className="inline-flex items-center gap-2 px-4 py-2.5 rounded-xl bg-white hover:bg-rose-50 text-rose-700 border-2 border-rose-300 font-bold text-xs sm:text-sm shadow-sm transition-all cursor-pointer"
                           >
                             <span className="material-symbols-outlined text-[18px]">close</span>
-                            <span>Refuser la proposition</span>
+                            <span>Rejeter</span>
                           </button>
                           {mode === 'view' && (
                             <button
@@ -1166,7 +1245,7 @@ export default function TaskDetailModal({
                               className="inline-flex items-center gap-2 px-4 py-2.5 rounded-xl bg-amber-100 hover:bg-amber-200 text-amber-900 border border-amber-300 font-semibold text-xs sm:text-sm transition-all cursor-pointer"
                             >
                               <span className="material-symbols-outlined text-[18px]">edit</span>
-                              <span>Compléter avant d'accepter</span>
+                              <span>Compléter avant d'approuver</span>
                             </button>
                           )}
                         </>
@@ -1174,29 +1253,55 @@ export default function TaskDetailModal({
 
                       {isProposed && !isCoordinator && (
                         <div className="text-xs font-semibold text-amber-900 bg-amber-100/70 p-3 rounded-xl border border-amber-300 w-full flex items-center gap-2">
-                          <span className="material-symbols-outlined text-amber-700 text-[18px]">hourglass_top</span>
-                          <span>Votre proposition de tâche est en cours d'examen par la coordination de la SCI.</span>
+                          <span className="material-symbols-outlined text-amber-700 text-[18px]">pending</span>
+                          <span>Proposition à l'étude par les coordinateurs.</span>
                         </div>
                       )}
 
-                      {/* Cas 2 : Tâche à valider (vert) - Validation finale coordinateur */}
+                      {/* Cas 2 : Tâche en cours (bleu) - Demande de vérification pour le membre OU clôture directe pour le coordinateur */}
+                      {isOpenTask && !isPendingValidation && !isProposed && (
+                        <div className="flex flex-wrap items-center gap-3">
+                          {(isAssignedToCurrentUser || !isCoordinator) && (
+                            <button
+                              type="button"
+                              onClick={handleRequestValidation}
+                              className="inline-flex items-center gap-2 px-5 py-2.5 rounded-xl bg-emerald-700 hover:bg-emerald-800 text-white font-bold text-xs sm:text-sm shadow-md transition-all cursor-pointer"
+                            >
+                              <span className="material-symbols-outlined text-[18px]">send</span>
+                              <span>Demander la vérification</span>
+                            </button>
+                          )}
+                          {isCoordinator && (
+                            <button
+                              type="button"
+                              onClick={handleValidateModalTask}
+                              className="inline-flex items-center gap-2 px-5 py-2.5 rounded-xl bg-slate-800 hover:bg-slate-900 text-white font-bold text-xs sm:text-sm shadow-md transition-all cursor-pointer"
+                            >
+                              <span className="material-symbols-outlined text-[18px]">check</span>
+                              <span>Clôturer directement</span>
+                            </button>
+                          )}
+                        </div>
+                      )}
+
+                      {/* Cas 3 : Tâche à valider (vert) - Validation finale coordinateur */}
                       {isPendingValidation && isCoordinator && (
                         <>
                           <button
                             type="button"
                             onClick={handleValidateModalTask}
-                            className="inline-flex items-center gap-2 px-5 py-2.5 rounded-xl bg-emerald-600 hover:bg-emerald-700 text-white font-bold text-xs sm:text-sm shadow-md transition-all cursor-pointer"
+                            className="inline-flex items-center gap-2 px-5 py-2.5 rounded-xl bg-emerald-700 hover:bg-emerald-800 text-white font-bold text-xs sm:text-sm shadow-md transition-all cursor-pointer"
                           >
                             <span className="material-symbols-outlined text-[18px]">check_circle</span>
-                            <span>Valider et clôturer la mission</span>
+                            <span>Confirmer la réalisation &amp; Clôturer</span>
                           </button>
                           <button
                             type="button"
                             onClick={handleInvalidateModalTask}
-                            className="inline-flex items-center gap-2 px-4 py-2.5 rounded-xl bg-white hover:bg-rose-50 text-rose-700 border-2 border-rose-300 font-bold text-xs sm:text-sm shadow-sm transition-all cursor-pointer"
+                            className="inline-flex items-center gap-2 px-4 py-2.5 rounded-xl bg-white hover:bg-amber-50 text-amber-900 border-2 border-amber-300 font-bold text-xs sm:text-sm shadow-sm transition-all cursor-pointer"
                           >
-                            <span className="material-symbols-outlined text-[18px]">close</span>
-                            <span>Refuser / Invalider</span>
+                            <span className="material-symbols-outlined text-[18px]">undo</span>
+                            <span>Renvoyer en cours (corrections requises)</span>
                           </button>
                         </>
                       )}
@@ -1204,20 +1309,8 @@ export default function TaskDetailModal({
                       {isPendingValidation && !isCoordinator && (
                         <div className="text-xs font-semibold text-emerald-900 bg-emerald-50 p-3 rounded-xl border border-emerald-200 w-full flex items-center gap-2">
                           <span className="material-symbols-outlined text-emerald-700 text-[18px]">hourglass_top</span>
-                          <span>Votre demande de validation a été transmise aux coordinateurs de la SCI.</span>
+                          <span>En attente de vérification par les coordinateurs.</span>
                         </div>
-                      )}
-
-                      {/* Cas 3 : Tâche en cours - Demande de validation */}
-                      {isOpenTask && isAssignedToCurrentUser && !isPendingValidation && !isProposed && (
-                        <button
-                          type="button"
-                          onClick={handleRequestValidation}
-                          className="inline-flex items-center gap-2 px-5 py-2.5 rounded-xl bg-primary hover:bg-forest-deep text-white font-bold text-xs sm:text-sm shadow-md transition-all cursor-pointer"
-                        >
-                          <span className="material-symbols-outlined text-[18px]">send</span>
-                          <span>Demander la validation aux coordinateurs</span>
-                        </button>
                       )}
                     </div>
                   </div>
@@ -1348,7 +1441,7 @@ export default function TaskDetailModal({
                   <div className="flex items-center justify-between border-b border-slate-100 pb-3">
                     <h3 className="font-headline-sm text-sm sm:text-base font-bold text-on-surface flex items-center gap-2">
                       <span className="material-symbols-outlined text-primary text-[20px]">assignment</span>
-                      {isVoteInitiative ? "Détails de l'initiative soumise au vote" : "Champs standards (Tous membres)"}
+                      {isVoteInitiative ? "Détails de l'initiative soumise au vote" : "Champs standards"}
                     </h3>
                   </div>
 
@@ -1730,6 +1823,15 @@ export default function TaskDetailModal({
         currentUser={currentUser}
         initialFile={droppedFileForUpload}
         onUploadSuccess={handleUniversalUploadSuccess}
+      />
+
+      {/* Modale de sélection de documents déjà existants dans la SCI (Annotation 6) */}
+      <SelectExistingDocumentModal
+        isOpen={isSelectExistingDocModalOpen}
+        onClose={() => setIsSelectExistingDocModalOpen(false)}
+        targetTaskId={task?.id}
+        alreadyAttachedDocIds={parseTaskDocuments(task?.documents || task?.completion_docs)}
+        onAttachSuccess={handleAttachExistingDocs}
       />
 
     </div>

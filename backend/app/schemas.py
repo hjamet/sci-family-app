@@ -178,6 +178,7 @@ class AdminDocumentCreate(BaseModel):
     file_name: Optional[str] = None
     file_type: Optional[str] = None
     file_size: Optional[int] = None
+    file_hash: Optional[str] = None
     drive_file_id: Optional[str] = None
     source_type: Optional[str] = "TASK"
     source_id: Optional[int] = None
@@ -198,6 +199,8 @@ class AdminDocumentResponse(BaseModel):
     file_name: Optional[str] = None
     file_type: Optional[str] = None
     file_size: Optional[int] = None
+    file_hash: Optional[str] = None
+    reused: Optional[bool] = False
     drive_file_id: Optional[str] = None
     source_type: Optional[str] = None
     source_id: Optional[int] = None
@@ -210,6 +213,9 @@ class AdminDocumentResponse(BaseModel):
 
     class Config:
         from_attributes = True
+
+class DocumentAttachRequest(BaseModel):
+    document_ids: List[int]
 
 # Document Category Schemas
 class DocumentCategoryBase(BaseModel):

@@ -2,9 +2,10 @@ import React, { useState, useEffect, useRef, useMemo } from 'react';
 import { MarkdownContent } from './common/RichTextEditor';
 import DocumentViewerModal from './DocumentViewerModal';
 import UploadDocumentModal from './UploadDocumentModal';
+import SelectExistingDocumentModal from './SelectExistingDocumentModal';
 import FamilyChat from './common/FamilyChat';
 import WhatsAppPollView, { STATUTORY_ASSOCIATES, parseVotesArray, hasVotedForOption } from './common/WhatsAppPollView';
-import { castProjectVote, createProject, updateProject, deleteProject } from '../api';
+import { castProjectVote, createProject, updateProject, deleteProject, attachDocumentsToProject } from '../api';
 
 // Error Boundary de protection intégrée pour empêcher tout écran blanc
 class VoteErrorBoundary extends React.Component {
@@ -253,10 +254,13 @@ function VoteRoofModalInner({
     currentUserLower.includes('joséphine')
   );
   const isOwner = Boolean(
-    activeProject?.submitted_by &&
-    currentUserLower.includes(String(activeProject.submitted_by).toLowerCase().split(' ')[0])
+    (activeProject?.submitted_by &&
+      currentUserLower.includes(String(activeProject.submitted_by).toLowerCase().split(' ')[0])) ||
+    (activeProject?.created_by &&
+      (String(activeProject.created_by).toLowerCase() === currentUserLower ||
+       currentUserLower.includes(String(activeProject.created_by).toLowerCase())))
   );
-  const canManageVote = isCoordinator || isOwner;
+  const canManageVote = isCoordinator || isOwner || currentUserLower === 'henri jamet';
 
   const [editTitle, setEditTitle] = useState(projectTitle);
   const [editDescription, setEditDescription] = useState(projectDescription);
@@ -278,9 +282,10 @@ function VoteRoofModalInner({
   const [newOptionInput, setNewOptionInput] = useState('');
   const [isSubmittingEdit, setIsSubmittingEdit] = useState(false);
 
-  // Annotation 4 : Gestion des documents en mode édition / création
+  // Annotation 4 & 6 : Gestion des documents en mode édition / création
   const [editDocuments, setEditDocuments] = useState([]);
   const [isUploadModalOpen, setIsUploadModalOpen] = useState(false);
+  const [isSelectExistingDocModalOpen, setIsSelectExistingDocModalOpen] = useState(false);
 
   // Synchronisation lors de l'ouverture du mode édition
   useEffect(() => {
@@ -483,6 +488,30 @@ function VoteRoofModalInner({
     setEditDocuments(prev => [...prev, newDoc]);
     setIsUploadModalOpen(false);
     setToastMessage('Document rattaché avec succès !');
+    setTimeout(() => setToastMessage(null), 3000);
+  };
+
+  // Annotation 6 : Association de documents existants de la bibliothèque SCI
+  const handleAttachExistingDocs = (attachedDocs) => {
+    if (!Array.isArray(attachedDocs) || attachedDocs.length === 0) return;
+    const newItems = attachedDocs.map((doc) => ({
+      id: doc.id,
+      title: doc.title || doc.name || doc.filename,
+      filename: doc.filename || doc.file_name || doc.title,
+      file_url: doc.file_url || doc.url || `/api/documents/${doc.id}/download`,
+      url: doc.file_url || doc.url || `/api/documents/${doc.id}/download`,
+      file_type: doc.file_type || doc.mime_type || ((doc.filename || '').toLowerCase().endsWith('.pdf') ? 'application/pdf' : 'application/octet-stream')
+    }));
+
+    setEditDocuments(prev => [...prev, ...newItems]);
+    const currentDocs = Array.isArray(localProject.documents) ? localProject.documents : [];
+    const mergedDocs = [...currentDocs, ...newItems];
+    const updatedLocal = { ...localProject, documents: mergedDocs };
+    setLocalProject(updatedLocal);
+    if (typeof onVoteSubmit === 'function') {
+      onVoteSubmit(updatedLocal);
+    }
+    setToastMessage(`${newItems.length} document(s) associé(s) avec succès !`);
     setTimeout(() => setToastMessage(null), 3000);
   };
 
@@ -786,7 +815,7 @@ function VoteRoofModalInner({
                   title="Modifier le titre, la description ou les options de ce vote"
                 >
                   <span className="material-symbols-outlined text-[15px]">edit</span>
-                  <span className="hidden sm:inline">Modifier</span>
+                  <span>Modifier</span>
                 </button>
                 <button
                   type="button"
@@ -795,7 +824,7 @@ function VoteRoofModalInner({
                   title="Supprimer définitivement ce scrutin"
                 >
                   <span className="material-symbols-outlined text-[15px]">delete</span>
-                  <span className="hidden sm:inline">Supprimer</span>
+                  <span>Supprimer</span>
                 </button>
               </div>
             )}
@@ -906,9 +935,6 @@ function VoteRoofModalInner({
                     <span className="text-xs font-bold text-slate-800 dark:text-slate-200">
                       Autoriser plusieurs réponses
                     </span>
-                    <span className="text-[11px] text-slate-500 dark:text-slate-400">
-                      Permettre aux associés de cocher plusieurs options (comme sur WhatsApp)
-                    </span>
                   </div>
                   <button
                     type="button"
@@ -975,26 +1001,37 @@ function VoteRoofModalInner({
                   )}
                 </div>
 
-                {/* ANNOTATION 4 : Gestion des pièces jointes en mode édition / création */}
+                {/* ANNOTATION 4 & 6 : Gestion des pièces jointes en mode édition / création */}
                 <div className="flex flex-col gap-2 pt-2 border-t border-slate-200 dark:border-slate-800">
-                  <div className="flex items-center justify-between">
+                  <div className="flex items-center justify-between flex-wrap gap-2">
                     <label className="text-xs font-bold text-slate-700 dark:text-slate-300 flex items-center gap-1.5">
                       <span className="material-symbols-outlined text-sm text-forest-deep">attach_file</span>
                       <span>Documents justificatifs &amp; Devis ({editDocuments.length})</span>
                     </label>
-                    <button
-                      type="button"
-                      onClick={() => setIsUploadModalOpen(true)}
-                      className="inline-flex items-center gap-1 px-2.5 py-1 rounded-lg bg-emerald-50 dark:bg-emerald-950/50 border border-emerald-300 dark:border-emerald-700 text-emerald-800 dark:text-emerald-200 text-xs font-semibold hover:bg-emerald-100 transition-colors cursor-pointer"
-                    >
-                      <span className="material-symbols-outlined text-sm">add</span>
-                      <span>+ Ajouter un document</span>
-                    </button>
+                    <div className="flex items-center gap-2">
+                      <button
+                        type="button"
+                        onClick={() => setIsSelectExistingDocModalOpen(true)}
+                        className="inline-flex items-center gap-1 px-2.5 py-1 rounded-lg bg-slate-100 dark:bg-slate-800 border border-slate-300 dark:border-slate-700 text-slate-700 dark:text-slate-200 text-xs font-semibold hover:bg-slate-200 dark:hover:bg-slate-700 transition-colors cursor-pointer"
+                        title="Associer un document déjà présent dans la base documentaire"
+                      >
+                        <span className="material-symbols-outlined text-sm">search</span>
+                        <span>Associer un document existant</span>
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => setIsUploadModalOpen(true)}
+                        className="inline-flex items-center gap-1 px-2.5 py-1 rounded-lg bg-emerald-50 dark:bg-emerald-950/50 border border-emerald-300 dark:border-emerald-700 text-emerald-800 dark:text-emerald-200 text-xs font-semibold hover:bg-emerald-100 transition-colors cursor-pointer"
+                      >
+                        <span className="material-symbols-outlined text-sm">add</span>
+                        <span>Ajouter un document</span>
+                      </button>
+                    </div>
                   </div>
 
                   {editDocuments.length === 0 ? (
                     <div className="p-3 bg-white dark:bg-slate-800 rounded-xl text-center text-xs text-slate-500 dark:text-slate-400 border border-dashed border-slate-300 dark:border-slate-700">
-                      Aucun document rattaché. Cliquez sur « + Ajouter un document » pour téléverser un devis ou une pièce justificative.
+                      Aucun document rattaché. Cliquez sur « Ajouter un document » pour téléverser un devis ou une pièce justificative.
                     </div>
                   ) : (
                     <div className="flex flex-col gap-1.5">
@@ -1117,14 +1154,27 @@ function VoteRoofModalInner({
 
                 {/* Documents & Justificatifs rattachés (Annotation 6 : Vrais noms & visionneuse universelle) */}
                 <div className="flex flex-col gap-2.5">
-                  <div className="flex items-center justify-between">
+                  <div className="flex items-center justify-between flex-wrap gap-2">
                     <h2 className="font-headline-sm text-sm sm:text-base font-bold text-on-surface flex items-center gap-2">
                       <span className="material-symbols-outlined text-forest-deep text-xl">folder_open</span>
                       Documents &amp; Justificatifs rattachés
                     </h2>
-                    <span className="text-xs text-on-surface-variant font-medium">
-                      {documentsList.length} pièce{documentsList.length > 1 ? 's' : ''}
-                    </span>
+                    <div className="flex items-center gap-2">
+                      {canManageVote && (
+                        <button
+                          type="button"
+                          onClick={() => setIsSelectExistingDocModalOpen(true)}
+                          className="inline-flex items-center gap-1 px-2.5 py-1 rounded-lg bg-slate-100 dark:bg-slate-800 border border-slate-300 dark:border-slate-700 text-slate-700 dark:text-slate-200 text-xs font-semibold hover:bg-slate-200 dark:hover:bg-slate-700 transition-colors cursor-pointer"
+                          title="Associer un document déjà présent dans la base documentaire"
+                        >
+                          <span className="material-symbols-outlined text-sm">search</span>
+                          <span>Associer un document existant</span>
+                        </button>
+                      )}
+                      <span className="text-xs text-on-surface-variant font-medium">
+                        {documentsList.length} pièce{documentsList.length > 1 ? 's' : ''}
+                      </span>
+                    </div>
                   </div>
 
                   <div className="flex flex-col gap-2">
@@ -1237,6 +1287,15 @@ function VoteRoofModalInner({
         onClose={() => setIsUploadModalOpen(false)}
         onUploadSuccess={handleUploadSuccess}
         targetProjectId={activeProject?.id || null}
+      />
+
+      {/* Annotation 6 : Modale de sélection de documents déjà existants dans la SCI */}
+      <SelectExistingDocumentModal
+        isOpen={isSelectExistingDocModalOpen}
+        onClose={() => setIsSelectExistingDocModalOpen(false)}
+        targetProjectId={activeProject?.id || null}
+        alreadyAttachedDocIds={editDocuments}
+        onAttachSuccess={handleAttachExistingDocs}
       />
     </div>
   );

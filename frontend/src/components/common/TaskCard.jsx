@@ -189,11 +189,13 @@ export default function TaskCard({
           {/* Badge Trichromatique Principal */}
           {isProposed ? (
             <span className="px-2.5 py-0.5 rounded-full text-xs font-bold bg-amber-100 text-amber-900 dark:bg-amber-900/60 dark:text-amber-200 border border-amber-300 flex items-center gap-1">
-              <span className="material-symbols-outlined text-[15px]">pending</span> Tâche proposée
+              <span className="material-symbols-outlined text-[15px]">pending</span>
+              {isCoordinator ? "Proposition à valider" : "Proposition à l'étude par les coordinateurs"}
             </span>
           ) : isValidationTask ? (
             <span className="px-2.5 py-0.5 rounded-full text-xs font-bold bg-emerald-100 text-emerald-800 dark:bg-emerald-900/60 dark:text-emerald-200 border border-emerald-300 flex items-center gap-1">
-              <span className="material-symbols-outlined text-[15px]">verified</span> En attente de validation
+              <span className="material-symbols-outlined text-[15px]">verified</span>
+              {isCoordinator ? "À valider & clôturer" : "En attente de vérification par les coordinateurs"}
             </span>
           ) : (
             <span className="px-2.5 py-0.5 rounded-full text-xs font-semibold bg-sky-50 text-sky-800 dark:bg-sky-950/60 dark:text-sky-200 border border-sky-200 flex items-center gap-1">
@@ -395,10 +397,10 @@ export default function TaskCard({
               disabled={isSubmitting}
               onClick={handleAcceptClick}
               className="h-[38px] px-3.5 rounded-DEFAULT bg-emerald-600 hover:bg-emerald-700 text-white font-bold text-xs sm:text-sm flex items-center gap-1.5 shadow-sm transition-all cursor-pointer disabled:opacity-50"
-              title="Accepter la proposition et faire passer la tâche en cours (active)"
+              title="Approuver la proposition et faire passer la tâche en cours (active)"
             >
               <span className="material-symbols-outlined text-[18px]">check</span>
-              <span>Accepter</span>
+              <span>Approuver la tâche</span>
             </button>
 
             <button
@@ -406,10 +408,10 @@ export default function TaskCard({
               disabled={isSubmitting}
               onClick={handleRejectClick}
               className="h-[38px] px-3 rounded-DEFAULT bg-white dark:bg-slate-900 border border-rose-300 dark:border-rose-800 hover:bg-rose-50 dark:hover:bg-rose-950/40 text-rose-700 dark:text-rose-300 font-bold text-xs sm:text-sm flex items-center gap-1 shadow-xs transition-all cursor-pointer disabled:opacity-50"
-              title="Refuser la tâche proposée"
+              title="Rejeter la tâche proposée"
             >
               <span className="material-symbols-outlined text-[18px]">close</span>
-              <span>Refuser</span>
+              <span>Rejeter</span>
             </button>
 
             <button

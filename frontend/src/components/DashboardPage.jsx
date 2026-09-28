@@ -12,6 +12,7 @@ import {
   invalidateTask,
   acceptTask,
   rejectTask,
+  deleteProject,
   getCachedData,
 } from '../api';
 import TaskDetailModal from './TaskDetailModal';
@@ -118,6 +119,7 @@ export default function DashboardPage({
   const [isTaskEditingDirect, setIsTaskEditingDirect] = useState(false);
   const [isRoofVoteModalOpen, setIsRoofVoteModalOpen] = useState(false);
   const [selectedVoteForModal, setSelectedVoteForModal] = useState(null);
+  const [isVoteModalInitialEditing, setIsVoteModalInitialEditing] = useState(false);
   const [selectedStay, setSelectedStay] = useState(null);
   const [isStayModalOpen, setIsStayModalOpen] = useState(false);
   const [properties, setProperties] = useState(() => getCachedData('properties') || []);
@@ -151,6 +153,7 @@ export default function DashboardPage({
       options: ['Approuver le projet', 'Rejeter le projet'],
       allow_multiple_choices: false,
     });
+    setIsVoteModalInitialEditing(true);
     setIsRoofVoteModalOpen(true);
   };
 
@@ -327,6 +330,34 @@ export default function DashboardPage({
     currentUserName.toLowerCase().includes('joséphine') ||
     currentUserName.toLowerCase().includes('josephine')
   );
+
+  const canManageActiveVote = Boolean(
+    activeVote && (
+      isCoordinator ||
+      currentUserName.toLowerCase() === 'henri jamet' ||
+      (activeVote.submitted_by && currentUserName.toLowerCase().includes(String(activeVote.submitted_by).toLowerCase().split(' ')[0])) ||
+      (activeVote.created_by && (String(activeVote.created_by).toLowerCase() === currentUserName.toLowerCase() || currentUserName.toLowerCase().includes(String(activeVote.created_by).toLowerCase())))
+    )
+  );
+
+  const handleEditVote = (vote) => {
+    setSelectedVoteForModal(vote);
+    setIsVoteModalInitialEditing(true);
+    setIsRoofVoteModalOpen(true);
+  };
+
+  const handleDeleteVote = async (vote) => {
+    if (!vote?.id) return;
+    const ok = window.confirm(`Êtes-vous sûr de vouloir supprimer définitivement le scrutin « ${vote.title} » ? Cette action est irréversible.`);
+    if (!ok) return;
+    try {
+      await deleteProject(vote.id);
+      setProjects(prev => prev.filter(p => p.id !== vote.id));
+      await loadDashboardData({ forceRefresh: true });
+    } catch (err) {
+      alert(`Erreur lors de la suppression du scrutin : ${err.message}`);
+    }
+  };
 
   const handleValidateTask = async (taskId) => {
     try {
@@ -693,15 +724,44 @@ export default function DashboardPage({
                 </div>
               </div>
 
-              <div className="flex items-center gap-2.5">
+              <div className="flex items-center gap-2">
+                {canManageActiveVote && (
+                  <>
+                    <button
+                      type="button"
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        handleEditVote(activeVote);
+                      }}
+                      className="inline-flex items-center gap-1 px-3 py-2 rounded-DEFAULT bg-white dark:bg-slate-800 border border-slate-300 dark:border-slate-600 text-slate-700 dark:text-slate-200 font-label-sm text-xs font-semibold hover:bg-slate-50 transition-colors shadow-2xs cursor-pointer"
+                      title="Modifier les paramètres du scrutin"
+                    >
+                      <span className="material-symbols-outlined text-[16px]">edit</span>
+                      <span>Modifier</span>
+                    </button>
+                    <button
+                      type="button"
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        handleDeleteVote(activeVote);
+                      }}
+                      className="inline-flex items-center gap-1 px-3 py-2 rounded-DEFAULT bg-rose-50 border border-rose-200 text-rose-700 hover:bg-rose-100 font-label-sm text-xs font-semibold transition-colors shadow-2xs cursor-pointer"
+                      title="Supprimer définitivement ce scrutin"
+                    >
+                      <span className="material-symbols-outlined text-[16px]">delete</span>
+                      <span>Supprimer</span>
+                    </button>
+                  </>
+                )}
                 <button
                   type="button"
                   onClick={(e) => {
                     e.stopPropagation();
                     setSelectedVoteForModal(activeVote);
+                    setIsVoteModalInitialEditing(false);
                     setIsRoofVoteModalOpen(true);
                   }}
-                  className="inline-flex items-center gap-1.5 px-5 py-2.5 rounded-DEFAULT bg-white dark:bg-slate-800 border-2 border-primary text-primary font-label-sm text-xs font-bold hover:bg-sage-soft transition-colors shadow-sm cursor-pointer"
+                  className="inline-flex items-center gap-1.5 px-4 py-2 rounded-DEFAULT bg-white dark:bg-slate-800 border-2 border-primary text-primary font-label-sm text-xs font-bold hover:bg-sage-soft transition-colors shadow-sm cursor-pointer"
                 >
                   <span className="material-symbols-outlined text-[18px]">how_to_vote</span>
                   Participer au vote
@@ -976,8 +1036,10 @@ export default function DashboardPage({
         onClose={() => {
           setIsRoofVoteModalOpen(false);
           setSelectedVoteForModal(null);
+          setIsVoteModalInitialEditing(false);
         }}
         currentUser={currentUser}
+        initialEditing={isVoteModalInitialEditing}
         project={selectedVoteForModal || activeVote}
         onVoteSubmit={(updatedProject) => {
           if (updatedProject?.deleted) {

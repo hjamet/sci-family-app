@@ -597,6 +597,40 @@ export async function fetchTaskDocuments(taskId) {
   return res.json();
 }
 
+export async function attachDocumentsToTask(taskId, documentIds) {
+  const res = await fetch(`${API_BASE}/tasks/${taskId}/documents/attach`, {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      ...getAuthHeaders(),
+    },
+    body: JSON.stringify({ document_ids: documentIds }),
+  });
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({}));
+    throw new Error(err.detail || "Erreur lors de l'association des documents à la tâche");
+  }
+  invalidateApiCache('tasks');
+  return res.json();
+}
+
+export async function attachDocumentsToProject(projectId, documentIds) {
+  const res = await fetch(`${API_BASE}/projects/${projectId}/documents/attach`, {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      ...getAuthHeaders(),
+    },
+    body: JSON.stringify({ document_ids: documentIds }),
+  });
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({}));
+    throw new Error(err.detail || "Erreur lors de l'association des documents au scrutin");
+  }
+  invalidateApiCache('projects');
+  return res.json();
+}
+
 export async function uploadTaskDocuments(files, taskId = null) {
   const formData = new FormData();
   for (let i = 0; i < files.length; i++) {
