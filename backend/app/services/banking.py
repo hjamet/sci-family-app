@@ -44,6 +44,31 @@ class EnableBankingAPIError(RuntimeError):
     def __str__(self):
         return self.message
 
+    @property
+    def is_auth_error(self) -> bool:
+        """Indique si l'erreur relève formellement d'une expiration ou révocation d'authentification DSP2."""
+        if self.status_code in (401, 403):
+            return True
+        full_text = f"{self.message or ''} {self.raw_body or ''}".lower()
+        return any(term in full_text for term in ["consent_expired", "invalid_grant", "session_invalid", "unauthorized", "access_denied"])
+
+    @property
+    def is_network_timeout(self) -> bool:
+        """Indique si l'erreur est un timeout réseau ou une indisponibilité passerelle temporaire."""
+        if self.status_code in (504, None):
+            full_text = f"{self.message or ''} {self.raw_body or ''}".lower()
+            return any(term in full_text for term in ["timed out", "timeout", "connection reset", "connection refused", "econnreset", "broken pipe"])
+        return False
+
+    @property
+    def is_rate_limit(self) -> bool:
+        """Indique si l'erreur est un dépassement du quota journalier DSP2 ASPSP (Swan)."""
+        if self.status_code == 429:
+            return True
+        full_text = f"{self.message or ''} {self.raw_body or ''}".lower()
+        return any(term in full_text for term in ["rate_limit", "ratelimit", "maximum daily access", "too many requests", "aspsp_rate_limit_exceeded"])
+
+
 
 
 class EnableBankingService:
@@ -279,8 +304,16 @@ class EnableBankingService:
         self._jwt_expires_at = now + 3600
         return token
 
-    def _api_request(self, method: str, endpoint: str, data: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
-        """Exécute une requête HTTP authentifiée vers l'API Enable Banking."""
+    def _api_request(
+        self,
+        method: str,
+        endpoint: str,
+        data: Optional[Dict[str, Any]] = None,
+        timeout: Optional[float] = None,
+        retries: int = 2,
+        backoff_seconds: float = 2.0
+    ) -> Dict[str, Any]:
+        """Exécute une requête HTTP authentifiée vers l'API Enable Banking avec retry et timeout sécurisé."""
         token = self.get_jwt_token()
         url = f"{self.base_url.rstrip('/')}/{endpoint.lstrip('/')}"
         headers = {
@@ -290,36 +323,61 @@ class EnableBankingService:
             "User-Agent": "SCI-Hellenvilliers/2.0"
         }
 
+        # Timeout par défaut à 30 secondes (conforme aux exigences de latence ASPSP Swan)
+        req_timeout = timeout if timeout is not None else float(os.getenv("ENABLE_BANKING_TIMEOUT", "30.0"))
         body_bytes = json.dumps(data).encode("utf-8") if data is not None else None
-        req = urllib.request.Request(url, data=body_bytes, headers=headers, method=method)
 
-        try:
-            with urllib.request.urlopen(req, timeout=3.5) as resp:
-                resp_text = resp.read().decode("utf-8")
-                return json.loads(resp_text) if resp_text else {}
-        except urllib.error.HTTPError as e:
-            err_body = e.read().decode("utf-8")
-            logger.error(f"Erreur API Enable Banking [{e.code}] {url} : {err_body}")
-            err_json = None
+        for attempt in range(retries + 1):
+            req = urllib.request.Request(url, data=body_bytes, headers=headers, method=method)
             try:
-                err_json = json.loads(err_body)
-                msg = err_json.get("message") or err_json.get("error", {}).get("message") or str(err_json)
-            except Exception:
-                msg = err_body
-            raise EnableBankingAPIError(
-                message=f"Erreur Enable Banking ({e.code}) : {msg}",
-                status_code=e.code,
-                details=err_json,
-                raw_body=err_body
-            )
-        except Exception as e:
-            logger.error(f"Erreur réseau Enable Banking : {e}")
-            raise EnableBankingAPIError(
-                message=f"Échec de connexion vers Enable Banking : {e}",
-                status_code=None,
-                details={"error": str(e)},
-                raw_body=str(e)
-            )
+                with urllib.request.urlopen(req, timeout=req_timeout) as resp:
+                    resp_text = resp.read().decode("utf-8")
+                    return json.loads(resp_text) if resp_text else {}
+            except urllib.error.HTTPError as e:
+                err_body = e.read().decode("utf-8")
+                err_json = None
+                try:
+                    err_json = json.loads(err_body)
+                    msg = err_json.get("message") or err_json.get("error", {}).get("message") or str(err_json)
+                except Exception:
+                    msg = err_body
+
+                # En cas d'erreur de passerelle temporaire (502, 503, 504), retry avant d'abandonner
+                if e.code in (502, 503, 504) and attempt < retries:
+                    wait_time = backoff_seconds * (attempt + 1)
+                    logger.warning(
+                        f"Erreur transitoire API Enable Banking [{e.code}] {url} (tentative {attempt + 1}/{retries + 1}), "
+                        f"nouvelle tentative dans {wait_time}s..."
+                    )
+                    time.sleep(wait_time)
+                    continue
+
+                logger.error(f"Erreur API Enable Banking [{e.code}] {url} : {err_body}")
+                raise EnableBankingAPIError(
+                    message=f"Erreur Enable Banking ({e.code}) : {msg}",
+                    status_code=e.code,
+                    details=err_json,
+                    raw_body=err_body
+                )
+            except Exception as e:
+                err_str = str(e)
+                is_timeout = "timed out" in err_str.lower() or "timeout" in err_str.lower()
+                if is_timeout and attempt < retries:
+                    wait_time = backoff_seconds * (attempt + 1)
+                    logger.warning(
+                        f"Timeout réseau vers Enable Banking sur {url} (tentative {attempt + 1}/{retries + 1}), "
+                        f"nouvelle tentative dans {wait_time}s..."
+                    )
+                    time.sleep(wait_time)
+                    continue
+
+                logger.error(f"Erreur réseau Enable Banking sur {url} : {e}")
+                raise EnableBankingAPIError(
+                    message=f"Échec de connexion vers Enable Banking : {e}",
+                    status_code=504 if is_timeout else None,
+                    details={"error": err_str},
+                    raw_body=err_str
+                )
 
     def get_aspsps(self, country: str = "FR") -> List[Dict[str, Any]]:
         """Récupère la liste des établissements bancaires (ASPSPs) disponibles."""
@@ -809,14 +867,17 @@ class EnableBankingService:
         """Vérifie de manière réactive l'état réel de la liaison bancaire Swan via Enable Banking.
         
         RÈGLE D'OR DE DÉTECTION (Consigne stricte Henri) :
-        Détection purement réactive :
-        1. Lorsque l'API / le système n'arrive plus à récupérer les données (erreur HTTP, rejet d'accès,
-           jeton expiré, 401/403/404, session expirée ou inaccessible).
-        2. Ou lorsque le compte ou la liaison bancaire n'est plus actif/active.
-        
-        En temps normal (requêtes réussies) : is_connected=True, status='ok', needs_reauth=False.
-        En cas d'échec : is_connected=False, status='interrupted', needs_reauth=True, URL Tilisy instantanée fournie.
-        Zero-Trust / Fail-Fast : ZÉRO cache (directive Henri). 100% direct-live.
+        Détection médico-légale et distinction stricte :
+        1. VRAIE expiration/révocation DSP2 (401/403, invalid_grant, session EXPIRED/REVOKED) :
+           -> is_connected=False, status='interrupted', needs_reauth=True, URL Tilisy fournie.
+        2. Aléa réseau passager / Timeout (The read operation timed out, 502/503/504, socket error) :
+           -> is_connected=True, status='degraded', needs_reauth=False !
+           -> Zéro fausse ré-authentification, préservation des soldes et de la date d'expiration DSP2.
+           -> Message rassurant et transparent.
+        3. Quota journalier ASPSP DSP2 atteint (HTTP 429, ASPSP_RATE_LIMIT_EXCEEDED) :
+           -> is_connected=True, status='ok', needs_reauth=False !
+           -> Le consentement est 100% vivant, seule l'interrogation automatique sans PSU est bornée par Swan.
+        4. En temps normal (requêtes réussies) : is_connected=True, status='ok', needs_reauth=False.
         """
         now_iso = datetime.utcnow().isoformat()
         accounts = db.query(BankAccount).all()
@@ -825,7 +886,7 @@ class EnableBankingService:
 
         # 1. Vérification des sessions en base
         active_sessions = db.query(BankAuthSession).filter(BankAuthSession.status == "AUTHORIZED").all()
-        
+
         # Auto-guérison : si aucune session AUTHORIZED en base, vérifier si la session la plus récente
         # est en réalité encore AUTHORIZED sur l'API Enable Banking (pour réparer d'éventuels basculements prématurés)
         if not active_sessions:
@@ -875,9 +936,128 @@ class EnableBankingService:
                 "last_sync_attempt": now_iso
             }
 
-        # Construction de la liste ordonnée des comptes candidats à tester
+        # 2. Vérification de santé de la session active (Interrogation directe Enable Banking)
+        # Si force_refresh n'est pas demandé, on privilégie l'état de la session (0.8s, sans consommer le quota ASPSP de soldes Swan)
+        if active_sessions and not force_refresh:
+            primary_sess = active_sessions[0]
+            try:
+                sess_info = self.get_session(primary_sess.session_id)
+                sess_status = sess_info.get("status") if isinstance(sess_info, dict) else None
+                if sess_status in ["AUTHORIZED", "ACTIVE"]:
+                    # Mise à jour de valid_until si retournée par l'API
+                    api_valid_until = sess_info.get("access", {}).get("valid_until")
+                    if api_valid_until:
+                        try:
+                            clean_vu = api_valid_until.replace("Z", "+00:00")
+                            vu_dt = datetime.fromisoformat(clean_vu).replace(tzinfo=None)
+                            valid_until = api_valid_until
+                            days_left = max(0, (vu_dt - datetime.utcnow()).days)
+                            if not primary_sess.expires_at or primary_sess.expires_at != vu_dt:
+                                primary_sess.expires_at = vu_dt
+                                db.commit()
+                        except Exception:
+                            pass
+
+                    return {
+                        "status": "ok",
+                        "is_connected": True,
+                        "needs_reauth": False,
+                        "days_left": days_left,
+                        "valid_until": valid_until,
+                        "message": "Liaison bancaire Swan active et opérationnelle.",
+                        "reauth_url": None,
+                        "active_accounts_count": len(accounts),
+                        "total_balance": round(total_bal, 2),
+                        "last_synced_at": latest_sync,
+                        "last_successful_sync": latest_sync,
+                        "raw_error": None,
+                        "error_code": None,
+                        "error_details": None,
+                        "last_sync_attempt": now_iso
+                    }
+                elif sess_status in ["EXPIRED", "REVOKED", "TERMINATED"]:
+                    # Vraie expiration confirmée par Enable Banking
+                    for s in active_sessions:
+                        s.status = "EXPIRED"
+                    try:
+                        db.commit()
+                    except Exception:
+                        db.rollback()
+                    reauth_info = self._get_or_create_reauth_url(db)
+                    return {
+                        "status": "interrupted",
+                        "is_connected": False,
+                        "needs_reauth": True,
+                        "days_left": 0,
+                        "valid_until": valid_until,
+                        "message": f"Liaison bancaire interrompue : La session a été révoquée ou a expiré auprès de Swan ({sess_status}).",
+                        "reauth_url": reauth_info.get("url"),
+                        "active_accounts_count": len(accounts),
+                        "total_balance": round(total_bal, 2),
+                        "last_synced_at": latest_sync,
+                        "last_successful_sync": latest_sync,
+                        "raw_error": f"Session status: {sess_status}",
+                        "error_code": f"SESSION_{sess_status}",
+                        "error_details": sess_info,
+                        "last_sync_attempt": now_iso
+                    }
+            except Exception as e:
+                is_auth_err = False
+                is_timeout_err = False
+                if isinstance(e, EnableBankingAPIError):
+                    is_auth_err = e.is_auth_error
+                    is_timeout_err = e.is_network_timeout
+                else:
+                    err_s = str(e).lower()
+                    is_timeout_err = "timed out" in err_s or "timeout" in err_s
+
+                if is_auth_err:
+                    for s in active_sessions:
+                        s.status = "EXPIRED"
+                    try:
+                        db.commit()
+                    except Exception:
+                        db.rollback()
+                    reauth_info = self._get_or_create_reauth_url(db)
+                    return {
+                        "status": "interrupted",
+                        "is_connected": False,
+                        "needs_reauth": True,
+                        "days_left": None,
+                        "valid_until": None,
+                        "message": f"Liaison bancaire interrompue : Authentification refusée ({e}).",
+                        "reauth_url": reauth_info.get("url"),
+                        "active_accounts_count": len(accounts),
+                        "total_balance": round(total_bal, 2),
+                        "last_synced_at": latest_sync,
+                        "last_successful_sync": latest_sync,
+                        "raw_error": str(e),
+                        "error_code": "AUTH_ERROR",
+                        "error_details": {"error": str(e)},
+                        "last_sync_attempt": now_iso
+                    }
+                elif is_timeout_err:
+                    logger.warning(f"Timeout réseau temporaire lors du check session : {e}")
+                    return {
+                        "status": "degraded",
+                        "is_connected": True,
+                        "needs_reauth": False,
+                        "days_left": days_left,
+                        "valid_until": valid_until,
+                        "message": "Le serveur de la banque a mis trop de temps à répondre (timeout réseau temporaire). Votre liaison reste active, nouvelle tentative automatique en cours.",
+                        "reauth_url": None,
+                        "active_accounts_count": len(accounts),
+                        "total_balance": round(total_bal, 2),
+                        "last_synced_at": latest_sync,
+                        "last_successful_sync": latest_sync,
+                        "raw_error": str(e),
+                        "error_code": "TIMEOUT",
+                        "error_details": {"error": str(e)},
+                        "last_sync_attempt": now_iso
+                    }
+
+        # 3. Test direct des soldes si force_refresh=True ou si pas de session mais comptes en base
         candidate_accounts = []
-        # A. Comptes issus des sessions autorisées (priorité absolue car garantis par le consentement actif)
         if active_sessions:
             for s in active_sessions:
                 if s.accounts_data:
@@ -890,29 +1070,22 @@ class EnableBankingService:
                                     candidate_accounts.append(uid)
                     except Exception:
                         pass
-        
-        # B. Comptes en base ayant déjà été synchronisés avec succès (last_synced_at non nul)
+
         synced_accounts = [a for a in accounts if a.last_synced_at is not None]
         for a in synced_accounts:
             uid = self._extract_account_id_str(a.account_id)
             if uid and uid not in candidate_accounts:
                 candidate_accounts.append(uid)
 
-        # C. Autres comptes en base
         for a in accounts:
             uid = self._extract_account_id_str(a.account_id)
             if uid and uid not in candidate_accounts:
                 candidate_accounts.append(uid)
 
-        # Test réactif effectif de l'API Enable Banking (100% direct sans cache)
         is_query_successful = False
-        raw_error = None
-        error_code = None
-        error_details = None
-        is_auth_error = False
+        last_err = None
 
         if candidate_accounts:
-            last_err = None
             for acc_id in candidate_accounts:
                 try:
                     self.get_account_balances(acc_id, raise_errors=True)
@@ -921,56 +1094,6 @@ class EnableBankingService:
                 except Exception as e:
                     last_err = e
                     continue
-
-            if not is_query_successful and last_err:
-                if isinstance(last_err, EnableBankingAPIError):
-                    raw_error = last_err.raw_body or str(last_err)
-                    error_code = f"HTTP {last_err.status_code}" if last_err.status_code else "API_ERROR"
-                    error_details = last_err.details or str(last_err)
-                    if last_err.status_code in (401, 403):
-                        is_auth_error = True
-                else:
-                    raw_error = str(last_err)
-                    error_code = "ERROR"
-                    error_details = {"error": str(last_err)}
-        elif active_sessions:
-            sess = active_sessions[0]
-            try:
-                sess_data = self.get_session(sess.session_id)
-                if sess_data and sess_data.get("status") in ["AUTHORIZED", "ACTIVE"]:
-                    is_query_successful = True
-                else:
-                    is_auth_error = True
-                    sess_status = sess_data.get("status") if sess_data else "inconnu"
-                    raw_error = f"Statut session Enable Banking : {sess_status}"
-                    error_code = f"SESSION_{sess_status.upper()}"
-                    error_details = sess_data or {}
-            except Exception as e:
-                if isinstance(e, EnableBankingAPIError):
-                    raw_error = e.raw_body or str(e)
-                    error_code = f"HTTP {e.status_code}" if e.status_code else "API_ERROR"
-                    error_details = e.details or str(e)
-                    if e.status_code in (401, 403):
-                        is_auth_error = True
-                else:
-                    raw_error = str(e)
-                    error_code = "ERROR"
-                    error_details = {"error": str(e)}
-        else:
-            try:
-                self.get_accounts()
-                is_query_successful = True
-            except Exception as e:
-                if isinstance(e, EnableBankingAPIError):
-                    raw_error = e.raw_body or str(e)
-                    error_code = f"HTTP {e.status_code}" if e.status_code else "API_ERROR"
-                    error_details = e.details or str(e)
-                    if e.status_code in (401, 403):
-                        is_auth_error = True
-                else:
-                    raw_error = str(e)
-                    error_code = "ERROR"
-                    error_details = {"error": str(e)}
 
         if is_query_successful:
             return {
@@ -990,9 +1113,75 @@ class EnableBankingService:
                 "error_details": None,
                 "last_sync_attempt": now_iso
             }
-        else:
-            # Marquer les sessions comme expirées EXCLUSIVEMENT en cas de rejet formel d'authentification (401/403)
-            if is_auth_error and active_sessions:
+
+        # Analyse fine de l'échec lors du test de soldes
+        is_auth_error = False
+        is_timeout = False
+        is_rate_limit = False
+        raw_error = None
+        error_code = None
+        error_details = None
+
+        if last_err:
+            if isinstance(last_err, EnableBankingAPIError):
+                raw_error = last_err.raw_body or str(last_err)
+                error_code = f"HTTP {last_err.status_code}" if last_err.status_code else "API_ERROR"
+                error_details = last_err.details or str(last_err)
+                is_auth_error = last_err.is_auth_error
+                is_timeout = last_err.is_network_timeout
+                is_rate_limit = last_err.is_rate_limit
+            else:
+                raw_error = str(last_err)
+                error_code = "ERROR"
+                error_details = {"error": str(last_err)}
+                err_lower = str(last_err).lower()
+                is_timeout = "timed out" in err_lower or "timeout" in err_lower
+
+        # Cas A : Dépassement de quota journalier DSP2 ASPSP (Swan)
+        if is_rate_limit:
+            logger.info("Quota journalier DSP2 Swan atteint : la liaison reste active.")
+            return {
+                "status": "ok",
+                "is_connected": True,
+                "needs_reauth": False,
+                "days_left": days_left,
+                "valid_until": valid_until,
+                "message": "Quota journalier d'interrogation bancaire en arrière-plan atteint (limite réglementaire DSP2 de Swan). Votre liaison reste active et vos soldes restent synchronisés.",
+                "reauth_url": None,
+                "active_accounts_count": len(accounts),
+                "total_balance": round(total_bal, 2),
+                "last_synced_at": latest_sync,
+                "last_successful_sync": latest_sync,
+                "raw_error": raw_error,
+                "error_code": "ASPSP_RATE_LIMIT",
+                "error_details": error_details,
+                "last_sync_attempt": now_iso
+            }
+
+        # Cas B : Timeout réseau transitoire ou erreur serveur 502/503/504
+        if is_timeout or (isinstance(last_err, EnableBankingAPIError) and last_err.status_code in (502, 503, 504)):
+            logger.warning(f"Timeout ou erreur réseau transitoire Swan/Enable Banking : {raw_error}")
+            return {
+                "status": "degraded",
+                "is_connected": True,
+                "needs_reauth": False,
+                "days_left": days_left,
+                "valid_until": valid_until,
+                "message": "Le serveur de la banque a mis trop de temps à répondre (timeout réseau temporaire). Votre liaison reste active, nouvelle tentative automatique en cours.",
+                "reauth_url": None,
+                "active_accounts_count": len(accounts),
+                "total_balance": round(total_bal, 2),
+                "last_synced_at": latest_sync,
+                "last_successful_sync": latest_sync,
+                "raw_error": raw_error,
+                "error_code": "TIMEOUT",
+                "error_details": error_details,
+                "last_sync_attempt": now_iso
+            }
+
+        # Cas C : Erreur formelle d'authentification (401/403 ou session révoquée)
+        if is_auth_error:
+            if active_sessions:
                 for s in active_sessions:
                     s.status = "EXPIRED"
                 try:
@@ -1001,22 +1190,14 @@ class EnableBankingService:
                     db.rollback()
 
             reauth_info = self._get_or_create_reauth_url(db)
-            status_code = "interrupted"
-            
-            # Message clair avec indication de l'erreur brute
             detail_suffix = f" ({error_code}: {raw_error})" if error_code or raw_error else ""
-            if is_auth_error:
-                msg = f"Liaison bancaire interrompue : La ré-authentification DSP2 de sécurité (tous les 180 jours) est requise pour actualiser les données.{detail_suffix}"
-            else:
-                msg = f"Liaison bancaire indisponible : Impossible d'interroger Swan via Enable Banking{detail_suffix}."
-
             return {
-                "status": status_code,
+                "status": "interrupted",
                 "is_connected": False,
                 "needs_reauth": True,
                 "days_left": None,
                 "valid_until": None,
-                "message": msg,
+                "message": f"Liaison bancaire interrompue : La ré-authentification DSP2 de sécurité (tous les 180 jours) est requise pour actualiser les données.{detail_suffix}",
                 "reauth_url": reauth_info.get("url"),
                 "active_accounts_count": len(accounts),
                 "total_balance": round(total_bal, 2),
@@ -1027,6 +1208,46 @@ class EnableBankingService:
                 "error_details": error_details,
                 "last_sync_attempt": now_iso
             }
+
+        # Cas D : Autre erreur non d'authentification si des sessions ou des comptes sont en base
+        if active_sessions or latest_sync:
+            return {
+                "status": "degraded",
+                "is_connected": True,
+                "needs_reauth": False,
+                "days_left": days_left,
+                "valid_until": valid_until,
+                "message": f"Service bancaire temporairement indisponible ({error_code or 'ERREUR'}). Votre liaison reste active.",
+                "reauth_url": None,
+                "active_accounts_count": len(accounts),
+                "total_balance": round(total_bal, 2),
+                "last_synced_at": latest_sync,
+                "last_successful_sync": latest_sync,
+                "raw_error": raw_error,
+                "error_code": error_code,
+                "error_details": error_details,
+                "last_sync_attempt": now_iso
+            }
+
+        # Fallback si rien n'est connecté
+        reauth_info = self._get_or_create_reauth_url(db)
+        return {
+            "status": "interrupted",
+            "is_connected": False,
+            "needs_reauth": True,
+            "days_left": None,
+            "valid_until": None,
+            "message": f"Liaison bancaire indisponible : Impossible d'interroger Swan via Enable Banking ({error_code}: {raw_error}).",
+            "reauth_url": reauth_info.get("url"),
+            "active_accounts_count": len(accounts),
+            "total_balance": round(total_bal, 2),
+            "last_synced_at": latest_sync,
+            "last_successful_sync": latest_sync,
+            "raw_error": raw_error,
+            "error_code": error_code,
+            "error_details": error_details,
+            "last_sync_attempt": now_iso
+        }
 
     @classmethod
     def clear_status_cache(cls):

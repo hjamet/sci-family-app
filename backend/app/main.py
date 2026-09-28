@@ -1928,7 +1928,22 @@ def review_project(project_id: int, review: ProjectReview, db: Session = Depends
 
     old_status = db_proj.status
 
-    # Détection de modification des options ou du mode choix multiples (Annotation 6)
+    # Détection étendue d'invalidation des votes (Annotation 6) :
+    # Toute modification du texte (titre, description), du vote (options, multi-choix) ou des documents associés
+
+    # 1. Titre
+    old_title = (db_proj.title or "").strip()
+    title_was_modified = False
+    if review.title is not None and review.title.strip() != old_title:
+        title_was_modified = True
+
+    # 2. Description
+    old_description = (db_proj.description or "").strip()
+    desc_was_modified = False
+    if review.description is not None and review.description.strip() != old_description:
+        desc_was_modified = True
+
+    # 3. Options de vote
     old_raw_options = db_proj.options
     old_options_list = []
     if old_raw_options:
@@ -1947,12 +1962,65 @@ def review_project(project_id: int, review: ProjectReview, db: Session = Depends
     if new_options_list is not None and new_options_list != old_options_list:
         options_were_modified = True
 
+    # 4. Mode choix multiples
     old_allow_multiple = bool(getattr(db_proj, "allow_multiple_choices", False) or False)
     multi_was_modified = False
     if review.allow_multiple_choices is not None and bool(review.allow_multiple_choices) != old_allow_multiple:
         multi_was_modified = True
 
-    should_reset_votes = (options_were_modified or multi_was_modified)
+    # 5. Documents associés (document_urls, document_ids, documents, linked_documents)
+    def extract_doc_signatures(docs):
+        if not docs:
+            return []
+        if isinstance(docs, str):
+            try:
+                parsed = json.loads(docs)
+                return extract_doc_signatures(parsed)
+            except Exception:
+                return [d.strip() for d in docs.split(",") if d.strip()]
+        if isinstance(docs, list):
+            res = []
+            for d in docs:
+                if isinstance(d, dict):
+                    sig = str(d.get("id") or d.get("url") or d.get("file_url") or d.get("filename") or d.get("name") or "").strip()
+                    if sig:
+                        res.append(sig)
+                elif d:
+                    res.append(str(d).strip())
+            return sorted(res)
+        return []
+
+    old_docs_sig = extract_doc_signatures(db_proj.document_urls)
+    docs_were_modified = False
+
+    incoming_docs = review.document_urls if review.document_urls is not None else (getattr(review, 'documents', None) or None)
+    if incoming_docs is not None:
+        new_docs_sig = extract_doc_signatures(incoming_docs)
+        if new_docs_sig != old_docs_sig:
+            docs_were_modified = True
+
+    incoming_doc_ids = getattr(review, 'document_ids', None)
+    if incoming_doc_ids is not None:
+        new_doc_ids_sig = sorted([str(x).strip() for x in incoming_doc_ids if str(x).strip()])
+        old_ids_sig = []
+        if db_proj.document_urls and isinstance(db_proj.document_urls, str) and db_proj.document_urls.startswith('['):
+            try:
+                old_ids_sig = sorted([str(d.get('id')).strip() for d in json.loads(db_proj.document_urls) if isinstance(d, dict) and d.get('id')])
+            except Exception:
+                old_ids_sig = []
+        if new_doc_ids_sig != old_ids_sig:
+            docs_were_modified = True
+
+    if review.linked_documents is not None and (review.linked_documents or "").strip() != (db_proj.linked_documents or "").strip():
+        docs_were_modified = True
+
+    should_reset_votes = (
+        title_was_modified or
+        desc_was_modified or
+        options_were_modified or
+        multi_was_modified or
+        docs_were_modified
+    )
 
     if review.title is not None and review.title.strip():
         db_proj.title = review.title.strip()
@@ -1977,7 +2045,7 @@ def review_project(project_id: int, review: ProjectReview, db: Session = Depends
     if review.linked_documents is not None:
         db_proj.linked_documents = review.linked_documents
     if review.document_urls is not None:
-        db_proj.document_urls = json.dumps(review.document_urls)
+        db_proj.document_urls = json.dumps(review.document_urls) if not isinstance(review.document_urls, str) else review.document_urls
     if review.supplier_info is not None:
         db_proj.supplier_info = review.supplier_info
     if review.coordinator_notes is not None:
@@ -1991,14 +2059,17 @@ def review_project(project_id: int, review: ProjectReview, db: Session = Depends
     if review.responsible is not None:
         db_proj.responsible = review.responsible
     if review.options is not None:
-        db_proj.options = json.dumps(review.options)
+        db_proj.options = json.dumps(review.options) if not isinstance(review.options, str) else review.options
     if review.allow_multiple_choices is not None:
         db_proj.allow_multiple_choices = bool(review.allow_multiple_choices)
 
-    # Invalidation et réinitialisation des votes si les options ou choix multiples ont été modifiés (Annotation 6)
+    # Invalidation étendue et réinitialisation des votes si titre, description, options, multi ou docs modifiés (Annotation 6)
     votes_count = db.query(ProjectVote).filter(ProjectVote.project_id == project_id).count()
     if should_reset_votes and votes_count > 0:
         db.query(ProjectVote).filter(ProjectVote.project_id == project_id).delete()
+        if hasattr(db_proj, 'votes') and isinstance(db_proj.votes, list):
+            db_proj.votes.clear()
+        db.expire(db_proj, ['votes'])
         if db_proj.status == "REPORT_AG":
             db_proj.status = "EN_VOTE"
 
@@ -2698,10 +2769,15 @@ def format_task_response(task: Task, include_comments: bool = False) -> dict:
 
 def resolve_task_by_id_or_ref(task_id: str, db: Session) -> Task:
     task = None
+    task_query = db.query(Task).options(
+        selectinload(Task.comments),
+        selectinload(Task.assignee),
+        selectinload(Task.admin_documents)
+    )
     if str(task_id).isdigit():
-        task = db.query(Task).filter(Task.id == int(task_id)).first()
+        task = task_query.filter(Task.id == int(task_id)).first()
     if not task:
-        task = db.query(Task).filter(Task.ref == str(task_id)).first()
+        task = task_query.filter(Task.ref == str(task_id)).first()
     if not task:
         raise HTTPException(status_code=404, detail=f"Tâche '{task_id}' non trouvée.")
     return task
@@ -4430,6 +4506,26 @@ def attach_documents_to_project(
             attached.append(doc_entry)
 
     project.document_urls = json.dumps(existing_docs)
+
+    # Invalidation étendue : réinitialisation des votes si nouveaux documents rattachés et votes existants (Annotation 6)
+    if len(attached) > 0:
+        votes_count = db.query(ProjectVote).filter(ProjectVote.project_id == project_id).count()
+        if votes_count > 0:
+            db.query(ProjectVote).filter(ProjectVote.project_id == project_id).delete()
+            if hasattr(project, 'votes') and isinstance(project.votes, list):
+                project.votes.clear()
+            db.expire(project, ['votes'])
+            if project.status == "REPORT_AG":
+                project.status = "EN_VOTE"
+
+            notif_msg = f"Le scrutin « {project.title} » a été modifié. Les votes précédents ont été réinitialisés. Merci d'exprimer à nouveau votre voix."
+            sys_comment = ProjectComment(
+                project_id=project_id,
+                author_name="Système",
+                content=notif_msg
+            )
+            db.add(sys_comment)
+
     db.commit()
     db.refresh(project)
     return {

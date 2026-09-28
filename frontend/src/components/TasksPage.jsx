@@ -62,6 +62,7 @@ export default function TasksPage({ currentUser = 'Henri Jamet' }) {
   const [selectedAssignee, setSelectedAssignee] = useState('all');
   const [selectedSubject, setSelectedSubject] = useState('all');
   const [selectedCategory, setSelectedCategory] = useState('all');
+  const [showArchived, setShowArchived] = useState(false);
 
   // Voting Spotlight Carrousel State
   const [activeVoteIndex, setActiveVoteIndex] = useState(0);
@@ -227,7 +228,20 @@ export default function TasksPage({ currentUser = 'Henri Jamet' }) {
         return [createdTask, ...prev];
       });
     }
-    await loadTasks();
+    await loadTasks({ forceRefresh: true });
+  };
+
+  const handleTaskUpdated = async (updatedTask) => {
+    if (updatedTask && updatedTask.id) {
+      setTasks((prev) => {
+        const exists = prev.some((t) => t.id === updatedTask.id || (updatedTask.ref && t.ref === updatedTask.ref));
+        if (exists) {
+          return prev.map((t) => (t.id === updatedTask.id || (updatedTask.ref && t.ref === updatedTask.ref)) ? { ...t, ...updatedTask } : t);
+        }
+        return [updatedTask, ...prev];
+      });
+    }
+    await loadTasks({ forceRefresh: true });
   };
 
   const handleVoteRoofSubmit = async (updatedProject) => {
@@ -293,11 +307,13 @@ export default function TasksPage({ currentUser = 'Henri Jamet' }) {
 
   const handleValidateTask = async (taskId) => {
     try {
+      setTasks(prev => prev.map(t => (t.id === taskId || t.ref === taskId) ? { ...t, status: 'DONE' } : t));
       await validateTask(taskId);
-      await loadTasks();
+      await loadTasks({ forceRefresh: true });
     } catch (err) {
       console.error('Erreur validation tâche:', err);
       alert(err.message || 'Erreur lors de la validation');
+      await loadTasks({ forceRefresh: true });
     }
   };
 
@@ -305,21 +321,25 @@ export default function TasksPage({ currentUser = 'Henri Jamet' }) {
     const reason = window.prompt("Motif de l'invalidation / demande de révision (optionnel) :", "");
     if (reason === null) return;
     try {
+      setTasks(prev => prev.map(t => (t.id === taskId || t.ref === taskId) ? { ...t, status: 'PROPOSED' } : t));
       await invalidateTask(taskId, reason);
-      await loadTasks();
+      await loadTasks({ forceRefresh: true });
     } catch (err) {
       console.error('Erreur invalidation tâche:', err);
       alert(err.message || "Erreur lors de l'invalidation");
+      await loadTasks({ forceRefresh: true });
     }
   };
 
   const handleAcceptTask = async (taskToAccept) => {
     try {
+      setTasks(prev => prev.map(t => (t.id === taskToAccept.id || t.ref === taskToAccept.ref) ? { ...t, status: 'EN_COURS' } : t));
       await acceptTask(taskToAccept.id);
-      await loadTasks();
+      await loadTasks({ forceRefresh: true });
     } catch (err) {
       console.error('Erreur acceptation tâche:', err);
       alert(err.message || "Erreur lors de l'acceptation de la tâche");
+      await loadTasks({ forceRefresh: true });
     }
   };
 
@@ -327,16 +347,30 @@ export default function TasksPage({ currentUser = 'Henri Jamet' }) {
     const reason = window.prompt("Motif du refus de la proposition (optionnel) :", "");
     if (reason === null) return;
     try {
+      setTasks(prev => prev.map(t => (t.id === taskToReject.id || t.ref === taskToReject.ref) ? { ...t, status: 'REJECTED' } : t));
       await rejectTask(taskToReject.id, reason);
-      await loadTasks();
+      await loadTasks({ forceRefresh: true });
     } catch (err) {
       console.error('Erreur refus tâche:', err);
       alert(err.message || "Erreur lors du refus de la tâche");
+      await loadTasks({ forceRefresh: true });
     }
   };
 
+  // Tâches archivées vs actives (Annotation 1 & 4)
+  const isArchivedTask = (t) => !isTaskOpen(t) || t?.status === 'DONE' || t?.status === 'ARCHIVEE' || t?.status === 'TERMINEE';
+
+  const archivedTasks = useMemo(() => tasks.filter(t => isArchivedTask(t)), [tasks]);
+  const activeTasks = useMemo(() => tasks.filter(t => !isArchivedTask(t)), [tasks]);
+  const nbArchived = archivedTasks.length;
+  const nbActive = activeTasks.length;
+
   // Filtrage des tâches
   const filteredTasks = tasks.filter((t) => {
+    // ANNOTATION 1 & 4 : Masquage par défaut des tâches archivées, ou bascule exclusive si showArchived
+    const archived = isArchivedTask(t);
+    if (showArchived ? !archived : archived) return false;
+
     // Recherche textuelle
     if (searchTerm) {
       const q = searchTerm.toLowerCase();
@@ -404,19 +438,20 @@ export default function TasksPage({ currentUser = 'Henri Jamet' }) {
     return 0;
   });
 
-  // Comptages dynamiques pour les pilules
+  // Comptages dynamiques pour les pilules (alignés sur la vue active vs archivée)
+  const currentViewTasks = showArchived ? archivedTasks : activeTasks;
   const countsByPriority = {
-    Toutes: tasks.length,
-    Critique: tasks.filter(t => t.priority === 'Critique').length,
-    Haute: tasks.filter(t => t.priority === 'Haute').length,
-    Normale: tasks.filter(t => t.priority === 'Normale').length,
-    Planifié: tasks.filter(t => t.priority === 'Planifié').length,
+    Toutes: currentViewTasks.length,
+    Critique: currentViewTasks.filter(t => t.priority === 'Critique').length,
+    Haute: currentViewTasks.filter(t => t.priority === 'Haute').length,
+    Normale: currentViewTasks.filter(t => t.priority === 'Normale').length,
+    Planifié: currentViewTasks.filter(t => t.priority === 'Planifié').length,
   };
 
   // 1. Calculs des Tâches (Annotation 9 : robustesse filtre et calcul tâches ouvertes)
-  const completedTasksCount = tasks.filter(t => !isTaskOpen(t)).length;
+  const completedTasksCount = nbArchived;
   const totalTasks = tasks.length;
-  const totalOpenTasksCount = Math.max(0, totalTasks - completedTasksCount);
+  const totalOpenTasksCount = nbActive;
 
   // Mes tâches parmi les tâches ouvertes (inclus les tâches à valider ou proposées pour le coordinateur)
   const myOpenTasksCount = useMemo(() => {
@@ -969,18 +1004,37 @@ export default function TasksPage({ currentUser = 'Henri Jamet' }) {
       {/* ========================================================================= */}
       {/* 5. SECTION TITLE & COUNTER SUMMARY (Stitch)                              */}
       {/* ========================================================================= */}
-      <div className="flex items-center justify-between mb-space-md">
+      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 mb-space-md">
         <div className="flex items-center gap-2">
+          {/* ANNOTATION 3 : Titre épuré sans "& Arbitrages" */}
           <h2 className="font-headline-md text-headline-md text-forest-deep tracking-tight font-bold">
-            Chantiers Actifs & Arbitrages
+            {showArchived ? 'Chantiers Archivés' : 'Chantiers Actifs'}
           </h2>
           <span className="bg-sage-soft text-forest-deep font-label-sm text-label-sm font-bold px-2.5 py-0.5 rounded-full">
             {sortedTasks.length} affichés
           </span>
         </div>
-        <span className="font-label-sm text-label-sm text-on-surface-variant hidden sm:inline-block">
-          Dernière synchronisation le 24 mai 2026 à 09:42
-        </span>
+
+        {/* ANNOTATIONS 2 & 4 : Bouton Toggle Tâches Actives vs Archivées (Date de synchronisation statique purgée) */}
+        <button
+          type="button"
+          onClick={() => setShowArchived((prev) => !prev)}
+          className={`inline-flex items-center gap-2 px-4 py-2.5 rounded-xl font-label-md text-xs sm:text-sm font-bold transition-all cursor-pointer shadow-xs ${
+            showArchived
+              ? 'bg-primary text-white hover:bg-forest-deep border border-transparent shadow-sm'
+              : 'bg-white dark:bg-slate-800 text-slate-700 dark:text-slate-200 hover:bg-slate-100 dark:hover:bg-slate-700 border border-slate-300 dark:border-slate-600'
+          }`}
+          title={showArchived ? "Revenir aux chantiers actifs en cours" : "Afficher les chantiers achevés et archivés"}
+        >
+          <span className="material-symbols-outlined text-[19px]">
+            {showArchived ? 'bolt' : 'inventory_2'}
+          </span>
+          <span>
+            {showArchived
+              ? `⚡ Voir les tâches actives (${nbActive})`
+              : `📦 Voir les tâches archivées (${nbArchived})`}
+          </span>
+        </button>
       </div>
 
       {/* ========================================================================= */}
@@ -992,19 +1046,21 @@ export default function TasksPage({ currentUser = 'Henri Jamet' }) {
         ) : sortedTasks.length === 0 ? (
           <div className="col-span-full bg-surface-container-low border border-subtle rounded-2xl p-8 flex flex-col items-center justify-center text-center py-12">
             <div className="w-14 h-14 rounded-full bg-surface-container flex items-center justify-center text-on-surface-variant mb-3">
-              <span className="material-symbols-outlined text-[28px]">checklist</span>
+              <span className="material-symbols-outlined text-[28px]">{showArchived ? 'inventory_2' : 'checklist'}</span>
             </div>
             <h3 className="font-headline-sm text-headline-sm text-forest-deep font-bold mb-4">
-              Aucune tâche en cours
+              {showArchived ? 'Aucune tâche archivée' : 'Aucune tâche en cours'}
             </h3>
-            <button
-              type="button"
-              onClick={handleOpenCreateTask}
-              className="h-[48px] px-6 rounded-DEFAULT bg-surface-container-lowest border-2 border-primary text-primary hover:bg-sage-soft font-label-md text-label-md transition-all flex items-center gap-2.5 font-bold cursor-pointer shadow-sm hover:shadow"
-            >
-              <span className="material-symbols-outlined text-[22px]">add_task</span>
-              <span>Soumettre une nouvelle proposition de tâche</span>
-            </button>
+            {!showArchived && (
+              <button
+                type="button"
+                onClick={handleOpenCreateTask}
+                className="h-[48px] px-6 rounded-DEFAULT bg-surface-container-lowest border-2 border-primary text-primary hover:bg-sage-soft font-label-md text-label-md transition-all flex items-center gap-2.5 font-bold cursor-pointer shadow-sm hover:shadow"
+              >
+                <span className="material-symbols-outlined text-[22px]">add_task</span>
+                <span>Soumettre une nouvelle proposition de tâche</span>
+              </button>
+            )}
           </div>
         ) : (
           sortedTasks.map((t) => (
@@ -1051,7 +1107,7 @@ export default function TasksPage({ currentUser = 'Henri Jamet' }) {
             setIsTaskEditingDirect(false);
           }}
           currentUser={currentUser}
-          onTaskUpdated={loadTasks}
+          onTaskUpdated={handleTaskUpdated}
         />
       )}
 

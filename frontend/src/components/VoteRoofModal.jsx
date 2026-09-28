@@ -881,7 +881,7 @@ function VoteRoofModalInner({
                     <div className="flex flex-col gap-0.5">
                       <span className="font-bold">Attention : {activeProject.votes.length} bulletin(s) ont déjà été exprimé(s)</span>
                       <span className="text-amber-800/90 dark:text-amber-300/90 leading-relaxed">
-                        Toute modification des options de vote ou du mode de sélection réinitialisera automatiquement l'ensemble des votes exprimés et notifiera les associés.
+                        Toute modification (titre, description, options de vote ou documents associés) réinitialisera l'ensemble des votes déjà enregistrés.
                       </span>
                     </div>
                   </div>

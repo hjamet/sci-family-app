@@ -219,3 +219,75 @@ def test_modify_options_or_multiple_choices_resets_votes():
             db.query(Project).filter(Project.id == proj_id).delete()
             db.commit()
 
+
+def test_extended_invalidation_on_title_desc_docs_modification():
+    """Annotation 6: verify invalidation on title, description, and attached documents change."""
+    with SessionLocal() as db:
+        project = Project(
+            property_id=1,
+            title="Scrutin Invalidation Étendue Initial",
+            description="Description initiale du projet",
+            estimated_cost=1500.0,
+            category="Travaux",
+            priority="HAUTE",
+            submitted_by="Henri",
+            status="EN_VOTE",
+            options='["Pour", "Contre"]',
+            document_urls='["/uploads/devis_initial.pdf"]',
+            allow_multiple_choices=False
+        )
+        db.add(project)
+        db.commit()
+        db.refresh(project)
+        proj_id = project.id
+
+    try:
+        # A. Vote initial
+        client.post(f"/api/projects/{proj_id}/vote", json={"user_name": "Henri", "vote": "Pour"})
+        with SessionLocal() as db:
+            assert db.query(ProjectVote).filter(ProjectVote.project_id == proj_id).count() == 1
+
+        # B. Modification du TITRE -> doit invalider les votes
+        resp_title = client.patch(f"/api/projects/{proj_id}/review", json={"title": "Scrutin Invalidation Étendue MODIFIÉ"})
+        assert resp_title.status_code == 200
+        assert len(resp_title.json().get("votes", [])) == 0
+        with SessionLocal() as db:
+            assert db.query(ProjectVote).filter(ProjectVote.project_id == proj_id).count() == 0
+
+        # C. Re-vote
+        client.post(f"/api/projects/{proj_id}/vote", json={"user_name": "Joséphine", "vote": "Contre"})
+        with SessionLocal() as db:
+            assert db.query(ProjectVote).filter(ProjectVote.project_id == proj_id).count() == 1
+
+        # D. Modification de la DESCRIPTION -> doit invalider les votes
+        resp_desc = client.patch(f"/api/projects/{proj_id}/review", json={"description": "Nouvelle description avec spécifications refondues"})
+        assert resp_desc.status_code == 200
+        assert len(resp_desc.json().get("votes", [])) == 0
+        with SessionLocal() as db:
+            assert db.query(ProjectVote).filter(ProjectVote.project_id == proj_id).count() == 0
+
+        # E. Re-vote
+        client.post(f"/api/projects/{proj_id}/vote", json={"user_name": "Marguerite", "vote": "Pour"})
+        with SessionLocal() as db:
+            assert db.query(ProjectVote).filter(ProjectVote.project_id == proj_id).count() == 1
+
+        # F. Modification des DOCUMENTS ASSOCIES (document_urls) -> doit invalider les votes
+        resp_docs = client.patch(f"/api/projects/{proj_id}/review", json={"document_urls": ["/uploads/devis_initial.pdf", "/uploads/nouveau_devis.pdf"]})
+        assert resp_docs.status_code == 200
+        assert len(resp_docs.json().get("votes", [])) == 0
+        with SessionLocal() as db:
+            assert db.query(ProjectVote).filter(ProjectVote.project_id == proj_id).count() == 0
+            # Vérifier présence du commentaire système
+            sys_comment = db.query(ProjectComment).filter(
+                ProjectComment.project_id == proj_id,
+                ProjectComment.author_name == "Système"
+            ).order_by(ProjectComment.id.desc()).first()
+            assert sys_comment is not None
+            assert "réinitialisés" in sys_comment.content
+    finally:
+        with SessionLocal() as db:
+            db.query(ProjectVote).filter(ProjectVote.project_id == proj_id).delete()
+            db.query(ProjectComment).filter(ProjectComment.project_id == proj_id).delete()
+            db.query(Project).filter(Project.id == proj_id).delete()
+            db.commit()
+

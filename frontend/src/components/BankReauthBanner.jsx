@@ -153,6 +153,8 @@ export default function BankReauthBanner({
   }
 
   const isExpiringSoon = bankStatus?.status === 'expiring_soon' && !urlError;
+  const isDegraded = (bankStatus?.status === 'degraded' || (!bankStatus?.needs_reauth && bankStatus?.status !== 'ok')) && !urlError;
+  const isWarning = isExpiringSoon || isDegraded;
   const lastSyncTimestamp = bankStatus?.last_successful_sync || bankStatus?.last_synced_at;
   const formattedLastSync = formatDateTime(lastSyncTimestamp);
   const formattedLastAttempt = formatDateTime(bankStatus?.last_sync_attempt);
@@ -198,7 +200,7 @@ export default function BankReauthBanner({
         id="bank-reauth-banner"
         role="alert"
         className={`rounded-2xl border-2 p-4 sm:p-5 shadow-sm transition-all duration-200 mb-space-md ${
-          isExpiringSoon
+          isWarning
             ? 'bg-amber-50/95 border-amber-300 text-amber-950'
             : 'bg-rose-50/95 border-rose-300 text-rose-950'
         } ${className}`}
@@ -209,12 +211,12 @@ export default function BankReauthBanner({
           <div className="flex items-start gap-3.5 min-w-0 flex-1">
             <div
               className={`w-11 h-11 rounded-xl flex items-center justify-center shrink-0 border shadow-xs ${
-                isExpiringSoon
+                isWarning
                   ? 'bg-amber-100 text-amber-700 border-amber-200'
                   : 'bg-rose-100 text-rose-700 border-rose-200'
               }`}
             >
-              {isExpiringSoon ? (
+              {isWarning ? (
                 <AlertTriangle className="w-5 h-5" />
               ) : (
                 <ShieldAlert className="w-6 h-6 animate-pulse" />
@@ -226,16 +228,18 @@ export default function BankReauthBanner({
                 <h3 className="font-bold text-sm sm:text-base leading-tight">
                   {isExpiringSoon
                     ? 'Liaison bancaire à renouveler'
+                    : isDegraded
+                    ? 'Liaison bancaire - Réseau temporairement ralenti'
                     : '⚠️ Liaison bancaire interrompue'}
                 </h3>
                 <span
                   className={`inline-flex items-center px-2 py-0.5 rounded-full text-[11px] font-bold uppercase tracking-wider ${
-                    isExpiringSoon
+                    isWarning
                       ? 'bg-amber-200/80 text-amber-900 border border-amber-300'
                       : 'bg-rose-200/80 text-rose-900 border border-rose-300'
                   }`}
                 >
-                  {isExpiringSoon ? 'À renouveler' : 'Interrompue'}
+                  {isExpiringSoon ? 'À renouveler' : isDegraded ? 'Réseau temporaire' : 'Interrompue'}
                 </span>
               </div>
 
@@ -352,22 +356,24 @@ export default function BankReauthBanner({
               <span>{loading ? 'Vérification...' : 'Tester'}</span>
             </button>
 
-            {/* Ouvre le modal de renouvellement bancaire avec diagnostic complet */}
-            <button
-              id="btn-open-bank-reauth-modal"
-              type="button"
-              onClick={() => setIsReauthModalOpen(true)}
-              disabled={reauthLoading}
-              className={`inline-flex items-center justify-center gap-2 px-5 py-2.5 rounded-xl text-xs sm:text-sm font-bold text-white shadow-sm transition-all duration-150 active:scale-95 cursor-pointer whitespace-nowrap ${
-                isExpiringSoon
-                  ? 'bg-amber-600 hover:bg-amber-700'
-                  : 'bg-rose-600 hover:bg-rose-700'
-              } disabled:opacity-50`}
-              title="Afficher les explications et renouveler la liaison bancaire"
-            >
-              <span>Renouveler via Tilisy</span>
-              <ExternalLink className="w-4 h-4" />
-            </button>
+            {/* Ouvre le modal de renouvellement bancaire avec diagnostic complet UNIQUEMENT si ré-authentification requise */}
+            {(bankStatus?.needs_reauth || isExpiringSoon) && (
+              <button
+                id="btn-open-bank-reauth-modal"
+                type="button"
+                onClick={() => setIsReauthModalOpen(true)}
+                disabled={reauthLoading}
+                className={`inline-flex items-center justify-center gap-2 px-5 py-2.5 rounded-xl text-xs sm:text-sm font-bold text-white shadow-sm transition-all duration-150 active:scale-95 cursor-pointer whitespace-nowrap ${
+                  isExpiringSoon
+                    ? 'bg-amber-600 hover:bg-amber-700'
+                    : 'bg-rose-600 hover:bg-rose-700'
+                } disabled:opacity-50`}
+                title="Afficher les explications et renouveler la liaison bancaire"
+              >
+                <span>Renouveler via Tilisy</span>
+                <ExternalLink className="w-4 h-4" />
+              </button>
+            )}
           </div>
 
         </div>

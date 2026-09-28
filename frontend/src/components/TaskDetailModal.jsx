@@ -129,8 +129,11 @@ export default function TaskDetailModal({
   const [task, setTask] = useState(initialTask || {});
   const [mode, setMode] = useState(isNewTask ? 'edit' : (initialMode || 'view')); // 'view' | 'edit'
   
-  // Initialisation des commentaires (avec message d'accueil si nouvelle création)
+  // Initialisation des commentaires (avec message d'accueil si nouvelle création, ou task.comments si existant)
   const [comments, setComments] = useState(() => {
+    if (initialTask?.comments && Array.isArray(initialTask.comments) && initialTask.comments.length > 0) {
+      return initialTask.comments;
+    }
     if (isNewTask) {
       return [
         {
@@ -448,6 +451,10 @@ export default function TaskDetailModal({
     syncEditFields(taskObj, isNew);
     setMode(isNew ? 'edit' : (initialMode || 'view'));
 
+    if (initialTask?.comments && Array.isArray(initialTask.comments) && initialTask.comments.length > 0) {
+      setComments(initialTask.comments);
+    }
+
     let isMounted = true;
     async function loadData() {
       try {
@@ -459,7 +466,11 @@ export default function TaskDetailModal({
           if (isMounted) {
             setTask(updatedTask);
             syncEditFields(updatedTask, false);
-            setComments(taskComments || []);
+            if (Array.isArray(taskComments) && taskComments.length > 0) {
+              setComments(taskComments);
+            } else if (Array.isArray(updatedTask?.comments) && updatedTask.comments.length > 0) {
+              setComments(updatedTask.comments);
+            }
           }
         }
       } catch (err) {
@@ -624,15 +635,16 @@ export default function TaskDetailModal({
 
     try {
       setClosingSubmitting(true);
+      let updatedClosed = null;
       if (task.id) {
-        await closeTask(task.id, {
+        updatedClosed = await closeTask(task.id, {
           completion_notes: closeNotes.trim(),
           completion_docs: [],
         });
       }
       setIsClosingModalOpen(false);
       onClose();
-      if (onTaskUpdated) onTaskUpdated();
+      if (onTaskUpdated) onTaskUpdated(updatedClosed || { ...task, status: 'DONE' });
     } catch (err) {
       console.error('Erreur clôture tâche:', err);
       alert(err.message || 'Erreur lors de la clôture.');
@@ -651,10 +663,11 @@ export default function TaskDetailModal({
         const refreshed = await fetchTaskById(task.id);
         setTask(refreshed);
         syncEditFields(refreshed);
+        if (onTaskUpdated) onTaskUpdated(refreshed);
       } else {
         setTask({ ...task, status: 'PENDING_VALIDATION' });
+        if (onTaskUpdated) onTaskUpdated({ ...task, status: 'PENDING_VALIDATION' });
       }
-      if (onTaskUpdated) onTaskUpdated();
     } catch (err) {
       console.error('Erreur demande de validation:', err);
       alert(err.message || 'Erreur lors de la demande de validation.');
@@ -664,10 +677,11 @@ export default function TaskDetailModal({
   // Validation / Invalidation directes depuis la modale (Annotation 8 & 6)
   const handleValidateModalTask = async () => {
     try {
+      let validated = null;
       if (task?.id) {
-        await validateTask(task.id);
+        validated = await validateTask(task.id);
       }
-      if (onTaskUpdated) onTaskUpdated();
+      if (onTaskUpdated) onTaskUpdated(validated || { ...task, status: 'DONE' });
       onClose();
     } catch (err) {
       console.error('Erreur validation tâche:', err);
@@ -722,17 +736,18 @@ export default function TaskDetailModal({
   };
 
 
-  // Background server sync for Optimistic Chat (Annotation 13 & 3)
+  // Background server sync for Optimistic Chat (Annotation 5)
   const sendCommentToServer = async (tempId, textToSend, authorName) => {
+    const targetTaskId = task?.id || initialTask?.id;
     try {
       let confirmedComment;
-      if (task?.id) {
-        confirmedComment = await addTaskComment(task.id, {
+      if (targetTaskId) {
+        confirmedComment = await addTaskComment(targetTaskId, {
           content: textToSend,
           author_name: authorName,
         });
       } else {
-        // En mode création préalable (Annotation 2), conservation locale fluide
+        // En mode création préalable, conservation locale fluide
         confirmedComment = {
           id: Date.now(),
           author_name: authorName,
@@ -749,9 +764,30 @@ export default function TaskDetailModal({
             : c
         )
       );
+
+      // Revalidation synchrone et persistance immédiate dans task.comments
+      if (targetTaskId) {
+        try {
+          const freshComments = await fetchTaskComments(targetTaskId);
+          if (Array.isArray(freshComments) && freshComments.length > 0) {
+            setComments(freshComments);
+            setTask((prev) => ({
+              ...prev,
+              comments: freshComments,
+              comments_count: freshComments.length
+            }));
+          }
+        } catch (fetchErr) {
+          console.warn('Revalidation commentaires après post notice:', fetchErr);
+        }
+
+        if (typeof onTaskUpdated === 'function') {
+          onTaskUpdated();
+        }
+      }
     } catch (err) {
-      console.error('Erreur envoi message:', err);
-      if (task?.id) {
+      console.error('Erreur envoi message chat:', err);
+      if (targetTaskId) {
         window.dispatchEvent(
           new CustomEvent('app-error', {
             detail: {
@@ -781,7 +817,7 @@ export default function TaskDetailModal({
     if (!text || !text.trim()) return;
 
     const tempId = `temp-${Date.now()}`;
-    const authorName = currentUserName || 'Henri Jamet';
+    const authorName = currentUserName || (typeof currentUser === 'string' ? currentUser : currentUser?.name) || 'Henri Jamet';
 
     const tempMessage = {
       id: tempId,

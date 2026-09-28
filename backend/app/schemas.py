@@ -441,7 +441,9 @@ class ProjectReview(BaseModel):
     charge: Optional[int] = None
     add_to_ag_agenda: Optional[bool] = None  # Single-Veto AG Rule
     linked_documents: Optional[str] = None
-    document_urls: Optional[List[str]] = None
+    document_urls: Optional[List[Any]] = None
+    document_ids: Optional[List[Any]] = None
+    documents: Optional[List[Any]] = None
     supplier_info: Optional[str] = None
     coordinator_notes: Optional[str] = None
     estimated_cost: Optional[float] = None
