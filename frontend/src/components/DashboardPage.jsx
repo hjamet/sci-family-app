@@ -674,12 +674,12 @@ export default function DashboardPage({
               onClick={() => navigateTo('/taches')}
               className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-DEFAULT bg-white border-2 border-outline-variant text-on-surface-variant font-label-sm text-xs font-semibold hover:border-outline hover:bg-canvas-slate transition-colors shadow-sm cursor-pointer"
             >
-              Tous les votes {loadingProjects ? '' : `(${projects.length})`}
+              Tous les votes {(loadingProjects && projects.length === 0) ? '' : `(${projects.length})`}
             </button>
           </div>
         </div>
 
-        {loadingProjects ? (
+        {(loadingProjects && projects.length === 0) ? (
           <VoteCardSkeleton />
         ) : activeVote ? (
           <article

@@ -50,10 +50,10 @@ export {
 export default function TasksPage({ currentUser = 'Henri Jamet' }) {
   const navigate = useNavigate();
 
-  // Tasks state initialisé instantanément depuis le cache SWR (< 16ms)
+  // Tasks & Projects state initialisés instantanément depuis le cache SWR (< 1ms)
   const [tasks, setTasks] = useState(() => getCachedData('tasks') || []);
   const [projects, setProjects] = useState(() => getCachedData('projects') || []);
-  const [loading, setLoading] = useState(() => !getCachedData('tasks'));
+  const [loading, setLoading] = useState(() => !getCachedData('tasks') && !getCachedData('projects'));
 
   // Search & Filter state
   const [searchTerm, setSearchTerm] = useState('');
@@ -196,7 +196,7 @@ export default function TasksPage({ currentUser = 'Henri Jamet' }) {
 
   const loadTasks = async (options = {}) => {
     try {
-      if (!tasks || tasks.length === 0) setLoading(true);
+      if ((!tasks || tasks.length === 0) && (!projects || projects.length === 0)) setLoading(true);
       const [taskResult, projResult] = await Promise.allSettled([
         fetchTasks({}, options),
         fetchProjects({}, options),
@@ -537,7 +537,7 @@ export default function TasksPage({ currentUser = 'Henri Jamet' }) {
                 Avancement global
               </span>
               <div className="flex items-baseline gap-1 mt-2">
-                {loading ? (
+                {(loading && (!tasks || tasks.length === 0) && (!projects || projects.length === 0)) ? (
                   <span className="w-16 h-8 bg-slate-200 dark:bg-slate-700 rounded animate-pulse inline-block"></span>
                 ) : (
                   <>
@@ -569,7 +569,7 @@ export default function TasksPage({ currentUser = 'Henri Jamet' }) {
                 Votes à exprimer
               </span>
               <div className="flex items-baseline gap-2 mt-2">
-                {loading ? (
+                {(loading && (!projects || projects.length === 0)) ? (
                   <span className="w-16 h-8 bg-slate-200 dark:bg-slate-700 rounded animate-pulse inline-block"></span>
                 ) : (
                   <span className="text-3xl font-extrabold text-forest-deep dark:text-slate-100 leading-none">
@@ -601,7 +601,7 @@ export default function TasksPage({ currentUser = 'Henri Jamet' }) {
                 Mes tâches
               </span>
               <div className="flex items-baseline gap-2 mt-2">
-                {loading ? (
+                {(loading && (!tasks || tasks.length === 0)) ? (
                   <span className="w-16 h-8 bg-slate-200 dark:bg-slate-700 rounded animate-pulse inline-block"></span>
                 ) : (
                   <span className="text-3xl font-extrabold text-forest-deep dark:text-slate-100 leading-none">
@@ -678,7 +678,7 @@ export default function TasksPage({ currentUser = 'Henri Jamet' }) {
         </div>
 
         {/* Voting Card (Dynamic, Skeleton or Empty State) */}
-        {loading ? (
+        {(loading && (!projects || projects.length === 0)) ? (
           <VoteCardSkeleton />
         ) : currentVote ? (
           <div
@@ -987,7 +987,7 @@ export default function TasksPage({ currentUser = 'Henri Jamet' }) {
       {/* 6. GRID OF TASK CARDS (Stitch)                                           */}
       {/* ========================================================================= */}
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-space-md" id="tasksContainer">
-        {loading ? (
+        {(loading && (!tasks || tasks.length === 0)) ? (
           <TasksContainerSkeleton count={4} />
         ) : sortedTasks.length === 0 ? (
           <div className="col-span-full bg-surface-container-low border border-subtle rounded-2xl p-8 flex flex-col items-center justify-center text-center py-12">

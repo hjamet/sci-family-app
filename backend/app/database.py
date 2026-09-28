@@ -46,10 +46,15 @@ if is_sqlite:
         cursor.close()
 else:
     # PostgreSQL configuration (Supabase Pooler port 6543 / Supavisor / Serverless)
-    # Using NullPool prevents stale connections across serverless lambda freezes
+    # Un pool léger avec pool_pre_ping et pool_recycle réutilise la connexion TCP/SSL
+    # pendant la durée de vie du warm container (économisant 600ms à 1000ms par requête),
+    # tout en évitant les connexions périmées ou coupées par Supavisor.
     engine = create_engine(
         SQLALCHEMY_DATABASE_URL,
-        poolclass=NullPool
+        pool_size=5,
+        max_overflow=10,
+        pool_recycle=300,
+        pool_pre_ping=True
     )
 
 SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)

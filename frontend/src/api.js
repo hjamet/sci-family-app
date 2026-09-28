@@ -108,52 +108,108 @@ function getAuthJsonHeaders(extraHeaders = {}) {
   return getAuthHeaders({ 'Content-Type': 'application/json', ...extraHeaders });
 }
 
-// ==================== DÉDUPLICATION STRICTE DES REQUÊTES EN VOL (ZÉRO CACHE) ====================
-// Map de requêtes en vol : cacheKey -> Promise (évite d'envoyer 2 requêtes HTTP identiques au même instant précis)
-// Dès qu'une requête aboutit ou échoue, elle est immédiatement retirée. Zéro stockage de données passées.
+// ==================== CACHE STALE-WHILE-REVALIDATE (SWR) HYBRIDE MÉMOIRE + SESSIONSTORAGE ====================
+// Offre un affichage immédiat (0 ms) des scrutins, tâches et données clés lors de la navigation
+// tout en garantissant une revalidation automatique en arrière-plan et une invalidation chirurgicale sur mutation.
+
+const memoryCache = new Map();
 const inFlightRequests = new Map();
 
-// Purge immédiate de tout ancien résidu sessionStorage au chargement
-if (typeof window !== 'undefined' && window.sessionStorage) {
-  try {
-    const keys = Object.keys(sessionStorage).filter(k => k.startsWith('sci_swr_cache_'));
-    keys.forEach(k => sessionStorage.removeItem(k));
-  } catch (_) {}
-}
+const SESSION_PREFIX = 'sci_swr_';
 
 /**
- * Zéro cache selon directive formelle d'Henri : retourne toujours null.
- * Tout composant charge directement les données fraîches du serveur.
+ * Récupère une entrée en cache pour affichage instantané (Stale-While-Revalidate).
+ * Priorité : Mémoire vive (< 1ms) puis sessionStorage (< 5ms).
  */
 export function getCachedData(key) {
+  if (!key) return null;
+
+  // 1. Recherche en mémoire vive
+  if (memoryCache.has(key)) {
+    const entry = memoryCache.get(key);
+    if (Date.now() - entry.timestamp < (entry.ttl || 300000)) {
+      return entry.data;
+    }
+  }
+
+  // 2. Recherche de secours en sessionStorage
+  if (typeof window !== 'undefined' && window.sessionStorage) {
+    try {
+      const raw = sessionStorage.getItem(`${SESSION_PREFIX}${key}`);
+      if (raw) {
+        const parsed = JSON.parse(raw);
+        if (Date.now() - parsed.timestamp < (parsed.ttl || 300000)) {
+          memoryCache.set(key, parsed);
+          return parsed.data;
+        } else {
+          sessionStorage.removeItem(`${SESSION_PREFIX}${key}`);
+        }
+      }
+    } catch (_) {}
+  }
+
   return null;
 }
 
 /**
- * No-op conservée pour compatibilité sans stocker de données périmées.
+ * Enregistre une donnée en cache (Mémoire + SessionStorage).
  */
-export function setCachedData(key, data, ttlMs = 0) {
-  // Aucun stockage de cache (Directive Zero-Trust Henri)
+export function setCachedData(key, data, ttlMs = 120000) {
+  if (!key || data === undefined) return;
+  const entry = { data, timestamp: Date.now(), ttl: ttlMs };
+  memoryCache.set(key, entry);
+
+  if (typeof window !== 'undefined' && window.sessionStorage) {
+    try {
+      sessionStorage.setItem(`${SESSION_PREFIX}${key}`, JSON.stringify(entry));
+    } catch (_) {}
+  }
 }
 
 /**
- * Invalide les requêtes en cours et nettoie tout résidu.
+ * Invalide les requêtes en cours et purge le cache mémoire et session.
+ * Appelé systématiquement lors des mutations (votes, création de tâche, etc.).
  */
 export function invalidateApiCache(prefixOrKey = '') {
   if (!prefixOrKey) {
     inFlightRequests.clear();
+    memoryCache.clear();
+    if (typeof window !== 'undefined' && window.sessionStorage) {
+      try {
+        const keys = Object.keys(sessionStorage).filter(k => k.startsWith(SESSION_PREFIX));
+        keys.forEach(k => sessionStorage.removeItem(k));
+      } catch (_) {}
+    }
     return;
   }
+
+  // Nettoyage inFlight
   for (const k of inFlightRequests.keys()) {
     if (k.startsWith(prefixOrKey) || k.includes(prefixOrKey)) {
       inFlightRequests.delete(k);
     }
   }
+
+  // Nettoyage memoryCache
+  for (const k of memoryCache.keys()) {
+    if (k.startsWith(prefixOrKey) || k.includes(prefixOrKey)) {
+      memoryCache.delete(k);
+    }
+  }
+
+  // Nettoyage sessionStorage
+  if (typeof window !== 'undefined' && window.sessionStorage) {
+    try {
+      const keys = Object.keys(sessionStorage).filter(k => 
+        k.startsWith(`${SESSION_PREFIX}${prefixOrKey}`) || k.includes(prefixOrKey)
+      );
+      keys.forEach(k => sessionStorage.removeItem(k));
+    } catch (_) {}
+  }
 }
 
 /**
- * Exécute un fetch avec déduplication STRICTEMENT des requêtes identiques en vol au même instant t.
- * Zéro stockage de données passées : chaque appel après terminaison va chercher les données fraîches en direct.
+ * Exécute un fetch avec déduplication des requêtes en vol et mise en cache SWR.
  */
 export async function swrFetch(cacheKey, fetcher, options = {}) {
   // Déduplication : si une requête identique est déjà en vol AU MÊME INSTANT t, mutualiser la Promise
@@ -163,7 +219,11 @@ export async function swrFetch(cacheKey, fetcher, options = {}) {
 
   const promise = (async () => {
     try {
-      return await fetcher();
+      const freshData = await fetcher();
+      if (freshData !== undefined && freshData !== null) {
+        setCachedData(cacheKey, freshData, options.ttl || 120000);
+      }
+      return freshData;
     } finally {
       inFlightRequests.delete(cacheKey);
     }

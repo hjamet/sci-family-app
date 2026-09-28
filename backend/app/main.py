@@ -1757,17 +1757,23 @@ def delete_reservation(reservation_id: int, db: Session = Depends(get_db)):
 
 @app.get("/api/projects")
 def list_projects(
+    response: Response,
     property_id: Optional[int] = Query(None),
     status_filter: Optional[str] = Query(None, alias="status"),
     db: Session = Depends(get_db)
 ):
+    response.headers["Cache-Control"] = "private, max-age=5, stale-while-revalidate=30"
     query = db.query(Project)
     if property_id:
         query = query.filter(Project.property_id == property_id)
     if status_filter and status_filter != "Tous":
         query = query.filter(Project.status == status_filter)
 
-    projects = query.options(selectinload(Project.votes), selectinload(Project.comments)).order_by(Project.created_at.desc()).all()
+    projects = query.options(
+        joinedload(Project.property),
+        selectinload(Project.votes),
+        selectinload(Project.comments)
+    ).order_by(Project.created_at.desc()).all()
     return [format_project_response(p) for p in projects]
 
 @app.post("/api/projects", status_code=status.HTTP_201_CREATED)
@@ -2702,6 +2708,7 @@ def resolve_task_by_id_or_ref(task_id: str, db: Session) -> Task:
 
 @app.get("/api/tasks")
 def list_tasks(
+    response: Response,
     priority: Optional[str] = Query(None),
     category: Optional[str] = Query(None),
     status_filter: Optional[str] = Query(None, alias="status"),
@@ -2713,6 +2720,7 @@ def list_tasks(
     property_id: Optional[int] = Query(None),
     db: Session = Depends(get_db)
 ):
+    response.headers["Cache-Control"] = "private, max-age=5, stale-while-revalidate=30"
     query = db.query(Task)
 
     if priority and priority not in ["Toutes", "ALL"]:
@@ -2747,7 +2755,11 @@ def list_tasks(
             Task.subject.ilike(s)
         )
 
-    tasks = query.options(selectinload(Task.comments), selectinload(Task.assignee)).order_by(Task.id.asc()).all()
+    tasks = query.options(
+        selectinload(Task.comments),
+        selectinload(Task.assignee),
+        selectinload(Task.admin_documents)
+    ).order_by(Task.id.asc()).all()
     return [format_task_response(t) for t in tasks]
 
 
