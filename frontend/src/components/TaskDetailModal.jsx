@@ -31,6 +31,7 @@ import UploadDocumentModal from './UploadDocumentModal';
 import SelectExistingDocumentModal from './SelectExistingDocumentModal';
 import CategoryManageModal from './CategoryManageModal';
 import FamilyChat from './common/FamilyChat';
+import ExternalLinksSection from './common/ExternalLinksSection';
 
 const SUBJECTS = [
   'Rosing',
@@ -195,6 +196,7 @@ export default function TaskDetailModal({
   const [editChecklist, setEditChecklist] = useState([]);
   const [editVoteOptions, setEditVoteOptions] = useState([]);
   const [editDocuments, setEditDocuments] = useState([]);
+  const [editExternalLinks, setEditExternalLinks] = useState([]);
   const [editOnsitePresence, setEditOnsitePresence] = useState(true);
   const [savingEdit, setSavingEdit] = useState(false);
 
@@ -493,6 +495,7 @@ export default function TaskDetailModal({
     setEditMembers(isVoteInitiative ? [currentUserName || 'Henri Jamet'] : (Array.isArray(t.assigned_members) ? t.assigned_members : (t.assignee ? [t.assignee] : [])));
     setEditChecklist(isNew ? [] : parseChecklistItems(t.checklist));
     setEditDocuments(parseTaskDocuments(t.documents || t.completion_docs || t.document_urls));
+    setEditExternalLinks(Array.isArray(t.external_links) ? t.external_links : []);
     setEditOnsitePresence(t.onsite_presence !== false);
 
     let parsedOptions = [];
@@ -554,6 +557,7 @@ export default function TaskDetailModal({
         checklist: editChecklist,
         options: cleanOptions,
         documents: editDocuments,
+        external_links: editExternalLinks,
         onsite_presence: editOnsitePresence,
         subject: editSubject,
         category: editSubject,
@@ -589,6 +593,7 @@ export default function TaskDetailModal({
               options: cleanOptions,
               document_urls: editDocuments.map((d) => d.file_url || d.url || d.filename),
               linked_documents: editDocuments.map((d) => d.name || d.filename).join(', '),
+              external_links: editExternalLinks,
             });
           } else {
             await createTask(payload);
@@ -1247,6 +1252,12 @@ export default function TaskDetailModal({
                   </div>
                 </div>
 
+                {/* Annotation 2 : Liens web sources & devis en ligne */}
+                <ExternalLinksSection
+                  links={task?.external_links}
+                  isEditing={false}
+                />
+
                 {/* Section Validation & Arbitrage de la Mission (#section-task-validation) */}
                 {!isNewTask && (
                   <div
@@ -1554,7 +1565,7 @@ export default function TaskDetailModal({
                       value={editTitle}
                       onChange={(e) => setEditTitle(e.target.value)}
                       placeholder={isVoteInitiative ? "Ex: Rénovation Façade Est & Volets Presbytère" : "Titre de la tâche..."}
-                      className="bg-canvas-slate rounded-xl p-2.5 text-xs sm:text-sm border border-slate-300 focus:outline-none focus:ring-2 focus:ring-primary font-semibold"
+                      className="bg-white dark:bg-slate-800 rounded-lg px-3.5 py-2.5 text-xs sm:text-sm border border-slate-300 dark:border-slate-700 focus:outline-none focus:ring-2 focus:ring-primary font-medium"
                     />
                   </div>
 
@@ -1565,7 +1576,7 @@ export default function TaskDetailModal({
                       value={editDescription}
                       onChange={(e) => setEditDescription(e.target.value)}
                       placeholder={isVoteInitiative ? "Expliquez l'urgence, le contexte, l'impact sur la propriété et l'intérêt pour la SCI..." : "Description..."}
-                      className="bg-canvas-slate rounded-xl p-2.5 text-xs sm:text-sm border border-slate-300 focus:outline-none focus:ring-2 focus:ring-primary leading-relaxed resize-none"
+                      className="bg-white dark:bg-slate-800 rounded-lg px-3.5 py-2.5 text-xs sm:text-sm border border-slate-300 dark:border-slate-700 focus:outline-none focus:ring-2 focus:ring-primary leading-relaxed resize-none"
                     />
                   </div>
 
@@ -1780,6 +1791,15 @@ export default function TaskDetailModal({
                       })}
                     </div>
                   )}
+                </section>
+
+                {/* Section 4 : Liens web sources & devis en ligne (Annotation 2) */}
+                <section className="bg-white border border-slate-200 rounded-2xl p-4 sm:p-5 shadow-xs">
+                  <ExternalLinksSection
+                    links={editExternalLinks}
+                    onChange={setEditExternalLinks}
+                    isEditing={true}
+                  />
                 </section>
 
                 {/* Footer formulaire fixé / sticky en bas (Annotation 6) */}

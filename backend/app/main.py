@@ -157,12 +157,15 @@ def run_project_migrations():
                         conn.execute(text("ALTER TABLE projects ADD COLUMN options TEXT"))
                     if "allow_multiple_choices" not in column_names:
                         conn.execute(text("ALTER TABLE projects ADD COLUMN allow_multiple_choices BOOLEAN DEFAULT 0"))
+                    if "external_links" not in column_names:
+                        conn.execute(text("ALTER TABLE projects ADD COLUMN external_links TEXT"))
                     conn.commit()
             else:
                 conn.execute(text("ALTER TABLE projects ADD COLUMN IF NOT EXISTS document_urls TEXT;"))
                 conn.execute(text("ALTER TABLE projects ADD COLUMN IF NOT EXISTS task_weight VARCHAR DEFAULT 'MOYEN';"))
                 conn.execute(text("ALTER TABLE projects ADD COLUMN IF NOT EXISTS options TEXT;"))
                 conn.execute(text("ALTER TABLE projects ADD COLUMN IF NOT EXISTS allow_multiple_choices BOOLEAN DEFAULT FALSE;"))
+                conn.execute(text("ALTER TABLE projects ADD COLUMN IF NOT EXISTS external_links TEXT;"))
                 conn.commit()
     except Exception as e:
         logger.warning(f"Notice: run_project_migrations: {e}")
@@ -211,6 +214,8 @@ def run_task_migrations():
                         conn.execute(text("ALTER TABLE tasks ADD COLUMN is_recurring BOOLEAN DEFAULT 0"))
                     if "last_completed_at" not in t_columns:
                         conn.execute(text("ALTER TABLE tasks ADD COLUMN last_completed_at DATETIME"))
+                    if "external_links" not in t_columns:
+                        conn.execute(text("ALTER TABLE tasks ADD COLUMN external_links TEXT"))
                     conn.commit()
             else:
                 conn.execute(text("ALTER TABLE stay_task_assignments ADD COLUMN IF NOT EXISTS status VARCHAR DEFAULT 'A_FAIRE';"))
@@ -218,6 +223,7 @@ def run_task_migrations():
                 conn.execute(text("ALTER TABLE stay_task_assignments ADD COLUMN IF NOT EXISTS completion_docs TEXT;"))
                 conn.execute(text("ALTER TABLE tasks ADD COLUMN IF NOT EXISTS is_recurring BOOLEAN DEFAULT FALSE;"))
                 conn.execute(text("ALTER TABLE tasks ADD COLUMN IF NOT EXISTS last_completed_at TIMESTAMP;"))
+                conn.execute(text("ALTER TABLE tasks ADD COLUMN IF NOT EXISTS external_links TEXT;"))
                 conn.commit()
     except Exception as e:
         logger.warning(f"Notice: run_task_migrations: {e}")
@@ -415,6 +421,16 @@ def format_project_response(project: Project) -> dict:
         except Exception:
             options_list = [o.strip() for o in str(raw_options).split(",") if o.strip()]
 
+    raw_external_links = getattr(project, "external_links", None)
+    external_links_list = []
+    if raw_external_links:
+        try:
+            external_links_list = json.loads(raw_external_links) if isinstance(raw_external_links, str) else list(raw_external_links)
+        except Exception:
+            external_links_list = []
+    if not isinstance(external_links_list, list):
+        external_links_list = []
+
     options_counts = {}
     for opt in options_list:
         count = 0
@@ -447,6 +463,7 @@ def format_project_response(project: Project) -> dict:
         "add_to_ag_agenda": getattr(project, "add_to_ag_agenda", False) or False,
         "linked_documents": getattr(project, "linked_documents", None),
         "document_urls": doc_urls_list,
+        "external_links": external_links_list,
         "supplier_info": getattr(project, "supplier_info", None),
         "submitted_by": project.submitted_by,
         "responsible": project.responsible,
@@ -1783,6 +1800,7 @@ def create_project(proj: ProjectCreate, db: Session = Depends(get_db)):
     first_photo = proj.photo_url or (proj.photo_urls[0] if proj.photo_urls else None)
     doc_urls_str = json.dumps(proj.document_urls) if proj.document_urls else None
     options_str = json.dumps(proj.options) if proj.options else None
+    external_links_str = json.dumps(proj.external_links) if proj.external_links else None
 
     db_proj = Project(
         property_id=proj.property_id,
@@ -1797,6 +1815,7 @@ def create_project(proj: ProjectCreate, db: Session = Depends(get_db)):
         add_to_ag_agenda=proj.add_to_ag_agenda if proj.add_to_ag_agenda is not None else False,
         linked_documents=proj.linked_documents,
         document_urls=doc_urls_str,
+        external_links=external_links_str,
         supplier_info=proj.supplier_info,
         submitted_by=proj.submitted_by,
         responsible=proj.responsible,
@@ -2062,6 +2081,8 @@ def review_project(project_id: int, review: ProjectReview, db: Session = Depends
         db_proj.options = json.dumps(review.options) if not isinstance(review.options, str) else review.options
     if review.allow_multiple_choices is not None:
         db_proj.allow_multiple_choices = bool(review.allow_multiple_choices)
+    if review.external_links is not None:
+        db_proj.external_links = json.dumps(review.external_links) if not isinstance(review.external_links, str) else review.external_links
 
     # Invalidation étendue et réinitialisation des votes si titre, description, options, multi ou docs modifiés (Annotation 6)
     votes_count = db.query(ProjectVote).filter(ProjectVote.project_id == project_id).count()
@@ -2732,6 +2753,15 @@ def format_task_response(task: Task, include_comments: bool = False) -> dict:
         except Exception:
             completion_docs = [task.completion_docs]
 
+    external_links = []
+    if getattr(task, "external_links", None):
+        try:
+            external_links = json.loads(task.external_links) if isinstance(task.external_links, str) else list(task.external_links)
+        except Exception:
+            external_links = []
+    if not isinstance(external_links, list):
+        external_links = []
+
     comments_list = [format_comment_response(c) for c in task.comments] if task.comments else []
 
     data = {
@@ -2753,6 +2783,7 @@ def format_task_response(task: Task, include_comments: bool = False) -> dict:
         "deadline": task.deadline,
         "checklist": checklist,
         "documents": documents,
+        "external_links": external_links,
         "completion_notes": task.completion_notes,
         "completion_docs": completion_docs,
         "created_by": task.created_by,
@@ -2948,6 +2979,9 @@ def create_task(
 
     documents_json = json.dumps(documents_list)
 
+    raw_external_links = payload.get("external_links")
+    external_links_json = json.dumps(raw_external_links) if isinstance(raw_external_links, list) else (str(raw_external_links) if raw_external_links else None)
+
     ref = payload.get("ref")
     if not ref:
         last_task = db.query(Task).order_by(Task.id.desc()).first()
@@ -2975,6 +3009,7 @@ def create_task(
         deadline=deadline,
         checklist=checklist,
         documents=documents_json,
+        external_links=external_links_json,
         created_by=created_by
     )
     db.add(db_task)
@@ -3148,6 +3183,10 @@ def update_task(
                     existing_docs.append({"name": os.path.basename(att), "url": att, "type": "FILE"})
 
     task.documents = json.dumps(existing_docs)
+
+    if "external_links" in payload and payload["external_links"] is not None:
+        val = payload["external_links"]
+        task.external_links = json.dumps(val) if isinstance(val, list) else str(val)
 
     if "completion_notes" in payload and payload["completion_notes"] is not None:
         task.completion_notes = payload["completion_notes"]

@@ -89,6 +89,31 @@ const ROOMS = [
   },
 ];
 
+export function resolveSafeUserName(val) {
+  if (!val) return '';
+  if (typeof val === 'string') return val.trim();
+  if (typeof val === 'object') {
+    if (typeof val.fullName === 'string' && val.fullName.trim()) return val.fullName.trim();
+    if (typeof val.name === 'string' && val.name.trim()) return val.name.trim();
+    if (typeof val.prenom === 'string' && val.prenom.trim()) {
+      return `${val.prenom.trim()} Jamet`;
+    }
+    if (typeof val.username === 'string' && val.username.trim()) return val.username.trim();
+  }
+  return String(val || '').trim();
+}
+
+export function normalizeTimeInput(val, fallback = '15:00') {
+  if (!val) return fallback;
+  const str = typeof val === 'string' ? val.trim().toLowerCase() : String(val);
+  const cleaned = str.replace('h', ':');
+  if (/^\d{1,2}:\d{2}$/.test(cleaned)) {
+    const [h, m] = cleaned.split(':');
+    return `${h.padStart(2, '0')}:${m}`;
+  }
+  return fallback;
+}
+
 function resolveCurrentUserFullName(currentUser) {
   if (typeof currentUser === 'string' && currentUser.trim()) {
     const match = ASSOCIATES_LIST.find(
@@ -152,6 +177,11 @@ class BookingErrorBoundary extends React.Component {
             <p className="text-xs sm:text-sm text-slate-600 dark:text-slate-300 leading-relaxed">
               Un incident de rendu a été intercepté pour protéger l'intégrité de la session.
             </p>
+            {this.state.error?.message && (
+              <p className="text-[11px] font-mono text-rose-600 dark:text-rose-400 bg-rose-50 dark:bg-rose-950/40 p-2.5 rounded-lg border border-rose-200 dark:border-rose-900 break-words max-h-24 overflow-y-auto text-left">
+                {this.state.error.message}
+              </p>
+            )}
             <div className="pt-2 flex items-center justify-center gap-3">
               <button
                 type="button"
@@ -182,9 +212,9 @@ function BookingModalContent({
   onBooked,
   initialReservation = null,
 }) {
-  const loggedInUserName = resolveCurrentUserFullName(currentUser);
+  const loggedInUserName = resolveSafeUserName(resolveCurrentUserFullName(currentUser)) || 'Henri Jamet';
   const isEditMode = Boolean(initialReservation && initialReservation.id);
-  const applicant = (isEditMode && initialReservation?.user_name) ? initialReservation.user_name : loggedInUserName;
+  const applicant = resolveSafeUserName(isEditMode ? initialReservation?.user_name : loggedInUserName) || loggedInUserName;
 
   const [selectedHouse, setSelectedHouse] = useState('all'); // 'all' | 'rosing' | 'presbytere'
   const [selectedRooms, setSelectedRooms] = useState([]); // Annotation 1 : Zéro chambre sélectionnée par défaut
@@ -220,16 +250,8 @@ function BookingModalContent({
       if (initialReservation.start_date) setStartDate(initialReservation.start_date);
       if (initialReservation.end_date) setEndDate(initialReservation.end_date);
       const isSingleDay = initialReservation.start_date && initialReservation.end_date && initialReservation.start_date === initialReservation.end_date;
-      if (initialReservation.arrival_time) {
-        setArrivalTime(initialReservation.arrival_time);
-      } else if (isSingleDay) {
-        setArrivalTime('10:00');
-      }
-      if (initialReservation.departure_time) {
-        setDepartureTime(initialReservation.departure_time);
-      } else if (isSingleDay) {
-        setDepartureTime('18:00');
-      }
+      setArrivalTime(normalizeTimeInput(initialReservation.arrival_time, isSingleDay ? '10:00' : '15:00'));
+      setDepartureTime(normalizeTimeInput(initialReservation.departure_time, isSingleDay ? '18:00' : '11:00'));
       if (initialReservation.title) setStayTitle(initialReservation.title);
 
       // Décomposition intelligente des notes
@@ -239,13 +261,13 @@ function BookingModalContent({
 
       const membresMatch = rawNotes.match(/\[Membres:\s*([^\]]+)\]/i);
       if (membresMatch) {
-        parsedMembers = membresMatch[1].split(',').map((s) => s.trim()).filter(Boolean);
+        parsedMembers = membresMatch[1].split(',').map((s) => resolveSafeUserName(s)).filter(Boolean);
         rawNotes = rawNotes.replace(membresMatch[0], '');
       }
 
       const invitesMatch = rawNotes.match(/\[Invités:\s*([^\]]+)\]/i);
       if (invitesMatch) {
-        parsedGuests = invitesMatch[1].split(',').map((s) => s.trim()).filter(Boolean);
+        parsedGuests = invitesMatch[1].split(',').map((s) => String(s || '').trim()).filter(Boolean);
         rawNotes = rawNotes.replace(invitesMatch[0], '');
       }
 
@@ -280,15 +302,30 @@ function BookingModalContent({
       if (parsedMembers.length > 0) {
         setSelectedMembers(parsedMembers);
       } else if (initialReservation.user_name) {
-        setSelectedMembers([initialReservation.user_name]);
+        setSelectedMembers([resolveSafeUserName(initialReservation.user_name)]);
       } else {
         setSelectedMembers([loggedInUserName]);
       }
 
       setExternalGuests(parsedGuests);
 
-      if (Array.isArray(initialReservation.selected_rooms) && initialReservation.selected_rooms.length > 0) {
-        const normalized = initialReservation.selected_rooms.map((r) => (r === 'Suite Parentale' ? 'Suite' : r));
+      // Résolution et parsing défensif de selected_rooms (gère Array, chaîne JSON ou liste virgules)
+      let roomsArray = [];
+      const rawRooms = initialReservation.selected_rooms;
+      if (Array.isArray(rawRooms)) {
+        roomsArray = rawRooms;
+      } else if (typeof rawRooms === 'string' && rawRooms.trim()) {
+        try {
+          const parsed = JSON.parse(rawRooms);
+          if (Array.isArray(parsed)) roomsArray = parsed;
+          else roomsArray = [rawRooms.trim()];
+        } catch (_) {
+          roomsArray = rawRooms.split(',').map((s) => s.trim()).filter(Boolean);
+        }
+      }
+
+      if (roomsArray.length > 0) {
+        const normalized = roomsArray.map((r) => (r === 'Suite Parentale' ? 'Suite' : String(r).trim()));
         setSelectedRooms(normalized);
         const hasPresb = normalized.some((rName) => {
           const found = ROOMS.find((r) => r.name === rName);
@@ -332,11 +369,12 @@ function BookingModalContent({
   const { week_number, year } = getISOWeekAndYear(startDate);
 
   const toggleRoom = (roomName) => {
+    const current = Array.isArray(selectedRooms) ? selectedRooms : [];
     let nextRooms;
-    if (selectedRooms.includes(roomName)) {
-      nextRooms = selectedRooms.filter((r) => r !== roomName);
+    if (current.includes(roomName)) {
+      nextRooms = current.filter((r) => r !== roomName);
     } else {
-      nextRooms = [...selectedRooms, roomName];
+      nextRooms = [...current, roomName];
     }
     setSelectedRooms(nextRooms);
 
@@ -357,15 +395,17 @@ function BookingModalContent({
 
   const handleAddGuest = (e) => {
     if (e) e.preventDefault();
+    const current = Array.isArray(externalGuests) ? externalGuests : [];
     const trimmed = guestInputValue.trim();
-    if (trimmed && !externalGuests.includes(trimmed)) {
-      setExternalGuests([...externalGuests, trimmed]);
+    if (trimmed && !current.includes(trimmed)) {
+      setExternalGuests([...current, trimmed]);
       setGuestInputValue('');
     }
   };
 
   const handleRemoveGuest = (guestName) => {
-    setExternalGuests(externalGuests.filter((g) => g !== guestName));
+    const current = Array.isArray(externalGuests) ? externalGuests : [];
+    setExternalGuests(current.filter((g) => g !== guestName));
   };
 
   const handleSubmit = async (e) => {
@@ -386,11 +426,12 @@ function BookingModalContent({
       setSubmitting(true);
       setError(null);
 
-      const hasPresb = selectedRooms.some((rName) => {
+      const safeRooms = Array.isArray(selectedRooms) ? selectedRooms : [];
+      const hasPresb = safeRooms.some((rName) => {
         const found = ROOMS.find((r) => r.name === rName);
         return found ? found.house === 'presbytere' : false;
       });
-      const hasRosing = selectedRooms.some((rName) => {
+      const hasRosing = safeRooms.some((rName) => {
         const found = ROOMS.find((r) => r.name === rName);
         return found ? found.house === 'rosing' : false;
       });
@@ -484,11 +525,12 @@ function BookingModalContent({
 
   const rosingRooms = ROOMS.filter((r) => r.house === 'rosing');
   const presbytereRooms = ROOMS.filter((r) => r.house === 'presbytere');
-  const hasSelectedRosing = selectedRooms.some((rName) => {
+  const safeSelectedRooms = Array.isArray(selectedRooms) ? selectedRooms : [];
+  const hasSelectedRosing = safeSelectedRooms.some((rName) => {
     const found = ROOMS.find((r) => r.name === rName);
     return found ? found.house === 'rosing' : false;
   });
-  const hasSelectedPresb = selectedRooms.some((rName) => {
+  const hasSelectedPresb = safeSelectedRooms.some((rName) => {
     const found = ROOMS.find((r) => r.name === rName);
     return found ? found.house === 'presbytere' : false;
   });

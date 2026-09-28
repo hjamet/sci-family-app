@@ -420,6 +420,7 @@ class ProjectCreate(BaseModel):
     status: Optional[str] = None
     options: Optional[List[str]] = []
     allow_multiple_choices: Optional[bool] = False
+    external_links: Optional[List[Any]] = []
 
 class ProjectApprove(BaseModel):
     estimated_cost: Optional[float] = 0.0
@@ -444,6 +445,7 @@ class ProjectReview(BaseModel):
     document_urls: Optional[List[Any]] = None
     document_ids: Optional[List[Any]] = None
     documents: Optional[List[Any]] = None
+    external_links: Optional[List[Any]] = None
     supplier_info: Optional[str] = None
     coordinator_notes: Optional[str] = None
     estimated_cost: Optional[float] = None
@@ -812,6 +814,7 @@ class TaskBase(BaseModel):
     documents: Optional[List[Dict]] = []
     document_ids: Optional[List[int]] = None
     attachments: Optional[List[Any]] = None
+    external_links: Optional[List[Any]] = []
     completion_notes: Optional[str] = None
     completion_docs: Optional[List[str]] = []
     created_by: Optional[str] = "Henri"
@@ -840,6 +843,7 @@ class TaskUpdate(BaseModel):
     documents: Optional[List[Dict]] = None
     document_ids: Optional[List[int]] = None
     attachments: Optional[List[Any]] = None
+    external_links: Optional[List[Any]] = None
     completion_notes: Optional[str] = None
     completion_docs: Optional[List[str]] = None
 

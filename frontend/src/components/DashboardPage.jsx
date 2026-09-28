@@ -497,14 +497,14 @@ export default function DashboardPage({
 
             <button
               type="button"
-              onClick={() => navigateTo('/taches')}
-              className="group rounded-2xl p-3 flex items-center gap-2.5 text-left transition-all hover:scale-[1.02] shadow-sm cursor-pointer bg-rose-500/10 hover:bg-rose-500/20 text-rose-900 dark:text-rose-200 border border-rose-500/20"
+              onClick={handleOpenCreateVote}
+              className="group rounded-2xl p-3 flex items-center gap-2.5 text-left transition-all hover:scale-[1.02] shadow-sm cursor-pointer bg-purple-500/10 hover:bg-purple-500/20 text-purple-900 dark:text-purple-200 border border-purple-500/20"
             >
               <span className="material-symbols-outlined text-[22px] shrink-0 group-hover:scale-110 transition-transform">
-                checklist
+                how_to_vote
               </span>
               <span className="font-label-lg text-xs sm:text-sm font-semibold leading-tight">
-                Voir les chantiers / tâches
+                Proposer un vote
               </span>
             </button>
           </div>

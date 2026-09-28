@@ -220,6 +220,7 @@ class Project(Base):
     completion_docs = Column(Text, nullable=True)
     options = Column(Text, nullable=True)  # JSON-encoded array of custom vote options
     allow_multiple_choices = Column(Boolean, default=False, nullable=True)
+    external_links = Column(Text, nullable=True)  # JSON array: [{"url": "https://...", "title": "Doc Klereo"}]
     created_at = Column(DateTime, default=datetime.utcnow)
     updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
 
@@ -302,6 +303,7 @@ class Task(Base):
     deadline = Column(String(50), nullable=True)  # e.g. "2026-08-31"
     checklist = Column(Text, nullable=True)  # JSON array: [{"text": "...", "completed": true}]
     documents = Column(Text, nullable=True)  # JSON array: [{"name": "...", "url": "...", "type": "PDF", "size": "1.2 Mo"}]
+    external_links = Column(Text, nullable=True)  # JSON array: [{"url": "https://...", "title": "Doc Klereo"}]
     completion_notes = Column(Text, nullable=True)  # Mandatory synthesis note on closure
     completion_docs = Column(Text, nullable=True)  # JSON or comma-separated document URLs
     created_by = Column(String(100), nullable=False)

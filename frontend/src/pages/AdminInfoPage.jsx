@@ -1237,7 +1237,11 @@ export default function AdminInfoPage({ currentUser }) {
                 key={doc.id || doc.filename}
                 className="doc-card group bg-surface-container-lowest rounded-lg border border-border-subtle p-space-sm flex flex-col justify-between shadow-[0_2px_8px_-2px_rgba(6,95,70,0.04),0_6px_20px_-4px_rgba(15,23,42,0.05)] hover:border-sage-border hover:shadow-[0_8px_24px_-4px_rgba(6,95,70,0.09)] transition-all"
               >
-                <div>
+                <div 
+                  onClick={() => handleViewDocument(doc)} 
+                  className="cursor-pointer group-hover:opacity-95 transition-opacity"
+                  title="Cliquer pour consulter ce document"
+                >
                   {/* Document Thumbnail Card */}
                   <div className="relative w-full h-44 rounded-DEFAULT bg-surface-container overflow-hidden flex flex-col justify-between p-3 border border-border-subtle/60">
                     <div className="flex items-center justify-between">
@@ -1287,7 +1291,7 @@ export default function AdminInfoPage({ currentUser }) {
                   </div>
                 </div>
 
-                {/* Card Actions */}
+                {/* Card Actions (Annotation 1 : Téléchargement supprimé des cartes directes, disponible dans le modal de consultation) */}
                 <div className="mt-4 pt-3 border-t border-border-subtle flex items-center justify-between gap-1.5">
                   <button
                     type="button"
@@ -1296,21 +1300,11 @@ export default function AdminInfoPage({ currentUser }) {
                       e.stopPropagation();
                       handleViewDocument(doc);
                     }}
-                    className="btn-view flex-1 h-[40px] px-2 rounded-DEFAULT bg-surface-container-lowest border-2 border-primary text-primary font-label-sm text-xs hover:bg-sage-soft transition-all flex items-center justify-center gap-1 cursor-pointer font-bold"
-                    title="Consulter le document sans télécharger"
+                    className="btn-view flex-1 h-[40px] px-3 rounded-DEFAULT bg-primary text-white font-label-sm text-xs hover:bg-forest-deep transition-all flex items-center justify-center gap-1.5 cursor-pointer font-bold shadow-xs"
+                    title="Consulter le document"
                   >
-                    <span className="material-symbols-outlined text-[16px]">visibility</span>
+                    <span className="material-symbols-outlined text-[17px]">visibility</span>
                     <span>Consulter</span>
-                  </button>
-
-                  <button
-                    type="button"
-                    onClick={() => handleDownload(doc)}
-                    className="btn-download flex-1 h-[40px] px-2 rounded-DEFAULT bg-primary text-white font-label-sm text-xs hover:bg-forest-deep transition-all flex items-center justify-center gap-1 cursor-pointer font-bold shadow-xs"
-                    title="Télécharger une copie locale"
-                  >
-                    <span className="material-symbols-outlined text-[16px]">download</span>
-                    <span>Télécharger</span>
                   </button>
 
                   <button
@@ -1347,21 +1341,25 @@ export default function AdminInfoPage({ currentUser }) {
                 key={doc.id || doc.filename}
                 className="doc-card group bg-surface-container-lowest rounded-DEFAULT border border-border-subtle p-3 flex flex-col md:flex-row md:items-center justify-between gap-3 shadow-xs hover:border-sage-border transition-all"
               >
-                <div className="flex items-center gap-3">
+                <div 
+                  onClick={() => handleViewDocument(doc)} 
+                  className="flex items-center gap-3 cursor-pointer group-hover:opacity-95 transition-opacity flex-1 min-w-0"
+                  title="Cliquer pour consulter ce document"
+                >
                   <div className="w-10 h-10 rounded-full flex items-center justify-center shrink-0 bg-sage-soft text-primary text-xl">
                     {catObj?.emoji || '📁'}
                   </div>
-                  <div>
+                  <div className="min-w-0">
                     <div className="flex items-center gap-2 flex-wrap">
                       <span className={`px-2 py-0.5 rounded text-[10px] font-semibold border ${badgeColorClass}`}>
                         {catObj?.emoji || '📁'} {doc.category}
                       </span>
                       <span className="text-xs font-mono text-on-surface-variant">{doc.size || '—'}</span>
                     </div>
-                    <h3 className="font-headline-sm text-sm text-forest-deep font-bold line-clamp-1 doc-title-text mt-0.5" title={doc.filename || doc.title}>
+                    <h3 className="font-headline-sm text-sm text-forest-deep font-bold line-clamp-1 doc-title-text mt-0.5 truncate" title={doc.filename || doc.title}>
                       {doc.filename || doc.title}
                     </h3>
-                    <p className="font-body-md text-xs text-on-surface-variant">
+                    <p className="font-body-md text-xs text-on-surface-variant truncate">
                       {doc.upload_date || 'Date'} • Déposant : {doc.uploaded_by || 'Henri Jamet'} {doc.notes ? `• Org : ${doc.notes}` : ''}
                     </p>
                   </div>
@@ -1375,20 +1373,11 @@ export default function AdminInfoPage({ currentUser }) {
                       e.stopPropagation();
                       handleViewDocument(doc);
                     }}
-                    className="btn-view h-[38px] px-3 rounded-DEFAULT bg-surface-container-lowest border-2 border-primary text-primary font-label-sm text-xs hover:bg-sage-soft transition-all flex items-center gap-1 cursor-pointer font-bold"
-                    title="Consulter sans télécharger"
+                    className="btn-view h-[38px] px-3.5 rounded-DEFAULT bg-primary text-white font-label-sm text-xs hover:bg-forest-deep transition-all flex items-center gap-1.5 cursor-pointer font-bold shadow-xs"
+                    title="Consulter ce document"
                   >
-                    <span className="material-symbols-outlined text-[16px]">visibility</span>
+                    <span className="material-symbols-outlined text-[17px]">visibility</span>
                     <span>Consulter</span>
-                  </button>
-                  <button
-                    type="button"
-                    onClick={() => handleDownload(doc)}
-                    className="btn-download h-[38px] px-3 rounded-DEFAULT bg-primary text-white font-label-sm text-xs hover:bg-forest-deep transition-all flex items-center gap-1 cursor-pointer font-bold shadow-xs"
-                    title="Télécharger une copie locale"
-                  >
-                    <span className="material-symbols-outlined text-[16px]">download</span>
-                    <span>Télécharger</span>
                   </button>
                   <button
                     type="button"

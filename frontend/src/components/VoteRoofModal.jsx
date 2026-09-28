@@ -1075,6 +1075,15 @@ function VoteRoofModalInner({
                   )}
                 </div>
 
+                {/* Annotation 2 : Liens web & sources externes */}
+                <div className="pt-2 border-t border-slate-200 dark:border-slate-800">
+                  <ExternalLinksSection
+                    links={editExternalLinks}
+                    onChange={setEditExternalLinks}
+                    isEditing={true}
+                  />
+                </div>
+
                 {/* Boutons d'action édition / création */}
                 <div className="flex items-center justify-end gap-2.5 pt-3 border-t border-slate-200 dark:border-slate-800">
                   <button
@@ -1226,6 +1235,12 @@ function VoteRoofModalInner({
                     )}
                   </div>
                 </div>
+
+                {/* Annotation 2 : Liens web & sources externes */}
+                <ExternalLinksSection
+                  links={activeProject.external_links}
+                  isEditing={false}
+                />
 
                 {/* ANNOTATIONS 4 & 5 : TITRE ÉPURÉ "Voter" & SONDAGE STYLE WHATSAPP */}
                 <div ref={voteSectionRef} id="section-sondage-whatsapp" className="flex flex-col gap-2.5 scroll-mt-6">

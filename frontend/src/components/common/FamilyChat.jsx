@@ -734,7 +734,7 @@ export default function FamilyChat({
             }}
             disabled={disabled}
             placeholder={placeholder}
-            className="w-full bg-canvas-slate rounded-xl p-2.5 sm:p-3 text-xs sm:text-sm text-on-surface placeholder:text-outline border border-slate-300 focus:border-emerald-600 focus:ring-1 focus:ring-emerald-600 shadow-inner resize-none outline-none disabled:opacity-50"
+            className="w-full bg-canvas-slate rounded-lg px-3.5 py-2.5 text-xs sm:text-sm text-on-surface placeholder:text-outline border border-slate-300 dark:border-slate-700 focus:border-emerald-600 focus:ring-1 focus:ring-emerald-600 shadow-inner resize-none outline-none disabled:opacity-50"
             onKeyDown={handleKeyDown}
           />
         </div>
