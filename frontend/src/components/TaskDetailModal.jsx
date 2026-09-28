@@ -198,6 +198,10 @@ export default function TaskDetailModal({
   const [editDocuments, setEditDocuments] = useState([]);
   const [editExternalLinks, setEditExternalLinks] = useState([]);
   const [editOnsitePresence, setEditOnsitePresence] = useState(true);
+  const [editIsRecurring, setEditIsRecurring] = useState(false);
+  const [editRecurrenceInterval, setEditRecurrenceInterval] = useState(1);
+  const [editRecurrenceUnit, setEditRecurrenceUnit] = useState('semaines');
+  const [editAutoAssignByWorkload, setEditAutoAssignByWorkload] = useState(false);
   const [savingEdit, setSavingEdit] = useState(false);
 
   // Catégories dynamiques et édition (Annotation 1)
@@ -447,6 +451,10 @@ export default function TaskDetailModal({
       checklist: isNew ? [] : parseChecklistItems(initialTask?.checklist),
       options: initialTask?.options || (isVoteInitiative ? ['Approuver le projet', 'Rejeter le projet'] : []),
       documents: parseTaskDocuments(initialTask?.documents || initialTask?.completion_docs || initialTask?.document_urls),
+      is_recurring: initialTask?.is_recurring || false,
+      recurrence_interval: initialTask?.recurrence_interval || 1,
+      recurrence_unit: initialTask?.recurrence_unit || 'semaines',
+      auto_assign_by_workload: initialTask?.auto_assign_by_workload || false,
     };
 
     setTask(taskObj);
@@ -497,6 +505,10 @@ export default function TaskDetailModal({
     setEditDocuments(parseTaskDocuments(t.documents || t.completion_docs || t.document_urls));
     setEditExternalLinks(Array.isArray(t.external_links) ? t.external_links : []);
     setEditOnsitePresence(t.onsite_presence !== false);
+    setEditIsRecurring(Boolean(t.is_recurring));
+    setEditRecurrenceInterval(t.recurrence_interval || 1);
+    setEditRecurrenceUnit(t.recurrence_unit || 'semaines');
+    setEditAutoAssignByWorkload(Boolean(t.auto_assign_by_workload));
 
     let parsedOptions = [];
     if (Array.isArray(t.options)) {
@@ -568,6 +580,10 @@ export default function TaskDetailModal({
         assignee: isVoteInitiative
           ? (currentUserName || 'Henri Jamet')
           : (editMembers && editMembers.length > 0 ? editMembers[0] : null),
+        is_recurring: editIsRecurring,
+        recurrence_interval: editRecurrenceInterval,
+        recurrence_unit: editRecurrenceUnit,
+        auto_assign_by_workload: editAutoAssignByWorkload,
         created_by: currentUserName || 'Henri Jamet',
         status: isVoteInitiative ? 'EN_VOTE' : (task?.id ? (task?.status || 'PROPOSED') : 'PROPOSED'),
         progress: 0,
@@ -1071,16 +1087,31 @@ export default function TaskDetailModal({
                 
                 {/* Title & Meta */}
                 <div className="space-y-1.5">
-                  <div className="flex flex-wrap gap-2 mb-1">
+                  <div className="flex flex-wrap items-center gap-2 mb-1">
                     <span className="px-3 py-1 bg-surface-container text-on-surface font-label-sm text-xs rounded-full">
                       {task.category || (isVoteInitiative ? 'Projet & Scrutin SCI' : 'Espaces Verts & Parc')}
                     </span>
                     <span className="px-3 py-1 bg-surface-container text-on-surface font-label-sm text-xs rounded-full">
                       {task.subject || (isVoteInitiative ? 'Presbytère' : 'Rosing')}
                     </span>
-                    <span className="px-3 py-1 bg-surface-container text-on-surface font-label-sm text-xs rounded-full">
-                      Chantier 2026
-                    </span>
+                    {task.is_recurring && (
+                      <span className="px-3 py-1 bg-amber-50 text-amber-900 border border-amber-200 font-label-sm text-xs rounded-full flex items-center gap-1 font-semibold">
+                        <span className="material-symbols-outlined text-[14px] text-amber-700">update</span>
+                        Tous les {task.recurrence_interval || 1} {task.recurrence_unit || 'semaines'}
+                      </span>
+                    )}
+                    {task.auto_assign_by_workload && (
+                      <span className="px-3 py-1 bg-purple-50 text-purple-900 border border-purple-200 font-label-sm text-xs rounded-full flex items-center gap-1 font-semibold">
+                        <span className="material-symbols-outlined text-[14px] text-purple-700">balance</span>
+                        Auto-attribution équitable
+                      </span>
+                    )}
+                    {task.onsite_presence && (
+                      <span className="px-3 py-1 bg-sky-50 text-sky-900 border border-sky-200 font-label-sm text-xs rounded-full flex items-center gap-1 font-semibold">
+                        <span className="material-symbols-outlined text-[14px] text-sky-700">holiday_village</span>
+                        Sur place
+                      </span>
+                    )}
                   </div>
 
                   <h1
@@ -1089,9 +1120,21 @@ export default function TaskDetailModal({
                   >
                     {task.title || (isVoteInitiative ? "Nouvelle initiative au vote" : "Nouvelle tâche")}
                   </h1>
-                  <p className="font-body-md text-xs text-on-surface-variant">
-                    Réf. {task.ref || `${isVoteInitiative ? 'VOTE' : 'T'}-2026-${task.id || '088'}`} • Statut : <span className="font-semibold text-on-surface">{getTaskStatusMeta(task).label}</span>
-                  </p>
+                  <div className="flex flex-wrap items-center gap-3 pt-0.5">
+                    <p className="font-body-md text-xs text-on-surface-variant">
+                      Réf. {task.ref || `${isVoteInitiative ? 'VOTE' : 'T'}-2026-${task.id || '088'}`} • Statut : <span className="font-semibold text-on-surface">{getTaskStatusMeta(task).label}</span>
+                    </p>
+                    {Array.isArray(task.assigned_members) && task.assigned_members.length > 0 && (
+                      <div className="flex flex-wrap items-center gap-1.5 text-xs text-on-surface-variant font-medium">
+                        <span>• Assigné(s) :</span>
+                        {task.assigned_members.map((m) => (
+                          <span key={m} className="px-2 py-0.5 rounded-full bg-emerald-50 text-emerald-800 border border-emerald-200 text-[11px] font-semibold">
+                            {m}
+                          </span>
+                        ))}
+                      </div>
+                    )}
+                  </div>
                 </div>
 
                 {/* Description & Objectives */}
@@ -1544,6 +1587,74 @@ export default function TaskDetailModal({
                         <span className="text-on-surface-variant">Sera inscrite sur la feuille de route du prochain séjour</span>
                       </div>
                     </label>
+
+                    {/* Annotation 1 : Récurrence de la tâche */}
+                    {!isVoteInitiative && (
+                      <div className="p-3.5 bg-canvas-slate rounded-xl border border-slate-200 space-y-3">
+                        <label className="flex items-center gap-3 select-none cursor-pointer">
+                          <input
+                            type="checkbox"
+                            id="toggle-task-recurring"
+                            checked={editIsRecurring}
+                            onChange={(e) => setEditIsRecurring(e.target.checked)}
+                            className="w-4 h-4 rounded text-primary accent-primary cursor-pointer"
+                          />
+                          <div className="text-xs">
+                            <strong className="text-forest-deep flex items-center gap-1.5">
+                              <span className="material-symbols-outlined text-[16px] text-primary">update</span>
+                              Tâche récurrente (programmation périodique)
+                            </strong>
+                            <span className="text-on-surface-variant">Se reprogramme automatiquement selon l'intervalle configuré</span>
+                          </div>
+                        </label>
+
+                        {editIsRecurring && (
+                          <div className="pt-2 border-t border-slate-200/80 flex flex-wrap items-center gap-3 animate-in fade-in duration-150">
+                            <span className="text-xs font-medium text-on-surface">Répéter tous les</span>
+                            <input
+                              type="number"
+                              id="input-recurrence-interval"
+                              min={1}
+                              max={365}
+                              value={editRecurrenceInterval}
+                              onChange={(e) => setEditRecurrenceInterval(Math.max(1, parseInt(e.target.value, 10) || 1))}
+                              className="w-16 h-9 px-2.5 text-xs text-center font-bold bg-white border border-slate-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-primary"
+                            />
+                            <select
+                              id="select-recurrence-unit"
+                              value={editRecurrenceUnit}
+                              onChange={(e) => setEditRecurrenceUnit(e.target.value)}
+                              className="h-9 px-3 text-xs font-semibold bg-white border border-slate-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-primary cursor-pointer"
+                            >
+                              <option value="jours">Jour(s)</option>
+                              <option value="semaines">Semaine(s)</option>
+                              <option value="mois">Mois</option>
+                              <option value="sejours">Séjour(s) sur le domaine</option>
+                            </select>
+                          </div>
+                        )}
+                      </div>
+                    )}
+
+                    {/* Annotation 1 : Auto-attribution équitable */}
+                    {!isVoteInitiative && (
+                      <label className="flex items-center gap-3 p-3.5 bg-canvas-slate rounded-xl border border-slate-200 select-none cursor-pointer">
+                        <input
+                          type="checkbox"
+                          id="toggle-task-auto-assign"
+                          checked={editAutoAssignByWorkload}
+                          onChange={(e) => setEditAutoAssignByWorkload(e.target.checked)}
+                          className="w-4 h-4 rounded text-primary accent-primary cursor-pointer"
+                        />
+                        <div className="text-xs">
+                          <strong className="text-forest-deep flex items-center gap-1.5">
+                            <span className="material-symbols-outlined text-[16px] text-primary">balance</span>
+                            Auto-attribution équitable (selon taux d'usage du domaine)
+                          </strong>
+                          <span className="text-on-surface-variant">Attribue la tâche à l'associé le plus disponible selon le ratio charge / présence sur le domaine</span>
+                        </div>
+                      </label>
+                    )}
                   </section>
                 )}
 

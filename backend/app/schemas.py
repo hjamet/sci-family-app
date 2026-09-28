@@ -803,6 +803,9 @@ class TaskBase(BaseModel):
     priority: Optional[str] = "Normale"
     status: Optional[str] = "PROPOSED"
     is_recurring: Optional[bool] = False
+    recurrence_interval: Optional[int] = 1
+    recurrence_unit: Optional[str] = "semaines"
+    auto_assign_by_workload: Optional[bool] = False
     last_completed_at: Optional[datetime] = None
     complexity: Optional[str] = "Modérée"
     budget: Optional[float] = None
@@ -832,6 +835,9 @@ class TaskUpdate(BaseModel):
     priority: Optional[str] = None
     status: Optional[str] = None
     is_recurring: Optional[bool] = None
+    recurrence_interval: Optional[int] = None
+    recurrence_unit: Optional[str] = None
+    auto_assign_by_workload: Optional[bool] = None
     last_completed_at: Optional[datetime] = None
     complexity: Optional[str] = None
     budget: Optional[float] = None

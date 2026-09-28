@@ -48,11 +48,20 @@ export default function CategoryManageModal({
     setIsUpdating(true);
     setError(null);
     try {
-      const updated = await updateDocumentCategory(category.id, {
+      let updated = {
+        ...category,
         name: name.trim(),
         emoji: emoji || '📁',
         color: color || 'slate'
-      });
+      };
+      const isNumericId = typeof category.id === 'number' || (typeof category.id === 'string' && /^\d+$/.test(category.id));
+      if (isNumericId) {
+        updated = await updateDocumentCategory(category.id, {
+          name: name.trim(),
+          emoji: emoji || '📁',
+          color: color || 'slate'
+        });
+      }
       if (onUpdated) onUpdated(updated);
       onClose();
     } catch (err) {
@@ -68,7 +77,10 @@ export default function CategoryManageModal({
       setIsDeleting(true);
       setError(null);
       try {
-        await deleteDocumentCategory(category.id);
+        const isNumericId = typeof category.id === 'number' || (typeof category.id === 'string' && /^\d+$/.test(category.id));
+        if (isNumericId) {
+          await deleteDocumentCategory(category.id);
+        }
         if (onDeleted) onDeleted(category.id, category);
         onClose();
       } catch (err) {

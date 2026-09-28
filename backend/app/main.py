@@ -52,7 +52,7 @@ from .schemas import (
     VoteSubmissionRequest, ForgotPasswordRequest
 )
 from .seed import seed_database
-from .services.workload_balancer import calculate_workload_distribution
+from .services.workload_balancer import calculate_workload_distribution, resolve_auto_assignment_by_workload
 from .services.vicare_service import ViCareService
 from .services.klereo_service import KlereoService
 from .services.banking import enable_banking_service
@@ -2774,6 +2774,9 @@ def format_task_response(task: Task, include_comments: bool = False) -> dict:
         "priority": task.priority,
         "status": task.status,
         "is_recurring": bool(getattr(task, "is_recurring", False)),
+        "recurrence_interval": getattr(task, "recurrence_interval", 1) or 1,
+        "recurrence_unit": getattr(task, "recurrence_unit", "semaines") or "semaines",
+        "auto_assign_by_workload": bool(getattr(task, "auto_assign_by_workload", False)),
         "last_completed_at": task.last_completed_at,
         "complexity": task.complexity,
         "budget": task.budget,
@@ -2886,6 +2889,9 @@ def create_task(
     category = payload.get("category", "Général")
     priority = payload.get("priority", "Normale")
     is_recurring = bool(payload.get("is_recurring", False))
+    recurrence_interval = int(payload.get("recurrence_interval", 1)) if payload.get("recurrence_interval") else 1
+    recurrence_unit = str(payload.get("recurrence_unit", "semaines") or "semaines")
+    auto_assign_by_workload = bool(payload.get("auto_assign_by_workload", False))
     complexity = payload.get("complexity", "Modérée")
 
     # Neutralisation / purge du champ budget (100% optionnel et tolérant)
@@ -2934,6 +2940,17 @@ def create_task(
         task_status = explicit_status
     else:
         task_status = "PROPOSED"
+
+    if auto_assign_by_workload and (not assigned_members or assigned_members == [] or assigned_members == "[]"):
+        try:
+            all_members = db.query(Member).all()
+            all_reservations = db.query(Reservation).all()
+            all_tasks = db.query(Task).all()
+            selected_member = resolve_auto_assignment_by_workload(all_members, all_reservations, all_tasks)
+            if selected_member:
+                assigned_members = [selected_member]
+        except Exception as auto_err:
+            logger.warning(f"Erreur calcul auto-attribution selon score d'usage: {auto_err}")
 
     if isinstance(assigned_members, list):
         assigned_members = json.dumps(assigned_members)
@@ -3001,6 +3018,9 @@ def create_task(
         priority=priority,
         status=task_status,
         is_recurring=is_recurring,
+        recurrence_interval=recurrence_interval,
+        recurrence_unit=recurrence_unit,
+        auto_assign_by_workload=auto_assign_by_workload,
         complexity=complexity,
         budget=budget,
         budget_notes=budget_notes,
@@ -3115,6 +3135,29 @@ def update_task(
         task.status = new_st
     if "is_recurring" in payload and payload["is_recurring"] is not None:
         task.is_recurring = bool(payload["is_recurring"])
+    if "recurrence_interval" in payload and payload["recurrence_interval"] is not None:
+        task.recurrence_interval = int(payload["recurrence_interval"]) if payload["recurrence_interval"] else 1
+    if "recurrence_unit" in payload and payload["recurrence_unit"] is not None:
+        task.recurrence_unit = str(payload["recurrence_unit"] or "semaines")
+    if "auto_assign_by_workload" in payload and payload["auto_assign_by_workload"] is not None:
+        task.auto_assign_by_workload = bool(payload["auto_assign_by_workload"])
+        if task.auto_assign_by_workload:
+            existing_assigned = []
+            if task.assigned_members:
+                try:
+                    existing_assigned = json.loads(task.assigned_members) if isinstance(task.assigned_members, str) else list(task.assigned_members)
+                except Exception:
+                    existing_assigned = []
+            if not existing_assigned:
+                try:
+                    all_members = db.query(Member).all()
+                    all_reservations = db.query(Reservation).all()
+                    all_tasks = db.query(Task).all()
+                    selected_member = resolve_auto_assignment_by_workload(all_members, all_reservations, all_tasks)
+                    if selected_member:
+                        task.assigned_members = json.dumps([selected_member])
+                except Exception as auto_err:
+                    logger.warning(f"Erreur calcul auto-attribution lors de update_task: {auto_err}")
     if "last_completed_at" in payload and payload["last_completed_at"] is not None:
         task.last_completed_at = payload["last_completed_at"]
     if "complexity" in payload and payload["complexity"] is not None:

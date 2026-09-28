@@ -20,8 +20,6 @@ import {
   validateTask,
   invalidateTask,
   getCachedData,
-  fetchDocumentCategories,
-  createDocumentCategory
 } from '../api';
 import ThermalMasterSwitch from '../components/common/ThermalMasterSwitch';
 import CategoryManageModal, { COLOR_OPTIONS, EMOJI_PRESETS } from '../components/common/CategoryManageModal';
@@ -108,6 +106,28 @@ function formatPureRoomName(raw) {
   let name = idMap[raw] || raw;
   return name.replace(/\s*\([^)]*(couchage|personne)[^)]*\)/gi, '').trim();
 }
+
+export const VADEMECUM_CATEGORY_ICONS = {
+  'Arrivée & Clés': '🔑',
+  'Chauffage & Eau Chaude': '♨️',
+  'Piscine': '🏊‍♂️',
+  'Ordures Ménagères': '🗑️',
+  'Wifi & Multimédia': '📶',
+  'Artisans & Dépannage': '🔧',
+  'Bâtiments & Réseaux Techniques': '🏛️',
+  'Sécurité & Urgences': '🚨',
+  'Général': '📋',
+};
+
+export const CANONICAL_VADEMECUM_CATEGORIES = [
+  { id: 'cat-1', name: 'Arrivée & Clés', emoji: '🔑', color: 'amber' },
+  { id: 'cat-2', name: 'Chauffage & Eau Chaude', emoji: '♨️', color: 'rose' },
+  { id: 'cat-3', name: 'Piscine', emoji: '🏊‍♂️', color: 'sky' },
+  { id: 'cat-4', name: 'Ordures Ménagères', emoji: '🗑️', color: 'teal' },
+  { id: 'cat-5', name: 'Wifi & Multimédia', emoji: '📶', color: 'purple' },
+  { id: 'cat-6', name: 'Artisans & Dépannage', emoji: '🔧', color: 'slate' },
+  { id: 'cat-7', name: 'Bâtiments & Réseaux Techniques', emoji: '🏛️', color: 'emerald' },
+];
 
 export default function VademecumPage({ properties, currentUser, reservations = [], onOpenBooking }) {
   const location = useLocation();
@@ -655,8 +675,16 @@ export default function VademecumPage({ properties, currentUser, reservations = 
   const [dbError, setDbError] = useState(null);
   const [copiedDbId, setCopiedDbId] = useState(null);
 
-  // Dynamic Categories state (Annotation 3 : zéro badge hardcodé, synchronisation en base)
-  const [categoriesList, setCategoriesList] = useState([]);
+  // Dynamic Categories state : Catégories authentiques du père + personnalisées (Zéro fuite administrative)
+  const [customCategories, setCustomCategories] = useState(() => {
+    try {
+      const saved = localStorage.getItem('vademecum_custom_categories');
+      return saved ? JSON.parse(saved) : [];
+    } catch (_) {
+      return [];
+    }
+  });
+
   const [isNewCategoryOpen, setIsNewCategoryOpen] = useState(false);
   const [newCatName, setNewCatName] = useState('');
   const [newCatEmoji, setNewCatEmoji] = useState('📁');
@@ -665,50 +693,77 @@ export default function VademecumPage({ properties, currentUser, reservations = 
   const [isEditCategoryModalOpen, setIsEditCategoryModalOpen] = useState(false);
   const [selectedEditingCat, setSelectedEditingCat] = useState(null);
 
-  // New Item modal state (Annotation 4 : code_to_copy et importance supprimés)
+  // New Item modal state
   const [isNewItemModalOpen, setIsNewItemModalOpen] = useState(false);
-  const [newCategory, setNewCategory] = useState('');
+  const [newCategory, setNewCategory] = useState('Arrivée & Clés');
   const [newTitle, setNewTitle] = useState('');
   const [newContent, setNewContent] = useState('');
   const [submittingItem, setSubmittingItem] = useState(false);
 
-  const loadCategories = async () => {
-    try {
-      const cats = await fetchDocumentCategories();
-      if (Array.isArray(cats)) {
-        setCategoriesList(cats);
-        if (cats.length > 0) {
-          setNewCategory((prev) => prev || cats[0].name);
+  // Dérivation dynamique des catégories du vadémécum : canoniques du père + custom + base
+  const categoriesList = React.useMemo(() => {
+    const list = [...CANONICAL_VADEMECUM_CATEGORIES];
+    const seen = new Set(list.map((c) => c.name.toLowerCase()));
+
+    // 1. Ajouter les catégories personnalisées de l'utilisateur
+    if (Array.isArray(customCategories)) {
+      for (const c of customCategories) {
+        if (c && c.name && !seen.has(c.name.toLowerCase())) {
+          seen.add(c.name.toLowerCase());
+          list.push({
+            id: c.id || c.name,
+            name: c.name,
+            emoji: c.emoji || '📁',
+            color: c.color || 'slate',
+          });
         }
       }
-    } catch (err) {
-      console.warn('Erreur chargement catégories vademecum:', err.message);
     }
-  };
+
+    // 2. Ajouter toute catégorie présente dans les fiches en base
+    if (Array.isArray(vademecumItems)) {
+      for (const item of vademecumItems) {
+        if (item && item.category && !seen.has(item.category.toLowerCase())) {
+          seen.add(item.category.toLowerCase());
+          list.push({
+            id: item.category,
+            name: item.category,
+            emoji: VADEMECUM_CATEGORY_ICONS[item.category] || '📁',
+            color: 'slate',
+          });
+        }
+      }
+    }
+
+    return list;
+  }, [vademecumItems, customCategories]);
 
   useEffect(() => {
-    loadCategories();
-  }, []);
+    if (!newCategory && categoriesList.length > 0) {
+      setNewCategory(categoriesList[0].name);
+    }
+  }, [categoriesList, newCategory]);
 
-  const handleCreateCategorySubmit = async (e) => {
+  const handleCreateCategorySubmit = (e) => {
     e.preventDefault();
     if (!newCatName.trim()) return;
     setIsCreatingCat(true);
     try {
-      const created = await createDocumentCategory({
+      const catObj = {
+        id: `custom-${Date.now()}`,
         name: newCatName.trim(),
         emoji: newCatEmoji || '📁',
         color: newCatColor || 'slate'
-      });
-      setCategoriesList((prev) => {
-        const exists = prev.find((c) => c.name.toLowerCase() === created.name.toLowerCase());
-        if (exists) return prev;
-        return [...prev, created];
-      });
-      setNewCategory(created.name);
+      };
+      const updated = [...customCategories.filter((c) => c.name.toLowerCase() !== catObj.name.toLowerCase()), catObj];
+      setCustomCategories(updated);
+      try {
+        localStorage.setItem('vademecum_custom_categories', JSON.stringify(updated));
+      } catch (_) {}
+      setNewCategory(catObj.name);
       setNewCatName('');
       setIsNewCategoryOpen(false);
-      showToast(`Catégorie « ${created.name} » créée`);
+      showToast(`Catégorie « ${catObj.name} » créée`);
     } catch (err) {
       showToast(`Erreur : ${err.message}`);
     } finally {
@@ -727,7 +782,11 @@ export default function VademecumPage({ properties, currentUser, reservations = 
   };
 
   const handleCategoryUpdated = (updated) => {
-    setCategoriesList((prev) => prev.map((c) => (c.id === updated.id ? updated : c)));
+    const updatedList = customCategories.map((c) => (c.name.toLowerCase() === updated.name.toLowerCase() ? updated : c));
+    setCustomCategories(updatedList);
+    try {
+      localStorage.setItem('vademecum_custom_categories', JSON.stringify(updatedList));
+    } catch (_) {}
     if (newCategory === selectedEditingCat?.name) {
       setNewCategory(updated.name);
     }
@@ -739,10 +798,13 @@ export default function VademecumPage({ properties, currentUser, reservations = 
   };
 
   const handleCategoryDeleted = (deletedId, deletedCat) => {
-    const remaining = categoriesList.filter((c) => c.id !== deletedId);
-    setCategoriesList(remaining);
+    const remaining = customCategories.filter((c) => c.name.toLowerCase() !== deletedCat?.name?.toLowerCase());
+    setCustomCategories(remaining);
+    try {
+      localStorage.setItem('vademecum_custom_categories', JSON.stringify(remaining));
+    } catch (_) {}
     if (newCategory === deletedCat?.name) {
-      setNewCategory(remaining.length > 0 ? remaining[0].name : '');
+      setNewCategory(categoriesList.length > 0 ? categoriesList[0].name : 'Arrivée & Clés');
     }
     if (selectedCategory === deletedCat?.name) {
       setSelectedCategory('Toutes');

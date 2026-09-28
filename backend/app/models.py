@@ -294,6 +294,9 @@ class Task(Base):
     priority = Column(String(50), nullable=False, default="Normale")  # Critique, Haute, Normale, Planifié
     status = Column(String(50), nullable=False, default="PROPOSED")  # PROPOSED, A_FAIRE, EN_COURS, TODO, TERMINE, ARCHIVEE, SOUMIS, PENDING_VALIDATION, REJECTED
     is_recurring = Column(Boolean, default=False, nullable=False, server_default="0")
+    recurrence_interval = Column(Integer, default=1, nullable=True)  # ex: 1, 2, 3...
+    recurrence_unit = Column(String(50), default="semaines", nullable=True)  # jours, semaines, mois, séjours
+    auto_assign_by_workload = Column(Boolean, default=False, nullable=True)  # Répartition équitable selon score d'usage
     last_completed_at = Column(DateTime, nullable=True)
     complexity = Column(String(50), default="Modérée")  # Faible, Modérée, Élevée, Expertise requise
     budget = Column(Float, default=0.0, nullable=True)

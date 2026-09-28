@@ -111,3 +111,76 @@ def calculate_workload_distribution(
         "total_occupation_score": round(total_o, 2),
         "user_stats": user_stats
     }
+
+
+def resolve_auto_assignment_by_workload(
+    members: List[Any],
+    reservations: List[Any],
+    tasks: Optional[List[Any]] = None
+) -> Optional[str]:
+    """
+    Détermine l'associé auquel attribuer automatiquement une tâche récurrente
+    selon le modèle proportionnel d'équité d'Henri :
+    - Score d'usage O_u = sum(jours * chambres_effectives)
+    - Score de corvées C_u = nombre de tâches assignées/validées au membre
+    - Ratio d'équité gamifié : R_u = (C_u + 0.5) / (O_u + 0.5)
+    
+    L'associé ayant le ratio d'implication le plus faible (celui qui utilise le plus le domaine
+    et a le moins contribué en tâches) est sélectionné en priorité absolue.
+    """
+    if not members:
+        return "Henri Jamet"
+
+    # Calcul des scores d'usage par associé
+    usage_by_name: Dict[str, float] = {}
+    for res in reservations:
+        u_name = res.get("user_name") if isinstance(res, dict) else getattr(res, "user_name", "")
+        if not u_name:
+            continue
+        s_date = res.get("start_date") if isinstance(res, dict) else getattr(res, "start_date", "")
+        e_date = res.get("end_date") if isinstance(res, dict) else getattr(res, "end_date", "")
+        accepts_extra = res.get("accepts_extra_family", True) if isinstance(res, dict) else getattr(res, "accepts_extra_family", True)
+        cohab = res.get("cohabitation_type") if isinstance(res, dict) else getattr(res, "cohabitation_type", None)
+        rc = res.get("rooms_count", 1) if isinstance(res, dict) else getattr(res, "rooms_count", 1)
+        cu = res.get("chambers_used", 1) if isinstance(res, dict) else getattr(res, "chambers_used", 1)
+
+        score = calculate_reservation_score(s_date, e_date, accepts_extra, rc, cu, cohab)
+        # Rapprochement souple sur le nom canonique
+        for m in members:
+            m_name = m.name if hasattr(m, "name") else (m.get("name") if isinstance(m, dict) else str(m))
+            m_prenom = m.prenom if hasattr(m, "prenom") else (m.get("prenom") if isinstance(m, dict) else "")
+            if (m_prenom and m_prenom.lower() in u_name.lower()) or (m_name and m_name.lower() in u_name.lower()):
+                usage_by_name[m_name] = usage_by_name.get(m_name, 0.0) + score
+
+    # Compte des tâches par associé
+    tasks_by_name: Dict[str, int] = {}
+    if tasks:
+        for t in tasks:
+            assigned = getattr(t, "assigned_members", None)
+            if isinstance(assigned, str):
+                try:
+                    import json
+                    assigned = json.loads(assigned)
+                except Exception:
+                    assigned = [assigned]
+            elif not isinstance(assigned, list):
+                assigned = [getattr(t, "assignee", None)] if getattr(t, "assignee", None) else []
+
+            for a in (assigned or []):
+                if a:
+                    tasks_by_name[str(a)] = tasks_by_name.get(str(a), 0) + 1
+
+    # Calcul du ratio d'implication pour chaque associé éligible
+    scored_members = []
+    for m in members:
+        m_name = m.name if hasattr(m, "name") else (m.get("name") if isinstance(m, dict) else str(m))
+        u_score = usage_by_name.get(m_name, 0.0)
+        t_score = tasks_by_name.get(m_name, 0)
+        # Ratio gamifié inversé : plus le ratio est petit, plus la personne "doit" du temps
+        ratio = (t_score + 0.5) / (u_score + 0.5)
+        scored_members.append((ratio, u_score, -t_score, m_name))
+
+    # Tri par ratio croissant : le plus faible en tête (doit le plus de corvées)
+    scored_members.sort(key=lambda x: (x[0], -x[1], x[2]))
+    return scored_members[0][3] if scored_members else "Henri Jamet"
+
