@@ -2807,10 +2807,11 @@ def create_task(
         elif cb_clean.lower() in ["henri", "henri jamet", "joséphine", "josephine", "joséphine jamet", "josephine jamet"]:
             is_coord = True
 
-    # Règle d'or Henri : Par défaut PROPOSED. Seul un coordinateur peut spécifier explicitement un statut actif à la création.
-    requested_status = payload.get("status")
-    if is_coord and requested_status and str(requested_status).upper() not in ["PROPOSED", "A_REVOIR", "SOUMIS"]:
-        task_status = str(requested_status)
+    # Règle formelle Henri (Annotation 3 & 4) : À la création, le statut par défaut obligatoire est STRICTEMENT 'PROPOSED' (En attente de validation).
+    # La tâche ne doit pas être pré-assignée au créateur ; seul un coordinateur peut spécifier un statut actif explicite.
+    explicit_status = payload.get("status")
+    if is_coord and explicit_status:
+        task_status = explicit_status
     else:
         task_status = "PROPOSED"
 

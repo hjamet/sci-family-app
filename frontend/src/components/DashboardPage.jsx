@@ -131,7 +131,9 @@ export default function DashboardPage({
       subject: 'Rosing',
       complexity: 'Modérée',
       budget: 0,
-      assigned_members: [typeof currentUser === 'string' ? currentUser : (currentUser?.prenom ? `${currentUser.prenom} ${currentUser.nom || 'Jamet'}` : 'Henri Jamet')],
+      assigned_members: [],
+      assignee: null,
+      status: 'PROPOSED',
       checklist: [
         { text: 'Diagnostic initial et constat sur place', done: false },
         { text: 'Demande de devis et consultation des artisans', done: false },

@@ -3,6 +3,7 @@ import {
   isTaskPendingValidation,
   isTaskProposed,
   getTaskColorCategory,
+  getTaskStatusMeta,
 } from '../../utils/taskAssignment';
 import { acceptTask, rejectTask } from '../../api';
 
@@ -43,14 +44,16 @@ export default function TaskCard({
 
   const [isSubmitting, setIsSubmitting] = useState(false);
 
-  // Système Trichromatique :
-  // - Orange : tâche proposée en attente d'approbation initiale (PROPOSED, A_REVOIR, SOUMIS)
-  // - Vert : tâche terminée demandant validation finale du coordinateur (PENDING_VALIDATION, A_VALIDER)
-  // - Bleu : tâche en cours (EN_COURS, IN_PROGRESS, TODO)
-  const colorCat = getTaskColorCategory(task);
-  const isProposed = colorCat === 'orange';
-  const isValidationTask = colorCat === 'green';
-  const isInProgress = colorCat === 'blue';
+  // Labels canoniques stricts du cycle de vie (Annotation 4) :
+  // - PROPOSED ➔ « En attente de validation » (Orange ambre)
+  // - TODO / EN_COURS ➔ « En cours » (Bleu)
+  // - PENDING_VALIDATION ➔ « En attente d'archivage » (Vert émeraude)
+  // - DONE ➔ « Archivée » (Gris sobre)
+  const statusMeta = getTaskStatusMeta(task);
+  const isProposed = statusMeta.status === 'PROPOSED';
+  const isValidationTask = statusMeta.status === 'PENDING_VALIDATION';
+  const isDone = statusMeta.status === 'DONE';
+  const isInProgress = statusMeta.status === 'EN_COURS';
 
   const isCoordinator = Boolean(
     currentUser?.is_coordinator === true ||
@@ -77,7 +80,7 @@ export default function TaskCard({
   const subject = task.subject || task.location || task.domaine || task.property_name || '';
   const complexity = task.complexity || (task.difficulty ? (task.difficulty === 'Modérée' ? 'Modérée' : task.difficulty) : '');
 
-  // Resolve assignee name & initials
+  // Resolve assignee name & initials (Annotation 3 : Pas d'auto-attribution au créateur)
   let assigneeName = '';
   if (Array.isArray(task.assigned_members) && task.assigned_members.length > 0) {
     const first = task.assigned_members[0];
@@ -89,22 +92,23 @@ export default function TaskCard({
   } else if (task.responsible) {
     assigneeName = String(task.responsible);
   } else {
-    assigneeName = 'Henri Jamet';
+    assigneeName = 'Non assignée';
   }
 
-  const displayAssigneeName = (isValidationTask || isProposed)
-    ? (task.created_by || assigneeName)
+  const isUnassigned = !assigneeName || assigneeName === 'Non assignée';
+  const displayAssigneeName = isProposed
+    ? (task.created_by ? `Proposée par ${task.created_by}` : (isUnassigned ? 'En attente de désignation' : assigneeName))
     : assigneeName;
 
-  const initials = displayAssigneeName
-    ? displayAssigneeName
+  const initials = isUnassigned
+    ? '--'
+    : (displayAssigneeName
         .split(' ')
         .filter(Boolean)
         .map((n) => n[0])
         .join('')
         .slice(0, 2)
-        .toUpperCase()
-    : 'HJ';
+        .toUpperCase() || 'SCI');
 
   // Calcul d'avancement opérationnel strictement basé sur la checklist / subtasks
   const parseItems = (raw) => {
@@ -186,20 +190,26 @@ export default function TaskCard({
       <div>
         {/* Badges row */}
         <div className="flex flex-wrap items-center gap-space-xs mb-3">
-          {/* Badge Trichromatique Principal */}
-          {isProposed ? (
+          {/* Badge Trichromatique Principal avec Labels Canoniques Stricts (Annotation 4) */}
+          {statusMeta.status === 'PROPOSED' ? (
             <span className="px-2.5 py-0.5 rounded-full text-xs font-bold bg-amber-100 text-amber-900 dark:bg-amber-900/60 dark:text-amber-200 border border-amber-300 flex items-center gap-1">
               <span className="material-symbols-outlined text-[15px]">pending</span>
-              {isCoordinator ? "Proposition à valider" : "Proposition à l'étude par les coordinateurs"}
+              En attente de validation
             </span>
-          ) : isValidationTask ? (
+          ) : statusMeta.status === 'PENDING_VALIDATION' ? (
             <span className="px-2.5 py-0.5 rounded-full text-xs font-bold bg-emerald-100 text-emerald-800 dark:bg-emerald-900/60 dark:text-emerald-200 border border-emerald-300 flex items-center gap-1">
               <span className="material-symbols-outlined text-[15px]">verified</span>
-              {isCoordinator ? "À valider & clôturer" : "En attente de vérification par les coordinateurs"}
+              En attente d'archivage
+            </span>
+          ) : statusMeta.status === 'DONE' ? (
+            <span className="px-2.5 py-0.5 rounded-full text-xs font-bold bg-slate-100 text-slate-700 dark:bg-slate-800 dark:text-slate-300 border border-slate-300 flex items-center gap-1">
+              <span className="material-symbols-outlined text-[15px]">archive</span>
+              Archivée
             </span>
           ) : (
             <span className="px-2.5 py-0.5 rounded-full text-xs font-semibold bg-sky-50 text-sky-800 dark:bg-sky-950/60 dark:text-sky-200 border border-sky-200 flex items-center gap-1">
-              <span className="material-symbols-outlined text-[15px]">play_circle</span> En cours
+              <span className="material-symbols-outlined text-[15px]">play_circle</span>
+              En cours
             </span>
           )}
 
@@ -373,17 +383,19 @@ export default function TaskCard({
           <div className="flex flex-col">
             <span className="font-label-sm text-label-sm text-on-surface font-semibold leading-tight">
               {isProposed
-                ? `Proposé par : ${task.created_by || assigneeName}`
+                ? (task.created_by ? `Proposée par : ${task.created_by}` : (isUnassigned ? 'Non assignée' : assigneeName))
                 : isValidationTask
-                ? `Soumis par : ${task.created_by || assigneeName}`
-                : assigneeName}
+                ? (task.created_by ? `Réalisée par : ${assigneeName || task.created_by}` : (isUnassigned ? 'Non assignée' : assigneeName))
+                : (isUnassigned ? 'Non assignée' : assigneeName)}
             </span>
             <span className="text-[12px] text-on-surface-variant leading-tight">
               {isProposed
-                ? 'Approbation coordinateur requise'
+                ? 'En attente de validation'
                 : isValidationTask
-                ? 'Validation finale requise'
-                : task.role_label || 'Responsable de mission'}
+                ? "En attente d'archivage"
+                : isDone
+                ? 'Archivée'
+                : task.role_label || (isUnassigned ? 'En attente de désignation' : 'Responsable de mission')}
             </span>
           </div>
         </div>

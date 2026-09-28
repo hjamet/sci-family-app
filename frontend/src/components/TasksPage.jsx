@@ -81,7 +81,9 @@ export default function TasksPage({ currentUser = 'Henri Jamet' }) {
       subject: 'Rosing',
       complexity: 'Modérée',
       budget: 0,
-      assigned_members: [typeof currentUser === 'string' ? currentUser : (currentUser?.name || 'Henri Jamet')],
+      assigned_members: [],
+      assignee: null,
+      status: 'PROPOSED',
       checklist: [
         { text: 'Diagnostic initial et constat sur place', done: false },
         { text: 'Demande de devis et consultation des artisans', done: false },
@@ -430,12 +432,13 @@ export default function TasksPage({ currentUser = 'Henri Jamet' }) {
     ? 100
     : Math.round((completedTasksCount / totalTasks) * 100);
 
-  // 2. Calculs des Votes (Annotation 1)
+  // 2. Calculs des Votes (Annotation 5 : Compteur dynamique aligné sur la base de données)
   const openVotes = useMemo(() => {
     if (!projects || !Array.isArray(projects)) return [];
     return projects.filter(p => {
-      const st = (p.status || '').toUpperCase();
-      return st === 'EN_VOTE' || st === 'VOTE_EN_COURS' || st === 'OPEN' || p.decision_mode === 'SOUMETTRE_AU_VOTE';
+      if (!p) return false;
+      const st = String(p.status || '').toUpperCase().trim();
+      return !['ARCHIVE', 'ARCHIVEE', 'CLOS', 'TERMINE', 'ADOPTE', 'REJETE'].includes(st);
     });
   }, [projects]);
 

@@ -166,6 +166,75 @@ export function getTaskColorCategory(task) {
   return 'blue';
 }
 
+/**
+ * Retourne le label canonique strict, le statut normalisé et le style de badge (Annotation 4) :
+ * - PROPOSED : "En attente de validation" (Badge orange/ambre)
+ * - PENDING_VALIDATION : "En attente d'archivage" (Badge vert émeraude)
+ * - EN_COURS / TODO : "En cours" (Badge bleu)
+ * - DONE / ARCHIVEE : "Archivée" (Badge gris)
+ */
+export function getTaskStatusMeta(task) {
+  if (!task) {
+    return {
+      status: 'PROPOSED',
+      label: 'En attente de validation',
+      color: 'orange',
+      badgeClass: 'bg-amber-100 text-amber-900 dark:bg-amber-900/60 dark:text-amber-200 border-amber-300',
+      icon: 'pending'
+    };
+  }
+
+  const rawStatus = (task.status || '').trim();
+  const st = rawStatus.toUpperCase();
+  const normalized = stripAccents(rawStatus).toLowerCase().replace(/[_\s-]+/g, '_');
+
+  // 1. Tâche terminée / archivée
+  if (
+    !isTaskOpen(task) ||
+    ['DONE', 'TERMINE', 'TERMINEE', 'ARCHIVE', 'ARCHIVEE', 'CLOS', 'CLOTURE', 'CLOTUREE'].includes(st) ||
+    ['done', 'termine', 'terminee', 'archive', 'archivee', 'clos', 'cloture', 'cloturee'].includes(normalized)
+  ) {
+    return {
+      status: 'DONE',
+      label: 'Archivée',
+      color: 'gray',
+      badgeClass: 'bg-slate-100 text-slate-700 dark:bg-slate-800 dark:text-slate-300 border-slate-300',
+      icon: 'archive'
+    };
+  }
+
+  // 2. Tâche effectuée par le membre, attend la confirmation finale et l'archivage par le coordinateur
+  if (isTaskPendingValidation(task)) {
+    return {
+      status: 'PENDING_VALIDATION',
+      label: "En attente d'archivage",
+      color: 'green',
+      badgeClass: 'bg-emerald-100 text-emerald-800 dark:bg-emerald-900/60 dark:text-emerald-200 border-emerald-300',
+      icon: 'verified'
+    };
+  }
+
+  // 3. Tâche proposée, non assignée, attend que le coordinateur valide et complète
+  if (isTaskProposed(task)) {
+    return {
+      status: 'PROPOSED',
+      label: 'En attente de validation',
+      color: 'orange',
+      badgeClass: 'bg-amber-100 text-amber-900 dark:bg-amber-900/60 dark:text-amber-200 border-amber-300',
+      icon: 'pending'
+    };
+  }
+
+  // 4. Tâche active, validée par le coordinateur et assignée au responsable
+  return {
+    status: 'EN_COURS',
+    label: 'En cours',
+    color: 'blue',
+    badgeClass: 'bg-sky-50 text-sky-800 dark:bg-sky-950/60 dark:text-sky-200 border-sky-200',
+    icon: 'play_circle'
+  };
+}
+
 
 /**
  * Comparateur universel d'assignation d'une tâche à un utilisateur donné.
@@ -272,14 +341,7 @@ export function isTaskAssignedToUser(task, userMetaOrUser) {
     }
   }
 
-  // 5. Fallback created_by / submitted_by si aucune autre assignation explicite n'est présente
-  const hasExplicitAssignee = directIds.some((id) => id != null) ||
-    directFields.some((f) => Boolean(f)) ||
-    membersList.length > 0;
-
-  if (!hasExplicitAssignee && (task.created_by || task.submitted_by)) {
-    if (matchesUser(task.created_by) || matchesUser(task.submitted_by)) return true;
-  }
-
+  // Annotation 3 : Zéro auto-attribution au créateur. Une tâche sans membre explicitement assigné
+  // n'est attribuée à personne et attend la désignation formelle par le coordinateur.
   return false;
 }

@@ -15,11 +15,13 @@ import {
   addTaskComment,
   reactToTaskComment,
   uploadTaskDocuments,
+  fetchDocumentCategories,
 } from '../api';
 import {
   isTaskPendingValidation,
   isTaskProposed,
   getTaskColorCategory,
+  getTaskStatusMeta,
   isTaskAssignedToUser,
   isTaskOpen,
 } from '../utils/taskAssignment';
@@ -27,6 +29,7 @@ import CustomSelect from './CustomSelect';
 import DocumentViewerModal from './DocumentViewerModal';
 import UploadDocumentModal from './UploadDocumentModal';
 import SelectExistingDocumentModal from './SelectExistingDocumentModal';
+import CategoryManageModal from './CategoryManageModal';
 import FamilyChat from './common/FamilyChat';
 
 const SUBJECTS = [
@@ -83,27 +86,31 @@ function normalizeDocItem(docItem, idx = 0) {
     const isUploadOrHttp = docItem.startsWith('/uploads/') || docItem.startsWith('http') || docItem.startsWith('/api/');
     const url = isUploadOrHttp ? docItem : `/api/documents/${encodeURIComponent(docItem)}/download`;
     const cleanBasename = docItem.split('/').pop().replace(/^[a-f0-9]{32}_/, '') || docItem;
+    const isImg = Boolean(cleanBasename.match(/\.(png|jpe?g|webp|gif|svg)$/i));
+    const properFilename = isImg ? cleanBasename : (cleanBasename.includes('.') ? cleanBasename : `${cleanBasename}.pdf`);
     return {
       id: docItem,
       name: cleanBasename,
-      filename: cleanBasename,
+      filename: properFilename,
       file_url: url,
       url: url,
-      type: docItem.toLowerCase().endsWith('.pdf') ? 'PDF' : (docItem.match(/\.(png|jpe?g|webp|gif|svg)$/i) ? 'Image' : 'Document'),
+      type: isImg ? 'Image' : 'PDF',
       size: '',
     };
   }
   const url = docItem.file_url || docItem.url || (docItem.id ? `/api/documents/${docItem.id}/download` : (docItem.filename?.startsWith('/uploads/') ? docItem.filename : ''));
-  const rawName = docItem.name || docItem.filename || (url ? url.split('/').pop() : `Document_${idx + 1}`);
+  const rawName = docItem.name || docItem.filename || docItem.title || (url ? url.split('/').pop() : `Document_${idx + 1}`);
   const cleanName = String(rawName).replace(/^[a-f0-9]{32}_/, '');
+  const isImg = Boolean(cleanName.match(/\.(png|jpe?g|webp|gif|svg)$/i)) || (docItem.type === 'Image') || (docItem.file_type && docItem.file_type.startsWith('image/'));
+  const properFilename = isImg ? cleanName : (cleanName.includes('.') ? cleanName : `${cleanName}.pdf`);
   return {
     ...docItem,
     id: docItem.id || url || `doc-${idx}`,
     name: cleanName,
-    filename: cleanName,
+    filename: properFilename,
     file_url: url,
     url: url,
-    type: docItem.type || (cleanName.toLowerCase().endsWith('.pdf') ? 'PDF' : (cleanName.match(/\.(png|jpe?g|webp|gif|svg)$/i) ? 'Image' : 'Document')),
+    type: isImg ? 'Image' : 'PDF',
     size: docItem.size || '',
   };
 }
@@ -187,6 +194,26 @@ export default function TaskDetailModal({
   const [editDocuments, setEditDocuments] = useState([]);
   const [editOnsitePresence, setEditOnsitePresence] = useState(true);
   const [savingEdit, setSavingEdit] = useState(false);
+
+  // Catégories dynamiques et édition (Annotation 1)
+  const [categoriesList, setCategoriesList] = useState([]);
+  const [isEditCategoryModalOpen, setIsEditCategoryModalOpen] = useState(false);
+
+  // Options dynamiques pour le sélecteur de sujet/catégorie (Annotation 1)
+  const categoryOptions = React.useMemo(() => {
+    const list = Array.isArray(categoriesList) && categoriesList.length > 0
+      ? categoriesList.map((cat) => ({
+          value: cat.name,
+          label: `${cat.emoji || '📁'} ${cat.name}`,
+        }))
+      : [];
+    for (const sub of SUBJECTS) {
+      if (!list.some((item) => item.value.toLowerCase() === sub.toLowerCase())) {
+        list.push({ value: sub, label: `📍 ${sub}` });
+      }
+    }
+    return list;
+  }, [categoriesList]);
 
   // Document Upload & Drag-and-drop State (Universal Upload Modal)
   const [isUploadDocModalOpen, setIsUploadDocModalOpen] = useState(false);
@@ -385,7 +412,23 @@ export default function TaskDetailModal({
   const isProposed = isTaskProposed(task);
   const isOpenTask = isTaskOpen(task);
 
-  // Load latest task details and comments when opened
+  // Load latest task details, categories and comments when opened
+  useEffect(() => {
+    async function loadCats() {
+      try {
+        const cats = await fetchDocumentCategories();
+        if (Array.isArray(cats) && cats.length > 0) {
+          setCategoriesList(cats);
+        }
+      } catch (err) {
+        console.warn('Erreur chargement catégories:', err);
+      }
+    }
+    if (isOpen) {
+      loadCats();
+    }
+  }, [isOpen]);
+
   useEffect(() => {
     if (!isOpen) return;
     const isNew = !initialTask || !initialTask.id || isEditing || initialMode === 'edit';
@@ -394,7 +437,8 @@ export default function TaskDetailModal({
       description: initialTask?.description || '',
       subject: initialTask?.subject || (isVoteInitiative ? 'Presbytère' : 'Rosing'),
       complexity: initialTask?.complexity || (isVoteInitiative ? 'Élevée' : 'Modérée'),
-      assigned_members: initialTask?.assigned_members || [currentUserName || 'Henri Jamet'],
+      assigned_members: initialTask?.assigned_members || (isVoteInitiative ? [currentUserName || 'Henri Jamet'] : []),
+      status: initialTask?.status || (isVoteInitiative ? 'EN_VOTE' : 'PROPOSED'),
       checklist: isNew ? [] : parseChecklistItems(initialTask?.checklist),
       options: initialTask?.options || (isVoteInitiative ? ['Approuver le projet', 'Rejeter le projet'] : []),
       documents: parseTaskDocuments(initialTask?.documents || initialTask?.completion_docs || initialTask?.document_urls),
@@ -435,7 +479,7 @@ export default function TaskDetailModal({
     setEditDescription(t.description || '');
     setEditSubject(t.subject || (isVoteInitiative ? 'Presbytère' : 'Rosing'));
     setEditComplexity(t.complexity || (isVoteInitiative ? 'Élevée' : 'Modérée'));
-    setEditMembers(isVoteInitiative ? [currentUserName || 'Henri Jamet'] : (t.assigned_members || (t.assignee ? [t.assignee] : ['Henri Jamet'])));
+    setEditMembers(isVoteInitiative ? [currentUserName || 'Henri Jamet'] : (Array.isArray(t.assigned_members) ? t.assigned_members : (t.assignee ? [t.assignee] : [])));
     setEditChecklist(isNew ? [] : parseChecklistItems(t.checklist));
     setEditDocuments(parseTaskDocuments(t.documents || t.completion_docs || t.document_urls));
     setEditOnsitePresence(t.onsite_presence !== false);
@@ -505,12 +549,12 @@ export default function TaskDetailModal({
         complexity: isVoteInitiative ? 'Modérée' : editComplexity,
         assigned_members: isVoteInitiative
           ? [currentUserName || 'Henri Jamet']
-          : (editMembers && editMembers.length > 0 ? editMembers : [currentUserName || 'Henri Jamet']),
+          : (editMembers && editMembers.length > 0 ? editMembers : []),
         assignee: isVoteInitiative
           ? (currentUserName || 'Henri Jamet')
-          : (editMembers?.[0] || currentUserName || 'Henri Jamet'),
+          : (editMembers && editMembers.length > 0 ? editMembers[0] : null),
         created_by: currentUserName || 'Henri Jamet',
-        status: isVoteInitiative ? 'EN_VOTE' : 'EN_COURS',
+        status: isVoteInitiative ? 'EN_VOTE' : (task?.id ? (task?.status || 'PROPOSED') : 'PROPOSED'),
         progress: 0,
       };
 
@@ -836,7 +880,7 @@ export default function TaskDetailModal({
                   ? (isVoteInitiative ? 'Initiative statutaire — Soumission au vote' : 'Nouvelle tâche — Création')
                   : (isVoteInitiative
                     ? `Scrutin statutaire — ${task.status || 'En délibération'}`
-                    : `Mission SCI — ${task.status || 'En cours'}`)}
+                    : `Mission SCI — ${getTaskStatusMeta(task).label}`)}
               </span>
             </div>
           </div>
@@ -1005,7 +1049,7 @@ export default function TaskDetailModal({
                     {task.title || (isVoteInitiative ? "Nouvelle initiative au vote" : "Nouvelle tâche")}
                   </h1>
                   <p className="font-body-md text-xs text-on-surface-variant">
-                    Réf. {task.ref || `${isVoteInitiative ? 'VOTE' : 'T'}-2026-${task.id || '088'}`} • Statut : {task.status || 'En cours'}
+                    Réf. {task.ref || `${isVoteInitiative ? 'VOTE' : 'T'}-2026-${task.id || '088'}`} • Statut : <span className="font-semibold text-on-surface">{getTaskStatusMeta(task).label}</span>
                   </p>
                 </div>
 
@@ -1193,19 +1237,25 @@ export default function TaskDetailModal({
                             : 'Validation & Clôture de la Mission'}
                         </h3>
                       </div>
-                      {isProposed ? (
-                        <span className="inline-flex items-center gap-1 px-3 py-1 rounded-full text-xs font-bold bg-amber-100 text-amber-900 border border-amber-300">
+                      {getTaskStatusMeta(task).status === 'PROPOSED' ? (
+                        <span className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full text-xs font-bold bg-amber-100 text-amber-900 border border-amber-300">
                           <span className="w-2 h-2 rounded-full bg-amber-600 animate-pulse"></span>
-                          Proposition en attente
+                          En attente de validation
                         </span>
-                      ) : isPendingValidation ? (
-                        <span className="inline-flex items-center gap-1 px-3 py-1 rounded-full text-xs font-bold bg-emerald-100 text-emerald-800 border border-emerald-300">
+                      ) : getTaskStatusMeta(task).status === 'PENDING_VALIDATION' ? (
+                        <span className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full text-xs font-bold bg-emerald-100 text-emerald-800 border border-emerald-300">
                           <span className="w-2 h-2 rounded-full bg-emerald-600 animate-pulse"></span>
-                          En attente de validation finale
+                          En attente d'archivage
+                        </span>
+                      ) : getTaskStatusMeta(task).status === 'DONE' ? (
+                        <span className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full text-xs font-bold bg-slate-100 text-slate-700 border border-slate-300">
+                          <span className="w-2 h-2 rounded-full bg-slate-500"></span>
+                          Archivée
                         </span>
                       ) : (
-                        <span className="inline-flex items-center gap-1 px-3 py-1 rounded-full text-xs font-bold bg-sky-100 text-sky-800 border border-sky-200">
-                          Statut : {task.status || 'En cours'}
+                        <span className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full text-xs font-bold bg-sky-100 text-sky-800 border border-sky-200">
+                          <span className="w-2 h-2 rounded-full bg-sky-600"></span>
+                          En cours
                         </span>
                       )}
                     </div>
@@ -1356,12 +1406,26 @@ export default function TaskDetailModal({
                     <div className={`grid gap-4 ${isVoteInitiative ? 'grid-cols-1' : 'grid-cols-1 sm:grid-cols-2'}`}>
                       <div className="flex flex-col gap-1">
                         <label className="font-label-md text-xs font-semibold text-on-surface">Sujet / Emplacement</label>
-                        <CustomSelect
-                          value={editSubject}
-                          onChange={(e) => setEditSubject(e.target.value)}
-                          options={SUBJECTS}
-                          className="h-10 text-xs sm:text-sm"
-                        />
+                        <div className="flex items-center gap-2">
+                          <div className="flex-1">
+                            <CustomSelect
+                              id="select-task-category"
+                              value={editSubject}
+                              onChange={(e) => setEditSubject(e.target.value)}
+                              options={categoryOptions}
+                              className="h-10 text-xs sm:text-sm"
+                            />
+                          </div>
+                          <button
+                            type="button"
+                            id="btn-edit-task-category"
+                            onClick={() => setIsEditCategoryModalOpen(true)}
+                            className="h-10 w-10 rounded-DEFAULT border-2 border-border-subtle bg-surface-container-lowest text-on-surface-variant hover:text-primary hover:border-primary flex items-center justify-center transition-all cursor-pointer shrink-0 shadow-xs"
+                            title="Modifier ou supprimer la catégorie sélectionnée"
+                          >
+                            <span className="material-symbols-outlined text-[18px]">edit</span>
+                          </button>
+                        </div>
                       </div>
 
                       {/* Annotation 8 : Masquer degré de complexité en mode vote */}
@@ -1832,6 +1896,22 @@ export default function TaskDetailModal({
         targetTaskId={task?.id}
         alreadyAttachedDocIds={parseTaskDocuments(task?.documents || task?.completion_docs)}
         onAttachSuccess={handleAttachExistingDocs}
+      />
+
+      {/* Modale d'édition / suppression de catégorie existante (Annotation 1 - DRY) */}
+      <CategoryManageModal
+        isOpen={isEditCategoryModalOpen}
+        onClose={() => setIsEditCategoryModalOpen(false)}
+        category={categoriesList.find((c) => c.name === editSubject) || categoriesList[0]}
+        onUpdated={(updated) => {
+          setCategoriesList((prev) => prev.map((c) => (c.id === updated.id ? updated : c)));
+          setEditSubject(updated.name);
+        }}
+        onDeleted={(id) => {
+          const remaining = categoriesList.filter((c) => c.id !== id);
+          setCategoriesList(remaining);
+          setEditSubject(remaining.length > 0 ? remaining[0].name : 'Rosing');
+        }}
       />
 
     </div>

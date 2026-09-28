@@ -5,6 +5,7 @@ import {
   uploadDocument
 } from '../api';
 import CustomSelect from './CustomSelect';
+import CategoryManageModal from './CategoryManageModal';
 
 const COLOR_OPTIONS = [
   { id: 'slate', name: 'Ardoise', bg: 'bg-slate-500', text: 'text-slate-700', border: 'border-slate-500', badgeBg: 'bg-slate-100 text-slate-800 border-slate-200' },
@@ -54,6 +55,9 @@ export default function UploadDocumentModal({
   const [newCatEmoji, setNewCatEmoji] = useState('📁');
   const [newCatColor, setNewCatColor] = useState('slate');
   const [isCreatingCat, setIsCreatingCat] = useState(false);
+
+  // Édition / suppression d'une catégorie existante (Annotation 1)
+  const [isEditCategoryModalOpen, setIsEditCategoryModalOpen] = useState(false);
 
   const fileDropInputRef = useRef(null);
 
@@ -469,17 +473,30 @@ export default function UploadDocumentModal({
               </div>
             )}
 
-            {/* Liste des catégories disponibles */}
-            <CustomSelect
-              id="modal-doc-category-select"
-              value={uploadCategory}
-              onChange={(e) => setUploadCategory(e.target.value)}
-              options={categoriesList.map((cat) => ({
-                value: cat.name,
-                label: `${cat.emoji || '📁'} ${cat.name}`,
-              }))}
-              className="h-[48px]"
-            />
+            {/* Liste des catégories disponibles avec bouton d'édition (Annotation 1) */}
+            <div className="flex items-center gap-2">
+              <div className="flex-1">
+                <CustomSelect
+                  id="modal-doc-category-select"
+                  value={uploadCategory}
+                  onChange={(e) => setUploadCategory(e.target.value)}
+                  options={categoriesList.map((cat) => ({
+                    value: cat.name,
+                    label: `${cat.emoji || '📁'} ${cat.name}`,
+                  }))}
+                  className="h-[48px]"
+                />
+              </div>
+              <button
+                type="button"
+                id="btn-edit-selected-category"
+                onClick={() => setIsEditCategoryModalOpen(true)}
+                className="h-[48px] w-[48px] rounded-DEFAULT border-2 border-border-subtle bg-surface-container-lowest text-on-surface-variant hover:text-primary hover:border-primary flex items-center justify-center transition-all cursor-pointer shrink-0 shadow-xs"
+                title="Modifier ou supprimer la catégorie sélectionnée"
+              >
+                <span className="material-symbols-outlined text-[20px]">edit</span>
+              </button>
+            </div>
           </div>
 
           {/* Actions de la modale */}
@@ -508,6 +525,22 @@ export default function UploadDocumentModal({
         </form>
 
       </div>
+
+      {/* Modale d'édition / suppression de catégorie existante (Annotation 1) */}
+      <CategoryManageModal
+        isOpen={isEditCategoryModalOpen}
+        onClose={() => setIsEditCategoryModalOpen(false)}
+        category={categoriesList.find((c) => c.name === uploadCategory) || categoriesList[0]}
+        onUpdated={(updated) => {
+          setCategoriesList((prev) => prev.map((c) => (c.id === updated.id ? updated : c)));
+          setUploadCategory(updated.name);
+        }}
+        onDeleted={(id) => {
+          const remaining = categoriesList.filter((c) => c.id !== id);
+          setCategoriesList(remaining);
+          setUploadCategory(remaining.length > 0 ? remaining[0].name : '');
+        }}
+      />
     </div>
   );
 }

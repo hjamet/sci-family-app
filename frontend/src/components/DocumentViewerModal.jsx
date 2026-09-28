@@ -32,11 +32,12 @@ export default function DocumentViewerModal({
   const fileName = explicitName || docItem?.filename || docItem?.file_name || docItem?.title || docItem?.name || 'document';
   
   const ext = (fileName.split('.').pop() || '').toLowerCase();
-  const rawType = explicitType || docItem?.file_type || docItem?.mime_type || '';
+  const rawType = explicitType || docItem?.file_type || docItem?.mime_type || docItem?.type || '';
   
-  const isPdf = ext === 'pdf' || rawType.includes('pdf');
-  const isImage = ['png', 'jpg', 'jpeg', 'webp', 'gif', 'svg', 'bmp'].includes(ext) || rawType.startsWith('image/');
-  const isText = ['txt', 'md', 'json', 'csv', 'log'].includes(ext) || rawType.startsWith('text/');
+  const isImage = ['png', 'jpg', 'jpeg', 'webp', 'gif', 'svg', 'bmp'].includes(ext) || rawType.toLowerCase().startsWith('image/');
+  const isText = ['txt', 'md', 'json', 'csv', 'log'].includes(ext) || rawType.toLowerCase().startsWith('text/');
+  // Règle d'or Henri (Annotation 2) : Tout document non-image est un PDF authentique chargé via /api/documents/{id}/download et affiché en iframe
+  const isPdf = !isImage && !isText;
 
   // États internes de visualisation
   const [blobUrl, setBlobUrl] = useState(null);
@@ -338,19 +339,11 @@ export default function DocumentViewerModal({
             </div>
           )}
 
-          {/* Rendu Texte / Devis simulé */}
-          {!loadError && !isPdf && !isImage && (
+          {/* Rendu Texte Brut Sobre (Uniquement pour fichiers texte purs avec contenu réel) */}
+          {!loadError && isText && textContent && (
             <div className="w-full h-full max-w-3xl bg-white dark:bg-slate-900 rounded-xl p-6 shadow-sm border border-slate-200 dark:border-slate-800 overflow-y-auto">
-              <div className="border-b border-slate-200 dark:border-slate-800 pb-3 mb-4 flex items-center justify-between">
-                <span className="text-xs font-bold text-slate-500 uppercase tracking-wider">
-                  Contenu textuel certifié
-                </span>
-                <span className="text-xs text-slate-400">
-                  SCI FAMILIALE D'HELLENVILLIERS
-                </span>
-              </div>
               <pre className="font-mono text-xs sm:text-sm text-slate-800 dark:text-slate-200 whitespace-pre-wrap leading-relaxed">
-                {textContent || 'Fichier sans aperçu textuel.'}
+                {textContent}
               </pre>
             </div>
           )}
