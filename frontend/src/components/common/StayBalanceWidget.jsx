@@ -50,6 +50,8 @@ export default function StayBalanceWidget({ year = 2026, members: propsMembers, 
     return () => { isMounted = false; };
   }, [year]);
 
+  const safeBalance = Array.isArray(balance) && balance.length > 0 ? balance : DEFAULT_MEMBERS;
+
   return (
     <section className="w-full bg-surface-container-lowest rounded-2xl p-space-md sm:p-space-lg shadow-sm border border-outline-variant/30">
       <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 border-b border-outline-variant/20 pb-4 mb-5">
@@ -63,9 +65,10 @@ export default function StayBalanceWidget({ year = 2026, members: propsMembers, 
 
       {/* Grid of 7 Associates */}
       <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-7 gap-3">
-        {balance.map((m) => {
-          const percentage = Math.min(100, Math.round((m.days / m.max_days) * 100));
-          const isSelected = selectedMember && selectedMember.toLowerCase().includes(m.name.toLowerCase().split(' ')[0]);
+        {safeBalance.map((m) => {
+          const maxDays = m.max_days > 0 ? m.max_days : 35;
+          const percentage = Math.min(100, Math.round(((m.days || 0) / maxDays) * 100));
+          const isSelected = selectedMember && selectedMember.toLowerCase().includes((m.name || '').toLowerCase().split(' ')[0]);
 
           return (
             <div

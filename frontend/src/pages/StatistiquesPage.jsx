@@ -2,6 +2,7 @@ import React, { useState, useEffect, useMemo } from 'react';
 import StayBalanceWidget from '../components/common/StayBalanceWidget';
 import HouseUsageChart from '../components/HouseUsageChart';
 import WorkloadDashboard from '../components/WorkloadDashboard';
+import ErrorBoundary from '../components/common/ErrorBoundary';
 import { fetchReservations } from '../api';
 
 const SCI_MEMBERS = [
@@ -20,7 +21,7 @@ const PERIOD_OPTIONS = [
   { id: '3_months', label: 'Derniers 3 mois' },
 ];
 
-export default function StatistiquesPage({ currentUser }) {
+function StatistiquesPageInner({ currentUser }) {
   const [period, setPeriod] = useState('all');
   const [allReservations, setAllReservations] = useState([]);
   const [loading, setLoading] = useState(true);
@@ -331,13 +332,39 @@ export default function StatistiquesPage({ currentUser }) {
       </section>
 
       {/* Détail Complet de l'Équilibre des Séjours */}
-      <StayBalanceWidget members={members} />
+      <ErrorBoundary
+        title="Équilibre des Séjours temporairement indisponible"
+        description="Le composant de solde des séjours a rencontré une anomalie lors du rendu. Le reste de la page reste accessible."
+      >
+        <StayBalanceWidget members={members} />
+      </ErrorBoundary>
 
       {/* Projection d'Occupation sur 12 Mois */}
-      <HouseUsageChart reservations={filteredReservations} />
+      <ErrorBoundary
+        title="Projection d'occupation temporairement indisponible"
+        description="Le graphique mensuel a rencontré une anomalie lors du calcul des nuitées."
+      >
+        <HouseUsageChart reservations={filteredReservations} />
+      </ErrorBoundary>
 
       {/* Jauge de Répartition des Charges & Responsabilités */}
-      <WorkloadDashboard currentUser={currentUser} period={period} />
+      <ErrorBoundary
+        title="Jauge d'Implication & Charges indisponible"
+        description="Le calcul du ratio d'implication des associés a rencontré une exception."
+      >
+        <WorkloadDashboard currentUser={currentUser} period={period} />
+      </ErrorBoundary>
     </div>
+  );
+}
+
+export default function StatistiquesPage(props) {
+  return (
+    <ErrorBoundary
+      title="Page Statistiques indisponible"
+      description="Une erreur inattendue est survenue sur la page Statistiques. L'affichage a été sécurisé contre l'écran blanc."
+    >
+      <StatistiquesPageInner {...props} />
+    </ErrorBoundary>
   );
 }

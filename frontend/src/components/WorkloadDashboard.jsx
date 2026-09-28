@@ -13,8 +13,9 @@ import {
   CheckSquare
 } from 'lucide-react';
 import TaskDetailModal from './TaskDetailModal';
-import { fetchTasks, fetchStayBalance, fetchReservations } from '../api';
+import { fetchTasks, fetchReservations } from '../api';
 import { resolveUserMeta, isTaskAssignedToUser } from '../utils/taskAssignment';
+import ErrorBoundary from './common/ErrorBoundary';
 
 const ALL_7_MEMBERS = [
   { id: 1, prenom: 'Henri', fullName: 'Henri Jamet', role: 'Coordinateur Général (Chauffage, CCA)', color: 'from-cyan-500 to-blue-600', badgeColor: 'bg-cyan-50 text-cyan-700 border-cyan-200' },
@@ -51,13 +52,16 @@ const PERIOD_OPTIONS = [
   { id: '3_months', label: 'Derniers 3 mois' },
 ];
 
-export default function WorkloadDashboard({ currentUser, period: propPeriod = 'all' }) {
+function WorkloadDashboardInner({ currentUser, period: propPeriod = 'all' }) {
   const [realTasks, setRealTasks] = useState([]);
   const [reservations, setReservations] = useState([]);
   const [loading, setLoading] = useState(true);
   const [errorMsg, setErrorMsg] = useState(null);
   const [selectedTask, setSelectedTask] = useState(null);
   const [selectedPeriod, setSelectedPeriod] = useState(propPeriod);
+
+  const selectedPeriodOption = PERIOD_OPTIONS.find((opt) => opt.id === selectedPeriod) || PERIOD_OPTIONS[0];
+  const selectedPeriodLabel = selectedPeriodOption.label;
 
   // Synchronisation avec la prop period si elle change
   useEffect(() => {
@@ -187,7 +191,7 @@ export default function WorkloadDashboard({ currentUser, period: propPeriod = 'a
     });
 
     return list;
-  }, [stayBalance, reservations, realTasks]);
+  }, [selectedPeriod, reservations, realTasks]);
 
   // Échelles max pour les barres de progression
   const maxUsage = useMemo(() => {
@@ -421,7 +425,7 @@ export default function WorkloadDashboard({ currentUser, period: propPeriod = 'a
                       </div>
 
                       <div className="flex justify-between items-center text-[10px] text-slate-400">
-                        <span>Présence au domaine ({selectedYear})</span>
+                        <span>Présence au domaine ({selectedPeriodLabel})</span>
                         <span>{pctUsage}% relative</span>
                       </div>
                     </div>
@@ -523,5 +527,16 @@ export default function WorkloadDashboard({ currentUser, period: propPeriod = 'a
         />
       )}
     </div>
+  );
+}
+
+export default function WorkloadDashboard(props) {
+  return (
+    <ErrorBoundary
+      title="Jauge d'Implication & Double Barre indisponible"
+      description="Une anomalie s'est produite lors de l'évaluation des statistiques d'équité. L'affichage du reste de la page reste opérationnel."
+    >
+      <WorkloadDashboardInner {...props} />
+    </ErrorBoundary>
   );
 }
