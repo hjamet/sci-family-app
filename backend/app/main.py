@@ -1917,6 +1917,32 @@ def review_project(project_id: int, review: ProjectReview, db: Session = Depends
 
     old_status = db_proj.status
 
+    # Détection de modification des options ou du mode choix multiples (Annotation 6)
+    old_raw_options = db_proj.options
+    old_options_list = []
+    if old_raw_options:
+        try:
+            old_options_list = json.loads(old_raw_options) if isinstance(old_raw_options, str) else list(old_raw_options)
+        except Exception:
+            old_options_list = [o.strip() for o in str(old_raw_options).split(",") if o.strip()]
+    if not isinstance(old_options_list, list):
+        old_options_list = []
+
+    new_options_list = None
+    if review.options is not None:
+        new_options_list = [str(o).strip() for o in review.options if str(o).strip()]
+
+    options_were_modified = False
+    if new_options_list is not None and new_options_list != old_options_list:
+        options_were_modified = True
+
+    old_allow_multiple = bool(getattr(db_proj, "allow_multiple_choices", False) or False)
+    multi_was_modified = False
+    if review.allow_multiple_choices is not None and bool(review.allow_multiple_choices) != old_allow_multiple:
+        multi_was_modified = True
+
+    should_reset_votes = (options_were_modified or multi_was_modified)
+
     if review.title is not None and review.title.strip():
         db_proj.title = review.title.strip()
     if review.description is not None:
@@ -1957,6 +1983,36 @@ def review_project(project_id: int, review: ProjectReview, db: Session = Depends
         db_proj.options = json.dumps(review.options)
     if review.allow_multiple_choices is not None:
         db_proj.allow_multiple_choices = bool(review.allow_multiple_choices)
+
+    # Invalidation et réinitialisation des votes si les options ou choix multiples ont été modifiés (Annotation 6)
+    votes_count = db.query(ProjectVote).filter(ProjectVote.project_id == project_id).count()
+    if should_reset_votes and votes_count > 0:
+        db.query(ProjectVote).filter(ProjectVote.project_id == project_id).delete()
+        if db_proj.status == "REPORT_AG":
+            db_proj.status = "EN_VOTE"
+
+        notif_msg = f"Le scrutin « {db_proj.title} » a été modifié. Les votes précédents ont été réinitialisés. Merci d'exprimer à nouveau votre voix."
+        sys_comment = ProjectComment(
+            project_id=project_id,
+            author_name="Système",
+            content=notif_msg
+        )
+        db.add(sys_comment)
+
+        try:
+            member_users = db.query(Member).filter(Member.email.isnot(None)).all()
+            member_emails = [u.email for u in member_users if getattr(u, 'notif_vote_needed', True) and u.email]
+            if member_emails:
+                send_vote_required_email(
+                    to_email=member_emails,
+                    vote_title=db_proj.title,
+                    submitted_by="Coordination SCI",
+                    description=f"{notif_msg}\n\n{db_proj.description or ''}",
+                    estimated_cost=float(db_proj.estimated_cost or 0.0),
+                    project_id=db_proj.id
+                )
+        except Exception as e:
+            logger.error(f"[EMAIL ERROR] Failed to send vote reset notification: {e}")
 
     db_proj.updated_at = datetime.utcnow()
     db.commit()
@@ -3973,6 +4029,7 @@ async def upload_document_canonical(
     title: str = Form(...),
     category: str = Form(...),
     task_id: Optional[int] = Form(None),
+    project_id: Optional[int] = Form(None),
     uploaded_by: Optional[str] = Form("Henri Jamet"),
     db: Session = Depends(get_db)
 ):
@@ -3980,7 +4037,7 @@ async def upload_document_canonical(
     Téléversement d'un document selon la convention de nommage canonique officielle :
     [ORGANISME] [MMAAAA actuel] [Titre du document].[ext]
     Téléversement DIRECT dans Google Drive (dossier Hellenvilliers SCI 14RcQbUF7WQb5kmVlfhdHmieV1OA0Pk-J).
-    Support de l'association universelle à une tâche via task_id (Annotation 10 & 11).
+    Support de l'association universelle à une tâche via task_id et à un scrutin/projet via project_id.
     """
     clean_org = organisme.strip()
     clean_title = title.strip()
@@ -4035,6 +4092,9 @@ async def upload_document_canonical(
         logger.warning(f"Erreur écriture cache local {canonical_filename}: {e}")
 
     # 3. Enregistrement en base de données
+    effective_source_type = "PROJECT" if project_id else ("TASK" if task_id else "MANUAL")
+    effective_source_id = project_id if project_id else task_id
+
     db_doc = AdminDocument(
         title=clean_title,
         category=category,
@@ -4044,8 +4104,8 @@ async def upload_document_canonical(
         file_size=file_size,
         file_data=file_bytes,
         drive_file_id=drive_file_id,
-        source_type="TASK" if task_id else "MANUAL",
-        source_id=task_id,
+        source_type=effective_source_type,
+        source_id=effective_source_id,
         task_id=task_id,
         uploaded_by=uploaded_by or "Henri Jamet",
         notes=clean_org
@@ -4095,6 +4155,42 @@ async def upload_document_canonical(
                     db.commit()
         except Exception as sync_err:
             logger.warning(f"Notice: Erreur synchronisation task.documents: {sync_err}")
+
+    # Si rattaché à un projet / scrutin, synchroniser le champ JSON project.document_urls
+    if project_id:
+        try:
+            target_proj = db.query(Project).filter(Project.id == project_id).first()
+            if target_proj:
+                existing_proj_docs = []
+                if target_proj.document_urls:
+                    try:
+                        existing_proj_docs = json.loads(target_proj.document_urls) if isinstance(target_proj.document_urls, str) else target_proj.document_urls
+                    except Exception:
+                        existing_proj_docs = []
+                if not isinstance(existing_proj_docs, list):
+                    existing_proj_docs = []
+
+                proj_doc_entry = {
+                    "id": db_doc.id,
+                    "name": db_doc.title,
+                    "title": db_doc.title,
+                    "filename": db_doc.file_name,
+                    "file_url": download_url,
+                    "url": download_url,
+                    "type": "PDF" if (db_doc.file_name or "").lower().endswith(".pdf") else "Image" if (db_doc.file_type or "").startswith("image/") else "Document",
+                    "file_type": db_doc.file_type,
+                    "size": f"{round(file_size / 1024, 1)} Ko",
+                    "category": category,
+                    "uploaded_by": db_doc.uploaded_by,
+                    "created_at": db_doc.created_at.isoformat() if hasattr(db_doc.created_at, "isoformat") else str(db_doc.created_at)
+                }
+
+                if not any(d.get("id") == db_doc.id or d.get("url") == download_url for d in existing_proj_docs if isinstance(d, dict)):
+                    existing_proj_docs.append(proj_doc_entry)
+                    target_proj.document_urls = json.dumps(existing_proj_docs)
+                    db.commit()
+        except Exception as sync_proj_err:
+            logger.warning(f"Notice: Erreur synchronisation project.document_urls: {sync_proj_err}")
 
     return {
         "id": db_doc.id,

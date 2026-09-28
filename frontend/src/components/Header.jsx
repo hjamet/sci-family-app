@@ -43,7 +43,7 @@ const NAV_ITEMS = [
   { id: 'home', label: 'Tableau de bord', path: '/', icon: 'dashboard' },
   { id: 'sejour', label: 'Séjour', path: '/sejour', icon: 'cottage' },
   { id: 'calendrier', label: 'Calendrier', path: '/calendrier', icon: 'calendar_month' },
-  { id: 'taches', label: 'Tâches', path: '/taches', icon: 'checklist' },
+  { id: 'taches', label: 'Votes et Chantiers', path: '/taches', icon: 'checklist' },
   { id: 'admin', label: 'Administratif', path: '/admin', icon: 'folder_shared' },
 ];
 

@@ -1,4 +1,4 @@
-import React from 'react';
+import React, { useState, useRef, useEffect } from 'react';
 
 /**
  * 7 Associés statutaires canoniques de la SCI Hellenvilliers
@@ -216,14 +216,43 @@ export default function WhatsAppPollView({
   // Mode choix unique vs choix multiples (Annotation 11)
   const allowMultipleChoices = Boolean(project?.allow_multiple_choices);
 
+  // Verrouillage optimiste local contre les sauts/rollbacks d'affichage (Annotation 3)
+  const [optimisticChoice, setOptimisticChoice] = useState(null);
+  const optimisticTimerRef = useRef(null);
+
+  // Nettoyage du timer au démontage
+  useEffect(() => {
+    return () => {
+      if (optimisticTimerRef.current) clearTimeout(optimisticTimerRef.current);
+    };
+  }, []);
+
   // 1. Extraire les votes réels
   const rawVotesList = Array.isArray(project?.votes) ? project.votes : [];
 
   // 2. Mappage des 7 associés avec leurs votes réels
   const associatesWithVotes = STATUTORY_ASSOCIATES.map(assoc => {
+    const assocNameLower = assoc.name.toLowerCase();
+    const assocFirstLower = assoc.firstName.toLowerCase();
+    const isThisCurrentAssociate = (
+      currentUserLower.includes(assocFirstLower) ||
+      currentUserLower.includes(assocNameLower) ||
+      assocNameLower.includes(currentUserLower)
+    );
+
+    // Priorité absolue au choix optimiste local pour l'associé connecté (zéro saut d'affichage)
+    if (isThisCurrentAssociate && optimisticChoice !== null) {
+      const optStr = Array.isArray(optimisticChoice) ? JSON.stringify(optimisticChoice) : String(optimisticChoice);
+      return {
+        ...assoc,
+        vote: optStr,
+        date: "À l'instant"
+      };
+    }
+
     // Si associatesVotes a été passé explicitement (ex: état local de modale)
     if (Array.isArray(associatesVotes)) {
-      const foundInProps = associatesVotes.find(a => a && (a.id === assoc.id || a.name?.toLowerCase() === assoc.name.toLowerCase()));
+      const foundInProps = associatesVotes.find(a => a && (a.id === assoc.id || a.name?.toLowerCase() === assocNameLower));
       if (foundInProps && foundInProps.vote && foundInProps.vote !== 'EN_ATTENTE') {
         return {
           ...assoc,
@@ -234,8 +263,6 @@ export default function WhatsAppPollView({
     }
 
     // Sinon dérivation directe depuis rawVotesList
-    const assocNameLower = assoc.name.toLowerCase();
-    const assocFirstLower = assoc.firstName.toLowerCase();
     const matchedVote = rawVotesList.find(v => {
       if (!v) return false;
       const vName = extractVoterName(v).toLowerCase();
@@ -260,6 +287,27 @@ export default function WhatsAppPollView({
 
     return { ...assoc, vote: 'EN_ATTENTE', date: null };
   });
+
+  // Synchronisation avec la confirmation serveur
+  useEffect(() => {
+    if (optimisticChoice !== null) {
+      const matched = rawVotesList.find(v => {
+        if (!v) return false;
+        const vName = extractVoterName(v).toLowerCase();
+        return (
+          currentUserLower.includes(vName) ||
+          vName.includes(currentUserLower)
+        );
+      });
+      if (matched) {
+        const serverChoice = extractVoteChoice(matched);
+        const optStr = Array.isArray(optimisticChoice) ? JSON.stringify(optimisticChoice) : String(optimisticChoice);
+        if (serverChoice === optStr) {
+          setOptimisticChoice(null);
+        }
+      }
+    }
+  }, [rawVotesList, associatesVotes]);
 
   // Associé connecté
   const currentAssociate = associatesWithVotes.find(a => {
@@ -383,12 +431,14 @@ export default function WhatsAppPollView({
   const handleOptionClick = (clickedOptValue) => {
     if (isVotingDisabled || typeof onCastVote !== 'function') return;
 
+    let nextChoice;
     if (!allowMultipleChoices) {
       // Choix unique : sélectionne cette option exclusivement
-      onCastVote(clickedOptValue);
+      nextChoice = clickedOptValue;
     } else {
       // Choix multiples : toggle de l'option cliquée
-      const currentChoices = parseVotesArray(currentAssociate?.vote);
+      const activeChoice = optimisticChoice !== null ? optimisticChoice : currentAssociate?.vote;
+      const currentChoices = parseVotesArray(activeChoice);
       const isAlreadySelected = currentChoices.some(
         c => String(c).trim().toUpperCase() === String(clickedOptValue).trim().toUpperCase()
       );
@@ -400,8 +450,17 @@ export default function WhatsAppPollView({
       } else {
         updatedChoices = [...currentChoices, clickedOptValue];
       }
-      onCastVote(updatedChoices);
+      nextChoice = updatedChoices;
     }
+
+    // Verrouillage optimiste instantané (Annotation 3)
+    setOptimisticChoice(nextChoice);
+    if (optimisticTimerRef.current) clearTimeout(optimisticTimerRef.current);
+    optimisticTimerRef.current = setTimeout(() => {
+      setOptimisticChoice(null);
+    }, 6000);
+
+    onCastVote(nextChoice);
   };
 
   return (

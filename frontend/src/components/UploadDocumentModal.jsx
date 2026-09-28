@@ -34,6 +34,7 @@ export default function UploadDocumentModal({
   onClose,
   onUploadSuccess,
   targetTaskId = null,
+  targetProjectId = null,
   defaultCategory = null,
   currentUser = null,
   initialFile = null
@@ -179,6 +180,9 @@ export default function UploadDocumentModal({
       if (targetTaskId) {
         formData.append('task_id', String(targetTaskId));
       }
+      if (targetProjectId) {
+        formData.append('project_id', String(targetProjectId));
+      }
 
       const newDoc = await uploadDocument(formData);
 
@@ -226,6 +230,8 @@ export default function UploadDocumentModal({
               <p className="font-body-md text-xs text-on-surface-variant">
                 {targetTaskId
                   ? `Indexation administrative et association à la tâche #${targetTaskId}`
+                  : targetProjectId
+                  ? `Indexation administrative et association au scrutin`
                   : "Dépôt certifié dans l'espace documentaire de la SCI"}
               </p>
             </div>

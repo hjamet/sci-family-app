@@ -117,6 +117,7 @@ export default function DashboardPage({
   const [isTaskModalOpen, setIsTaskModalOpen] = useState(false);
   const [isTaskEditingDirect, setIsTaskEditingDirect] = useState(false);
   const [isRoofVoteModalOpen, setIsRoofVoteModalOpen] = useState(false);
+  const [selectedVoteForModal, setSelectedVoteForModal] = useState(null);
   const [selectedStay, setSelectedStay] = useState(null);
   const [isStayModalOpen, setIsStayModalOpen] = useState(false);
   const [properties, setProperties] = useState(() => getCachedData('properties') || []);
@@ -140,24 +141,17 @@ export default function DashboardPage({
     setIsTaskModalOpen(true);
   };
 
+  // ANNOTATION 9 : Câblage direct de « Proposer une initiative au vote » sur VoteRoofModal
   const handleOpenCreateVote = () => {
-    setInspectingTask({
+    setSelectedVoteForModal({
+      isNew: true,
       title: '',
       description: '',
-      subject: 'Presbytère',
-      complexity: 'Élevée',
-      budget: 1500,
-      isVoteInitiative: true,
-      assigned_members: [typeof currentUser === 'string' ? currentUser : (currentUser?.prenom ? `${currentUser.prenom} ${currentUser.nom || 'Jamet'}` : 'Henri Jamet')],
-      checklist: [
-        { text: 'Demande et analyse des devis contradictoires', done: false },
-        { text: 'Consultation et vote des 7 associés statutaires', done: false },
-        { text: 'Engagement des dépenses et validation gérance', done: false },
-        { text: 'Contrôle de conformité et réception des travaux', done: false },
-      ]
+      category: 'Presbytère',
+      options: ['Approuver le projet', 'Rejeter le projet'],
+      allow_multiple_choices: false,
     });
-    setIsTaskEditingDirect(true);
-    setIsTaskModalOpen(true);
+    setIsRoofVoteModalOpen(true);
   };
 
   const userPrenom = typeof currentUser === 'object'
@@ -633,12 +627,10 @@ export default function DashboardPage({
             </div>
             <div>
               <div className="flex items-center gap-2">
+                {/* ANNOTATION 2 : Titre épuré « Scrutins en cours » & ANNOTATION 1 : Badge « Vote actif » supprimé */}
                 <h2 className="font-headline-md text-base sm:text-headline-sm text-forest-deep font-bold tracking-tight">
-                  Démocratie Familiale & Scrutins en cours
+                  Scrutins en cours
                 </h2>
-                <span className="px-2.5 py-0.5 rounded-full bg-sage-soft text-primary font-label-sm text-xs font-bold">
-                  Vote actif
-                </span>
               </div>
             </div>
           </div>
@@ -658,7 +650,10 @@ export default function DashboardPage({
           <VoteCardSkeleton />
         ) : activeVote ? (
           <article
-            onClick={() => setIsRoofVoteModalOpen(true)}
+            onClick={() => {
+              setSelectedVoteForModal(activeVote);
+              setIsRoofVoteModalOpen(true);
+            }}
             className="bg-white dark:bg-slate-900 rounded-xl p-space-md border border-outline-variant/30 flex flex-col gap-4 shadow-sm hover:shadow-md transition-all cursor-pointer group"
           >
             <div className="flex flex-col sm:flex-row sm:items-start justify-between gap-2">
@@ -680,7 +675,10 @@ export default function DashboardPage({
               project={activeVote}
               currentUser={currentUser}
               compact={true}
-              onCastVote={() => setIsRoofVoteModalOpen(true)}
+              onCastVote={() => {
+                setSelectedVoteForModal(activeVote);
+                setIsRoofVoteModalOpen(true);
+              }}
               showPendingVoters={true}
               showQuorumNotice={true}
             />
@@ -700,6 +698,7 @@ export default function DashboardPage({
                   type="button"
                   onClick={(e) => {
                     e.stopPropagation();
+                    setSelectedVoteForModal(activeVote);
                     setIsRoofVoteModalOpen(true);
                   }}
                   className="inline-flex items-center gap-1.5 px-5 py-2.5 rounded-DEFAULT bg-white dark:bg-slate-800 border-2 border-primary text-primary font-label-sm text-xs font-bold hover:bg-sage-soft transition-colors shadow-sm cursor-pointer"
@@ -971,17 +970,26 @@ export default function DashboardPage({
         />
       )}
 
-      {/* Modale de Vote Toiture Presbytère Unifiée (Annotation 1) */}
+      {/* Modale de Vote Unifiée avec Création, Édition et Consultation (Annotations 1 & 9) */}
       <VoteRoofModal
         isOpen={isRoofVoteModalOpen}
-        onClose={() => setIsRoofVoteModalOpen(false)}
+        onClose={() => {
+          setIsRoofVoteModalOpen(false);
+          setSelectedVoteForModal(null);
+        }}
         currentUser={currentUser}
-        project={activeVote}
+        project={selectedVoteForModal || activeVote}
         onVoteSubmit={(updatedProject) => {
           if (updatedProject?.deleted) {
             setProjects(prev => prev.filter(p => p.id !== updatedProject.projectId));
           } else if (updatedProject?.id) {
-            setProjects(prev => prev.map(p => p.id === updatedProject.id ? updatedProject : p));
+            setProjects(prev => {
+              const idx = prev.findIndex(p => p.id === updatedProject.id);
+              if (idx >= 0) {
+                return prev.map(p => p.id === updatedProject.id ? updatedProject : p);
+              }
+              return [updatedProject, ...prev];
+            });
           }
           loadDashboardData({ forceRefresh: true });
         }}

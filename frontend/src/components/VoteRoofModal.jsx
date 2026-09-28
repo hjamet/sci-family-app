@@ -1,9 +1,10 @@
 import React, { useState, useEffect, useRef, useMemo } from 'react';
 import { MarkdownContent } from './common/RichTextEditor';
 import DocumentViewerModal from './DocumentViewerModal';
+import UploadDocumentModal from './UploadDocumentModal';
 import FamilyChat from './common/FamilyChat';
 import WhatsAppPollView, { STATUTORY_ASSOCIATES, parseVotesArray, hasVotedForOption } from './common/WhatsAppPollView';
-import { castProjectVote, updateProject, deleteProject } from '../api';
+import { castProjectVote, createProject, updateProject, deleteProject } from '../api';
 
 // Error Boundary de protection intégrée pour empêcher tout écran blanc
 class VoteErrorBoundary extends React.Component {
@@ -176,26 +177,56 @@ function VoteRoofModalInner({
   currentUser = 'Henri Jamet',
   onVoteSubmit,
   project,
+  initialEditing = false,
 }) {
   const currentUserName = resolveUserName(currentUser);
   const currentUserLower = currentUserName.toLowerCase();
 
+  const isNewProject = Boolean(project?.isNew || !project?.id);
+
   // État local réactif du projet pour mise à jour instantanée sans F5
   const [localProject, setLocalProject] = useState(project || {});
 
+  // Mode Édition du vote (initialisé à true si nouveau projet ou initialEditing)
+  const [isEditing, setIsEditing] = useState(() => Boolean(initialEditing || project?.isNew || !project?.id));
+
+  // Refs de verrouillage optimiste pour éliminer tout rollback transitoire (Annotation 3)
+  const isSubmittingVoteRef = useRef(false);
+  const optimisticVoteRef = useRef(null);
+
   useEffect(() => {
     if (project) {
-      setLocalProject(project);
+      if (isSubmittingVoteRef.current && optimisticVoteRef.current) {
+        const { assocId, votePayload, formattedDate } = optimisticVoteRef.current;
+        const votes = Array.isArray(project.votes) ? [...project.votes] : [];
+        const hasVoted = votes.some(v => safeExtractVoterName(v).toLowerCase() === assocId.toLowerCase());
+        if (!hasVoted) {
+          votes.push({
+            user_name: currentUserName,
+            user_id: assocId,
+            vote: votePayload,
+            choice: votePayload,
+            date: formattedDate,
+            created_at: new Date().toISOString()
+          });
+        }
+        setLocalProject({ ...project, votes });
+      } else {
+        setLocalProject(project);
+      }
+      if (project.isNew || !project.id || initialEditing) {
+        setIsEditing(true);
+      }
     }
-  }, [project]);
+  }, [project, initialEditing, currentUserName]);
 
   // Propriétés du projet
   const activeProject = localProject || {};
-  const projectTitle = activeProject.title || 'Consultation & Scrutin des Associés';
-  const projectDescription = activeProject.description || "Aucune description détaillée n'a été renseignée pour ce projet.";
-  const projectRef = activeProject.ref || (activeProject.id ? `VOTE-2026-${String(activeProject.id).padStart(2, '0')}` : 'VOTE-2026');
-  const projectReporter = activeProject.submitted_by || activeProject.reporter?.name || (typeof activeProject.reporter === 'string' ? activeProject.reporter : 'Non assigné');
-  const projectSubject = activeProject.category || activeProject.subject || 'SCI Familiale';
+  const projectTitle = activeProject.title || (isNewProject ? '' : 'Consultation & Scrutin des Associés');
+  const projectDescription = activeProject.description || (isNewProject ? '' : "Aucune description détaillée n'a été renseignée pour ce projet.");
+  const projectRef = activeProject.ref || (activeProject.id ? `VOTE-2026-${String(activeProject.id).padStart(2, '0')}` : 'NOUVEAU VOTE');
+  const projectReporter = activeProject.submitted_by || activeProject.reporter?.name || (typeof activeProject.reporter === 'string' ? activeProject.reporter : currentUserName);
+  const projectSubject = activeProject.category || activeProject.subject || 'Presbytère';
 
   // Badge de statut harmonisé et sobre
   const formatBadgeStatus = (status) => {
@@ -227,13 +258,11 @@ function VoteRoofModalInner({
   );
   const canManageVote = isCoordinator || isOwner;
 
-  // Mode Édition du vote
-  const [isEditing, setIsEditing] = useState(false);
   const [editTitle, setEditTitle] = useState(projectTitle);
   const [editDescription, setEditDescription] = useState(projectDescription);
   const [editCategory, setEditCategory] = useState(projectSubject);
   const [editOptions, setEditOptions] = useState(() => {
-    if (Array.isArray(activeProject.options)) return activeProject.options;
+    if (Array.isArray(activeProject.options) && activeProject.options.length > 0) return activeProject.options;
     if (typeof activeProject.options === 'string' && activeProject.options.trim()) {
       try {
         const p = JSON.parse(activeProject.options);
@@ -242,20 +271,24 @@ function VoteRoofModalInner({
         return activeProject.options.split(',').map(s => s.trim()).filter(Boolean);
       }
     }
-    return [];
+    return ['Approuver le projet', 'Rejeter le projet'];
   });
   // Annotation 11 : Toggle choix multiples
   const [editAllowMultipleChoices, setEditAllowMultipleChoices] = useState(Boolean(activeProject.allow_multiple_choices));
   const [newOptionInput, setNewOptionInput] = useState('');
   const [isSubmittingEdit, setIsSubmittingEdit] = useState(false);
 
+  // Annotation 4 : Gestion des documents en mode édition / création
+  const [editDocuments, setEditDocuments] = useState([]);
+  const [isUploadModalOpen, setIsUploadModalOpen] = useState(false);
+
   // Synchronisation lors de l'ouverture du mode édition
   useEffect(() => {
     setEditTitle(activeProject.title || '');
     setEditDescription(activeProject.description || '');
-    setEditCategory(activeProject.category || activeProject.subject || 'SCI Familiale');
+    setEditCategory(activeProject.category || activeProject.subject || 'Presbytère');
     const opts = (() => {
-      if (Array.isArray(activeProject.options)) return activeProject.options;
+      if (Array.isArray(activeProject.options) && activeProject.options.length > 0) return activeProject.options;
       if (typeof activeProject.options === 'string' && activeProject.options.trim()) {
         try {
           const p = JSON.parse(activeProject.options);
@@ -264,10 +297,26 @@ function VoteRoofModalInner({
           return activeProject.options.split(',').map(s => s.trim()).filter(Boolean);
         }
       }
-      return [];
+      return ['Approuver le projet', 'Rejeter le projet'];
     })();
     setEditOptions(opts);
     setEditAllowMultipleChoices(Boolean(activeProject.allow_multiple_choices));
+
+    // Initialisation de la liste des documents éditables
+    const list = [];
+    const seen = new Set();
+    const addDoc = (d) => {
+      if (!d) return;
+      const key = typeof d === 'string' ? d : (d.url || d.file_url || d.filename || d.title || JSON.stringify(d));
+      if (seen.has(key)) return;
+      seen.add(key);
+      list.push(d);
+    };
+    if (Array.isArray(activeProject.documents)) activeProject.documents.forEach(addDoc);
+    if (Array.isArray(activeProject.files)) activeProject.files.forEach(addDoc);
+    if (Array.isArray(activeProject.document_urls)) activeProject.document_urls.forEach(addDoc);
+    if (activeProject.devis_url) addDoc({ url: activeProject.devis_url, title: `Devis Prestataire - ${activeProject.title || 'Projet'}.pdf` });
+    setEditDocuments(list);
   }, [activeProject, isEditing]);
 
   // Liste nominative des 7 associés avec leurs votes réels synchronisés
@@ -294,12 +343,22 @@ function VoteRoofModalInner({
     });
   });
 
-  // Synchronisation dynamique si activeProject change
+  // Synchronisation dynamique si activeProject change avec protection optimiste
   useEffect(() => {
     const votesArr = Array.isArray(activeProject?.votes) ? activeProject.votes : [];
     setAssociatesVotes(DEFAULT_ASSOCIATES.map(assoc => {
       const assocNameLower = String(assoc.name || '').toLowerCase();
       const assocIdLower = String(assoc.id || '').toLowerCase();
+
+      // Si nous sommes en cours de vote optimiste pour cet associé, préserver son choix
+      if (isSubmittingVoteRef.current && optimisticVoteRef.current && optimisticVoteRef.current.assocId === assoc.id) {
+        return {
+          ...assoc,
+          vote: optimisticVoteRef.current.votePayload,
+          date: optimisticVoteRef.current.formattedDate
+        };
+      }
+
       const found = votesArr.find(v => {
         if (!v) return false;
         const vName = safeExtractVoterName(v).toLowerCase();
@@ -413,7 +472,21 @@ function VoteRoofModalInner({
     return list;
   }, [activeProject.documents, activeProject.files, activeProject.document_urls, activeProject.devis_url, projectTitle]);
 
-  // Enregistrement direct du vote (Annotation 11 : support choix unique et multiple)
+  // Annotation 4 : Détacher un document de la liste en mode édition / création
+  const handleDetachDocument = (indexToRemove) => {
+    setEditDocuments(prev => prev.filter((_, idx) => idx !== indexToRemove));
+  };
+
+  // Annotation 4 : Succès du téléversement d'un document justificatif
+  const handleUploadSuccess = (newDoc) => {
+    if (!newDoc) return;
+    setEditDocuments(prev => [...prev, newDoc]);
+    setIsUploadModalOpen(false);
+    setToastMessage('Document rattaché avec succès !');
+    setTimeout(() => setToastMessage(null), 3000);
+  };
+
+  // Enregistrement direct du vote (Annotation 3 & 11 : support choix unique et multiple, zéro lag)
   const handleCastVote = async (voteChoice) => {
     if (!voteChoice && voteChoice !== '') return;
     const now = new Date();
@@ -423,6 +496,10 @@ function VoteRoofModalInner({
     const assocName = currentAssociate?.name || currentUserName || 'Henri Jamet';
 
     const votePayload = Array.isArray(voteChoice) ? JSON.stringify(voteChoice) : String(voteChoice);
+
+    // Verrouillage optimiste anti-rollback transitoire
+    isSubmittingVoteRef.current = true;
+    optimisticVoteRef.current = { assocId, votePayload, formattedDate };
 
     // 1. Mise à jour optimiste immédiate dans associatesVotes
     const updatedAssociatesVotes = (associatesVotes || []).map(a => {
@@ -465,6 +542,15 @@ function VoteRoofModalInner({
     };
     setLocalProject(optimisticProject);
 
+    // Propagation synchrone immédiate au parent AVANT le await (Annotation 3)
+    if (typeof onVoteSubmit === 'function') {
+      try {
+        onVoteSubmit(optimisticProject);
+      } catch (err) {
+        console.warn('onVoteSubmit callback error:', err);
+      }
+    }
+
     const voteLabels = {
       POUR: 'Approuvé',
       CONTRE: 'Refusé',
@@ -493,19 +579,22 @@ function VoteRoofModalInner({
         if (res && typeof res === 'object') {
           serverUpdatedProject = res;
           setLocalProject(res);
+          // Propagation au parent avec le résultat serveur
+          if (typeof onVoteSubmit === 'function') {
+            onVoteSubmit(res);
+          }
         }
       } catch (err) {
         console.warn('API castProjectVote fallback local:', err.message);
+      } finally {
+        setTimeout(() => {
+          isSubmittingVoteRef.current = false;
+        }, 800);
       }
-    }
-
-    // 4. Propagation au parent avec le projet à jour complet
-    if (typeof onVoteSubmit === 'function') {
-      try {
-        onVoteSubmit(serverUpdatedProject);
-      } catch (err) {
-        console.warn('onVoteSubmit callback error:', err);
-      }
+    } else {
+      setTimeout(() => {
+        isSubmittingVoteRef.current = false;
+      }, 500);
     }
   };
 
@@ -529,33 +618,54 @@ function VoteRoofModalInner({
     }
   };
 
-  // Sauvegarde des modifications du vote (Annotation 11 : allow_multiple_choices)
+  // Sauvegarde des modifications ou création du vote (Annotation 9 & 11)
   const handleSaveEdit = async () => {
     if (!editTitle.trim()) {
-      alert('Veuillez renseigner un titre pour le vote.');
+      alert('Veuillez renseigner un titre pour le scrutin.');
       return;
     }
     setIsSubmittingEdit(true);
     try {
-      const payload = {
-        title: editTitle.trim(),
-        description: editDescription.trim(),
-        category: editCategory.trim(),
-        options: editOptions.filter(Boolean),
-        allow_multiple_choices: editAllowMultipleChoices
-      };
-
-      const updated = await updateProject(activeProject.id, payload);
-      setLocalProject(updated);
-      setIsEditing(false);
-      setToastMessage('Scrutin mis à jour avec succès !');
-      setTimeout(() => setToastMessage(null), 3000);
-
-      if (typeof onVoteSubmit === 'function') {
-        onVoteSubmit(updated);
+      if (isNewProject) {
+        const newPayload = {
+          title: editTitle.trim(),
+          description: editDescription.trim(),
+          category: editCategory.trim() || 'Presbytère',
+          status: 'EN_VOTE',
+          property_id: 1,
+          submitted_by: currentUserName,
+          options: editOptions.filter(Boolean).length > 0 ? editOptions.filter(Boolean) : ['Approuver le projet', 'Rejeter le projet'],
+          allow_multiple_choices: editAllowMultipleChoices,
+          document_urls: editDocuments
+        };
+        const created = await createProject(newPayload);
+        setLocalProject(created);
+        setIsEditing(false);
+        setToastMessage('Scrutin lancé avec succès !');
+        setTimeout(() => setToastMessage(null), 3000);
+        if (typeof onVoteSubmit === 'function') {
+          onVoteSubmit(created);
+        }
+      } else {
+        const payload = {
+          title: editTitle.trim(),
+          description: editDescription.trim(),
+          category: editCategory.trim(),
+          options: editOptions.filter(Boolean),
+          allow_multiple_choices: editAllowMultipleChoices,
+          document_urls: editDocuments
+        };
+        const updated = await updateProject(activeProject.id, payload);
+        setLocalProject(updated);
+        setIsEditing(false);
+        setToastMessage('Scrutin mis à jour avec succès !');
+        setTimeout(() => setToastMessage(null), 3000);
+        if (typeof onVoteSubmit === 'function') {
+          onVoteSubmit(updated);
+        }
       }
     } catch (err) {
-      alert(`Erreur lors de la mise à jour du vote : ${err.message}`);
+      alert(`Erreur lors de l'enregistrement du scrutin : ${err.message}`);
     } finally {
       setIsSubmittingEdit(false);
     }
@@ -660,12 +770,14 @@ function VoteRoofModalInner({
         <header className="w-full bg-canvas-slate px-4 py-3 sm:px-space-lg sm:py-space-md flex items-center justify-between gap-space-sm border-b border-border-subtle shrink-0">
           <div className="flex items-center gap-2">
             <span className="material-symbols-outlined text-forest-deep text-xl">how_to_vote</span>
-            <span className="font-semibold text-xs sm:text-sm text-slate-800">Scrutin &amp; Délibération des Associés</span>
+            <span className="font-semibold text-xs sm:text-sm text-slate-800">
+              {isNewProject ? 'Proposer une initiative au vote' : 'Scrutin & Délibération des Associés'}
+            </span>
           </div>
 
           <div className="flex items-center gap-2">
-            {/* Boutons Éditer et Supprimer pour coordinateurs / porteur */}
-            {canManageVote && !isEditing && (
+            {/* Boutons Éditer et Supprimer pour coordinateurs / porteur (scrutin existant uniquement) */}
+            {!isNewProject && canManageVote && !isEditing && (
               <div className="flex items-center gap-1.5 mr-2">
                 <button
                   type="button"
@@ -706,24 +818,45 @@ function VoteRoofModalInner({
           {/* COLONNE GAUCHE (7 cols) */}
           <section className="lg:col-span-7 p-4 sm:p-space-lg flex flex-col gap-5 bg-surface-container-lowest overflow-y-auto">
             
-            {/* ANNOTATION 10 : EN MODE MODIFICATION, AFFICHER UNIQUEMENT LE FORMULAIRE D'ÉDITION */}
+            {/* ANNOTATION 9 & 10 : EN MODE CRÉATION OU MODIFICATION, FORMULAIRE DÉDIÉ */}
             {isEditing ? (
               <div className="flex flex-col gap-4 bg-slate-50 dark:bg-slate-900/60 p-4 sm:p-5 rounded-2xl border border-slate-200 dark:border-slate-800">
                 <div className="flex items-center justify-between border-b border-slate-200 dark:border-slate-800 pb-3">
                   <div className="flex items-center gap-2">
-                    <span className="material-symbols-outlined text-emerald-700 text-xl">edit_note</span>
+                    <span className="material-symbols-outlined text-emerald-700 text-xl">
+                      {isNewProject ? 'add_circle' : 'edit_note'}
+                    </span>
                     <h2 className="text-sm sm:text-base font-bold text-slate-900 dark:text-slate-100">
-                      Modifier les paramètres du scrutin
+                      {isNewProject ? 'Proposer une nouvelle initiative au vote' : 'Modifier les paramètres du scrutin'}
                     </h2>
                   </div>
                   <button
                     type="button"
-                    onClick={() => setIsEditing(false)}
+                    onClick={() => {
+                      if (isNewProject) {
+                        onClose();
+                      } else {
+                        setIsEditing(false);
+                      }
+                    }}
                     className="text-xs text-slate-500 hover:text-slate-700 font-semibold cursor-pointer"
                   >
                     Annuler
                   </button>
                 </div>
+
+                {/* ANNOTATION 6 : Bandeau d'alerte ambre si des bulletins ont déjà été exprimés */}
+                {!isNewProject && Array.isArray(activeProject.votes) && activeProject.votes.length > 0 && (
+                  <div className="flex items-start gap-3 p-3.5 bg-amber-50 dark:bg-amber-950/40 rounded-xl border border-amber-300 dark:border-amber-800 text-amber-900 dark:text-amber-200 text-xs">
+                    <span className="material-symbols-outlined text-amber-600 dark:text-amber-400 text-lg shrink-0 mt-0.5">warning</span>
+                    <div className="flex flex-col gap-0.5">
+                      <span className="font-bold">Attention : {activeProject.votes.length} bulletin(s) ont déjà été exprimé(s)</span>
+                      <span className="text-amber-800/90 dark:text-amber-300/90 leading-relaxed">
+                        Toute modification des options de vote ou du mode de sélection réinitialisera automatiquement l'ensemble des votes exprimés et notifiera les associés.
+                      </span>
+                    </div>
+                  </div>
+                )}
 
                 {/* Titre */}
                 <div className="flex flex-col gap-1.5">
@@ -794,10 +927,10 @@ function VoteRoofModalInner({
                   </button>
                 </div>
 
-                {/* Options de vote personnalisées (Annotation 8 : aide supprimée) */}
+                {/* Options de vote personnalisées */}
                 <div className="flex flex-col gap-2 pt-2 border-t border-slate-200 dark:border-slate-800">
                   <label className="text-xs font-bold text-slate-700 dark:text-slate-300">
-                    Options personnalisées (Optionnel)
+                    Options du vote (au moins 2 options)
                   </label>
 
                   <div className="flex items-center gap-2">
@@ -842,11 +975,80 @@ function VoteRoofModalInner({
                   )}
                 </div>
 
-                {/* Boutons d'action édition */}
+                {/* ANNOTATION 4 : Gestion des pièces jointes en mode édition / création */}
+                <div className="flex flex-col gap-2 pt-2 border-t border-slate-200 dark:border-slate-800">
+                  <div className="flex items-center justify-between">
+                    <label className="text-xs font-bold text-slate-700 dark:text-slate-300 flex items-center gap-1.5">
+                      <span className="material-symbols-outlined text-sm text-forest-deep">attach_file</span>
+                      <span>Documents justificatifs &amp; Devis ({editDocuments.length})</span>
+                    </label>
+                    <button
+                      type="button"
+                      onClick={() => setIsUploadModalOpen(true)}
+                      className="inline-flex items-center gap-1 px-2.5 py-1 rounded-lg bg-emerald-50 dark:bg-emerald-950/50 border border-emerald-300 dark:border-emerald-700 text-emerald-800 dark:text-emerald-200 text-xs font-semibold hover:bg-emerald-100 transition-colors cursor-pointer"
+                    >
+                      <span className="material-symbols-outlined text-sm">add</span>
+                      <span>+ Ajouter un document</span>
+                    </button>
+                  </div>
+
+                  {editDocuments.length === 0 ? (
+                    <div className="p-3 bg-white dark:bg-slate-800 rounded-xl text-center text-xs text-slate-500 dark:text-slate-400 border border-dashed border-slate-300 dark:border-slate-700">
+                      Aucun document rattaché. Cliquez sur « + Ajouter un document » pour téléverser un devis ou une pièce justificative.
+                    </div>
+                  ) : (
+                    <div className="flex flex-col gap-1.5">
+                      {editDocuments.map((doc, idx) => {
+                        const docInfo = resolveDocumentInfo(doc, activeProject);
+                        return (
+                          <div
+                            key={idx}
+                            className="flex items-center justify-between p-2.5 bg-white dark:bg-slate-800 rounded-xl border border-slate-200 dark:border-slate-700 text-xs"
+                          >
+                            <div className="flex items-center gap-2 min-w-0">
+                              <span className="material-symbols-outlined text-rose-600 text-base shrink-0">
+                                {docInfo.isImage ? 'image' : 'picture_as_pdf'}
+                              </span>
+                              <span className="font-medium text-slate-800 dark:text-slate-200 truncate" title={docInfo.title}>
+                                {docInfo.title}
+                              </span>
+                            </div>
+                            <div className="flex items-center gap-1.5 shrink-0 ml-2">
+                              <button
+                                type="button"
+                                onClick={() => handleViewDocument(doc)}
+                                className="px-2 py-1 rounded-lg bg-slate-100 hover:bg-slate-200 text-slate-700 dark:bg-slate-700 dark:text-slate-200 text-[11px] font-semibold transition-colors cursor-pointer"
+                                title="Visualiser le document"
+                              >
+                                Visualiser
+                              </button>
+                              <button
+                                type="button"
+                                onClick={() => handleDetachDocument(idx)}
+                                className="px-2 py-1 rounded-lg bg-rose-50 hover:bg-rose-100 text-rose-700 dark:bg-rose-950/60 dark:text-rose-300 text-[11px] font-semibold transition-colors cursor-pointer"
+                                title="Détacher ce document"
+                              >
+                                Détacher
+                              </button>
+                            </div>
+                          </div>
+                        );
+                      })}
+                    </div>
+                  )}
+                </div>
+
+                {/* Boutons d'action édition / création */}
                 <div className="flex items-center justify-end gap-2.5 pt-3 border-t border-slate-200 dark:border-slate-800">
                   <button
                     type="button"
-                    onClick={() => setIsEditing(false)}
+                    onClick={() => {
+                      if (isNewProject) {
+                        onClose();
+                      } else {
+                        setIsEditing(false);
+                      }
+                    }}
                     className="px-4 py-2 rounded-xl bg-slate-200 hover:bg-slate-300 text-slate-700 text-xs font-bold cursor-pointer transition-colors"
                   >
                     Annuler
@@ -857,7 +1059,7 @@ function VoteRoofModalInner({
                     onClick={handleSaveEdit}
                     className="px-5 py-2 rounded-xl bg-emerald-600 hover:bg-emerald-700 text-white text-xs font-bold shadow-xs transition-all cursor-pointer disabled:opacity-50"
                   >
-                    {isSubmittingEdit ? 'Enregistrement...' : 'Enregistrer les modifications'}
+                    {isSubmittingEdit ? 'Enregistrement...' : (isNewProject ? 'Lancer le scrutin' : 'Enregistrer les modifications')}
                   </button>
                 </div>
               </div>
@@ -887,7 +1089,8 @@ function VoteRoofModalInner({
                     <span>•</span>
                     <span className="flex items-center gap-1 text-slate-700 dark:text-slate-300">
                       <span className="material-symbols-outlined text-[18px] text-primary">account_circle</span>
-                      Soumis par <strong>{projectReporter}</strong> (SCI)
+                      {/* Annotation 5 : Zéro mention (SCI) résiduelle */}
+                      Soumis par <strong>{projectReporter}</strong>
                     </span>
                   </div>
                 </div>
@@ -1026,6 +1229,14 @@ function VoteRoofModalInner({
         }}
         document={viewerDoc}
         onDownload={handleDownloadDocument}
+      />
+
+      {/* Annotation 4 : Modale de téléversement de documents justificatifs rattachée au projet */}
+      <UploadDocumentModal
+        isOpen={isUploadModalOpen}
+        onClose={() => setIsUploadModalOpen(false)}
+        onUploadSuccess={handleUploadSuccess}
+        targetProjectId={activeProject?.id || null}
       />
     </div>
   );

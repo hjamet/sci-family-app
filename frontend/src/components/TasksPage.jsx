@@ -70,6 +70,7 @@ export default function TasksPage({ currentUser = 'Henri Jamet' }) {
   const [isTaskModalOpen, setIsTaskModalOpen] = useState(false);
   const [isTaskEditingDirect, setIsTaskEditingDirect] = useState(false);
   const [isRoofVoteModalOpen, setIsRoofVoteModalOpen] = useState(false);
+  const [selectedVoteForModal, setSelectedVoteForModal] = useState(null);
 
   const handleOpenCreateTask = () => {
     setInspectingTask({
@@ -90,25 +91,17 @@ export default function TasksPage({ currentUser = 'Henri Jamet' }) {
     setIsTaskModalOpen(true);
   };
 
-  // Câblage direct de l'initiative au vote sur la modale unifiée avec FamilyChat (Annotation 2)
+  // ANNOTATION 9 : Câblage direct de « Proposer un vote » sur la modale unifiée VoteRoofModal
   const handleOpenCreateVote = () => {
-    setInspectingTask({
+    setSelectedVoteForModal({
+      isNew: true,
       title: '',
       description: '',
-      subject: 'Presbytère',
-      complexity: 'Élevée',
-      budget: 1500,
-      isVoteInitiative: true,
-      assigned_members: [typeof currentUser === 'string' ? currentUser : (currentUser?.name || 'Henri Jamet')],
-      checklist: [
-        { text: 'Demande et analyse des devis contradictoires', done: false },
-        { text: 'Consultation et vote des 7 associés statutaires', done: false },
-        { text: 'Engagement des dépenses et validation gérance', done: false },
-        { text: 'Contrôle de conformité et réception des travaux', done: false },
-      ]
+      category: 'Presbytère',
+      options: ['Approuver le projet', 'Rejeter le projet'],
+      allow_multiple_choices: false,
     });
-    setIsTaskEditingDirect(true);
-    setIsTaskModalOpen(true);
+    setIsRoofVoteModalOpen(true);
   };
 
   const handleOpenInspectTask = (t) => {
@@ -236,7 +229,13 @@ export default function TasksPage({ currentUser = 'Henri Jamet' }) {
     if (updatedProject?.deleted) {
       setProjects(prev => prev.filter(p => p.id !== updatedProject.projectId));
     } else if (updatedProject?.id) {
-      setProjects(prev => prev.map(p => p.id === updatedProject.id ? updatedProject : p));
+      setProjects(prev => {
+        const idx = prev.findIndex(p => p.id === updatedProject.id);
+        if (idx >= 0) {
+          return prev.map(p => p.id === updatedProject.id ? updatedProject : p);
+        }
+        return [updatedProject, ...prev];
+      });
     }
     await loadTasks({ forceRefresh: true });
   };
@@ -602,8 +601,9 @@ export default function TasksPage({ currentUser = 'Henri Jamet' }) {
             </div>
             <div>
               <div className="flex items-center gap-2">
+                {/* ANNOTATION 2 : Titre de section des scrutins épuré */}
                 <h2 className="font-headline-sm text-headline-sm text-forest-deep font-bold">
-                  Démocratie Familiale & Scrutins en cours
+                  Scrutins en cours
                 </h2>
                 {currentVote && (
                   <span className="px-2.5 py-0.5 rounded-full text-xs font-semibold bg-sage-soft text-primary">
@@ -643,7 +643,10 @@ export default function TasksPage({ currentUser = 'Henri Jamet' }) {
           <VoteCardSkeleton />
         ) : currentVote ? (
           <div
-            onClick={() => setIsRoofVoteModalOpen(true)}
+            onClick={() => {
+              setSelectedVoteForModal(currentVote);
+              setIsRoofVoteModalOpen(true);
+            }}
             className="bg-surface-container-low rounded-xl p-space-md border border-subtle hover:shadow-md transition-all cursor-pointer group flex flex-col gap-4"
           >
             <div className="flex flex-col lg:flex-row lg:items-start justify-between gap-space-md">
@@ -952,12 +955,15 @@ export default function TasksPage({ currentUser = 'Henri Jamet' }) {
       {/* 7. MODALES CONNECTÉES                                                     */}
       {/* ========================================================================= */}
 
-      {/* Modale de Vote Unifiée avec Projet Dynamique & ErrorBoundary (Annotation 1) */}
+      {/* Modale de Vote Unifiée avec Projet Dynamique & ErrorBoundary (Annotations 1 & 9) */}
       <VoteRoofModal
         isOpen={isRoofVoteModalOpen}
-        onClose={() => setIsRoofVoteModalOpen(false)}
+        onClose={() => {
+          setIsRoofVoteModalOpen(false);
+          setSelectedVoteForModal(null);
+        }}
         currentUser={currentUser}
-        project={currentVote}
+        project={selectedVoteForModal || currentVote}
         onVoteSubmit={handleVoteRoofSubmit}
       />
 

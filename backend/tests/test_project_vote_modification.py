@@ -9,7 +9,7 @@ if BACKEND_DIR not in sys.path:
 
 from app.main import app
 from app.database import SessionLocal
-from app.models import Project, ProjectVote
+from app.models import Project, ProjectVote, ProjectComment
 
 client = TestClient(app)
 
@@ -151,3 +151,71 @@ def test_vote_on_archived_project_fails_400():
             db.query(ProjectVote).filter(ProjectVote.project_id == proj_id).delete()
             db.query(Project).filter(Project.id == proj_id).delete()
             db.commit()
+
+
+def test_modify_options_or_multiple_choices_resets_votes():
+    """Verify that updating options or allow_multiple_choices wipes existing votes and notifies."""
+    with SessionLocal() as db:
+        project = Project(
+            property_id=1,
+            title="Scrutin Toiture Test Options Reset",
+            description="Test de réinitialisation si options changées",
+            estimated_cost=2500.0,
+            category="Travaux",
+            priority="HAUTE",
+            submitted_by="Henri",
+            status="EN_VOTE",
+            options='["Devis 1", "Devis 2"]',
+            allow_multiple_choices=False
+        )
+        db.add(project)
+        db.commit()
+        db.refresh(project)
+        proj_id = project.id
+
+    try:
+        # 1. Deux associés votent
+        r1 = client.post(f"/api/projects/{proj_id}/vote", json={"user_name": "Henri", "vote": "Devis 1"})
+        assert r1.status_code == 200
+        r2 = client.post(f"/api/projects/{proj_id}/vote", json={"user_name": "Joséphine", "vote": "Devis 2"})
+        assert r2.status_code == 200
+
+        with SessionLocal() as db:
+            votes = db.query(ProjectVote).filter(ProjectVote.project_id == proj_id).all()
+            assert len(votes) == 2
+
+        # 2. Modification des options (ajout de Devis 3) via /review
+        review_resp = client.patch(
+            f"/api/projects/{proj_id}/review",
+            json={
+                "options": ["Devis 1", "Devis 2", "Devis 3 (Artisan Martin)"],
+                "allow_multiple_choices": True
+            }
+        )
+        assert review_resp.status_code == 200
+        data = review_resp.json()
+
+        # 3. Vérifier que les votes ont été réinitialisés à 0
+        assert len(data.get("votes", [])) == 0
+        assert data.get("options_counts", {}).get("Devis 1", 0) == 0
+        assert data.get("options_counts", {}).get("Devis 2", 0) == 0
+
+        with SessionLocal() as db:
+            votes_in_db = db.query(ProjectVote).filter(ProjectVote.project_id == proj_id).all()
+            assert len(votes_in_db) == 0
+
+            # Vérifier qu'un commentaire système de notification a été inséré
+            sys_comment = db.query(ProjectComment).filter(
+                ProjectComment.project_id == proj_id,
+                ProjectComment.author_name == "Système"
+            ).first()
+            assert sys_comment is not None
+            assert "modifié" in sys_comment.content
+            assert "réinitialisés" in sys_comment.content
+    finally:
+        with SessionLocal() as db:
+            db.query(ProjectVote).filter(ProjectVote.project_id == proj_id).delete()
+            db.query(ProjectComment).filter(ProjectComment.project_id == proj_id).delete()
+            db.query(Project).filter(Project.id == proj_id).delete()
+            db.commit()
+
