@@ -1,5 +1,6 @@
 import os
 import hashlib
+import mimetypes
 import json
 import shutil
 import uuid
@@ -1762,7 +1763,7 @@ def list_projects(
     status_filter: Optional[str] = Query(None, alias="status"),
     db: Session = Depends(get_db)
 ):
-    response.headers["Cache-Control"] = "private, max-age=5, stale-while-revalidate=30"
+    response.headers["Cache-Control"] = "public, s-maxage=5, stale-while-revalidate=30"
     query = db.query(Project)
     if property_id:
         query = query.filter(Project.property_id == property_id)
@@ -2720,7 +2721,7 @@ def list_tasks(
     property_id: Optional[int] = Query(None),
     db: Session = Depends(get_db)
 ):
-    response.headers["Cache-Control"] = "private, max-age=5, stale-while-revalidate=30"
+    response.headers["Cache-Control"] = "public, s-maxage=5, stale-while-revalidate=30"
     query = db.query(Task)
 
     if priority and priority not in ["Toutes", "ALL"]:

@@ -209,10 +209,41 @@ export function invalidateApiCache(prefixOrKey = '') {
 }
 
 /**
- * Exécute un fetch avec déduplication des requêtes en vol et mise en cache SWR.
+ * Exécute un fetch avec déduplication des requêtes en vol et mise en cache SWR véritable.
+ * Si les données sont en cache et qu'aucun forceRefresh n'est demandé :
+ * - Retourne instantanément la donnée en cache (< 1ms).
+ * - Déclenche une revalidation silencieuse en arrière-plan sans bloquer l'UI.
  */
 export async function swrFetch(cacheKey, fetcher, options = {}) {
-  // Déduplication : si une requête identique est déjà en vol AU MÊME INSTANT t, mutualiser la Promise
+  const forceRefresh = options?.forceRefresh === true;
+
+  // 1. SWR instantané : si données en cache et pas de rafraîchissement forcé
+  if (!forceRefresh) {
+    const cached = getCachedData(cacheKey);
+    if (cached !== null && cached !== undefined) {
+      // Revalidation silencieuse en arrière-plan si aucune requête identique n'est déjà en vol
+      if (!inFlightRequests.has(cacheKey)) {
+        const bgPromise = (async () => {
+          try {
+            const fresh = await fetcher();
+            if (fresh !== undefined && fresh !== null) {
+              setCachedData(cacheKey, fresh, options.ttl || 120000);
+            }
+            return fresh;
+          } catch (_) {
+            // Erreur silencieuse en arrière-plan, la donnée en cache reste valide
+            return cached;
+          } finally {
+            inFlightRequests.delete(cacheKey);
+          }
+        })();
+        inFlightRequests.set(cacheKey, bgPromise);
+      }
+      return cached;
+    }
+  }
+
+  // 2. Déduplication : si une requête identique est déjà en vol AU MÊME INSTANT t, mutualiser la Promise
   if (inFlightRequests.has(cacheKey)) {
     return inFlightRequests.get(cacheKey);
   }
