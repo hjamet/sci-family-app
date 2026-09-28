@@ -2,7 +2,17 @@ import React, { useState, useRef, useEffect } from 'react';
 import DocumentViewerModal from '../DocumentViewerModal';
 import UploadDocumentModal from '../UploadDocumentModal';
 
-export const CHAT_ALLOWED_EMOJIS = ['👍', '❤️', '👏', '🎉', '👀', '✅', '🔥', '🙏'];
+/**
+ * Palette riche d'émojis universels pour le chat familial et les réactions (Annotation 10) :
+ * Réactions universelles expressives et élégantes
+ */
+export const CHAT_EMOJI_PALETTE = [
+  '👍', '❤️', '🎉', '👏', '🔥', '🤔',
+  '🚀', '💡', '😂', '🏠', '🌿', '🏊',
+  '❄️', '✅', '⚠️', '☕', '🙏', '🤝'
+];
+
+export const CHAT_ALLOWED_EMOJIS = CHAT_EMOJI_PALETTE;
 
 /**
  * Extraction pure du prénom sans titres ni suffixes.
@@ -192,6 +202,9 @@ export default function FamilyChat({
 }) {
   const [inputText, setInputText] = useState('');
   const [activeEmojiPickerMsgId, setActiveEmojiPickerMsgId] = useState(null);
+  const [isInputEmojiPickerOpen, setIsInputEmojiPickerOpen] = useState(false);
+  const inputEmojiPickerRef = useRef(null);
+  const lastSelectionRef = useRef({ start: 0, end: 0 });
 
   // Visionneuse universelle et upload intégrés (Annotation 10 & 11)
   const [isChatUploadModalOpen, setIsChatUploadModalOpen] = useState(false);
@@ -285,16 +298,23 @@ export default function FamilyChat({
     return () => document.removeEventListener('mousedown', handleOutsideClick);
   }, []);
 
-  // Fermer le popover emoji si on clique ailleurs
+  // Fermer les popovers emoji si on clique ailleurs
   useEffect(() => {
     const handleOutsideClick = (e) => {
       if (activeEmojiPickerMsgId && !e.target.closest('.emoji-popover-container')) {
         setActiveEmojiPickerMsgId(null);
       }
+      if (
+        isInputEmojiPickerOpen &&
+        inputEmojiPickerRef.current &&
+        !inputEmojiPickerRef.current.contains(e.target)
+      ) {
+        setIsInputEmojiPickerOpen(false);
+      }
     };
     document.addEventListener('mousedown', handleOutsideClick);
     return () => document.removeEventListener('mousedown', handleOutsideClick);
-  }, [activeEmojiPickerMsgId]);
+  }, [activeEmojiPickerMsgId, isInputEmojiPickerOpen]);
 
   // Détection de frappe de l'arobase
   const checkMentionTrigger = (text, cursorPos) => {
@@ -312,20 +332,23 @@ export default function FamilyChat({
   const handleInputChange = (e) => {
     const text = e.target.value;
     const cursorPos = e.target.selectionStart;
+    lastSelectionRef.current = { start: cursorPos, end: cursorPos };
     setInputText(text);
     checkMentionTrigger(text, cursorPos);
   };
 
   const handleInputKeyUp = (e) => {
+    const cursorPos = textareaRef.current ? textareaRef.current.selectionStart : inputText.length;
+    lastSelectionRef.current = { start: cursorPos, end: cursorPos };
     if (isMentionMenuOpen && ['ArrowDown', 'ArrowUp', 'Enter', 'Tab', 'Escape'].includes(e.key)) {
       return;
     }
-    const cursorPos = textareaRef.current ? textareaRef.current.selectionStart : inputText.length;
     checkMentionTrigger(inputText, cursorPos);
   };
 
   const handleInputClick = () => {
     const cursorPos = textareaRef.current ? textareaRef.current.selectionStart : inputText.length;
+    lastSelectionRef.current = { start: cursorPos, end: cursorPos };
     checkMentionTrigger(inputText, cursorPos);
   };
 
@@ -388,6 +411,12 @@ export default function FamilyChat({
       }
     }
 
+    if (e.key === 'Escape' && isInputEmojiPickerOpen) {
+      e.preventDefault();
+      setIsInputEmojiPickerOpen(false);
+      return;
+    }
+
     if (e.key === 'Enter' && !e.shiftKey) {
       e.preventDefault();
       handleSubmit(e);
@@ -412,6 +441,42 @@ export default function FamilyChat({
       onAddReaction(messageId, emoji);
     }
     setActiveEmojiPickerMsgId(null);
+  };
+
+  // Insertion d'un émoji dans le champ texte à la position du curseur (Annotation 10)
+  const handleInsertEmoji = (emoji) => {
+    const textarea = textareaRef.current;
+    let start = lastSelectionRef.current.start;
+    let end = lastSelectionRef.current.end;
+
+    if (textarea && typeof textarea.selectionStart === 'number' && document.activeElement === textarea) {
+      start = textarea.selectionStart;
+      end = textarea.selectionEnd;
+    }
+
+    if (typeof start !== 'number' || start < 0 || start > inputText.length) start = inputText.length;
+    if (typeof end !== 'number' || end < start || end > inputText.length) end = start;
+
+    const textBefore = inputText.slice(0, start);
+    const textAfter = inputText.slice(end);
+
+    const spaceBefore = textBefore.length > 0 && !textBefore.endsWith(' ') ? ' ' : '';
+    const spaceAfter = textAfter.startsWith(' ') ? '' : ' ';
+    const inserted = `${spaceBefore}${emoji}${spaceAfter}`;
+
+    const newText = textBefore + inserted + textAfter;
+    setInputText(newText);
+    setIsInputEmojiPickerOpen(false);
+
+    const newCursorPos = textBefore.length + inserted.length;
+    lastSelectionRef.current = { start: newCursorPos, end: newCursorPos };
+
+    requestAnimationFrame(() => {
+      if (textarea) {
+        textarea.focus();
+        textarea.setSelectionRange(newCursorPos, newCursorPos);
+      }
+    });
   };
 
   return (
@@ -556,20 +621,22 @@ export default function FamilyChat({
                               +
                             </button>
 
-                            {/* Popover flottant des 8 emojis */}
+                            {/* Popover flottant de la palette d'émojis */}
                             {activeEmojiPickerMsgId === msg.id && (
-                              <div className="absolute left-0 bottom-8 z-30 bg-white shadow-xl border border-slate-200 rounded-xl p-1.5 flex gap-1 animate-in zoom-in-95 duration-100">
-                                {CHAT_ALLOWED_EMOJIS.map((emoji) => (
-                                  <button
-                                    key={emoji}
-                                    type="button"
-                                    onClick={() => handleEmojiSelect(msg.id, emoji)}
-                                    className="p-1 hover:bg-emerald-50 rounded text-base cursor-pointer transition-transform hover:scale-125"
-                                    title={emoji}
-                                  >
-                                    {emoji}
-                                  </button>
-                                ))}
+                              <div className="absolute left-0 bottom-8 z-30 bg-white dark:bg-slate-900 shadow-xl border border-slate-200 dark:border-slate-800 rounded-2xl p-2 w-56 sm:w-60 animate-in zoom-in-95 duration-100">
+                                <div className="grid grid-cols-6 gap-1">
+                                  {CHAT_ALLOWED_EMOJIS.map((emoji) => (
+                                    <button
+                                      key={emoji}
+                                      type="button"
+                                      onClick={() => handleEmojiSelect(msg.id, emoji)}
+                                      className="w-8 h-8 flex items-center justify-center hover:bg-emerald-50 dark:hover:bg-slate-800 rounded-lg text-base cursor-pointer transition-transform hover:scale-125"
+                                      title={emoji}
+                                    >
+                                      {emoji}
+                                    </button>
+                                  ))}
+                                </div>
                               </div>
                             )}
                           </div>
@@ -659,6 +726,12 @@ export default function FamilyChat({
             onChange={handleInputChange}
             onKeyUp={handleInputKeyUp}
             onClick={handleInputClick}
+            onSelect={(e) => {
+              lastSelectionRef.current = {
+                start: e.target.selectionStart,
+                end: e.target.selectionEnd,
+              };
+            }}
             disabled={disabled}
             placeholder={placeholder}
             className="w-full bg-canvas-slate rounded-xl p-2.5 sm:p-3 text-xs sm:text-sm text-on-surface placeholder:text-outline border border-slate-300 focus:border-emerald-600 focus:ring-1 focus:ring-emerald-600 shadow-inner resize-none outline-none disabled:opacity-50"
@@ -703,14 +776,53 @@ export default function FamilyChat({
               @
             </button>
 
-            <button
-              type="button"
-              onClick={() => setInputText((prev) => prev + (prev.length > 0 && !prev.endsWith(' ') ? ' ' : '') + '👍 ')}
-              className="w-8 h-8 flex items-center justify-center rounded-lg bg-white text-slate-500 hover:text-emerald-800 hover:bg-sage-soft transition-colors border border-slate-200 cursor-pointer"
-              title="Ajouter un emoji"
-            >
-              <span className="material-symbols-outlined text-[18px]">sentiment_satisfied</span>
-            </button>
+            {/* Bouton et popover d'émojis variés (Annotation 10) */}
+            <div className="relative inline-block input-emoji-picker-container" ref={inputEmojiPickerRef}>
+              <button
+                type="button"
+                onClick={() => setIsInputEmojiPickerOpen((prev) => !prev)}
+                className={`w-8 h-8 flex items-center justify-center rounded-lg transition-colors border cursor-pointer ${
+                  isInputEmojiPickerOpen
+                    ? 'bg-emerald-50 text-emerald-800 border-emerald-300 ring-1 ring-emerald-300'
+                    : 'bg-white text-slate-500 hover:text-emerald-800 hover:bg-sage-soft border-slate-200'
+                }`}
+                title="Ajouter un emoji"
+                aria-expanded={isInputEmojiPickerOpen}
+                aria-label="Ajouter un emoji"
+              >
+                <span className="material-symbols-outlined text-[18px]">sentiment_satisfied</span>
+              </button>
+
+              {/* Popover compact d'émojis riches */}
+              {isInputEmojiPickerOpen && (
+                <div
+                  className="absolute bottom-full left-0 mb-2 w-64 p-2 bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-2xl shadow-xl z-50 animate-in fade-in zoom-in-95 duration-150"
+                  role="dialog"
+                  aria-label="Palette d'émojis"
+                >
+                  <div className="px-1.5 pb-1.5 mb-1.5 border-b border-slate-100 dark:border-slate-800 flex items-center justify-between text-[11px] font-semibold text-slate-500 dark:text-slate-400 select-none">
+                    <span className="flex items-center gap-1">
+                      <span>✨</span>
+                      <span>Émojis</span>
+                    </span>
+                    <span className="text-[10px] text-slate-400 font-normal">18 réactions</span>
+                  </div>
+                  <div className="grid grid-cols-6 gap-1">
+                    {CHAT_EMOJI_PALETTE.map((emoji) => (
+                      <button
+                        key={emoji}
+                        type="button"
+                        onClick={() => handleInsertEmoji(emoji)}
+                        className="w-9 h-9 flex items-center justify-center rounded-xl hover:bg-emerald-50 dark:hover:bg-slate-800 text-lg cursor-pointer transition-transform hover:scale-125 active:scale-95"
+                        title={emoji}
+                      >
+                        {emoji}
+                      </button>
+                    ))}
+                  </div>
+                </div>
+              )}
+            </div>
           </div>
 
           <button
