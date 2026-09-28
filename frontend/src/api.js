@@ -386,7 +386,7 @@ export async function createProject(data) {
   return res.json();
 }
 
-export async function reviewProject(projectId, data) {
+export async function updateProject(projectId, data) {
   const res = await fetch(`${API_BASE}/projects/${projectId}/review`, {
     method: 'PATCH',
     headers: getAuthJsonHeaders(),
@@ -394,10 +394,14 @@ export async function reviewProject(projectId, data) {
   });
   if (!res.ok) {
     const err = await res.json().catch(() => ({}));
-    throw new Error(err.detail || 'Erreur lors de la révision du projet');
+    throw new Error(err.detail || 'Erreur lors de la mise à jour du projet');
   }
   invalidateApiCache('projects');
   return res.json();
+}
+
+export async function reviewProject(projectId, data) {
+  return updateProject(projectId, data);
 }
 
 export async function updateProjectCost(projectId, estimatedCost, coordinatorNotes) {

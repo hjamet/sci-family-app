@@ -15,6 +15,7 @@ import VoteRoofModal from './VoteRoofModal';
 import { CardSkeleton, TasksContainerSkeleton, VoteCardSkeleton } from './SkeletonLoaders';
 import CustomSelect from './CustomSelect';
 import TaskCard from './common/TaskCard';
+import WhatsAppPollView from './common/WhatsAppPollView';
 
 const AUTHENTIC_ASSOCIATES = [
   { id: 'all', name: 'Tous les associés', shortName: 'Tous' },
@@ -231,8 +232,13 @@ export default function TasksPage({ currentUser = 'Henri Jamet' }) {
     await loadTasks();
   };
 
-  const handleVoteRoofSubmit = async () => {
-    await loadTasks();
+  const handleVoteRoofSubmit = async (updatedProject) => {
+    if (updatedProject?.deleted) {
+      setProjects(prev => prev.filter(p => p.id !== updatedProject.projectId));
+    } else if (updatedProject?.id) {
+      setProjects(prev => prev.map(p => p.id === updatedProject.id ? updatedProject : p));
+    }
+    await loadTasks({ forceRefresh: true });
   };
 
   const userMeta = useMemo(() => resolveUserMeta(currentUser), [currentUser]);
@@ -638,19 +644,16 @@ export default function TasksPage({ currentUser = 'Henri Jamet' }) {
         ) : currentVote ? (
           <div
             onClick={() => setIsRoofVoteModalOpen(true)}
-            className="bg-surface-container-low rounded-lg p-space-md border border-subtle hover:shadow-md transition-all cursor-pointer group"
+            className="bg-surface-container-low rounded-xl p-space-md border border-subtle hover:shadow-md transition-all cursor-pointer group flex flex-col gap-4"
           >
-            <div className="flex flex-col lg:flex-row lg:items-start justify-between gap-space-md mb-space-sm">
+            <div className="flex flex-col lg:flex-row lg:items-start justify-between gap-space-md">
               <div className="space-y-1.5 flex-1">
                 <div className="flex flex-wrap items-center gap-2">
-                  <span className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full bg-amber-soft text-amber-rich font-label-sm text-label-sm font-semibold">
-                    <span className="w-2 h-2 rounded-full bg-amber-rich animate-pulse"></span>
-                    {currentVote.badgeStatus}
+                  <span className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full bg-slate-100 dark:bg-slate-800 text-slate-700 dark:text-slate-300 font-label-sm text-xs font-semibold border border-slate-200 dark:border-slate-700">
+                    <span className="w-2 h-2 rounded-full bg-emerald-500 animate-pulse"></span>
+                    {currentVote.status === 'EN_VOTE' ? 'Scrutin ouvert' : (currentVote.status === 'SOUMIS' ? 'En délibération' : (currentVote.badgeStatus || 'Consultation'))}
                   </span>
-                  <span className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full bg-surface-container-lowest text-forest-deep font-label-sm text-label-sm font-semibold border border-subtle">
-                    <span className="material-symbols-outlined text-[16px] text-primary">account_balance_wallet</span>
-                    {currentVote.budgetText}
-                  </span>
+                  {/* Annotation 7 : Mention budget purgée */}
                 </div>
                 <h3 className="font-headline-sm text-headline-sm text-forest-deep pt-1 font-bold group-hover:text-primary transition-colors">
                   {currentVote.title}
@@ -671,43 +674,15 @@ export default function TasksPage({ currentUser = 'Henri Jamet' }) {
               </div>
             </div>
 
-            {/* Multi-segmented Progress Bar */}
-            <div className="w-full h-3 bg-surface-container-highest rounded-full overflow-hidden flex my-2">
-              <div className="h-full bg-primary transition-all duration-500" style={{ width: currentVote.pourWidth }} title="Pour"></div>
-              <div className="h-full bg-amber-rich transition-all duration-500" style={{ width: currentVote.abstentionWidth }} title="Abstention"></div>
-              <div className="h-full bg-purple-700 transition-all duration-500" style={{ width: currentVote.reportAgWidth }} title="Report AG"></div>
-              <div className="h-full bg-error transition-all duration-500" style={{ width: currentVote.contreWidth }} title="Contre"></div>
-              <div className="h-full bg-outline-variant transition-all duration-500" style={{ width: currentVote.attenteWidth }} title="En attente"></div>
-            </div>
-
-            {/* Detailed Voter Breakdown */}
-            <div className="flex flex-wrap items-center justify-between text-[12px] text-on-surface-variant pt-1 pb-space-sm">
-              <div className="flex items-center gap-4 flex-wrap">
-                <span className="flex items-center gap-1.5 font-medium text-forest-deep">
-                  <span className="w-2.5 h-2.5 rounded-full bg-primary"></span>
-                  {currentVote.pourLabel}
-                </span>
-                {currentVote.hasContre && (
-                  <span className="flex items-center gap-1.5 font-medium text-rose-700">
-                    <span className="w-2.5 h-2.5 rounded-full bg-rose-600"></span>
-                    {currentVote.contreLabel}
-                  </span>
-                )}
-                <span className="flex items-center gap-1.5 font-medium text-amber-rich">
-                  <span className="w-2.5 h-2.5 rounded-full bg-amber-rich"></span>
-                  {currentVote.abstentionLabel}
-                </span>
-                <span className="flex items-center gap-1.5 font-medium text-purple-800">
-                  <span className="w-2.5 h-2.5 rounded-full bg-purple-700"></span>
-                  {currentVote.reportAgLabel}
-                </span>
-                <span className="flex items-center gap-1.5 text-on-surface-variant">
-                  <span className="w-2.5 h-2.5 rounded-full bg-outline-variant"></span>
-                  {currentVote.attenteLabel}
-                </span>
-              </div>
-              <span className="text-xs italic">{currentVote.deadline}</span>
-            </div>
+            {/* Rendu dynamique du sondage WhatsApp */}
+            <WhatsAppPollView
+              project={currentVote}
+              currentUser={currentUser}
+              compact={true}
+              onCastVote={() => setIsRoofVoteModalOpen(true)}
+              showPendingVoters={true}
+              showQuorumNotice={false}
+            />
 
             {/* Card Footer: Reporter and Action Buttons */}
             <div className="border-t border-subtle pt-space-sm flex flex-col sm:flex-row sm:items-center justify-between gap-space-sm">

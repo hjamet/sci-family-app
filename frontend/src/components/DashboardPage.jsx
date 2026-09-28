@@ -18,6 +18,7 @@ import TaskDetailModal from './TaskDetailModal';
 import VoteRoofModal from './VoteRoofModal';
 import BookingModal from './BookingModal';
 import TaskCard from './common/TaskCard';
+import WhatsAppPollView from './common/WhatsAppPollView';
 import { extractParticipants } from '../pages/CalendarPage';
 import { VoteCardSkeleton, CompactStaySkeleton, CardSkeleton } from './SkeletonLoaders';
 import {
@@ -658,80 +659,31 @@ export default function DashboardPage({
         ) : activeVote ? (
           <article
             onClick={() => setIsRoofVoteModalOpen(true)}
-            className="bg-white rounded-xl p-space-md border border-outline-variant/30 flex flex-col gap-4 shadow-sm hover:shadow-md transition-all cursor-pointer group"
+            className="bg-white dark:bg-slate-900 rounded-xl p-space-md border border-outline-variant/30 flex flex-col gap-4 shadow-sm hover:shadow-md transition-all cursor-pointer group"
           >
-            <div>
-              <h3 className="font-headline-md text-base sm:text-headline-sm font-bold text-forest-deep group-hover:text-primary transition-colors">
-                {activeVote.title}
-              </h3>
-              <p className="font-body-md text-on-surface-variant text-xs sm:text-sm leading-relaxed mt-1">
-                {activeVote.description}
-              </p>
+            <div className="flex flex-col sm:flex-row sm:items-start justify-between gap-2">
+              <div>
+                <h3 className="font-headline-md text-base sm:text-headline-sm font-bold text-forest-deep group-hover:text-primary transition-colors">
+                  {activeVote.title}
+                </h3>
+                <p className="font-body-md text-on-surface-variant text-xs sm:text-sm leading-relaxed mt-1">
+                  {activeVote.description}
+                </p>
+              </div>
+              <span className="self-start px-2.5 py-0.5 rounded-full bg-slate-100 dark:bg-slate-800 text-slate-700 dark:text-slate-300 border border-slate-200 dark:border-slate-700 text-xs font-semibold shrink-0">
+                {activeVote.status === 'EN_VOTE' ? 'Scrutin ouvert' : (activeVote.status === 'SOUMIS' ? 'En délibération' : (activeVote.status || 'Initiative'))}
+              </span>
             </div>
 
-            {/* Participation bar */}
-            <div className="bg-canvas-slate rounded-DEFAULT p-space-sm border border-outline-variant/30 space-y-2">
-              <div className="flex items-center justify-between text-xs">
-                <span className="font-bold text-forest-deep flex items-center gap-1.5">
-                  <span className="material-symbols-outlined text-[16px] text-primary">poll</span>
-                  Participation : {activeVoteCastCount}/7 voix exprimées ({Math.round((activeVoteCastCount / 7) * 100)}%)
-                </span>
-                <span className={`font-bold ${activeVoteReportAg.length > 0 ? 'text-purple-700' : 'text-primary'}`}>
-                  {activeVoteReportAg.length > 0
-                    ? 'Débat en AG sollicité'
-                    : (activeVotePour.length >= 4 ? 'Majorité qualifiée acquise' : 'En cours d\'instruction')}
-                </span>
-              </div>
-
-              <div className="w-full h-2.5 rounded-full bg-surface-container overflow-hidden flex">
-                <div 
-                  className="bg-primary h-full transition-all duration-500" 
-                  style={{ width: `${Math.round((activeVotePour.length / 7) * 100)}%` }} 
-                  title="Pour"
-                ></div>
-                <div 
-                  className="bg-amber-rich h-full transition-all duration-500" 
-                  style={{ width: `${Math.round((activeVoteAbs.length / 7) * 100)}%` }} 
-                  title="Abstention"
-                ></div>
-                <div 
-                  className="bg-purple-700 h-full transition-all duration-500" 
-                  style={{ width: `${Math.round((activeVoteReportAg.length / 7) * 100)}%` }} 
-                  title="Report AG"
-                ></div>
-                <div 
-                  className="bg-error h-full transition-all duration-500" 
-                  style={{ width: `${Math.round((activeVoteContre.length / 7) * 100)}%` }} 
-                  title="Contre"
-                ></div>
-              </div>
-
-              <div className="flex flex-wrap items-center justify-between gap-2 text-xs text-on-surface-variant pt-1">
-                <div className="flex flex-wrap items-center gap-3">
-                  <span className="flex items-center gap-1.5 font-medium">
-                    <span className="w-2 h-2 rounded-full bg-primary inline-block"></span>
-                    {activeVotePour.length} Pour
-                  </span>
-                  {activeVoteContre.length > 0 && (
-                    <span className="flex items-center gap-1.5 font-medium text-rose-700">
-                      <span className="w-2 h-2 rounded-full bg-rose-600 inline-block"></span>
-                      {activeVoteContre.length} Contre
-                    </span>
-                  )}
-                  <span className="flex items-center gap-1.5 font-medium">
-                    <span className="w-2 h-2 rounded-full bg-amber-rich inline-block"></span>
-                    {activeVoteAbs.length} Abstention
-                  </span>
-                  <span className="flex items-center gap-1.5 font-medium text-purple-800">
-                    <span className="w-2 h-2 rounded-full bg-purple-700 inline-block"></span>
-                    {activeVoteReportAg.length} Report AG
-                  </span>
-                </div>
-                <span className="italic text-on-surface-variant/80">
-                  {activeVotePendingCount} en attente
-                </span>
-              </div>
-            </div>
+            {/* Rendu dynamique du sondage WhatsApp */}
+            <WhatsAppPollView
+              project={activeVote}
+              currentUser={currentUser}
+              compact={true}
+              onCastVote={() => setIsRoofVoteModalOpen(true)}
+              showPendingVoters={true}
+              showQuorumNotice={true}
+            />
 
             <div className="pt-2 border-t border-outline-variant/20 flex flex-col sm:flex-row sm:items-center justify-between gap-3">
               <div className="flex items-center gap-2">
@@ -750,7 +702,7 @@ export default function DashboardPage({
                     e.stopPropagation();
                     setIsRoofVoteModalOpen(true);
                   }}
-                  className="inline-flex items-center gap-1.5 px-5 py-2.5 rounded-DEFAULT bg-white border-2 border-primary text-primary font-label-sm text-xs font-bold hover:bg-sage-soft transition-colors shadow-sm cursor-pointer"
+                  className="inline-flex items-center gap-1.5 px-5 py-2.5 rounded-DEFAULT bg-white dark:bg-slate-800 border-2 border-primary text-primary font-label-sm text-xs font-bold hover:bg-sage-soft transition-colors shadow-sm cursor-pointer"
                 >
                   <span className="material-symbols-outlined text-[18px]">how_to_vote</span>
                   Participer au vote
@@ -1025,7 +977,12 @@ export default function DashboardPage({
         onClose={() => setIsRoofVoteModalOpen(false)}
         currentUser={currentUser}
         project={activeVote}
-        onVoteSubmit={() => {
+        onVoteSubmit={(updatedProject) => {
+          if (updatedProject?.deleted) {
+            setProjects(prev => prev.filter(p => p.id !== updatedProject.projectId));
+          } else if (updatedProject?.id) {
+            setProjects(prev => prev.map(p => p.id === updatedProject.id ? updatedProject : p));
+          }
           loadDashboardData({ forceRefresh: true });
         }}
       />

@@ -425,6 +425,8 @@ class ProjectApprove(BaseModel):
     responsible: Optional[str] = None
 
 class ProjectReview(BaseModel):
+    title: Optional[str] = None
+    description: Optional[str] = None
     status: Optional[str] = None  # EN_VOTE, APPROUVE, REFUSE, EN_COURS, TERMINE, REPORT_AG, EN_ATTENTE_VALIDATION, ARCHIVEE
     decision_mode: Optional[str] = None  # VALIDER_DIRECTEMENT ou SOUMETTRE_AU_VOTE
     classification: Optional[str] = None  # SIGNALEMENT vs INITIATIVE

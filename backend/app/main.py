@@ -1899,6 +1899,10 @@ def review_project(project_id: int, review: ProjectReview, db: Session = Depends
 
     old_status = db_proj.status
 
+    if review.title is not None and review.title.strip():
+        db_proj.title = review.title.strip()
+    if review.description is not None:
+        db_proj.description = review.description.strip()
     if review.status is not None:
         db_proj.status = review.status
     if review.decision_mode is not None:

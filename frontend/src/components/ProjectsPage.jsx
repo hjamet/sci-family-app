@@ -690,7 +690,12 @@ export default function ProjectsPage({ properties, currentUser }) {
         onClose={() => setIsRoofVoteModalOpen(false)}
         currentUser={currentUser}
         project={activeVoteProject || projects[0]}
-        onVoteSubmit={async () => {
+        onVoteSubmit={async (updatedProject) => {
+          if (updatedProject?.deleted) {
+            setProjects(prev => prev.filter(p => p.id !== updatedProject.projectId));
+          } else if (updatedProject?.id) {
+            setProjects(prev => prev.map(p => p.id === updatedProject.id ? updatedProject : p));
+          }
           await loadProjects();
         }}
       />
