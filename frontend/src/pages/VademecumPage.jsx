@@ -1362,43 +1362,36 @@ export default function VademecumPage({ properties, currentUser, reservations = 
                   </div>
 
                   {/* 2. Température à l'arrêt (Hors-gel / Maintien) */}
-                  <div className="p-3.5 bg-white dark:bg-slate-900 rounded-xl border border-border-subtle flex flex-col gap-2 shadow-2xs">
-                    <div className="flex items-center justify-between gap-2">
-                      <div className="flex items-center gap-2.5 min-w-0 pr-1">
-                        <div className="w-8 h-8 rounded-lg bg-sky-50 dark:bg-sky-950/50 text-sky-700 dark:text-sky-300 flex items-center justify-center shrink-0">
-                          <span className="material-symbols-outlined text-[20px]">ac_unit</span>
-                        </div>
-                        <div className="flex flex-col min-w-0">
-                          <span className="text-xs font-bold text-on-surface leading-tight">À l'arrêt</span>
-                          <span className="text-[10px] text-on-surface-variant">Hors-gel & maintien bâtiment</span>
-                        </div>
+                  <div className="p-3.5 bg-white dark:bg-slate-900 rounded-xl border border-border-subtle flex items-center justify-between gap-2 shadow-2xs">
+                    <div className="flex items-center gap-2.5 min-w-0 pr-1">
+                      <div className="w-8 h-8 rounded-lg bg-sky-50 dark:bg-sky-950/50 text-sky-700 dark:text-sky-300 flex items-center justify-center shrink-0">
+                        <span className="material-symbols-outlined text-[20px]">ac_unit</span>
                       </div>
-                      <div className="flex items-center gap-1.5 shrink-0 bg-canvas-slate p-1 rounded-full border border-border-subtle">
-                        <button
-                          aria-label="Diminuer consigne hors-gel"
-                          className="w-7 h-7 rounded-full bg-white dark:bg-slate-800 border border-outline-variant hover:bg-surface-container flex items-center justify-center text-on-surface active:scale-95 transition-transform shadow-2xs cursor-pointer"
-                          type="button"
-                          onClick={() => handleHeatingFrostChange(-0.5)}
-                        >
-                          <span className="material-symbols-outlined text-[15px]">remove</span>
-                        </button>
-                        <span className="font-headline-md text-sm sm:text-base text-sky-800 dark:text-sky-300 font-bold tabular-nums w-12 text-center">
-                          {heatingFrostTarget.toFixed(1)}<span className="text-xs text-outline font-normal">°C</span>
-                        </span>
-                        <button
-                          aria-label="Augmenter consigne hors-gel"
-                          className="w-7 h-7 rounded-full bg-sky-700 text-white hover:bg-sky-800 flex items-center justify-center font-bold active:scale-95 transition-transform shadow-2xs cursor-pointer"
-                          type="button"
-                          onClick={() => handleHeatingFrostChange(0.5)}
-                        >
-                          <span className="material-symbols-outlined text-[15px]">add</span>
-                        </button>
+                      <div className="flex flex-col min-w-0">
+                        <span className="text-xs font-bold text-on-surface leading-tight">À l'arrêt</span>
+                        <span className="text-[10px] text-on-surface-variant">Hors-gel & maintien bâtiment</span>
                       </div>
                     </div>
-                    {/* Callout de protection permanente */}
-                    <div className="flex items-center gap-1.5 px-2.5 py-1 rounded-lg bg-sky-50/90 dark:bg-sky-950/40 border border-sky-200/60 text-[11px] text-sky-800 dark:text-sky-200 font-medium">
-                      <span>🛡️</span>
-                      <span>Sécurité hors-gel permanente active (protection continue des canalisations).</span>
+                    <div className="flex items-center gap-1.5 shrink-0 bg-canvas-slate p-1 rounded-full border border-border-subtle">
+                      <button
+                        aria-label="Diminuer consigne hors-gel"
+                        className="w-7 h-7 rounded-full bg-white dark:bg-slate-800 border border-outline-variant hover:bg-surface-container flex items-center justify-center text-on-surface active:scale-95 transition-transform shadow-2xs cursor-pointer"
+                        type="button"
+                        onClick={() => handleHeatingFrostChange(-0.5)}
+                      >
+                        <span className="material-symbols-outlined text-[15px]">remove</span>
+                      </button>
+                      <span className="font-headline-md text-sm sm:text-base text-sky-800 dark:text-sky-300 font-bold tabular-nums w-12 text-center">
+                        {heatingFrostTarget.toFixed(1)}<span className="text-xs text-outline font-normal">°C</span>
+                      </span>
+                      <button
+                        aria-label="Augmenter consigne hors-gel"
+                        className="w-7 h-7 rounded-full bg-sky-700 text-white hover:bg-sky-800 flex items-center justify-center font-bold active:scale-95 transition-transform shadow-2xs cursor-pointer"
+                        type="button"
+                        onClick={() => handleHeatingFrostChange(0.5)}
+                      >
+                        <span className="material-symbols-outlined text-[15px]">add</span>
+                      </button>
                     </div>
                   </div>
                 </div>
@@ -1565,43 +1558,36 @@ export default function VademecumPage({ properties, currentUser, reservations = 
                   </div>
 
                   {/* 2. Température à l'arrêt (Seuil de veille Vitotronic & Protection cuve) */}
-                  <div className="p-3.5 bg-white dark:bg-slate-900 rounded-xl border border-border-subtle flex flex-col gap-2 shadow-2xs">
-                    <div className="flex items-center justify-between gap-2">
-                      <div className="flex items-center gap-2.5 min-w-0 pr-1">
-                        <div className="w-8 h-8 rounded-lg bg-sky-50 dark:bg-sky-950/50 text-sky-700 dark:text-sky-300 flex items-center justify-center shrink-0">
-                          <span className="material-symbols-outlined text-[20px]">ac_unit</span>
-                        </div>
-                        <div className="flex flex-col min-w-0">
-                          <span className="text-xs font-bold text-on-surface leading-tight">À l'arrêt</span>
-                          <span className="text-[10px] text-on-surface-variant">Seuil de veille Vitotronic (extinction chauffe &amp; protection cuve)</span>
-                        </div>
+                  <div className="p-3.5 bg-white dark:bg-slate-900 rounded-xl border border-border-subtle flex items-center justify-between gap-2 shadow-2xs">
+                    <div className="flex items-center gap-2.5 min-w-0 pr-1">
+                      <div className="w-8 h-8 rounded-lg bg-sky-50 dark:bg-sky-950/50 text-sky-700 dark:text-sky-300 flex items-center justify-center shrink-0">
+                        <span className="material-symbols-outlined text-[20px]">ac_unit</span>
                       </div>
-                      <div className="flex items-center gap-1.5 shrink-0 bg-canvas-slate p-1 rounded-full border border-border-subtle">
-                        <button
-                          aria-label="Diminuer consigne veille eau chaude"
-                          className="w-7 h-7 rounded-full bg-white dark:bg-slate-800 border border-outline-variant hover:bg-surface-container flex items-center justify-center text-on-surface active:scale-95 transition-transform shadow-2xs cursor-pointer"
-                          type="button"
-                          onClick={() => handleDhwFrostChange(-0.5)}
-                        >
-                          <span className="material-symbols-outlined text-[15px]">remove</span>
-                        </button>
-                        <span className="font-headline-md text-sm sm:text-base text-sky-800 dark:text-sky-300 font-bold tabular-nums w-12 text-center">
-                          {dhwFrostTarget.toFixed(1)}<span className="text-xs text-outline font-normal">°C</span>
-                        </span>
-                        <button
-                          aria-label="Augmenter consigne veille eau chaude"
-                          className="w-7 h-7 rounded-full bg-sky-700 text-white hover:bg-sky-800 flex items-center justify-center font-bold active:scale-95 transition-transform shadow-2xs cursor-pointer"
-                          type="button"
-                          onClick={() => handleDhwFrostChange(0.5)}
-                        >
-                          <span className="material-symbols-outlined text-[15px]">add</span>
-                        </button>
+                      <div className="flex flex-col min-w-0">
+                        <span className="text-xs font-bold text-on-surface leading-tight">À l'arrêt</span>
+                        <span className="text-[10px] text-on-surface-variant">Seuil de veille Vitotronic (extinction chauffe &amp; protection cuve)</span>
                       </div>
                     </div>
-                    {/* Callout de protection permanente et plancher de coupure */}
-                    <div className="flex items-center gap-1.5 px-2.5 py-1 rounded-lg bg-sky-50/90 dark:bg-sky-950/40 border border-sky-200/60 text-[11px] text-sky-800 dark:text-sky-200 font-medium">
-                      <span>🛡️</span>
-                      <span>Seuil de veille Vitotronic (extinction chauffe &amp; protection cuve). Plancher de coupure ViCare à 10.0°C.</span>
+                    <div className="flex items-center gap-1.5 shrink-0 bg-canvas-slate p-1 rounded-full border border-border-subtle">
+                      <button
+                        aria-label="Diminuer consigne veille eau chaude"
+                        className="w-7 h-7 rounded-full bg-white dark:bg-slate-800 border border-outline-variant hover:bg-surface-container flex items-center justify-center text-on-surface active:scale-95 transition-transform shadow-2xs cursor-pointer"
+                        type="button"
+                        onClick={() => handleDhwFrostChange(-0.5)}
+                      >
+                        <span className="material-symbols-outlined text-[15px]">remove</span>
+                      </button>
+                      <span className="font-headline-md text-sm sm:text-base text-sky-800 dark:text-sky-300 font-bold tabular-nums w-12 text-center">
+                        {dhwFrostTarget.toFixed(1)}<span className="text-xs text-outline font-normal">°C</span>
+                      </span>
+                      <button
+                        aria-label="Augmenter consigne veille eau chaude"
+                        className="w-7 h-7 rounded-full bg-sky-700 text-white hover:bg-sky-800 flex items-center justify-center font-bold active:scale-95 transition-transform shadow-2xs cursor-pointer"
+                        type="button"
+                        onClick={() => handleDhwFrostChange(0.5)}
+                      >
+                        <span className="material-symbols-outlined text-[15px]">add</span>
+                      </button>
                     </div>
                   </div>
                 </div>
@@ -1725,51 +1711,44 @@ export default function VademecumPage({ properties, currentUser, reservations = 
                 </div>
               )}
 
-              {/* Consigne de baignade (si PAC en marche) OU Mention Hors-gel garanti (si PAC à l'arrêt) (Annotation 1) */}
+              {/* Réglage de la consigne en fonctionnement (sans consigne à l'arrêt) (Annotation 3) */}
               <div className="flex flex-col gap-2.5">
                 <span className="text-[11px] font-bold text-on-surface-variant uppercase tracking-wider block">
-                  Consigne Chauffage Bassin
+                  Réglage de la Consigne
                 </span>
 
-                {isPoolHeatingActive ? (
-                  <div className="p-3.5 bg-white dark:bg-slate-900 rounded-xl border border-border-subtle flex items-center justify-between gap-2 shadow-2xs">
-                    <div className="flex items-center gap-2.5 min-w-0 pr-1">
-                      <div className="w-8 h-8 rounded-lg bg-emerald-50 dark:bg-emerald-950/50 text-emerald-700 dark:text-emerald-300 flex items-center justify-center shrink-0">
-                        <span className="material-symbols-outlined text-[20px]">local_fire_department</span>
-                      </div>
-                      <div className="flex flex-col min-w-0">
-                        <span className="text-xs font-bold text-on-surface leading-tight">Consigne de baignade</span>
-                        <span className="text-[10px] text-on-surface-variant">Chauffe PAC active</span>
-                      </div>
+                <div className="p-3.5 bg-white dark:bg-slate-900 rounded-xl border border-border-subtle flex items-center justify-between gap-2 shadow-2xs">
+                  <div className="flex items-center gap-2.5 min-w-0 pr-1">
+                    <div className="w-8 h-8 rounded-lg bg-emerald-50 dark:bg-emerald-950/50 text-emerald-700 dark:text-emerald-300 flex items-center justify-center shrink-0">
+                      <span className="material-symbols-outlined text-[20px]">pool</span>
                     </div>
-                    <div className="flex items-center gap-1.5 shrink-0 bg-canvas-slate p-1 rounded-full border border-border-subtle">
-                      <button
-                        aria-label="Diminuer consigne piscine"
-                        className="w-7 h-7 rounded-full bg-white dark:bg-slate-800 border border-outline-variant hover:bg-surface-container flex items-center justify-center text-on-surface active:scale-95 transition-transform shadow-2xs cursor-pointer"
-                        type="button"
-                        onClick={() => handlePoolChange(-0.5)}
-                      >
-                        <span className="material-symbols-outlined text-[15px]">remove</span>
-                      </button>
-                      <span className="font-headline-md text-sm sm:text-base text-primary font-bold tabular-nums w-12 text-center">
-                        {poolTarget.toFixed(1)}<span className="text-xs text-outline font-normal">°C</span>
-                      </span>
-                      <button
-                        aria-label="Augmenter consigne piscine"
-                        className="w-7 h-7 rounded-full bg-primary text-white hover:bg-forest-deep flex items-center justify-center font-bold active:scale-95 transition-transform shadow-2xs cursor-pointer"
-                        type="button"
-                        onClick={() => handlePoolChange(0.5)}
-                      >
-                        <span className="material-symbols-outlined text-[15px]">add</span>
-                      </button>
+                    <div className="flex flex-col min-w-0">
+                      <span className="text-xs font-bold text-on-surface leading-tight">Température en fonctionnement</span>
+                      <span className="text-[10px] text-on-surface-variant">Consigne de baignade ({isPoolHeatingActive ? 'actif' : 'prévu'})</span>
                     </div>
                   </div>
-                ) : (
-                  <div className="p-3.5 bg-sky-50/90 dark:bg-sky-950/40 border border-sky-200/60 rounded-xl flex items-center gap-2.5 text-xs text-sky-800 dark:text-sky-200 font-medium shadow-2xs">
-                    <span className="text-base shrink-0">🛡️</span>
-                    <span>Hors-gel garanti par circulation continue Klereo (PAC coupée)</span>
+                  <div className="flex items-center gap-1.5 shrink-0 bg-canvas-slate p-1 rounded-full border border-border-subtle">
+                    <button
+                      aria-label="Diminuer consigne piscine"
+                      className="w-7 h-7 rounded-full bg-white dark:bg-slate-800 border border-outline-variant hover:bg-surface-container flex items-center justify-center text-on-surface active:scale-95 transition-transform shadow-2xs cursor-pointer"
+                      type="button"
+                      onClick={() => handlePoolChange(-0.5)}
+                    >
+                      <span className="material-symbols-outlined text-[15px]">remove</span>
+                    </button>
+                    <span className="font-headline-md text-sm sm:text-base text-primary font-bold tabular-nums w-12 text-center">
+                      {poolTarget.toFixed(1)}<span className="text-xs text-outline font-normal">°C</span>
+                    </span>
+                    <button
+                      aria-label="Augmenter consigne piscine"
+                      className="w-7 h-7 rounded-full bg-primary text-white hover:bg-forest-deep flex items-center justify-center font-bold active:scale-95 transition-transform shadow-2xs cursor-pointer"
+                      type="button"
+                      onClick={() => handlePoolChange(0.5)}
+                    >
+                      <span className="material-symbols-outlined text-[15px]">add</span>
+                    </button>
                   </div>
-                )}
+                </div>
               </div>
 
               {/* Indicators */}
