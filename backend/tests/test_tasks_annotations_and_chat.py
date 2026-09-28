@@ -141,3 +141,57 @@ def test_task_document_upload_and_admin_indexing():
     finally:
         # 7. Nettoyage impératif de la tâche de test
         client.delete(f"/api/tasks/{task_id}")
+
+
+def test_tasks_annotations_v16_archived_chat_and_sync():
+    """Vérifie le respect des annotations UI v16 : chat persistant, eager-loading des commentaires et archivage immédiat."""
+    # 1. Création d'une tâche
+    t_res = client.post("/api/tasks", json={
+        "title": "Tâche v16 Archivage & Chat",
+        "description": "Validation Annotation 1 et 5",
+        "subject": "Presbytère",
+        "category": "Maintenance",
+        "created_by": "Henri"
+    })
+    assert t_res.status_code == 201
+    task = t_res.json()
+    task_id = task["id"]
+
+    try:
+        # 2. Ajout d'un commentaire dans le chat
+        comment_res = client.post(f"/api/tasks/{task_id}/comments", json={
+            "content": "Message de test chat v16 temps réel",
+            "author_name": "Henri Jamet",
+            "author_role": "Gérant"
+        })
+        assert comment_res.status_code == 201
+        new_comment = comment_res.json()
+        assert new_comment["content"] == "Message de test chat v16 temps réel"
+
+        # 3. GET /api/tasks/{id} doit inclure immédiatement les commentaires grâce à selectinload
+        get_res = client.get(f"/api/tasks/{task_id}")
+        assert get_res.status_code == 200
+        data = get_res.json()
+        assert "comments" in data
+        assert len(data["comments"]) == 1
+        assert data["comments"][0]["content"] == "Message de test chat v16 temps réel"
+        assert data["comments_count"] == 1
+
+        # 4. Archivage de la tâche (PATCH status -> ARCHIVEE)
+        patch_res = client.patch(f"/api/tasks/{task_id}", json={
+            "status": "ARCHIVEE",
+            "completion_notes": "Tâche archivée après réalisation complète des travaux."
+        })
+        assert patch_res.status_code == 200
+        updated = patch_res.json()
+        assert updated["status"] == "ARCHIVEE"
+        assert updated["completion_notes"] == "Tâche archivée après réalisation complète des travaux."
+
+        # 5. Vérifier que la tâche reste lisible et conserve ses commentaires même archivée
+        re_get = client.get(f"/api/tasks/{task_id}")
+        assert re_get.status_code == 200
+        assert re_get.json()["status"] == "ARCHIVEE"
+        assert len(re_get.json()["comments"]) == 1
+    finally:
+        client.delete(f"/api/tasks/{task_id}")
+
