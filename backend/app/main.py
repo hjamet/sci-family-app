@@ -39,6 +39,7 @@ from .schemas import (
     StatsResponse, UserWorkloadStats, WorkloadSummaryResponse,
     HeatingStatusResponse, HeatingModeRequest, HeatingTemperatureRequest,
     HeatingSettingsRequest, HeatingSettingsResponse, PoolSettingsRequest, PoolSettingsResponse,
+    DhwModeRequest, DhwTemperatureRequest,
     PiscineStatusResponse, StayBalanceResponse, StayBalanceMember,
     TaskCreate, TaskUpdate, TaskResponse, TaskCommentCreate, TaskCommentResponse, TaskCommentReactRequest, TaskCloseRequest,
     ALLOWED_REACTION_EMOJIS,
@@ -4589,15 +4590,30 @@ def get_heating_status(
 
 @app.post("/api/vicare/mode", response_model=HeatingStatusResponse)
 @app.post("/api/heating/mode", response_model=HeatingStatusResponse)
+@app.post("/api/heating/set-mode", response_model=HeatingStatusResponse)
 @app.post("/api/heating/vicare/mode", response_model=HeatingStatusResponse)
 def set_heating_mode(req: HeatingModeRequest):
     return ViCareService.set_mode(req.mode)
 
 @app.post("/api/vicare/temperature", response_model=HeatingStatusResponse)
 @app.post("/api/heating/temperature", response_model=HeatingStatusResponse)
+@app.post("/api/heating/set-temperature", response_model=HeatingStatusResponse)
 @app.post("/api/heating/vicare/temperature", response_model=HeatingStatusResponse)
 def set_heating_temperature(req: HeatingTemperatureRequest):
-    return ViCareService.set_temperature(req.target_temperature)
+    program = req.program or "comfort"
+    return ViCareService.set_temperature(req.target_temperature, program=program)
+
+@app.post("/api/heating/dhw/mode", response_model=HeatingStatusResponse)
+@app.post("/api/heating/dhw-mode", response_model=HeatingStatusResponse)
+@app.post("/api/vicare/dhw/mode", response_model=HeatingStatusResponse)
+def set_dhw_mode(req: DhwModeRequest):
+    return ViCareService.set_dhw_mode(req.is_active)
+
+@app.post("/api/heating/dhw/temperature", response_model=HeatingStatusResponse)
+@app.post("/api/heating/dhw-temperature", response_model=HeatingStatusResponse)
+@app.post("/api/vicare/dhw/temperature", response_model=HeatingStatusResponse)
+def set_dhw_temperature(req: DhwTemperatureRequest):
+    return ViCareService.set_dhw_temperature(req.target_temperature)
 
 
 # --- Piscine Rosing Telemetry Endpoints (PAC Rosing F08) ---
@@ -4671,7 +4687,7 @@ def update_heating_settings(
     """
     author = req.author_name or (current_user.name if current_user else "Henri Jamet (Coordinateur)")
 
-    # 1. Update or create row in thermal_settings
+    # 1. Update or create row in thermal_settings for heating
     setting = db.query(ThermalSettings).filter(ThermalSettings.equipment_type == "heating").first()
     if not setting:
         setting = ThermalSettings(equipment_type="heating")
@@ -4682,13 +4698,39 @@ def update_heating_settings(
     elif setting.target_temperature is None:
         setting.target_temperature = 19.0
 
-    if req.mode is not None:
+    if req.is_heating_active is not None:
+        setting.mode = "dhwAndHeating" if req.is_heating_active else "dhw"
+    elif req.mode is not None:
         setting.mode = req.mode
     elif setting.mode is None:
         setting.mode = "dhwAndHeating"
 
     setting.updated_by = author
     setting.updated_at = datetime.utcnow()
+
+    # 1b. Support frost / standby temperature
+    frost_setting = db.query(ThermalSettings).filter(ThermalSettings.equipment_type == "heating_frost").first()
+    if req.frost_temperature is not None:
+        if not frost_setting:
+            frost_setting = ThermalSettings(equipment_type="heating_frost")
+            db.add(frost_setting)
+        frost_setting.target_temperature = req.frost_temperature
+        frost_setting.updated_by = author
+        frost_setting.updated_at = datetime.utcnow()
+
+    # 1c. Support DHW settings
+    dhw_setting = db.query(ThermalSettings).filter(ThermalSettings.equipment_type == "dhw").first()
+    if req.is_dhw_active is not None or req.dhw_target_temperature is not None:
+        if not dhw_setting:
+            dhw_setting = ThermalSettings(equipment_type="dhw")
+            db.add(dhw_setting)
+        if req.is_dhw_active is not None:
+            dhw_setting.mode = "on" if req.is_dhw_active else "off"
+        if req.dhw_target_temperature is not None:
+            dhw_setting.target_temperature = req.dhw_target_temperature
+        dhw_setting.updated_by = author
+        dhw_setting.updated_at = datetime.utcnow()
+
     db.commit()
     db.refresh(setting)
 
@@ -4717,7 +4759,7 @@ def update_heating_settings(
             send_thermal_change_email(
                 target_emails=target_emails,
                 author_name=author,
-                equipment_type="Chauffage ViCare (Presbytère)",
+                equipment_type="Chauffage & Eau Chaude ViCare (Presbytère)",
                 details=details
             )
         except Exception as email_err:
@@ -4725,10 +4767,14 @@ def update_heating_settings(
 
     return HeatingSettingsResponse(
         target_temperature=setting.target_temperature,
+        frost_temperature=frost_setting.target_temperature if frost_setting else 10.0,
+        is_heating_active=setting.mode != "dhw" and setting.mode != "standby",
+        is_dhw_active=(dhw_setting.mode == "on") if dhw_setting else None,
+        dhw_target_temperature=dhw_setting.target_temperature if dhw_setting else None,
         mode=setting.mode,
         updated_by=setting.updated_by,
         updated_at=setting.updated_at,
-        message=f"Consigne de chauffage enregistrée ({temp_str}) et notification transmise aux associés abonnés.",
+        message=f"Consignes thermiques enregistrées ({temp_str}) et notification transmise aux associés.",
         status="ok"
     )
 

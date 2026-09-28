@@ -272,9 +272,13 @@ export default function HeatingPage({ currentUser }) {
               <div className="flex items-center gap-2 min-w-0">
                 <span className="material-symbols-outlined text-primary text-[22px]">hvac</span>
                 <h3 className="font-headline-sm text-headline-sm text-on-surface font-semibold truncate">Chauffage ViCare</h3>
-                <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full bg-sage-soft text-primary font-label-sm text-[11px] font-bold shrink-0">
-                  <span className="w-1.5 h-1.5 rounded-full bg-primary"></span>
-                  {activeMode === 'standby' || activeMode === 'forcedReduced' ? 'Veille' : 'En service'}
+                <span className={`inline-flex items-center gap-1 px-2 py-0.5 rounded-full font-label-sm text-[11px] font-bold shrink-0 ${
+                  status?.is_heating_active
+                    ? 'bg-sage-soft text-primary'
+                    : 'bg-slate-100 text-slate-600 border border-slate-200'
+                }`}>
+                  <span className={`w-1.5 h-1.5 rounded-full ${status?.is_heating_active ? 'bg-primary' : 'bg-slate-400'}`}></span>
+                  {status?.is_heating_active ? 'En chauffe' : 'À l\'arrêt (Veille)'}
                 </span>
               </div>
               <div className="flex items-center gap-1 px-2.5 py-1 rounded-full bg-canvas-slate border border-border-subtle shrink-0">
@@ -290,7 +294,7 @@ export default function HeatingPage({ currentUser }) {
               <div className="flex flex-col min-w-0 pr-1">
                 <span className="font-label-md text-label-md text-on-surface font-semibold leading-tight">Consigne active</span>
                 <span className="font-label-sm text-xs text-on-surface-variant mt-0.5 whitespace-nowrap">
-                  Plage recommandée 19°C – 20°C
+                  {status?.is_heating_active ? 'Fonctionnement confort' : 'Maintien hors-gel / arrêt'}
                 </span>
               </div>
               <div className="flex items-center gap-1.5 shrink-0 bg-white p-1 rounded-full border border-border-subtle shadow-xs">
@@ -347,9 +351,13 @@ export default function HeatingPage({ currentUser }) {
               <div className="flex items-center gap-2 min-w-0">
                 <span className="material-symbols-outlined text-primary text-[22px]">water_heater</span>
                 <h3 className="font-headline-sm text-headline-sm text-on-surface font-semibold truncate">Eau Chaude (ECS)</h3>
-                <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full bg-sage-soft text-primary font-label-sm text-[11px] font-bold shrink-0">
-                  <span className="w-1.5 h-1.5 rounded-full bg-primary"></span>
-                  Disponible
+                <span className={`inline-flex items-center gap-1 px-2 py-0.5 rounded-full font-label-sm text-[11px] font-bold shrink-0 ${
+                  status?.is_dhw_active
+                    ? 'bg-sage-soft text-primary'
+                    : 'bg-amber-50 text-amber-800 border border-amber-200'
+                }`}>
+                  <span className={`w-1.5 h-1.5 rounded-full ${status?.is_dhw_active ? 'bg-primary' : 'bg-amber-500'}`}></span>
+                  {status?.is_dhw_active ? 'En chauffe' : 'À l\'arrêt (Consigne 10°C)'}
                 </span>
               </div>
               <div className="flex items-center gap-1 px-2.5 py-1 rounded-full bg-canvas-slate border border-border-subtle shrink-0">
@@ -364,12 +372,15 @@ export default function HeatingPage({ currentUser }) {
               <div className="flex flex-col min-w-0 pr-1">
                 <span className="font-label-md text-label-md text-on-surface font-semibold leading-tight">Consigne ECS</span>
                 <span className="font-label-sm text-xs text-on-surface-variant mt-0.5 whitespace-nowrap">
-                  Recommandé 50°C – 55°C
+                  {status?.is_dhw_active ? 'Recommandé 50°C – 55°C' : 'Consigne minimale veille'}
                 </span>
               </div>
               <div className="flex items-center gap-1.5 shrink-0 bg-white p-1 rounded-full border border-border-subtle shadow-xs">
                 <span className="font-headline-md text-[18px] text-primary font-bold tabular-nums px-3 text-center">
-                  55.0<span className="text-xs text-outline font-normal">°C</span>
+                  {status?.dhw_configured_temperature != null
+                    ? status.dhw_configured_temperature.toFixed(1)
+                    : (status?.dhw_target_temperature != null ? status.dhw_target_temperature.toFixed(1) : '10.0')}
+                  <span className="text-xs text-outline font-normal">°C</span>
                 </span>
               </div>
             </div>

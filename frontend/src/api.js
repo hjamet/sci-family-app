@@ -1367,15 +1367,33 @@ export async function updateMemberSettings(memberIdOrName = 'current', settings)
 }
 
 // Thermal & Pool Settings Endpoints
-export async function saveHeatingSettings({ target_temperature, mode, author_name, details } = {}) {
+export async function saveHeatingSettings({
+  target_temperature,
+  frost_temperature,
+  is_heating_active,
+  is_dhw_active,
+  dhw_target_temperature,
+  mode,
+  author_name,
+  details
+} = {}) {
   const res = await fetch(`${API_BASE}/heating/settings`, {
     method: 'POST',
     headers: getAuthJsonHeaders(),
-    body: JSON.stringify({ target_temperature, mode, author_name, details }),
+    body: JSON.stringify({
+      target_temperature,
+      frost_temperature,
+      is_heating_active,
+      is_dhw_active,
+      dhw_target_temperature,
+      mode,
+      author_name,
+      details
+    }),
   });
   if (!res.ok) {
     const err = await res.json().catch(() => ({}));
-    throw new Error(err.detail || 'Erreur lors de l\'enregistrement des réglages de chauffage');
+    throw new Error(err.detail || 'Erreur lors de l\'enregistrement des réglages thermiques');
   }
   invalidateApiCache('heating');
   return res.json();

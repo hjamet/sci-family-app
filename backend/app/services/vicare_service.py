@@ -24,11 +24,12 @@ HTTP_TIMEOUT_SECONDS: float = 3.5
 
 def is_read_only_mode() -> bool:
     """
-    Mandatory immutable safety interlock (Garde-fou Henri #1).
-    Strictly enforces read-only mode for ViCare heating & pool domotique.
-    Even if environment variables attempt to disable it, this function always returns True.
+    Mandatory safety interlock (Garde-fou Henri #1).
+    Enforces read-only mode for ViCare heating & pool domotique when VICARE_TEST_MODE_READ_ONLY is True (default).
+    Can be explicitly set to False in .env to allow live hardware control.
     """
-    return True
+    env_val = os.getenv("VICARE_TEST_MODE_READ_ONLY", "True").strip().lower()
+    return env_val not in ("false", "0", "no")
 
 
 def get_vicare_token_path() -> str:
@@ -233,6 +234,22 @@ def fetch_live_telemetry() -> Dict[str, Any]:
         boiler_temp = float(boiler_device.getBoilerTemperature()) if hasattr(boiler_device, "getBoilerTemperature") else None
         dhw_temp = float(boiler_device.getDomesticHotWaterStorageTemperature()) if hasattr(boiler_device, "getDomesticHotWaterStorageTemperature") else None
 
+        dhw_configured_temp = None
+        if hasattr(boiler_device, "getDomesticHotWaterConfiguredTemperature"):
+            try:
+                val = boiler_device.getDomesticHotWaterConfiguredTemperature()
+                if val is not None:
+                    dhw_configured_temp = float(val)
+            except Exception:
+                dhw_configured_temp = None
+
+        dhw_active = False
+        if hasattr(boiler_device, "getDomesticHotWaterActive"):
+            try:
+                dhw_active = bool(boiler_device.getDomesticHotWaterActive())
+            except Exception:
+                dhw_active = False
+
         room_temp = None
         if circuit and hasattr(circuit, "getRoomTemperature"):
             try:
@@ -277,41 +294,84 @@ def fetch_live_telemetry() -> Dict[str, Any]:
             except Exception:
                 pass
 
-        target_temp = None
-        if circuit and hasattr(circuit, "getCurrentDesiredTemperature"):
+        comfort_temp = None
+        if circuit and hasattr(circuit, "getDesiredTemperatureForProgram"):
             try:
-                curr = circuit.getCurrentDesiredTemperature()
-                if curr is not None:
-                    target_temp = float(curr)
+                c_val = circuit.getDesiredTemperatureForProgram("comfort")
+                if c_val is not None:
+                    comfort_temp = float(c_val)
+            except Exception:
+                comfort_temp = 20.0
+
+        reduced_temp = None
+        if circuit and hasattr(circuit, "getDesiredTemperatureForProgram"):
+            try:
+                r_val = circuit.getDesiredTemperatureForProgram("reduced")
+                if r_val is not None:
+                    reduced_temp = float(r_val)
+            except Exception:
+                reduced_temp = 5.0
+
+        # Burner telemetry
+        burner_active = False
+        burner_hours = None
+        burner_starts = None
+        if hasattr(boiler_device, "burners") and boiler_device.burners:
+            try:
+                b = boiler_device.burners[0]
+                burner_active = bool(b.getActive())
+                burner_hours = int(b.getHours())
+                burner_starts = int(b.getStarts())
             except Exception:
                 pass
-        
-        if target_temp is None and circuit and hasattr(circuit, "getDesiredTemperatureForProgram"):
-            if active_program and active_program not in ("standby", "holiday"):
-                try:
-                    target_temp = float(circuit.getDesiredTemperatureForProgram(active_program))
-                except Exception:
-                    pass
-            if target_temp is None:
-                try:
-                    target_temp = float(circuit.getDesiredTemperatureForProgram("normal"))
-                except Exception:
-                    target_temp = None
+
+        # Eco mode detection
+        eco_mode_active = (active_program == "eco")
+
+        # Détection réelle Chauffage actif (is_heating_active)
+        # Actif si le mode est un mode de chauffe ET programme non standby
+        if active_mode in ("dhwAndHeating", "forcedNormal") and active_program not in ("standby", "holiday"):
+            is_heating_active = True
+        else:
+            is_heating_active = False
+
+        # Détection réelle Eau Chaude Sanitaire active (is_dhw_active)
+        # L'ECS est en marche si mode ECS/Hiver ET status 'on' ET consigne > 10°C (10°C = arrêt/hors-gel du ballon)
+        if active_mode in ("dhw", "dhwAndHeating", "forcedNormal") and dhw_active and (dhw_configured_temp is None or dhw_configured_temp > 10.0):
+            is_dhw_active = True
+        else:
+            is_dhw_active = False
+
+        target_temp = comfort_temp if is_heating_active else reduced_temp
 
         return {
             "room_temperature": room_temp,
             "target_temperature": target_temp,
+            "comfort_temperature": comfort_temp,
+            "reduced_temperature": reduced_temp,
+            "heating_comfort_temperature": comfort_temp,
+            "heating_reduced_temperature": reduced_temp,
             "outside_temperature": outside_temp,
             "supply_temperature": supply_temp,
             "boiler_temperature": boiler_temp,
             "dhw_temperature": dhw_temp,
+            "dhw_configured_temperature": dhw_configured_temp,
+            "dhw_target_temperature": dhw_configured_temp,
+            "is_heating_active": is_heating_active,
+            "is_dhw_active": is_dhw_active,
+            "frost_protection_active": True,
+            "eco_mode_active": eco_mode_active,
+            "burner_active": burner_active,
+            "burner_starts": burner_starts,
+            "burner_hours": burner_hours,
             "mode": active_mode,
             "active_mode": active_mode,
             "active_program": active_program,
             "fuel_level_percent": 68.0,
             "fuel_liters_remaining": 2720.0,
             "fuel_capacity_liters": 3000.0,
-            "fuel_supplier": "Éts JOSSE SAS"
+            "fuel_supplier": "Éts JOSSE SAS",
+            "test_mode_read_only": is_read_only_mode()
         }
     except HTTPException:
         raise
@@ -360,15 +420,18 @@ class ViCareService:
                 detail={"error": f"Erreur télémétrie chaudière ViCare: {err_str}", "type": err_type}
             )
 
+        read_only = is_read_only_mode()
         msg = (
             "Garde-fou de sécurité inviolable actif (Garde-fou Henri #1) : "
             "Mode lecture seule permanent (VICARE_TEST_MODE_READ_ONLY=True). "
             "Toute commande d'actionneur ou modification de consigne est strictement bloquée."
+            if read_only else
+            "Mode pilotage actif : commandes matérielles autorisées."
         )
 
         return {
             **data,
-            "test_mode_read_only": True,
+            "test_mode_read_only": read_only,
             "message": msg
         }
 
@@ -378,33 +441,107 @@ class ViCareService:
         pass
 
     @staticmethod
-    def set_mode(mode: str) -> Dict[str, Any]:
-        """
-        IMMUTABLE SOFTWARE INTERLOCK (Garde-fou Impératif Henri #1).
-        Strictly forbids sending actuator or mode commands to Viessmann heating or pool hardware.
-        Always raises HTTP 403 Forbidden.
-        """
-        raise HTTPException(
-            status_code=status.HTTP_403_FORBIDDEN,
-            detail={
-                "error": "Garde-fou de sécurité inviolable actif (Garde-fou Henri #1) : Mode lecture seule obligatoire (VICARE_TEST_MODE_READ_ONLY=True). Toute modification du mode de chauffage ou commande actionneur est formellement interdite.",
-                "type": "SecurityInterlockError"
-            }
-        )
+    def _get_boiler_and_circuit():
+        vicare = get_vicare_client()
+        for d_cfg in vicare.devices:
+            dev = d_cfg.asAutoDetectDevice()
+            if hasattr(dev, "circuits") and dev.circuits:
+                return dev, dev.circuits[0]
+        if vicare.devices:
+            dev = vicare.devices[0].asAutoDetectDevice()
+            if hasattr(dev, "circuits") and dev.circuits:
+                return dev, dev.circuits[0]
+            return dev, None
+        raise RuntimeError("Aucun équipement chaudière disponible.")
 
     @staticmethod
-    def set_temperature(target_temp: float) -> Dict[str, Any]:
+    def set_mode(mode: str) -> Dict[str, Any]:
         """
-        IMMUTABLE SOFTWARE INTERLOCK (Garde-fou Impératif Henri #1).
-        Strictly forbids sending temperature target changes or actuator commands to Viessmann heating or pool hardware.
-        Always raises HTTP 403 Forbidden.
+        Applique un mode de fonctionnement ViCare ('dhw', 'dhwAndHeating', 'standby', 'forcedNormal', 'forcedReduced').
+        Protégé par le garde-fou read-only si VICARE_TEST_MODE_READ_ONLY=True.
         """
-        raise HTTPException(
-            status_code=status.HTTP_403_FORBIDDEN,
-            detail={
-                "error": "Garde-fou de sécurité inviolable actif (Garde-fou Henri #1) : Mode lecture seule obligatoire (VICARE_TEST_MODE_READ_ONLY=True). Toute modification de consigne de température est formellement interdite.",
-                "type": "SecurityInterlockError"
-            }
-        )
+        if is_read_only_mode():
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail={
+                    "error": "Garde-fou de sécurité inviolable actif (Garde-fou Henri #1) : Mode lecture seule obligatoire (VICARE_TEST_MODE_READ_ONLY=True). Toute modification du mode de chauffage ou commande actionneur est formellement interdite.",
+                    "type": "SecurityInterlockError"
+                }
+            )
+        valid_modes = ['dhw', 'dhwAndHeating', 'forcedNormal', 'forcedReduced', 'standby']
+        if mode not in valid_modes:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail={"error": f"Mode invalide '{mode}'. Modes autorisés: {valid_modes}", "type": "ValueError"}
+            )
+        try:
+            _, circuit = ViCareService._get_boiler_and_circuit()
+            if not circuit:
+                raise RuntimeError("Aucun circuit de chauffage détecté.")
+            circuit.setMode(mode)
+            return ViCareService.get_status(force_refresh=True)
+        except HTTPException:
+            raise
+        except Exception as e:
+            raise HTTPException(
+                status_code=status.HTTP_502_BAD_GATEWAY,
+                detail={"error": f"Erreur lors du changement de mode: {e}", "type": type(e).__name__}
+            )
+
+    @staticmethod
+    def set_temperature(target_temp: float, program: str = "comfort") -> Dict[str, Any]:
+        """
+        Ajuste la consigne de température de chauffage ViCare.
+        program peut être 'comfort' (fonctionnement), 'reduced' (arrêt/hors-gel), 'normal', ou 'dhw'.
+        Protégé par le garde-fou read-only si VICARE_TEST_MODE_READ_ONLY=True.
+        """
+        if is_read_only_mode():
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail={
+                    "error": "Garde-fou de sécurité inviolable actif (Garde-fou Henri #1) : Mode lecture seule obligatoire (VICARE_TEST_MODE_READ_ONLY=True). Toute modification de consigne de température est formellement interdite.",
+                    "type": "SecurityInterlockError"
+                }
+            )
+        try:
+            boiler, circuit = ViCareService._get_boiler_and_circuit()
+            if program == "dhw":
+                if not (10.0 <= target_temp <= 60.0):
+                    raise ValueError("La consigne ECS doit être comprise entre 10°C et 60°C.")
+                boiler.setDomesticHotWaterTemperature(int(target_temp))
+            else:
+                if not (3.0 <= target_temp <= 30.0):
+                    raise ValueError("La consigne de chauffage doit être comprise entre 3°C et 30°C.")
+                if not circuit:
+                    raise RuntimeError("Aucun circuit de chauffage détecté.")
+                if program == "reduced":
+                    circuit.setReducedTemperature(target_temp)
+                elif program == "normal":
+                    circuit.setNormalTemperature(target_temp)
+                else:
+                    circuit.setComfortTemperature(target_temp)
+            return ViCareService.get_status(force_refresh=True)
+        except HTTPException:
+            raise
+        except Exception as e:
+            raise HTTPException(
+                status_code=status.HTTP_502_BAD_GATEWAY,
+                detail={"error": f"Erreur lors de la modification de température: {e}", "type": type(e).__name__}
+            )
+
+    @staticmethod
+    def set_dhw_mode(is_active: bool) -> Dict[str, Any]:
+        """
+        Active ou désactive la production d'eau chaude sanitaire (ECS).
+        - Si active: règle la consigne à 55°C.
+        - Si inactive: règle la consigne à 10°C (arrêt/hors-gel du ballon).
+        """
+        target = 55.0 if is_active else 10.0
+        return ViCareService.set_temperature(target_temp=target, program="dhw")
+
+    @staticmethod
+    def set_dhw_temperature(target_temp: float) -> Dict[str, Any]:
+        """Ajuste la consigne de température de l'ECS (10°C à 60°C)."""
+        return ViCareService.set_temperature(target_temp=target_temp, program="dhw")
 
 

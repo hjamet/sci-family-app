@@ -656,10 +656,23 @@ class WorkloadSummaryResponse(BaseModel):
 class HeatingStatusResponse(BaseModel):
     room_temperature: Optional[float] = None
     target_temperature: Optional[float] = None
+    comfort_temperature: Optional[float] = None
+    reduced_temperature: Optional[float] = None
+    heating_comfort_temperature: Optional[float] = None
+    heating_reduced_temperature: Optional[float] = None
     outside_temperature: Optional[float] = None
     supply_temperature: Optional[float] = None
     boiler_temperature: Optional[float] = None
     dhw_temperature: Optional[float] = None
+    dhw_configured_temperature: Optional[float] = None
+    dhw_target_temperature: Optional[float] = None
+    is_heating_active: bool = False
+    is_dhw_active: bool = False
+    frost_protection_active: bool = True
+    eco_mode_active: bool = False
+    burner_active: bool = False
+    burner_starts: Optional[int] = None
+    burner_hours: Optional[int] = None
     mode: Optional[str] = None
     active_mode: Optional[str] = None
     active_program: Optional[str] = None
@@ -674,10 +687,17 @@ class HeatingStatusResponse(BaseModel):
 
 class HeatingModeRequest(BaseModel):
     mode: str
+    program: Optional[str] = None
 
 class HeatingTemperatureRequest(BaseModel):
     target_temperature: float
-    program: Optional[str] = "normal"
+    program: Optional[str] = "comfort"
+
+class DhwModeRequest(BaseModel):
+    is_active: bool
+
+class DhwTemperatureRequest(BaseModel):
+    target_temperature: float
 
 
 # --- Piscine Schemas ---
@@ -1044,6 +1064,10 @@ class MemberSettingsUpdate(BaseModel):
 
 class HeatingSettingsRequest(BaseModel):
     target_temperature: Optional[float] = None
+    frost_temperature: Optional[float] = None
+    is_heating_active: Optional[bool] = None
+    is_dhw_active: Optional[bool] = None
+    dhw_target_temperature: Optional[float] = None
     mode: Optional[str] = None
     author_name: Optional[str] = None
     details: Optional[str] = None
@@ -1051,10 +1075,14 @@ class HeatingSettingsRequest(BaseModel):
 
 class HeatingSettingsResponse(BaseModel):
     target_temperature: Optional[float] = 19.0
+    frost_temperature: Optional[float] = 10.0
+    is_heating_active: Optional[bool] = None
+    is_dhw_active: Optional[bool] = None
+    dhw_target_temperature: Optional[float] = None
     mode: Optional[str] = "dhwAndHeating"
     updated_by: Optional[str] = None
     updated_at: Optional[datetime] = None
-    message: Optional[str] = "Réglages de chauffage enregistrés avec succès."
+    message: Optional[str] = "Réglages thermiques enregistrés avec succès."
     status: str = "ok"
 
 

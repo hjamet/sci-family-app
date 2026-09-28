@@ -11,12 +11,14 @@ import {
   fetchReservations,
   setHeatingTemperature,
   setHeatingMode as apiSetHeatingMode,
+  saveHeatingSettings,
   validateTask,
   invalidateTask,
   getCachedData,
   fetchDocumentCategories,
   createDocumentCategory
 } from '../api';
+import ThermalMasterSwitch from '../components/common/ThermalMasterSwitch';
 import CategoryManageModal, { COLOR_OPTIONS, EMOJI_PRESETS } from '../components/common/CategoryManageModal';
 import TaskDetailModal from '../components/TaskDetailModal';
 import TaskCard from '../components/common/TaskCard';
@@ -150,11 +152,14 @@ export default function VademecumPage({ properties, currentUser, reservations = 
   const [piscineStatus, setPiscineStatus] = useState(() => getCachedData('pool_status') || null);
   const [telemetryLoading, setTelemetryLoading] = useState(() => !getCachedData('heating_status') && !getCachedData('pool_status'));
 
-  // Thermal controls state (Annotation 2: Contrôles directs réels)
-  const [heatingTarget, setHeatingTarget] = useState(19.5);
-  const [heatingMode, setHeatingMode] = useState('Normal'); // 'Normal' | 'Éco' | 'Arrêt'
+  // Thermal controls state (Refonte Switches XXL Marche/Arrêt & Double Consigne)
+  const [isHeatingActive, setIsHeatingActive] = useState(false);
+  const [heatingComfortTarget, setHeatingComfortTarget] = useState(20.0);
+  const [heatingFrostTarget, setHeatingFrostTarget] = useState(10.0);
+
+  const [isDhwActive, setIsDhwActive] = useState(false);
   const [dhwTarget, setDhwTarget] = useState(55.0);
-  const [dhwMode, setDhwMode] = useState('Normal');
+
   const [poolTarget, setPoolTarget] = useState(14.0);
   const [poolPumpMode, setPoolPumpMode] = useState('Automatique'); // 'Automatique' | 'Marche forcée' | 'Arrêt'
   const [savingThermal, setSavingThermal] = useState(false);
@@ -195,17 +200,48 @@ export default function VademecumPage({ properties, currentUser, reservations = 
       const taskRes = taskResResult.status === 'fulfilled' ? (taskResResult.value || []) : [];
       const reservationsRes = reservationsResResult.status === 'fulfilled' ? (reservationsResResult.value || []) : (reservations || []);
 
-      // ViCare Telemetry & Fail-fast
+      // ViCare Telemetry & Fail-fast (Données réelles 100% dynamiques)
       if (heatRes && !heatRes.error) {
         setHeatingStatus(heatRes);
         setHeatingError(null);
-        if (heatRes.target_temperature != null) setHeatingTarget(heatRes.target_temperature);
-        if (heatRes.dhw_temperature != null) setDhwTarget(heatRes.dhw_temperature);
-        if (heatRes.active_mode) {
-          const m = heatRes.active_mode.toLowerCase();
-          if (m.includes('eco')) setHeatingMode('Éco');
-          else if (m.includes('standby') || m.includes('off') || m.includes('arret')) setHeatingMode('Arrêt');
-          else setHeatingMode('Normal');
+
+        // DHW active state
+        const dhwActive = heatRes.is_dhw_active != null
+          ? Boolean(heatRes.is_dhw_active)
+          : (heatRes.dhw_target_temperature != null && heatRes.dhw_target_temperature > 20.0);
+        setIsDhwActive(dhwActive);
+
+        if (heatRes.dhw_target_temperature != null && heatRes.dhw_target_temperature > 20.0) {
+          setDhwTarget(heatRes.dhw_target_temperature);
+        }
+
+        // Heating active state
+        let heatingActive = false;
+        if (heatRes.is_heating_active != null) {
+          heatingActive = Boolean(heatRes.is_heating_active);
+        } else if (heatRes.active_mode) {
+          const m = (heatRes.active_mode || '').toLowerCase();
+          const p = (heatRes.active_program || '').toLowerCase();
+          heatingActive = m !== 'dhw' && !m.includes('standby') && !m.includes('off') && !p.includes('standby');
+        }
+        setIsHeatingActive(heatingActive);
+
+        // Confort Target (en fonctionnement)
+        const comfortVal = heatRes.comfort_temperature != null
+          ? heatRes.comfort_temperature
+          : heatRes.heating_comfort_temperature;
+        if (comfortVal != null && comfortVal > 15.0) {
+          setHeatingComfortTarget(comfortVal);
+        } else if (heatRes.target_temperature != null && heatRes.target_temperature > 15.0) {
+          setHeatingComfortTarget(heatRes.target_temperature);
+        }
+
+        // Frost Target (à l'arrêt)
+        const reducedVal = heatRes.reduced_temperature != null
+          ? heatRes.reduced_temperature
+          : heatRes.heating_reduced_temperature;
+        if (reducedVal != null && reducedVal >= 5.0) {
+          setHeatingFrostTarget(Math.max(5.0, reducedVal));
         }
       } else {
         setHeatingStatus(null);
@@ -279,14 +315,20 @@ export default function VademecumPage({ properties, currentUser, reservations = 
     loadVademecumDb();
   }, [currentUser]);
 
-  const handleHeatingChange = (delta) => {
-    const nextVal = Math.round((heatingTarget + delta) * 10) / 10;
-    if (delta > 0 && heatingTarget >= 20.0) {
+  const handleHeatingComfortChange = (delta) => {
+    const nextVal = Math.round((heatingComfortTarget + delta) * 10) / 10;
+    if (delta > 0 && heatingComfortTarget >= 20.0) {
       showToast('Consigne maximale autorisée par la charte des associés : 20.0°C.');
       return;
     }
-    if (nextVal < 12.0) return;
-    setHeatingTarget(nextVal);
+    if (nextVal < 15.0) return;
+    setHeatingComfortTarget(nextVal);
+  };
+
+  const handleHeatingFrostChange = (delta) => {
+    const nextVal = Math.round((heatingFrostTarget + delta) * 10) / 10;
+    if (nextVal < 5.0 || nextVal > 15.0) return;
+    setHeatingFrostTarget(nextVal);
   };
 
   const handleDhwChange = (delta) => {
@@ -301,26 +343,76 @@ export default function VademecumPage({ properties, currentUser, reservations = 
     setPoolTarget(nextVal);
   };
 
-  // Annotation 2 : Enregistrement réel des modifications thermiques avec notification email
+  // Bascule instantanée du switch Marche/Arrêt Chauffage
+  const handleToggleHeating = async (targetActive) => {
+    setIsHeatingActive(targetActive);
+    try {
+      await saveHeatingSettings({
+        is_heating_active: targetActive,
+        target_temperature: heatingComfortTarget,
+        frost_temperature: heatingFrostTarget,
+        is_dhw_active: isDhwActive,
+        dhw_target_temperature: dhwTarget,
+        mode: targetActive ? 'dhwAndHeating' : 'dhw',
+        author_name: resolveCurrentUserFullName(currentUser),
+        details: targetActive
+          ? `Chauffage ViCare activé en Marche (Confort ${heatingComfortTarget.toFixed(1)}°C)`
+          : `Chauffage ViCare mis à l'Arrêt (Sécurité Hors-gel permanente active à ${heatingFrostTarget.toFixed(1)}°C)`
+      });
+      showToast(
+        targetActive
+          ? `Chauffage activé : Mode Confort ${heatingComfortTarget.toFixed(1)}°C 🔥`
+          : `Chauffage à l'arrêt : Sécurité Hors-gel active (${heatingFrostTarget.toFixed(1)}°C) 🛡️`
+      );
+    } catch (err) {
+      showToast(`Avertissement liaison : ${err.message}`);
+    }
+  };
+
+  // Bascule instantanée du switch Marche/Arrêt Eau Chaude Sanitaire
+  const handleToggleDhw = async (targetActive) => {
+    setIsDhwActive(targetActive);
+    try {
+      await saveHeatingSettings({
+        is_heating_active: isHeatingActive,
+        target_temperature: heatingComfortTarget,
+        frost_temperature: heatingFrostTarget,
+        is_dhw_active: targetActive,
+        dhw_target_temperature: dhwTarget,
+        author_name: resolveCurrentUserFullName(currentUser),
+        details: targetActive
+          ? `Eau Chaude (250L) activée en Marche (Chauffe cible ${dhwTarget.toFixed(1)}°C)`
+          : `Eau Chaude (250L) mise à l'Arrêt (Veille & Refroidissement naturel)`
+      });
+      showToast(
+        targetActive
+          ? `Eau Chaude Sanitaire activée (Cible : ${dhwTarget.toFixed(1)}°C) 🔥`
+          : `Eau Chaude mise à l'arrêt (Veille & Refroidissement naturel) ❄️`
+      );
+    } catch (err) {
+      showToast(`Avertissement liaison : ${err.message}`);
+    }
+  };
+
+  // Enregistrement consolidé de tous les réglages thermiques (Annotation 2)
   const handleSaveThermalSettings = async () => {
     try {
       setSavingThermal(true);
-      const modeKey = heatingMode === 'Éco' ? 'eco' : heatingMode === 'Arrêt' ? 'standby' : 'normal';
-      try {
-        await setHeatingTemperature(heatingTarget);
-      } catch (err) {
-        console.warn('API heating temperature update:', err.message);
-      }
-      try {
-        await apiSetHeatingMode(modeKey);
-      } catch (err) {
-        console.warn('API heating mode update:', err.message);
-      }
+      await saveHeatingSettings({
+        is_heating_active: isHeatingActive,
+        target_temperature: heatingComfortTarget,
+        frost_temperature: heatingFrostTarget,
+        is_dhw_active: isDhwActive,
+        dhw_target_temperature: dhwTarget,
+        mode: isHeatingActive ? 'dhwAndHeating' : 'dhw',
+        author_name: resolveCurrentUserFullName(currentUser),
+        details: `Réglages consolidés : Chauffage ${isHeatingActive ? `Marche (${heatingComfortTarget.toFixed(1)}°C)` : `Arrêt (Hors-gel ${heatingFrostTarget.toFixed(1)}°C)`}, ECS ${isDhwActive ? `Marche (${dhwTarget.toFixed(1)}°C)` : 'Arrêt/Veille'}`
+      });
 
       if (currentPageIndex > 0 && currentStay) {
-        showToast(`Consignes du séjour enregistrées : Chauffage ${heatingTarget.toFixed(1)}°C (démarrage à ${stayPreheatTime}, coupure à ${stayShutdownTime}), ECS ${dhwTarget.toFixed(1)}°C, Bassin ${poolTarget.toFixed(1)}°C. Notification envoyée.`);
+        showToast(`Consignes du séjour enregistrées : Chauffage ${isHeatingActive ? 'Marche' : 'Arrêt'} (Confort ${heatingComfortTarget.toFixed(1)}°C, Hors-gel ${heatingFrostTarget.toFixed(1)}°C), ECS ${isDhwActive ? 'Marche' : 'Arrêt'} (${dhwTarget.toFixed(1)}°C), Bassin ${poolTarget.toFixed(1)}°C. Notification transmise.`);
       } else {
-        showToast(`Consignes par défaut enregistrées : Chauffage ${heatingTarget.toFixed(1)}°C (${heatingMode}), Piscine ${poolTarget.toFixed(1)}°C (${poolPumpMode}). Notification envoyée.`);
+        showToast(`Consignes enregistrées : Chauffage ${isHeatingActive ? 'Marche' : 'Arrêt'} (Confort ${heatingComfortTarget.toFixed(1)}°C, Hors-gel ${heatingFrostTarget.toFixed(1)}°C), ECS ${isDhwActive ? 'Marche' : 'Arrêt'} (${dhwTarget.toFixed(1)}°C), Bassin ${poolTarget.toFixed(1)}°C (${poolPumpMode}). Notification transmise.`);
       }
     } catch (err) {
       showToast(`Erreur : ${err.message}`);
@@ -1043,305 +1135,395 @@ export default function VademecumPage({ properties, currentUser, reservations = 
         ) : (
           <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
             {/* Volet 1 : Chauffage (ViCare) */}
-          <div className="p-5 rounded-2xl bg-canvas-slate border border-border-subtle flex flex-col justify-between gap-5 shadow-sm min-w-0">
-            <div className="flex flex-col gap-4">
-              <div className="flex items-center justify-between border-b border-border-subtle pb-3 gap-2 flex-wrap">
-                <div className="flex items-center gap-2 min-w-0">
-                  <span className="material-symbols-outlined text-primary text-[22px]">hvac</span>
-                  <h3 className="font-headline-sm text-headline-sm text-on-surface font-semibold truncate">Chauffage (ViCare)</h3>
-                  <span className={`inline-flex items-center gap-1 px-2 py-0.5 rounded-full font-label-sm text-[11px] font-bold shrink-0 ${
-                    heatingError ? 'bg-rose-100 text-rose-800' : 'bg-sage-soft text-primary'
-                  }`}>
-                    <span className={`w-1.5 h-1.5 rounded-full ${heatingError ? 'bg-rose-600' : 'bg-primary'}`}></span>
-                    {heatingError ? 'Indisponible' : 'En marche'}
-                  </span>
-                </div>
-              </div>
-
-              {/* Consigne et Horaires prévus pour le séjour (Annotation 8 Stitch 2c313f81e4f5499abb218f5b1dc25c68) */}
-              {currentPageIndex > 0 && currentStay && (
-                <div className="p-3 bg-emerald-50/90 dark:bg-emerald-950/30 rounded-xl border border-emerald-200/80 dark:border-emerald-800/50 flex flex-col gap-2.5 shadow-2xs">
-                  <div className="flex items-center justify-between gap-2">
-                    <div className="flex items-center gap-2">
-                      <span className="material-symbols-outlined text-primary text-[18px]">schedule</span>
-                      <span className="text-[11px] uppercase font-bold text-on-surface-variant">Programmation asservie au séjour</span>
-                    </div>
-                    <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-bold bg-emerald-100 text-emerald-800 dark:bg-emerald-900/60 dark:text-emerald-200">
-                      <span className="w-1.5 h-1.5 rounded-full bg-emerald-600 animate-pulse"></span>
-                      Asservi
+            <div className="p-5 rounded-2xl bg-canvas-slate border border-border-subtle flex flex-col justify-between gap-5 shadow-sm min-w-0">
+              <div className="flex flex-col gap-4">
+                {/* En-tête Chauffage */}
+                <div className="flex items-center justify-between border-b border-border-subtle pb-3 gap-2 flex-wrap">
+                  <div className="flex items-center gap-2 min-w-0">
+                    <span className="material-symbols-outlined text-primary text-[22px]">hvac</span>
+                    <h3 className="font-headline-sm text-headline-sm text-on-surface font-semibold truncate">Chauffage (ViCare)</h3>
+                    <span className={`inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-full font-label-sm text-[11px] font-bold shrink-0 ${
+                      heatingError
+                        ? 'bg-rose-100 text-rose-800'
+                        : isHeatingActive
+                          ? 'bg-emerald-100 text-emerald-800 dark:bg-emerald-950 dark:text-emerald-200'
+                          : 'bg-slate-200/80 text-slate-700 dark:bg-slate-700 dark:text-slate-300'
+                    }`}>
+                      <span className={`w-1.5 h-1.5 rounded-full ${
+                        heatingError
+                          ? 'bg-rose-600'
+                          : isHeatingActive
+                            ? 'bg-emerald-600 animate-pulse'
+                            : 'bg-slate-500'
+                      }`} />
+                      {heatingError ? 'Indisponible' : isHeatingActive ? 'En chauffe (Confort)' : 'Arrêt (Hors-gel actif)'}
                     </span>
                   </div>
+                </div>
 
-                  <div className="grid grid-cols-2 gap-2 text-xs">
-                    <div className="p-2 rounded-lg bg-white dark:bg-slate-900 border border-emerald-200/60 flex flex-col gap-1">
-                      <span className="text-[10px] text-on-surface-variant font-medium">Démarrage préchauffage :</span>
-                      <div className="flex items-center gap-1">
-                        <span className="font-bold text-forest-deep dark:text-emerald-200">{formatDateReadable(currentStay.start_date)}</span>
-                        <input
-                          type="time"
-                          value={stayPreheatTime}
-                          onChange={(e) => setStayPreheatTime(e.target.value)}
-                          className="px-1.5 py-0.5 text-xs font-bold rounded bg-canvas-slate border border-outline-variant/40 text-primary w-20 text-center cursor-pointer"
-                          title="Modifier l'heure de préchauffage"
-                        />
-                      </div>
-                    </div>
-                    <div className="p-2 rounded-lg bg-white dark:bg-slate-900 border border-emerald-200/60 flex flex-col gap-1">
-                      <span className="text-[10px] text-on-surface-variant font-medium">Arrêt & Hors-gel :</span>
-                      <div className="flex items-center gap-1">
-                        <span className="font-bold text-forest-deep dark:text-emerald-200">{formatDateReadable(currentStay.end_date)}</span>
-                        <input
-                          type="time"
-                          value={stayShutdownTime}
-                          onChange={(e) => setStayShutdownTime(e.target.value)}
-                          className="px-1.5 py-0.5 text-xs font-bold rounded bg-canvas-slate border border-outline-variant/40 text-primary w-20 text-center cursor-pointer"
-                          title="Modifier l'heure de coupure"
-                        />
-                      </div>
-                    </div>
-                  </div>
-                </div>
-              )}
-
-              {/* Fail-Fast ViCare Alert (Annotation 4 & 6) */}
-              {heatingError && (
-                <div className="p-3 bg-rose-50 border border-rose-300 text-rose-900 rounded-xl text-xs font-semibold flex items-center gap-2 animate-in fade-in duration-200">
-                  <span className="material-symbols-outlined text-rose-600 text-[18px] shrink-0">error</span>
-                  <span>⚠️ Liaison ViCare indisponible : impossible d'interroger la chaudière</span>
-                </div>
-              )}
-
-              {/* Real Temperatures Telemetry (Zéro mock inventé) */}
-              <div className="grid grid-cols-2 gap-2">
-                <div className="p-3 bg-white rounded-xl border border-border-subtle flex flex-col gap-0.5 shadow-xs">
-                  <span className="text-[11px] text-on-surface-variant font-medium">Ambiante mesurée</span>
-                  <span className="font-headline-md text-base sm:text-lg font-bold text-on-surface tabular-nums">
-                    {heatingStatus?.room_temperature != null ? `${heatingStatus.room_temperature.toFixed(1)}°C` : '--°C'}
-                  </span>
-                </div>
-                <div className="p-3 bg-white rounded-xl border border-border-subtle flex flex-col gap-0.5 shadow-xs">
-                  <span className="text-[11px] text-on-surface-variant font-medium">Chaudière réelle</span>
-                  <span className="font-headline-md text-base sm:text-lg font-bold text-on-surface tabular-nums">
-                    {heatingStatus?.boiler_temperature != null ? `${heatingStatus.boiler_temperature.toFixed(1)}°C` : '--°C'}
-                  </span>
-                </div>
-              </div>
-
-              {/* Target Temperature Control */}
-              <div className="p-3.5 bg-white rounded-xl border border-border-subtle flex items-center justify-between gap-2 shadow-sm">
-                <div className="flex flex-col min-w-0 pr-1">
-                  <span className="font-label-md text-label-md text-on-surface font-semibold leading-tight">Consigne chauffage</span>
-                </div>
-                <div className="flex items-center gap-1.5 shrink-0 bg-canvas-slate p-1 rounded-full border border-border-subtle">
-                  <button
-                    aria-label="Diminuer consigne chauffage"
-                    className="w-8 h-8 rounded-full bg-white border border-outline-variant hover:bg-surface-container flex items-center justify-center text-on-surface active:scale-95 transition-transform shadow-sm cursor-pointer"
-                    type="button"
-                    onClick={() => handleHeatingChange(-0.5)}
-                  >
-                    <span className="material-symbols-outlined text-[16px]">remove</span>
-                  </button>
-                  <span className="font-headline-md text-[18px] text-primary font-bold tabular-nums w-12 text-center">
-                    {heatingTarget.toFixed(1)}<span className="text-xs text-outline font-normal">°C</span>
-                  </span>
-                  <button
-                    aria-label="Augmenter consigne chauffage"
-                    className="w-8 h-8 rounded-full bg-primary text-white hover:bg-forest-deep flex items-center justify-center font-bold active:scale-95 transition-transform shadow-sm cursor-pointer"
-                    type="button"
-                    onClick={() => handleHeatingChange(0.5)}
-                  >
-                    <span className="material-symbols-outlined text-[16px]">add</span>
-                  </button>
-                </div>
-              </div>
-
-              {/* Direct Mode Controls (Annotation 8: réservé à la vue Domaine hors séjour) */}
-              {currentPageIndex === 0 ? (
+                {/* Gros Switch Marche / Arrêt géant (Annotation 2) */}
                 <div className="space-y-1.5">
-                  <div className="flex items-center justify-between">
-                    <span className="text-[11px] font-bold text-on-surface-variant uppercase tracking-wider block">Commande manuelle hors séjour</span>
-                    <span className="text-[10px] text-amber-700 bg-amber-50 px-1.5 py-0.5 rounded font-semibold">Hors séjour</span>
-                  </div>
-                  <div className="grid grid-cols-3 gap-1.5 bg-white p-1 rounded-xl border border-border-subtle">
-                    {['Normal', 'Éco', 'Arrêt'].map((mode) => (
-                      <button
-                        key={mode}
-                        type="button"
-                        onClick={() => setHeatingMode(mode)}
-                        className={`py-2 px-1 rounded-lg text-xs font-bold transition-all cursor-pointer text-center ${
-                          heatingMode === mode
-                            ? 'bg-primary text-white shadow-xs'
-                            : 'text-on-surface-variant hover:text-on-surface hover:bg-canvas-slate'
-                        }`}
-                      >
-                        {mode}
-                      </button>
-                    ))}
-                  </div>
-                </div>
-              ) : (
-                <div className="p-2.5 rounded-xl bg-canvas-slate/80 border border-border-subtle/60 flex items-center justify-between text-xs text-on-surface-variant">
-                  <span className="flex items-center gap-1.5 font-medium">
-                    <span className="material-symbols-outlined text-primary text-[16px]">thermostat_auto</span>
-                    Régulation asservie au séjour
+                  <span className="text-[11px] font-bold text-on-surface-variant uppercase tracking-wider block">
+                    Interrupteur Principal Chauffage
                   </span>
-                  <span className="font-semibold text-primary">Confort {heatingTarget.toFixed(1)}°C</span>
+                  <ThermalMasterSwitch
+                    isActive={isHeatingActive}
+                    onChange={handleToggleHeating}
+                    disabled={Boolean(heatingError)}
+                    offLabel="Arrêt"
+                    offSubtitle="Arrêt (Hors-gel actif)"
+                    offIcon="ac_unit"
+                    onLabel="Marche"
+                    onSubtitle="En chauffe (Confort)"
+                    onIcon="local_fire_department"
+                    ariaLabel="Interrupteur principal Chauffage ViCare"
+                  />
                 </div>
-              )}
 
-              {/* Fuel Gauge (Annotation 1) */}
-              {(() => {
-                const fuelRemaining = heatingStatus?.fuel_liters_remaining != null ? heatingStatus.fuel_liters_remaining : 2720;
-                const fuelCapacity = heatingStatus?.fuel_capacity_liters != null ? heatingStatus.fuel_capacity_liters : 3000;
-                const fuelPercent = Math.min(100, Math.max(0, Math.round((fuelRemaining / fuelCapacity) * 100)));
-
-                return (
-                  <div className="p-3.5 bg-white rounded-xl border border-border-subtle flex flex-col gap-2.5 shadow-xs">
-                    <div className="flex items-center justify-between gap-2 flex-wrap">
-                      <div className="flex items-center gap-2 min-w-0">
-                        <span className="material-symbols-outlined text-amber-600 text-[20px] shrink-0">local_gas_station</span>
-                        <div className="flex flex-col min-w-0">
-                          <span className="text-xs font-semibold text-on-surface">Cuve Fioul (Éts JOSSE)</span>
-                          <span className="text-[11px] text-on-surface-variant">Capacité totale {fuelCapacity.toLocaleString('fr-FR')} L</span>
-                        </div>
+                {/* Consigne et Horaires prévus pour le séjour (Annotation 8 Stitch 2c313f81e4f5499abb218f5b1dc25c68) */}
+                {currentPageIndex > 0 && currentStay && (
+                  <div className="p-3 bg-emerald-50/90 dark:bg-emerald-950/30 rounded-xl border border-emerald-200/80 dark:border-emerald-800/50 flex flex-col gap-2.5 shadow-2xs">
+                    <div className="flex items-center justify-between gap-2">
+                      <div className="flex items-center gap-2">
+                        <span className="material-symbols-outlined text-primary text-[18px]">schedule</span>
+                        <span className="text-[11px] uppercase font-bold text-on-surface-variant">Programmation asservie au séjour</span>
                       </div>
-                      <span className="font-headline-sm text-xs font-bold text-amber-950 bg-amber-50 border border-amber-200/80 tabular-nums shrink-0 px-2.5 py-1 rounded-md">
-                        {fuelRemaining.toLocaleString('fr-FR')} L / {fuelCapacity.toLocaleString('fr-FR')} L • {fuelPercent}%
+                      <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-bold bg-emerald-100 text-emerald-800 dark:bg-emerald-900/60 dark:text-emerald-200">
+                        <span className="w-1.5 h-1.5 rounded-full bg-emerald-600 animate-pulse"></span>
+                        Asservi
                       </span>
                     </div>
 
-                    {/* Stylized progress bar */}
-                    <div className="w-full bg-slate-100 dark:bg-slate-800/80 backdrop-blur-xs h-3 rounded-full overflow-hidden shadow-inner border border-slate-200/70 p-0.5">
-                      <div
-                        className="bg-gradient-to-r from-amber-600 to-amber-400 h-full rounded-full overflow-hidden shadow-inner transition-all duration-500"
-                        style={{ width: `${fuelPercent}%` }}
-                      />
-                    </div>
-
-                    {/* Level indicators */}
-                    <div className="flex items-center justify-between text-[10px] font-semibold text-on-surface-variant/80 px-0.5">
-                      <span>0 L</span>
-                      <span>1 500 L</span>
-                      <span>3 000 L</span>
+                    <div className="grid grid-cols-2 gap-2 text-xs">
+                      <div className="p-2 rounded-lg bg-white dark:bg-slate-900 border border-emerald-200/60 flex flex-col gap-1">
+                        <span className="text-[10px] text-on-surface-variant font-medium">Démarrage préchauffage :</span>
+                        <div className="flex items-center gap-1">
+                          <span className="font-bold text-forest-deep dark:text-emerald-200">{formatDateReadable(currentStay.start_date)}</span>
+                          <input
+                            type="time"
+                            value={stayPreheatTime}
+                            onChange={(e) => setStayPreheatTime(e.target.value)}
+                            className="px-1.5 py-0.5 text-xs font-bold rounded bg-canvas-slate border border-outline-variant/40 text-primary w-20 text-center cursor-pointer"
+                            title="Modifier l'heure de préchauffage"
+                          />
+                        </div>
+                      </div>
+                      <div className="p-2 rounded-lg bg-white dark:bg-slate-900 border border-emerald-200/60 flex flex-col gap-1">
+                        <span className="text-[10px] text-on-surface-variant font-medium">Arrêt & Hors-gel :</span>
+                        <div className="flex items-center gap-1">
+                          <span className="font-bold text-forest-deep dark:text-emerald-200">{formatDateReadable(currentStay.end_date)}</span>
+                          <input
+                            type="time"
+                            value={stayShutdownTime}
+                            onChange={(e) => setStayShutdownTime(e.target.value)}
+                            className="px-1.5 py-0.5 text-xs font-bold rounded bg-canvas-slate border border-outline-variant/40 text-primary w-20 text-center cursor-pointer"
+                            title="Modifier l'heure de coupure"
+                          />
+                        </div>
+                      </div>
                     </div>
                   </div>
-                );
-              })()}
+                )}
 
-            </div>
-          </div>
+                {/* Fail-Fast ViCare Alert (Annotation 4 & 6) */}
+                {heatingError && (
+                  <div className="p-3 bg-rose-50 border border-rose-300 text-rose-900 rounded-xl text-xs font-semibold flex items-center gap-2 animate-in fade-in duration-200">
+                    <span className="material-symbols-outlined text-rose-600 text-[18px] shrink-0">error</span>
+                    <span>⚠️ Liaison ViCare indisponible : impossible d'interroger la chaudière</span>
+                  </div>
+                )}
 
-          {/* Volet 2 : Eau Chaude Sanitaire (ViCare) */}
-          <div className="p-5 rounded-2xl bg-canvas-slate border border-border-subtle flex flex-col justify-between gap-5 shadow-sm min-w-0">
-            <div className="flex flex-col gap-4">
-              <div className="flex items-center justify-between border-b border-border-subtle pb-3 gap-2 flex-wrap">
-                <div className="flex items-center gap-2 min-w-0">
-                  <span className="material-symbols-outlined text-primary text-[22px]">water_heater</span>
-                  <h3 className="font-headline-sm text-headline-sm text-on-surface font-semibold truncate">Eau Chaude (250L)</h3>
-                  <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full bg-sage-soft text-primary font-label-sm text-[11px] font-bold shrink-0">
-                    <span className="w-1.5 h-1.5 rounded-full bg-primary"></span>
-                    En marche
-                  </span>
+                {/* Sondes réelles ViCare (Ambiante mesurée & Chaudière réelle) */}
+                <div className="grid grid-cols-2 gap-2">
+                  <div className="p-3 bg-white dark:bg-slate-900 rounded-xl border border-border-subtle flex flex-col gap-0.5 shadow-2xs">
+                    <span className="text-[11px] text-on-surface-variant font-medium">Ambiante mesurée</span>
+                    <span className="font-headline-md text-base sm:text-lg font-bold text-on-surface tabular-nums">
+                      {heatingStatus?.room_temperature != null ? `${heatingStatus.room_temperature.toFixed(1)}°C` : '--°C'}
+                    </span>
+                  </div>
+                  <div className="p-3 bg-white dark:bg-slate-900 rounded-xl border border-border-subtle flex flex-col gap-0.5 shadow-2xs">
+                    <span className="text-[11px] text-on-surface-variant font-medium">Chaudière réelle</span>
+                    <span className="font-headline-md text-base sm:text-lg font-bold text-on-surface tabular-nums">
+                      {heatingStatus?.boiler_temperature != null ? `${heatingStatus.boiler_temperature.toFixed(1)}°C` : '--°C'}
+                    </span>
+                  </div>
                 </div>
-                <div className="flex items-center gap-1 px-2.5 py-1 rounded-full bg-white border border-border-subtle shrink-0">
-                  <span className="font-label-sm text-xs text-outline">Actuelle :</span>
-                  <span className="font-headline-sm text-xs text-on-surface font-bold tabular-nums">
-                    {heatingStatus?.dhw_temperature != null ? `${heatingStatus.dhw_temperature.toFixed(1)}°C` : '--°C'}
-                  </span>
-                </div>
-              </div>
 
-              {/* Consigne et Horaires prévus pour le séjour (Annotation 8 Stitch 2c313f81e4f5499abb218f5b1dc25c68) */}
-              {currentPageIndex > 0 && currentStay && (
-                <div className="p-3 bg-emerald-50/90 dark:bg-emerald-950/30 rounded-xl border border-emerald-200/80 dark:border-emerald-800/50 flex flex-col gap-2.5 shadow-2xs">
-                  <div className="flex items-center justify-between gap-2">
-                    <div className="flex items-center gap-2">
-                      <span className="material-symbols-outlined text-primary text-[18px]">schedule</span>
-                      <span className="text-[11px] uppercase font-bold text-on-surface-variant">Relance ECS asservie au séjour</span>
+                {/* Deux réglages distincts de température (Annotation 2) */}
+                <div className="flex flex-col gap-2.5">
+                  <span className="text-[11px] font-bold text-on-surface-variant uppercase tracking-wider block">
+                    Réglages des Consignes
+                  </span>
+
+                  {/* 1. Température en fonctionnement (Confort présence) */}
+                  <div className="p-3.5 bg-white dark:bg-slate-900 rounded-xl border border-border-subtle flex items-center justify-between gap-2 shadow-2xs">
+                    <div className="flex items-center gap-2.5 min-w-0 pr-1">
+                      <div className="w-8 h-8 rounded-lg bg-emerald-50 dark:bg-emerald-950/50 text-emerald-700 dark:text-emerald-300 flex items-center justify-center shrink-0">
+                        <span className="material-symbols-outlined text-[20px]">local_fire_department</span>
+                      </div>
+                      <div className="flex flex-col min-w-0">
+                        <span className="text-xs font-bold text-on-surface leading-tight">En fonctionnement</span>
+                        <span className="text-[10px] text-on-surface-variant">Confort présence ({isHeatingActive ? 'actif' : 'prévu'})</span>
+                      </div>
                     </div>
-                    <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-bold bg-emerald-100 text-emerald-800 dark:bg-emerald-900/60 dark:text-emerald-200">
-                      <span className="w-1.5 h-1.5 rounded-full bg-emerald-600 animate-pulse"></span>
-                      Asservi
+                    <div className="flex items-center gap-1.5 shrink-0 bg-canvas-slate p-1 rounded-full border border-border-subtle">
+                      <button
+                        aria-label="Diminuer consigne confort"
+                        className="w-7 h-7 rounded-full bg-white dark:bg-slate-800 border border-outline-variant hover:bg-surface-container flex items-center justify-center text-on-surface active:scale-95 transition-transform shadow-2xs cursor-pointer"
+                        type="button"
+                        onClick={() => handleHeatingComfortChange(-0.5)}
+                      >
+                        <span className="material-symbols-outlined text-[15px]">remove</span>
+                      </button>
+                      <span className="font-headline-md text-sm sm:text-base text-primary font-bold tabular-nums w-12 text-center">
+                        {heatingComfortTarget.toFixed(1)}<span className="text-xs text-outline font-normal">°C</span>
+                      </span>
+                      <button
+                        aria-label="Augmenter consigne confort"
+                        className="w-7 h-7 rounded-full bg-primary text-white hover:bg-forest-deep flex items-center justify-center font-bold active:scale-95 transition-transform shadow-2xs cursor-pointer"
+                        type="button"
+                        onClick={() => handleHeatingComfortChange(0.5)}
+                      >
+                        <span className="material-symbols-outlined text-[15px]">add</span>
+                      </button>
+                    </div>
+                  </div>
+
+                  {/* 2. Température à l'arrêt (Hors-gel / Maintien) */}
+                  <div className="p-3.5 bg-white dark:bg-slate-900 rounded-xl border border-border-subtle flex flex-col gap-2 shadow-2xs">
+                    <div className="flex items-center justify-between gap-2">
+                      <div className="flex items-center gap-2.5 min-w-0 pr-1">
+                        <div className="w-8 h-8 rounded-lg bg-sky-50 dark:bg-sky-950/50 text-sky-700 dark:text-sky-300 flex items-center justify-center shrink-0">
+                          <span className="material-symbols-outlined text-[20px]">ac_unit</span>
+                        </div>
+                        <div className="flex flex-col min-w-0">
+                          <span className="text-xs font-bold text-on-surface leading-tight">À l'arrêt</span>
+                          <span className="text-[10px] text-on-surface-variant">Hors-gel & maintien bâtiment</span>
+                        </div>
+                      </div>
+                      <div className="flex items-center gap-1.5 shrink-0 bg-canvas-slate p-1 rounded-full border border-border-subtle">
+                        <button
+                          aria-label="Diminuer consigne hors-gel"
+                          className="w-7 h-7 rounded-full bg-white dark:bg-slate-800 border border-outline-variant hover:bg-surface-container flex items-center justify-center text-on-surface active:scale-95 transition-transform shadow-2xs cursor-pointer"
+                          type="button"
+                          onClick={() => handleHeatingFrostChange(-0.5)}
+                        >
+                          <span className="material-symbols-outlined text-[15px]">remove</span>
+                        </button>
+                        <span className="font-headline-md text-sm sm:text-base text-sky-800 dark:text-sky-300 font-bold tabular-nums w-12 text-center">
+                          {heatingFrostTarget.toFixed(1)}<span className="text-xs text-outline font-normal">°C</span>
+                        </span>
+                        <button
+                          aria-label="Augmenter consigne hors-gel"
+                          className="w-7 h-7 rounded-full bg-sky-700 text-white hover:bg-sky-800 flex items-center justify-center font-bold active:scale-95 transition-transform shadow-2xs cursor-pointer"
+                          type="button"
+                          onClick={() => handleHeatingFrostChange(0.5)}
+                        >
+                          <span className="material-symbols-outlined text-[15px]">add</span>
+                        </button>
+                      </div>
+                    </div>
+                    {/* Callout de protection permanente */}
+                    <div className="flex items-center gap-1.5 px-2.5 py-1 rounded-lg bg-sky-50/90 dark:bg-sky-950/40 border border-sky-200/60 text-[11px] text-sky-800 dark:text-sky-200 font-medium">
+                      <span>🛡️</span>
+                      <span>Sécurité hors-gel permanente active (protection continue des canalisations).</span>
+                    </div>
+                  </div>
+                </div>
+
+                {/* Jauge Fioul (Cuve Éts JOSSE) */}
+                {(() => {
+                  const fuelRemaining = heatingStatus?.fuel_liters_remaining != null ? heatingStatus.fuel_liters_remaining : 2720;
+                  const fuelCapacity = heatingStatus?.fuel_capacity_liters != null ? heatingStatus.fuel_capacity_liters : 3000;
+                  const fuelPercent = Math.min(100, Math.max(0, Math.round((fuelRemaining / fuelCapacity) * 100)));
+
+                  return (
+                    <div className="p-3.5 bg-white dark:bg-slate-900 rounded-xl border border-border-subtle flex flex-col gap-2.5 shadow-2xs">
+                      <div className="flex items-center justify-between gap-2 flex-wrap">
+                        <div className="flex items-center gap-2 min-w-0">
+                          <span className="material-symbols-outlined text-amber-600 text-[20px] shrink-0">local_gas_station</span>
+                          <div className="flex flex-col min-w-0">
+                            <span className="text-xs font-semibold text-on-surface">Cuve Fioul (Éts JOSSE)</span>
+                            <span className="text-[11px] text-on-surface-variant">Capacité totale {fuelCapacity.toLocaleString('fr-FR')} L</span>
+                          </div>
+                        </div>
+                        <span className="font-headline-sm text-xs font-bold text-amber-950 bg-amber-50 border border-amber-200/80 tabular-nums shrink-0 px-2.5 py-1 rounded-md">
+                          {fuelRemaining.toLocaleString('fr-FR')} L / {fuelCapacity.toLocaleString('fr-FR')} L • {fuelPercent}%
+                        </span>
+                      </div>
+
+                      {/* Stylized progress bar */}
+                      <div className="w-full bg-slate-100 dark:bg-slate-800/80 backdrop-blur-xs h-3 rounded-full overflow-hidden shadow-inner border border-slate-200/70 p-0.5">
+                        <div
+                          className="bg-gradient-to-r from-amber-600 to-amber-400 h-full rounded-full overflow-hidden shadow-inner transition-all duration-500"
+                          style={{ width: `${fuelPercent}%` }}
+                        />
+                      </div>
+
+                      {/* Level indicators */}
+                      <div className="flex items-center justify-between text-[10px] font-semibold text-on-surface-variant/80 px-0.5">
+                        <span>0 L</span>
+                        <span>1 500 L</span>
+                        <span>3 000 L</span>
+                      </div>
+                    </div>
+                  );
+                })()}
+
+              </div>
+            </div>
+
+            {/* Volet 2 : Eau Chaude Sanitaire (ViCare 250L) */}
+            <div className="p-5 rounded-2xl bg-canvas-slate border border-border-subtle flex flex-col justify-between gap-5 shadow-sm min-w-0">
+              <div className="flex flex-col gap-4">
+                {/* En-tête ECS */}
+                <div className="flex items-center justify-between border-b border-border-subtle pb-3 gap-2 flex-wrap">
+                  <div className="flex items-center gap-2 min-w-0">
+                    <span className="material-symbols-outlined text-primary text-[22px]">water_heater</span>
+                    <h3 className="font-headline-sm text-headline-sm text-on-surface font-semibold truncate">Eau Chaude (250L)</h3>
+                    <span className={`inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-full font-label-sm text-[11px] font-bold shrink-0 ${
+                      heatingError
+                        ? 'bg-rose-100 text-rose-800'
+                        : isDhwActive
+                          ? 'bg-emerald-100 text-emerald-800 dark:bg-emerald-950 dark:text-emerald-200'
+                          : 'bg-slate-200/80 text-slate-700 dark:bg-slate-700 dark:text-slate-300'
+                    }`}>
+                      <span className={`w-1.5 h-1.5 rounded-full ${
+                        heatingError
+                          ? 'bg-rose-600'
+                          : isDhwActive
+                            ? 'bg-emerald-600 animate-pulse'
+                            : 'bg-slate-500'
+                      }`} />
+                      {heatingError ? 'Indisponible' : isDhwActive ? 'En marche / Chauffe active' : 'Éteint / Veille'}
                     </span>
                   </div>
 
-                  <div className="grid grid-cols-2 gap-2 text-xs">
-                    <div className="p-2 rounded-lg bg-white dark:bg-slate-900 border border-emerald-200/60 flex flex-col gap-1">
-                      <span className="text-[10px] text-on-surface-variant font-medium">Relance ballon :</span>
-                      <span className="font-bold text-forest-deep dark:text-emerald-200">Dès {stayPreheatTime} le {formatDateReadable(currentStay.start_date)}</span>
+                  {/* Température actuelle réelle et mention Refroidissement naturel */}
+                  <div className="flex flex-col items-end shrink-0">
+                    <div className="flex items-center gap-1.5 px-2.5 py-1 rounded-full bg-white dark:bg-slate-900 border border-border-subtle shadow-2xs">
+                      <span className="font-label-sm text-xs text-outline">Actuelle :</span>
+                      <span className="font-headline-sm text-xs sm:text-sm text-on-surface font-bold tabular-nums">
+                        {heatingStatus?.dhw_temperature != null ? `${heatingStatus.dhw_temperature.toFixed(1)}°C` : '--°C'}
+                      </span>
                     </div>
-                    <div className="p-2 rounded-lg bg-white dark:bg-slate-900 border border-emerald-200/60 flex flex-col gap-1">
-                      <span className="text-[10px] text-on-surface-variant font-medium">Bascule veille :</span>
-                      <span className="font-bold text-forest-deep dark:text-emerald-200">À {stayShutdownTime} le {formatDateReadable(currentStay.end_date)}</span>
-                    </div>
+                    {!isDhwActive && heatingStatus?.dhw_temperature != null && (
+                      <span className="text-[10px] text-slate-500 font-semibold mt-1 flex items-center gap-1">
+                        <span className="w-1.5 h-1.5 rounded-full bg-slate-400"></span>
+                        Refroidissement naturel
+                      </span>
+                    )}
                   </div>
                 </div>
-              )}
 
-              {/* DHW Target temperature control */}
-              <div className="p-3.5 bg-white rounded-xl border border-border-subtle flex items-center justify-between gap-2 shadow-sm">
-                <div className="flex flex-col min-w-0 pr-1">
-                  <span className="font-label-md text-label-md text-on-surface font-semibold leading-tight">Consigne ECS</span>
-                </div>
-                <div className="flex items-center gap-1.5 shrink-0 bg-canvas-slate p-1 rounded-full border border-border-subtle">
-                  <button
-                    aria-label="Diminuer consigne eau chaude"
-                    className="w-8 h-8 rounded-full bg-white border border-outline-variant hover:bg-surface-container flex items-center justify-center text-on-surface active:scale-95 transition-transform shadow-sm cursor-pointer"
-                    type="button"
-                    onClick={() => handleDhwChange(-0.5)}
-                  >
-                    <span className="material-symbols-outlined text-[16px]">remove</span>
-                  </button>
-                  <span className="font-headline-md text-[18px] text-primary font-bold tabular-nums w-12 text-center">
-                    {dhwTarget.toFixed(1)}<span className="text-xs text-outline font-normal">°C</span>
-                  </span>
-                  <button
-                    aria-label="Augmenter consigne eau chaude"
-                    className="w-8 h-8 rounded-full bg-primary text-white hover:bg-forest-deep flex items-center justify-center font-bold active:scale-95 transition-transform shadow-sm cursor-pointer"
-                    type="button"
-                    onClick={() => handleDhwChange(0.5)}
-                  >
-                    <span className="material-symbols-outlined text-[16px]">add</span>
-                  </button>
-                </div>
-              </div>
-
-              {/* Direct Mode ECS (Annotation 8: réservé à la vue Domaine hors séjour) */}
-              {currentPageIndex === 0 ? (
+                {/* Gros Switch Marche / Arrêt géant (Annotation 1) */}
                 <div className="space-y-1.5">
-                  <div className="flex items-center justify-between">
-                    <span className="text-[11px] font-bold text-on-surface-variant uppercase tracking-wider block">Commande manuelle ballon</span>
-                    <span className="text-[10px] text-amber-700 bg-amber-50 px-1.5 py-0.5 rounded font-semibold">Hors séjour</span>
-                  </div>
-                  <div className="grid grid-cols-3 gap-1.5 bg-white p-1 rounded-xl border border-border-subtle">
-                    {['Normal', 'Éco', 'Arrêt'].map((mode) => (
-                      <button
-                        key={mode}
-                        type="button"
-                        onClick={() => setDhwMode(mode)}
-                        className={`py-2 px-1 rounded-lg text-xs font-bold transition-all cursor-pointer text-center ${
-                          dhwMode === mode
-                            ? 'bg-primary text-white shadow-xs'
-                            : 'text-on-surface-variant hover:text-on-surface hover:bg-canvas-slate'
-                        }`}
-                      >
-                        {mode}
-                      </button>
-                    ))}
-                  </div>
-                </div>
-              ) : (
-                <div className="p-2.5 rounded-xl bg-canvas-slate/80 border border-border-subtle/60 flex items-center justify-between text-xs text-on-surface-variant">
-                  <span className="flex items-center gap-1.5 font-medium">
-                    <span className="material-symbols-outlined text-primary text-[16px]">water_heater</span>
-                    Chauffe-eau asservi au séjour
+                  <span className="text-[11px] font-bold text-on-surface-variant uppercase tracking-wider block">
+                    Interrupteur Chauffe-Eau
                   </span>
-                  <span className="font-semibold text-primary">{dhwTarget.toFixed(1)}°C (250L)</span>
+                  <ThermalMasterSwitch
+                    isActive={isDhwActive}
+                    onChange={handleToggleDhw}
+                    disabled={Boolean(heatingError)}
+                    offLabel="Arrêt"
+                    offSubtitle="Éteint / Veille"
+                    offIcon="power_settings_new"
+                    onLabel="Marche"
+                    onSubtitle="En marche / Chauffe active"
+                    onIcon="water_heater"
+                    ariaLabel="Interrupteur principal Eau Chaude Sanitaire"
+                  />
                 </div>
-              )}
 
+                {/* Consigne et Horaires prévus pour le séjour (Annotation 8 Stitch 2c313f81e4f5499abb218f5b1dc25c68) */}
+                {currentPageIndex > 0 && currentStay && (
+                  <div className="p-3 bg-emerald-50/90 dark:bg-emerald-950/30 rounded-xl border border-emerald-200/80 dark:border-emerald-800/50 flex flex-col gap-2.5 shadow-2xs">
+                    <div className="flex items-center justify-between gap-2">
+                      <div className="flex items-center gap-2">
+                        <span className="material-symbols-outlined text-primary text-[18px]">schedule</span>
+                        <span className="text-[11px] uppercase font-bold text-on-surface-variant">Relance ECS asservie au séjour</span>
+                      </div>
+                      <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-bold bg-emerald-100 text-emerald-800 dark:bg-emerald-900/60 dark:text-emerald-200">
+                        <span className="w-1.5 h-1.5 rounded-full bg-emerald-600 animate-pulse"></span>
+                        Asservi
+                      </span>
+                    </div>
+
+                    <div className="grid grid-cols-2 gap-2 text-xs">
+                      <div className="p-2 rounded-lg bg-white dark:bg-slate-900 border border-emerald-200/60 flex flex-col gap-1">
+                        <span className="text-[10px] text-on-surface-variant font-medium">Relance ballon :</span>
+                        <span className="font-bold text-forest-deep dark:text-emerald-200">Dès {stayPreheatTime} le {formatDateReadable(currentStay.start_date)}</span>
+                      </div>
+                      <div className="p-2 rounded-lg bg-white dark:bg-slate-900 border border-emerald-200/60 flex flex-col gap-1">
+                        <span className="text-[10px] text-on-surface-variant font-medium">Bascule veille :</span>
+                        <span className="font-bold text-forest-deep dark:text-emerald-200">À {stayShutdownTime} le {formatDateReadable(currentStay.end_date)}</span>
+                      </div>
+                    </div>
+                  </div>
+                )}
+
+                {/* Consigne cible souhaitée lorsqu'il est en marche (stepper +/- sobre) */}
+                <div className="p-3.5 bg-white dark:bg-slate-900 rounded-xl border border-border-subtle flex flex-col gap-2 shadow-2xs">
+                  <div className="flex items-center justify-between gap-2">
+                    <div className="flex flex-col min-w-0 pr-1">
+                      <span className="font-label-md text-label-md text-on-surface font-semibold leading-tight">Consigne cible (en marche)</span>
+                      <span className="text-[10px] text-on-surface-variant">Température de chauffe souhaitée du ballon 250L</span>
+                    </div>
+                    <div className="flex items-center gap-1.5 shrink-0 bg-canvas-slate p-1 rounded-full border border-border-subtle">
+                      <button
+                        aria-label="Diminuer consigne eau chaude"
+                        className="w-8 h-8 rounded-full bg-white dark:bg-slate-800 border border-outline-variant hover:bg-surface-container flex items-center justify-center text-on-surface active:scale-95 transition-transform shadow-2xs cursor-pointer"
+                        type="button"
+                        onClick={() => handleDhwChange(-0.5)}
+                      >
+                        <span className="material-symbols-outlined text-[16px]">remove</span>
+                      </button>
+                      <span className="font-headline-md text-[18px] text-primary font-bold tabular-nums w-12 text-center">
+                        {dhwTarget.toFixed(1)}<span className="text-xs text-outline font-normal">°C</span>
+                      </span>
+                      <button
+                        aria-label="Augmenter consigne eau chaude"
+                        className="w-8 h-8 rounded-full bg-primary text-white hover:bg-forest-deep flex items-center justify-center font-bold active:scale-95 transition-transform shadow-2xs cursor-pointer"
+                        type="button"
+                        onClick={() => handleDhwChange(0.5)}
+                      >
+                        <span className="material-symbols-outlined text-[16px]">add</span>
+                      </button>
+                    </div>
+                  </div>
+                  <div className="text-[11px] text-on-surface-variant/80 border-t border-border-subtle/50 pt-1.5 flex items-center gap-1.5">
+                    <span className="material-symbols-outlined text-[14px] text-primary">info</span>
+                    <span>
+                      {isDhwActive
+                        ? `Chauffe active vers la cible de ${dhwTarget.toFixed(1)}°C.`
+                        : `Consigne mémorisée : sera appliquée à la remise en marche ou lors des séjours.`}
+                    </span>
+                  </div>
+                </div>
+
+                {/* Synthèse statut séjour / hors séjour */}
+                {currentPageIndex === 0 ? (
+                  <div className="p-2.5 rounded-xl bg-canvas-slate/80 border border-border-subtle/60 flex items-center justify-between text-xs text-on-surface-variant">
+                    <span className="flex items-center gap-1.5 font-medium">
+                      <span className="material-symbols-outlined text-primary text-[16px]">power_settings_new</span>
+                      Pilotage direct manuel (hors séjour)
+                    </span>
+                    <span className={`font-semibold ${isDhwActive ? 'text-primary' : 'text-slate-500'}`}>
+                      {isDhwActive ? `Marche (${dhwTarget.toFixed(1)}°C)` : 'Veille / Arrêt'}
+                    </span>
+                  </div>
+                ) : (
+                  <div className="p-2.5 rounded-xl bg-canvas-slate/80 border border-border-subtle/60 flex items-center justify-between text-xs text-on-surface-variant">
+                    <span className="flex items-center gap-1.5 font-medium">
+                      <span className="material-symbols-outlined text-primary text-[16px]">water_heater</span>
+                      Chauffe-eau asservi au séjour
+                    </span>
+                    <span className="font-semibold text-primary">{dhwTarget.toFixed(1)}°C (250L)</span>
+                  </div>
+                )}
+
+              </div>
             </div>
-          </div>
 
           {/* Volet 3 : Piscine (Klereo) */}
           <div className="p-5 rounded-2xl bg-canvas-slate border border-border-subtle flex flex-col justify-between gap-5 shadow-sm min-w-0">
