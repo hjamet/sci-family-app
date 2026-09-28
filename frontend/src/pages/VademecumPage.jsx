@@ -11,7 +11,12 @@ import {
   fetchReservations,
   setHeatingTemperature,
   setHeatingMode as apiSetHeatingMode,
+  setDhwMode,
+  setDhwTemperature,
+  setPoolPumpMode,
+  setPoolHeatingMode,
   saveHeatingSettings,
+  savePoolSettings,
   validateTask,
   invalidateTask,
   getCachedData,
@@ -159,9 +164,11 @@ export default function VademecumPage({ properties, currentUser, reservations = 
 
   const [isDhwActive, setIsDhwActive] = useState(false);
   const [dhwTarget, setDhwTarget] = useState(55.0);
+  const [dhwFrostTarget, setDhwFrostTarget] = useState(10.0);
 
   const [poolTarget, setPoolTarget] = useState(14.0);
-  const [poolPumpMode, setPoolPumpMode] = useState('Automatique'); // 'Automatique' | 'Marche forcée' | 'Arrêt'
+  const [isPoolPumpActive, setIsPoolPumpActive] = useState(true);
+  const [isPoolHeatingActive, setIsPoolHeatingActive] = useState(false);
   const [savingThermal, setSavingThermal] = useState(false);
 
   // Horaires programmés pour le séjour (Annotation 8 Stitch 2c313f81e4f5499abb218f5b1dc25c68)
@@ -215,6 +222,10 @@ export default function VademecumPage({ properties, currentUser, reservations = 
           setDhwTarget(heatRes.dhw_target_temperature);
         }
 
+        if (heatRes.dhw_reduced_temperature != null && heatRes.dhw_reduced_temperature >= 5.0) {
+          setDhwFrostTarget(heatRes.dhw_reduced_temperature);
+        }
+
         // Heating active state
         let heatingActive = false;
         if (heatRes.is_heating_active != null) {
@@ -253,6 +264,16 @@ export default function VademecumPage({ properties, currentUser, reservations = 
         setPiscineStatus(poolRes);
         if (poolRes.frost_protection_target != null) setPoolTarget(poolRes.frost_protection_target);
         else if (poolRes.target_temperature != null) setPoolTarget(poolRes.target_temperature);
+
+        const pumpActive = poolRes.filtration_state
+          ? !poolRes.filtration_state.toLowerCase().includes('arrêt') && !poolRes.filtration_state.toLowerCase().includes('arret') && !poolRes.filtration_state.toLowerCase().includes('off')
+          : true;
+        setIsPoolPumpActive(pumpActive);
+
+        const pacActive = poolRes.pac_state
+          ? poolRes.pac_state.toLowerCase().includes('chauffe') || poolRes.pac_state.toLowerCase().includes('marche') || poolRes.pac_state.toLowerCase().includes('actif')
+          : false;
+        setIsPoolHeatingActive(pacActive);
       }
 
       // Tasks (Annotation 7 : Déduplication et purge des tâches inventées)
@@ -331,10 +352,25 @@ export default function VademecumPage({ properties, currentUser, reservations = 
     setHeatingFrostTarget(nextVal);
   };
 
-  const handleDhwChange = (delta) => {
+  const handleDhwChange = async (delta) => {
     const nextVal = Math.round((dhwTarget + delta) * 10) / 10;
-    if (nextVal < 45.0 || nextVal > 65.0) return;
+    if (delta > 0 && dhwTarget >= 60.0) {
+      showToast('Consigne maximale autorisée pour le chauffe-eau : 60.0°C.');
+      return;
+    }
+    if (nextVal < 40.0) return;
     setDhwTarget(nextVal);
+    if (isDhwActive) {
+      try {
+        await setDhwTemperature(nextVal);
+      } catch (_) {}
+    }
+  };
+
+  const handleDhwFrostChange = (delta) => {
+    const nextVal = Math.round((dhwFrostTarget + delta) * 10) / 10;
+    if (nextVal < 5.0 || nextVal > 25.0) return;
+    setDhwFrostTarget(nextVal);
   };
 
   const handlePoolChange = (delta) => {
@@ -362,7 +398,7 @@ export default function VademecumPage({ properties, currentUser, reservations = 
       showToast(
         targetActive
           ? `Chauffage activé : Mode Confort ${heatingComfortTarget.toFixed(1)}°C 🔥`
-          : `Chauffage à l'arrêt : Sécurité Hors-gel active (${heatingFrostTarget.toFixed(1)}°C) 🛡️`
+          : `Chauffage à l'arrêt : Sécurité Hors-gel active (${heatingFrostTarget.toFixed(1)}°C) 🛑`
       );
     } catch (err) {
       showToast(`Avertissement liaison : ${err.message}`);
@@ -378,19 +414,55 @@ export default function VademecumPage({ properties, currentUser, reservations = 
         target_temperature: heatingComfortTarget,
         frost_temperature: heatingFrostTarget,
         is_dhw_active: targetActive,
-        dhw_target_temperature: dhwTarget,
+        dhw_target_temperature: targetActive ? dhwTarget : dhwFrostTarget,
         author_name: resolveCurrentUserFullName(currentUser),
         details: targetActive
           ? `Eau Chaude (250L) activée en Marche (Chauffe cible ${dhwTarget.toFixed(1)}°C)`
-          : `Eau Chaude (250L) mise à l'Arrêt (Veille & Refroidissement naturel)`
+          : `Eau Chaude (250L) mise à l'Arrêt (Veille à ${dhwFrostTarget.toFixed(1)}°C)`
       });
+      try {
+        await setDhwMode(targetActive);
+        if (targetActive) {
+          await setDhwTemperature(dhwTarget);
+        }
+      } catch (_) {}
       showToast(
         targetActive
           ? `Eau Chaude Sanitaire activée (Cible : ${dhwTarget.toFixed(1)}°C) 🔥`
-          : `Eau Chaude mise à l'arrêt (Veille & Refroidissement naturel) ❄️`
+          : `Eau Chaude mise à l'arrêt (Veille à ${dhwFrostTarget.toFixed(1)}°C) 🛑`
       );
     } catch (err) {
       showToast(`Avertissement liaison : ${err.message}`);
+    }
+  };
+
+  // Bascule instantanée du switch Marche/Arrêt Pompe de filtration Piscine
+  const handleTogglePoolPump = async (targetActive) => {
+    setIsPoolPumpActive(targetActive);
+    try {
+      await setPoolPumpMode(targetActive);
+      showToast(
+        targetActive
+          ? 'Pompe de filtration activée (Marche) 🌊'
+          : 'Pompe de filtration mise à l\'arrêt 🛑'
+      );
+    } catch (err) {
+      showToast(`Avertissement piscine : ${err.message}`);
+    }
+  };
+
+  // Bascule instantanée du switch Marche/Arrêt Chauffage Piscine (PAC Inopac 20 kW)
+  const handleTogglePoolHeating = async (targetActive) => {
+    setIsPoolHeatingActive(targetActive);
+    try {
+      await setPoolHeatingMode(targetActive);
+      showToast(
+        targetActive
+          ? 'Chauffage piscine PAC activé (Marche) 🔥'
+          : 'Chauffage piscine PAC mis à l\'arrêt ❄️'
+      );
+    } catch (err) {
+      showToast(`Avertissement piscine : ${err.message}`);
     }
   };
 
@@ -403,16 +475,26 @@ export default function VademecumPage({ properties, currentUser, reservations = 
         target_temperature: heatingComfortTarget,
         frost_temperature: heatingFrostTarget,
         is_dhw_active: isDhwActive,
-        dhw_target_temperature: dhwTarget,
+        dhw_target_temperature: isDhwActive ? dhwTarget : dhwFrostTarget,
         mode: isHeatingActive ? 'dhwAndHeating' : 'dhw',
         author_name: resolveCurrentUserFullName(currentUser),
-        details: `Réglages consolidés : Chauffage ${isHeatingActive ? `Marche (${heatingComfortTarget.toFixed(1)}°C)` : `Arrêt (Hors-gel ${heatingFrostTarget.toFixed(1)}°C)`}, ECS ${isDhwActive ? `Marche (${dhwTarget.toFixed(1)}°C)` : 'Arrêt/Veille'}`
+        details: `Réglages consolidés : Chauffage ${isHeatingActive ? `Marche (${heatingComfortTarget.toFixed(1)}°C)` : `Arrêt (Hors-gel ${heatingFrostTarget.toFixed(1)}°C)`}, ECS ${isDhwActive ? `Marche (${dhwTarget.toFixed(1)}°C)` : `Arrêt (Veille ${dhwFrostTarget.toFixed(1)}°C)`}`
       });
 
+      try {
+        await savePoolSettings({
+          target_temperature: poolTarget,
+          filtration_mode: isPoolPumpActive ? 'marche' : 'arret',
+          mode: isPoolHeatingActive ? 'confort' : 'standby',
+          author_name: resolveCurrentUserFullName(currentUser),
+          details: `Réglages consolidés piscine : Pompe ${isPoolPumpActive ? 'Marche' : 'Arrêt'}, PAC ${isPoolHeatingActive ? 'Marche' : 'Arrêt'}, Cible ${poolTarget.toFixed(1)}°C`
+        });
+      } catch (_) {}
+
       if (currentPageIndex > 0 && currentStay) {
-        showToast(`Consignes du séjour enregistrées : Chauffage ${isHeatingActive ? 'Marche' : 'Arrêt'} (Confort ${heatingComfortTarget.toFixed(1)}°C, Hors-gel ${heatingFrostTarget.toFixed(1)}°C), ECS ${isDhwActive ? 'Marche' : 'Arrêt'} (${dhwTarget.toFixed(1)}°C), Bassin ${poolTarget.toFixed(1)}°C. Notification transmise.`);
+        showToast(`Consignes du séjour enregistrées : Chauffage ${isHeatingActive ? 'Marche' : 'Arrêt'} (Confort ${heatingComfortTarget.toFixed(1)}°C, Hors-gel ${heatingFrostTarget.toFixed(1)}°C), ECS ${isDhwActive ? 'Marche' : 'Arrêt'} (${dhwTarget.toFixed(1)}°C), Pompe ${isPoolPumpActive ? 'Marche' : 'Arrêt'}, PAC ${isPoolHeatingActive ? 'Marche' : 'Arrêt'}. Notification transmise.`);
       } else {
-        showToast(`Consignes enregistrées : Chauffage ${isHeatingActive ? 'Marche' : 'Arrêt'} (Confort ${heatingComfortTarget.toFixed(1)}°C, Hors-gel ${heatingFrostTarget.toFixed(1)}°C), ECS ${isDhwActive ? 'Marche' : 'Arrêt'} (${dhwTarget.toFixed(1)}°C), Bassin ${poolTarget.toFixed(1)}°C (${poolPumpMode}). Notification transmise.`);
+        showToast(`Consignes enregistrées : Chauffage ${isHeatingActive ? 'Marche' : 'Arrêt'} (Confort ${heatingComfortTarget.toFixed(1)}°C, Hors-gel ${heatingFrostTarget.toFixed(1)}°C), ECS ${isDhwActive ? 'Marche' : 'Arrêt'} (${dhwTarget.toFixed(1)}°C), Pompe ${isPoolPumpActive ? 'Marche' : 'Arrêt'}, PAC ${isPoolHeatingActive ? 'Marche' : 'Arrêt'}. Notification transmise.`);
       }
     } catch (err) {
       showToast(`Erreur : ${err.message}`);
@@ -1142,22 +1224,6 @@ export default function VademecumPage({ properties, currentUser, reservations = 
                   <div className="flex items-center gap-2 min-w-0">
                     <span className="material-symbols-outlined text-primary text-[22px]">hvac</span>
                     <h3 className="font-headline-sm text-headline-sm text-on-surface font-semibold truncate">Chauffage (ViCare)</h3>
-                    <span className={`inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-full font-label-sm text-[11px] font-bold shrink-0 ${
-                      heatingError
-                        ? 'bg-rose-100 text-rose-800'
-                        : isHeatingActive
-                          ? 'bg-emerald-100 text-emerald-800 dark:bg-emerald-950 dark:text-emerald-200'
-                          : 'bg-slate-200/80 text-slate-700 dark:bg-slate-700 dark:text-slate-300'
-                    }`}>
-                      <span className={`w-1.5 h-1.5 rounded-full ${
-                        heatingError
-                          ? 'bg-rose-600'
-                          : isHeatingActive
-                            ? 'bg-emerald-600 animate-pulse'
-                            : 'bg-slate-500'
-                      }`} />
-                      {heatingError ? 'Indisponible' : isHeatingActive ? 'En chauffe (Confort)' : 'Arrêt (Hors-gel actif)'}
-                    </span>
                   </div>
                 </div>
 
@@ -1171,10 +1237,8 @@ export default function VademecumPage({ properties, currentUser, reservations = 
                     onChange={handleToggleHeating}
                     disabled={Boolean(heatingError)}
                     offLabel="Arrêt"
-                    offSubtitle="Arrêt (Hors-gel actif)"
-                    offIcon="ac_unit"
                     onLabel="Marche"
-                    onSubtitle="En chauffe (Confort)"
+                    offIcon="power_settings_new"
                     onIcon="local_fire_department"
                     ariaLabel="Interrupteur principal Chauffage ViCare"
                   />
@@ -1381,38 +1445,6 @@ export default function VademecumPage({ properties, currentUser, reservations = 
                   <div className="flex items-center gap-2 min-w-0">
                     <span className="material-symbols-outlined text-primary text-[22px]">water_heater</span>
                     <h3 className="font-headline-sm text-headline-sm text-on-surface font-semibold truncate">Eau Chaude (250L)</h3>
-                    <span className={`inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-full font-label-sm text-[11px] font-bold shrink-0 ${
-                      heatingError
-                        ? 'bg-rose-100 text-rose-800'
-                        : isDhwActive
-                          ? 'bg-emerald-100 text-emerald-800 dark:bg-emerald-950 dark:text-emerald-200'
-                          : 'bg-slate-200/80 text-slate-700 dark:bg-slate-700 dark:text-slate-300'
-                    }`}>
-                      <span className={`w-1.5 h-1.5 rounded-full ${
-                        heatingError
-                          ? 'bg-rose-600'
-                          : isDhwActive
-                            ? 'bg-emerald-600 animate-pulse'
-                            : 'bg-slate-500'
-                      }`} />
-                      {heatingError ? 'Indisponible' : isDhwActive ? 'En marche / Chauffe active' : 'Éteint / Veille'}
-                    </span>
-                  </div>
-
-                  {/* Température actuelle réelle et mention Refroidissement naturel */}
-                  <div className="flex flex-col items-end shrink-0">
-                    <div className="flex items-center gap-1.5 px-2.5 py-1 rounded-full bg-white dark:bg-slate-900 border border-border-subtle shadow-2xs">
-                      <span className="font-label-sm text-xs text-outline">Actuelle :</span>
-                      <span className="font-headline-sm text-xs sm:text-sm text-on-surface font-bold tabular-nums">
-                        {heatingStatus?.dhw_temperature != null ? `${heatingStatus.dhw_temperature.toFixed(1)}°C` : '--°C'}
-                      </span>
-                    </div>
-                    {!isDhwActive && heatingStatus?.dhw_temperature != null && (
-                      <span className="text-[10px] text-slate-500 font-semibold mt-1 flex items-center gap-1">
-                        <span className="w-1.5 h-1.5 rounded-full bg-slate-400"></span>
-                        Refroidissement naturel
-                      </span>
-                    )}
                   </div>
                 </div>
 
@@ -1426,11 +1458,9 @@ export default function VademecumPage({ properties, currentUser, reservations = 
                     onChange={handleToggleDhw}
                     disabled={Boolean(heatingError)}
                     offLabel="Arrêt"
-                    offSubtitle="Éteint / Veille"
-                    offIcon="power_settings_new"
                     onLabel="Marche"
-                    onSubtitle="En marche / Chauffe active"
-                    onIcon="water_heater"
+                    offIcon="power_settings_new"
+                    onIcon="local_fire_department"
                     ariaLabel="Interrupteur principal Eau Chaude Sanitaire"
                   />
                 </div>
@@ -1462,65 +1492,111 @@ export default function VademecumPage({ properties, currentUser, reservations = 
                   </div>
                 )}
 
-                {/* Consigne cible souhaitée lorsqu'il est en marche (stepper +/- sobre) */}
-                <div className="p-3.5 bg-white dark:bg-slate-900 rounded-xl border border-border-subtle flex flex-col gap-2 shadow-2xs">
-                  <div className="flex items-center justify-between gap-2">
-                    <div className="flex flex-col min-w-0 pr-1">
-                      <span className="font-label-md text-label-md text-on-surface font-semibold leading-tight">Consigne cible (en marche)</span>
-                      <span className="text-[10px] text-on-surface-variant">Température de chauffe souhaitée du ballon 250L</span>
-                    </div>
-                    <div className="flex items-center gap-1.5 shrink-0 bg-canvas-slate p-1 rounded-full border border-border-subtle">
-                      <button
-                        aria-label="Diminuer consigne eau chaude"
-                        className="w-8 h-8 rounded-full bg-white dark:bg-slate-800 border border-outline-variant hover:bg-surface-container flex items-center justify-center text-on-surface active:scale-95 transition-transform shadow-2xs cursor-pointer"
-                        type="button"
-                        onClick={() => handleDhwChange(-0.5)}
-                      >
-                        <span className="material-symbols-outlined text-[16px]">remove</span>
-                      </button>
-                      <span className="font-headline-md text-[18px] text-primary font-bold tabular-nums w-12 text-center">
-                        {dhwTarget.toFixed(1)}<span className="text-xs text-outline font-normal">°C</span>
-                      </span>
-                      <button
-                        aria-label="Augmenter consigne eau chaude"
-                        className="w-8 h-8 rounded-full bg-primary text-white hover:bg-forest-deep flex items-center justify-center font-bold active:scale-95 transition-transform shadow-2xs cursor-pointer"
-                        type="button"
-                        onClick={() => handleDhwChange(0.5)}
-                      >
-                        <span className="material-symbols-outlined text-[16px]">add</span>
-                      </button>
-                    </div>
+                {/* Fail-Fast ViCare Alert (si erreur) */}
+                {heatingError && (
+                  <div className="p-3 bg-rose-50 border border-rose-300 text-rose-900 rounded-xl text-xs font-semibold flex items-center gap-2 animate-in fade-in duration-200">
+                    <span className="material-symbols-outlined text-rose-600 text-[18px] shrink-0">error</span>
+                    <span>⚠️ Liaison ViCare indisponible : impossible d'interroger le chauffe-eau</span>
                   </div>
-                  <div className="text-[11px] text-on-surface-variant/80 border-t border-border-subtle/50 pt-1.5 flex items-center gap-1.5">
-                    <span className="material-symbols-outlined text-[14px] text-primary">info</span>
-                    <span>
-                      {isDhwActive
-                        ? `Chauffe active vers la cible de ${dhwTarget.toFixed(1)}°C.`
-                        : `Consigne mémorisée : sera appliquée à la remise en marche ou lors des séjours.`}
+                )}
+
+                {/* Sondes réelles ViCare : Température actuelle du ballon & Capacité (Annotation 5) */}
+                <div className="grid grid-cols-2 gap-2">
+                  <div className="p-3 bg-white dark:bg-slate-900 rounded-xl border border-border-subtle flex flex-col gap-0.5 shadow-2xs">
+                    <span className="text-[11px] text-on-surface-variant font-medium">Température ballon</span>
+                    <span className="font-headline-md text-base sm:text-lg font-bold text-on-surface tabular-nums">
+                      {heatingStatus?.dhw_temperature != null ? `${heatingStatus.dhw_temperature.toFixed(1)}°C` : '--°C'}
+                    </span>
+                  </div>
+                  <div className="p-3 bg-white dark:bg-slate-900 rounded-xl border border-border-subtle flex flex-col gap-0.5 shadow-2xs">
+                    <span className="text-[11px] text-on-surface-variant font-medium">Capacité ballon</span>
+                    <span className="font-headline-md text-base sm:text-lg font-bold text-on-surface tabular-nums">
+                      250 L
                     </span>
                   </div>
                 </div>
 
-                {/* Synthèse statut séjour / hors séjour */}
-                {currentPageIndex === 0 ? (
-                  <div className="p-2.5 rounded-xl bg-canvas-slate/80 border border-border-subtle/60 flex items-center justify-between text-xs text-on-surface-variant">
-                    <span className="flex items-center gap-1.5 font-medium">
-                      <span className="material-symbols-outlined text-primary text-[16px]">power_settings_new</span>
-                      Pilotage direct manuel (hors séjour)
-                    </span>
-                    <span className={`font-semibold ${isDhwActive ? 'text-primary' : 'text-slate-500'}`}>
-                      {isDhwActive ? `Marche (${dhwTarget.toFixed(1)}°C)` : 'Veille / Arrêt'}
-                    </span>
+                {/* Deux réglages distincts de température identiques au Chauffage (Annotation 5) */}
+                <div className="flex flex-col gap-2.5">
+                  <span className="text-[11px] font-bold text-on-surface-variant uppercase tracking-wider block">
+                    Réglages des Consignes
+                  </span>
+
+                  {/* 1. Température en fonctionnement (Chauffe confort) */}
+                  <div className="p-3.5 bg-white dark:bg-slate-900 rounded-xl border border-border-subtle flex items-center justify-between gap-2 shadow-2xs">
+                    <div className="flex items-center gap-2.5 min-w-0 pr-1">
+                      <div className="w-8 h-8 rounded-lg bg-emerald-50 dark:bg-emerald-950/50 text-emerald-700 dark:text-emerald-300 flex items-center justify-center shrink-0">
+                        <span className="material-symbols-outlined text-[20px]">local_fire_department</span>
+                      </div>
+                      <div className="flex flex-col min-w-0">
+                        <span className="text-xs font-bold text-on-surface leading-tight">En fonctionnement</span>
+                        <span className="text-[10px] text-on-surface-variant">Chauffe confort ({isDhwActive ? 'actif' : 'prévu'})</span>
+                      </div>
+                    </div>
+                    <div className="flex items-center gap-1.5 shrink-0 bg-canvas-slate p-1 rounded-full border border-border-subtle">
+                      <button
+                        aria-label="Diminuer consigne confort eau chaude"
+                        className="w-7 h-7 rounded-full bg-white dark:bg-slate-800 border border-outline-variant hover:bg-surface-container flex items-center justify-center text-on-surface active:scale-95 transition-transform shadow-2xs cursor-pointer"
+                        type="button"
+                        onClick={() => handleDhwChange(-0.5)}
+                      >
+                        <span className="material-symbols-outlined text-[15px]">remove</span>
+                      </button>
+                      <span className="font-headline-md text-sm sm:text-base text-primary font-bold tabular-nums w-12 text-center">
+                        {dhwTarget.toFixed(1)}<span className="text-xs text-outline font-normal">°C</span>
+                      </span>
+                      <button
+                        aria-label="Augmenter consigne confort eau chaude"
+                        className="w-7 h-7 rounded-full bg-primary text-white hover:bg-forest-deep flex items-center justify-center font-bold active:scale-95 transition-transform shadow-2xs cursor-pointer"
+                        type="button"
+                        onClick={() => handleDhwChange(0.5)}
+                      >
+                        <span className="material-symbols-outlined text-[15px]">add</span>
+                      </button>
+                    </div>
                   </div>
-                ) : (
-                  <div className="p-2.5 rounded-xl bg-canvas-slate/80 border border-border-subtle/60 flex items-center justify-between text-xs text-on-surface-variant">
-                    <span className="flex items-center gap-1.5 font-medium">
-                      <span className="material-symbols-outlined text-primary text-[16px]">water_heater</span>
-                      Chauffe-eau asservi au séjour
-                    </span>
-                    <span className="font-semibold text-primary">{dhwTarget.toFixed(1)}°C (250L)</span>
+
+                  {/* 2. Température à l'arrêt (Veille / Maintien minimal) */}
+                  <div className="p-3.5 bg-white dark:bg-slate-900 rounded-xl border border-border-subtle flex flex-col gap-2 shadow-2xs">
+                    <div className="flex items-center justify-between gap-2">
+                      <div className="flex items-center gap-2.5 min-w-0 pr-1">
+                        <div className="w-8 h-8 rounded-lg bg-sky-50 dark:bg-sky-950/50 text-sky-700 dark:text-sky-300 flex items-center justify-center shrink-0">
+                          <span className="material-symbols-outlined text-[20px]">ac_unit</span>
+                        </div>
+                        <div className="flex flex-col min-w-0">
+                          <span className="text-xs font-bold text-on-surface leading-tight">À l'arrêt</span>
+                          <span className="text-[10px] text-on-surface-variant">Veille &amp; maintien minimal ballon</span>
+                        </div>
+                      </div>
+                      <div className="flex items-center gap-1.5 shrink-0 bg-canvas-slate p-1 rounded-full border border-border-subtle">
+                        <button
+                          aria-label="Diminuer consigne veille eau chaude"
+                          className="w-7 h-7 rounded-full bg-white dark:bg-slate-800 border border-outline-variant hover:bg-surface-container flex items-center justify-center text-on-surface active:scale-95 transition-transform shadow-2xs cursor-pointer"
+                          type="button"
+                          onClick={() => handleDhwFrostChange(-0.5)}
+                        >
+                          <span className="material-symbols-outlined text-[15px]">remove</span>
+                        </button>
+                        <span className="font-headline-md text-sm sm:text-base text-sky-800 dark:text-sky-300 font-bold tabular-nums w-12 text-center">
+                          {dhwFrostTarget.toFixed(1)}<span className="text-xs text-outline font-normal">°C</span>
+                        </span>
+                        <button
+                          aria-label="Augmenter consigne veille eau chaude"
+                          className="w-7 h-7 rounded-full bg-sky-700 text-white hover:bg-sky-800 flex items-center justify-center font-bold active:scale-95 transition-transform shadow-2xs cursor-pointer"
+                          type="button"
+                          onClick={() => handleDhwFrostChange(0.5)}
+                        >
+                          <span className="material-symbols-outlined text-[15px]">add</span>
+                        </button>
+                      </div>
+                    </div>
+                    {/* Callout de protection permanente */}
+                    <div className="flex items-center gap-1.5 px-2.5 py-1 rounded-lg bg-sky-50/90 dark:bg-sky-950/40 border border-sky-200/60 text-[11px] text-sky-800 dark:text-sky-200 font-medium">
+                      <span>🛡️</span>
+                      <span>Maintien en veille permanent actif (sécurité anti-gel du ballon).</span>
+                    </div>
                   </div>
-                )}
+                </div>
 
               </div>
             </div>
@@ -1533,7 +1609,7 @@ export default function VademecumPage({ properties, currentUser, reservations = 
                   <span className="material-symbols-outlined text-primary text-[22px]">pool</span>
                   <h3 className="font-headline-sm text-headline-sm text-on-surface font-semibold truncate">Piscine (Klereo)</h3>
                 </div>
-                <div className="flex items-center gap-1 px-2.5 py-1 rounded-full bg-white border border-border-subtle shrink-0">
+                <div className="flex items-center gap-1 px-2.5 py-1 rounded-full bg-white dark:bg-slate-900 border border-border-subtle shrink-0">
                   <span className="font-label-sm text-xs text-outline">Eau :</span>
                   <span className="font-headline-sm text-xs text-on-surface font-bold tabular-nums">
                     {piscineStatus?.water_temperature != null ? `${piscineStatus.water_temperature.toFixed(1)}°C` : '--°C'}
@@ -1543,6 +1619,41 @@ export default function VademecumPage({ properties, currentUser, reservations = 
                   <span className="font-headline-sm text-xs text-on-surface font-bold tabular-nums">
                     {piscineStatus?.outside_temperature != null ? `${piscineStatus.outside_temperature.toFixed(1)}°C` : (piscineStatus?.air_temperature != null ? `${piscineStatus.air_temperature.toFixed(1)}°C` : '--°C')}
                   </span>
+                </div>
+              </div>
+
+              {/* Double Switch Marche / Arrêt Piscine (Annotation 4) */}
+              <div className="space-y-3">
+                {/* 1. Switch Pompe de filtration */}
+                <div className="space-y-1.5">
+                  <span className="text-[11px] font-bold text-on-surface-variant uppercase tracking-wider block">
+                    Pompe de filtration
+                  </span>
+                  <ThermalMasterSwitch
+                    isActive={isPoolPumpActive}
+                    onChange={handleTogglePoolPump}
+                    offLabel="Arrêt"
+                    onLabel="Marche"
+                    offIcon="power_settings_new"
+                    onIcon="local_fire_department"
+                    ariaLabel="Interrupteur Pompe de filtration piscine"
+                  />
+                </div>
+
+                {/* 2. Switch Chauffage Piscine (PAC Inopac 20 kW) */}
+                <div className="space-y-1.5">
+                  <span className="text-[11px] font-bold text-on-surface-variant uppercase tracking-wider block">
+                    Chauffage Piscine (PAC Inopac 20 kW)
+                  </span>
+                  <ThermalMasterSwitch
+                    isActive={isPoolHeatingActive}
+                    onChange={handleTogglePoolHeating}
+                    offLabel="Arrêt"
+                    onLabel="Marche"
+                    offIcon="power_settings_new"
+                    onIcon="local_fire_department"
+                    ariaLabel="Interrupteur Chauffage Piscine PAC Inopac"
+                  />
                 </div>
               </div>
 
@@ -1588,14 +1699,14 @@ export default function VademecumPage({ properties, currentUser, reservations = 
               )}
 
               {/* Target Temperature Control */}
-              <div className="p-3.5 bg-white rounded-xl border border-border-subtle flex items-center justify-between gap-2 shadow-sm">
+              <div className="p-3.5 bg-white dark:bg-slate-900 rounded-xl border border-border-subtle flex items-center justify-between gap-2 shadow-sm">
                 <div className="flex flex-col min-w-0 pr-1">
                   <span className="font-label-md text-label-md text-on-surface font-semibold leading-tight">Consigne eau bassin</span>
                 </div>
                 <div className="flex items-center gap-1.5 shrink-0 bg-canvas-slate p-1 rounded-full border border-border-subtle">
                   <button
                     aria-label="Diminuer consigne piscine"
-                    className="w-8 h-8 rounded-full bg-white border border-outline-variant hover:bg-surface-container flex items-center justify-center text-on-surface active:scale-95 transition-transform shadow-sm cursor-pointer"
+                    className="w-8 h-8 rounded-full bg-white dark:bg-slate-800 border border-outline-variant hover:bg-surface-container flex items-center justify-center text-on-surface active:scale-95 transition-transform shadow-sm cursor-pointer"
                     type="button"
                     onClick={() => handlePoolChange(-0.5)}
                   >
@@ -1615,57 +1726,27 @@ export default function VademecumPage({ properties, currentUser, reservations = 
                 </div>
               </div>
 
-              {/* Filtration Pump Mode (Annotation 8: réservé à la vue Domaine hors séjour) */}
-              {currentPageIndex === 0 ? (
-                <div className="space-y-1.5">
-                  <div className="flex items-center justify-between">
-                    <span className="text-[11px] font-bold text-on-surface-variant uppercase tracking-wider block">Commande pompe filtration</span>
-                    <span className="text-[10px] text-amber-700 bg-amber-50 px-1.5 py-0.5 rounded font-semibold">Hors séjour</span>
-                  </div>
-                  <div className="grid grid-cols-3 gap-1.5 bg-white p-1 rounded-xl border border-border-subtle">
-                    {['Automatique', 'Marche forcée', 'Arrêt'].map((mode) => (
-                      <button
-                        key={mode}
-                        type="button"
-                        onClick={() => setPoolPumpMode(mode)}
-                        className={`py-2 px-1 rounded-lg text-xs font-bold transition-all cursor-pointer text-center ${
-                          poolPumpMode === mode
-                            ? 'bg-primary text-white shadow-xs'
-                            : 'text-on-surface-variant hover:text-on-surface hover:bg-canvas-slate'
-                        }`}
-                      >
-                        {mode}
-                      </button>
-                    ))}
-                  </div>
-                </div>
-              ) : (
-                <div className="p-2.5 rounded-xl bg-canvas-slate/80 border border-border-subtle/60 flex items-center justify-between text-xs text-on-surface-variant">
-                  <span className="flex items-center gap-1.5 font-medium">
-                    <span className="material-symbols-outlined text-primary text-[16px]">pool</span>
-                    Filtration asservie au séjour
-                  </span>
-                  <span className="font-semibold text-primary">Automatique ({poolTarget.toFixed(1)}°C)</span>
-                </div>
-              )}
-
               {/* Indicators */}
               <div className="pt-2.5 border-t border-border-subtle flex flex-wrap items-center gap-1.5">
-                <div className="inline-flex items-center gap-1 px-2 py-0.5 rounded-md bg-white border border-border-subtle text-[11px] font-medium text-on-surface-variant">
+                <div className="inline-flex items-center gap-1 px-2 py-0.5 rounded-md bg-white dark:bg-slate-900 border border-border-subtle text-[11px] font-medium text-on-surface-variant">
                   <span className="w-1.5 h-1.5 rounded-full bg-secondary"></span>
                   <span>pH : <strong>{piscineStatus?.ph != null ? piscineStatus.ph.toFixed(1) : (piscineStatus?.ph_value != null ? piscineStatus.ph_value.toFixed(1) : '--')}</strong></span>
                 </div>
-                <div className="inline-flex items-center gap-1 px-2 py-0.5 rounded-md bg-white border border-border-subtle text-[11px] font-medium text-on-surface-variant">
+                <div className="inline-flex items-center gap-1 px-2 py-0.5 rounded-md bg-white dark:bg-slate-900 border border-border-subtle text-[11px] font-medium text-on-surface-variant">
                   <span className="w-1.5 h-1.5 rounded-full bg-secondary"></span>
                   <span>Redox : <strong>{piscineStatus?.redox_mv != null ? `${piscineStatus.redox_mv} mV` : (piscineStatus?.redox_value != null ? `${piscineStatus.redox_value} mV` : '-- mV')}</strong></span>
                 </div>
-                <div className="inline-flex items-center gap-1 px-2 py-0.5 rounded-md bg-white border border-border-subtle text-[11px] font-medium text-on-surface-variant">
+                <div className="inline-flex items-center gap-1 px-2 py-0.5 rounded-md bg-white dark:bg-slate-900 border border-border-subtle text-[11px] font-medium text-on-surface-variant">
                   <span className="w-1.5 h-1.5 rounded-full bg-secondary"></span>
                   <span>Filtre : <strong>{piscineStatus?.filter_pressure_mbar != null ? `${piscineStatus.filter_pressure_mbar} mbar` : (piscineStatus?.filter_pressure != null ? `${piscineStatus.filter_pressure} mbar` : '-- mbar')}</strong></span>
                 </div>
                 <div className="inline-flex items-center gap-1 px-2 py-0.5 rounded-md bg-sage-soft text-primary text-[11px] font-semibold">
                   <span className="material-symbols-outlined text-[12px]">sync</span>
-                  Pompe {poolPumpMode === 'Arrêt' ? 'OFF' : 'ON'}
+                  Pompe {isPoolPumpActive ? 'ON' : 'OFF'}
+                </div>
+                <div className="inline-flex items-center gap-1 px-2 py-0.5 rounded-md bg-sage-soft text-primary text-[11px] font-semibold">
+                  <span className="material-symbols-outlined text-[12px]">hvac</span>
+                  PAC {isPoolHeatingActive ? 'ON' : 'OFF'}
                 </div>
               </div>
 

@@ -878,6 +878,34 @@ export async function setHeatingTemperature(target_temperature) {
   return res.json();
 }
 
+export async function setDhwMode(is_active) {
+  const res = await fetch(`${API_BASE}/heating/dhw/mode`, {
+    method: 'POST',
+    headers: getAuthJsonHeaders(),
+    body: JSON.stringify({ is_active: Boolean(is_active) }),
+  });
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({}));
+    throw new Error(err.detail || 'Erreur lors du changement de mode ECS');
+  }
+  invalidateApiCache('heating');
+  return res.json();
+}
+
+export async function setDhwTemperature(target_temperature) {
+  const res = await fetch(`${API_BASE}/heating/dhw/temperature`, {
+    method: 'POST',
+    headers: getAuthJsonHeaders(),
+    body: JSON.stringify({ target_temperature: Number(target_temperature) }),
+  });
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({}));
+    throw new Error(err.detail || 'Erreur lors du changement de consigne ECS');
+  }
+  invalidateApiCache('heating');
+  return res.json();
+}
+
 // Dashboard Stats
 export async function fetchStats() {
   const res = await fetch(`${API_BASE}/stats`, {
@@ -1086,6 +1114,36 @@ export async function fetchPiscineStatus(options = {}) {
     }
     return res.json();
   });
+}
+
+export async function setPoolPumpMode(modeOrActive) {
+  const is_active = typeof modeOrActive === 'boolean' ? modeOrActive : modeOrActive !== 'Arrêt' && modeOrActive !== 'arret';
+  const res = await fetch(`${API_BASE}/pool/pump/mode`, {
+    method: 'POST',
+    headers: getAuthJsonHeaders(),
+    body: JSON.stringify({ is_active, mode: is_active ? 'marche' : 'arret' }),
+  });
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({}));
+    throw new Error(err.detail || 'Erreur lors du changement de mode de la pompe piscine');
+  }
+  invalidateApiCache('pool');
+  return res.json();
+}
+
+export async function setPoolHeatingMode(modeOrActive) {
+  const is_active = typeof modeOrActive === 'boolean' ? modeOrActive : modeOrActive !== 'Arrêt' && modeOrActive !== 'arret';
+  const res = await fetch(`${API_BASE}/pool/heating/mode`, {
+    method: 'POST',
+    headers: getAuthJsonHeaders(),
+    body: JSON.stringify({ is_active, mode: is_active ? 'marche' : 'arret' }),
+  });
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({}));
+    throw new Error(err.detail || 'Erreur lors du changement de mode du chauffage piscine');
+  }
+  invalidateApiCache('pool');
+  return res.json();
 }
 
 // Open Banking DSP2 (Enable Banking & Swan France)

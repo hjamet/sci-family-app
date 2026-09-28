@@ -666,6 +666,8 @@ class HeatingStatusResponse(BaseModel):
     dhw_temperature: Optional[float] = None
     dhw_configured_temperature: Optional[float] = None
     dhw_target_temperature: Optional[float] = None
+    dhw_comfort_temperature: Optional[float] = 50.0
+    dhw_reduced_temperature: Optional[float] = 10.0
     is_heating_active: bool = False
     is_dhw_active: bool = False
     frost_protection_active: bool = True
@@ -697,10 +699,31 @@ class DhwModeRequest(BaseModel):
     is_active: bool
 
 class DhwTemperatureRequest(BaseModel):
-    target_temperature: float
+    temperature: Optional[float] = None
+    target_temperature: Optional[float] = None
+    target: Optional[str] = "comfort"
+
+    def get_temperature(self) -> float:
+        if self.temperature is not None:
+            return float(self.temperature)
+        if self.target_temperature is not None:
+            return float(self.target_temperature)
+        raise ValueError("Le paramètre 'temperature' ou 'target_temperature' est requis.")
 
 
 # --- Piscine Schemas ---
+class PoolPumpModeRequest(BaseModel):
+    mode: Optional[str] = None  # "auto" | "on" | "off"
+    active: Optional[bool] = None
+    is_active: Optional[bool] = None
+    author_name: Optional[str] = None
+
+class PoolHeatingModeRequest(BaseModel):
+    mode: Optional[str] = None  # "auto" | "on" | "off"
+    active: Optional[bool] = None
+    is_active: Optional[bool] = None
+    author_name: Optional[str] = None
+
 class PiscineStatusResponse(BaseModel):
     water_temperature: Optional[float] = None
     air_temperature: Optional[float] = None
@@ -708,6 +731,11 @@ class PiscineStatusResponse(BaseModel):
     redox_value: Optional[float] = None
     filter_pressure: Optional[float] = None
     frost_protection_target: Optional[float] = None
+    is_pump_active: bool = False
+    is_heating_active: bool = False
+    pac_active: bool = False
+    pump_mode: Optional[str] = "auto"
+    heating_mode: Optional[str] = "auto"
     pac_state: Optional[str] = None
     pac_power: Optional[str] = "20 kW"
     cover_state: Optional[str] = "Verrouillée & tendue"
@@ -1068,6 +1096,8 @@ class HeatingSettingsRequest(BaseModel):
     is_heating_active: Optional[bool] = None
     is_dhw_active: Optional[bool] = None
     dhw_target_temperature: Optional[float] = None
+    dhw_comfort_temperature: Optional[float] = None
+    dhw_reduced_temperature: Optional[float] = None
     mode: Optional[str] = None
     author_name: Optional[str] = None
     details: Optional[str] = None
@@ -1079,6 +1109,8 @@ class HeatingSettingsResponse(BaseModel):
     is_heating_active: Optional[bool] = None
     is_dhw_active: Optional[bool] = None
     dhw_target_temperature: Optional[float] = None
+    dhw_comfort_temperature: Optional[float] = 50.0
+    dhw_reduced_temperature: Optional[float] = 10.0
     mode: Optional[str] = "dhwAndHeating"
     updated_by: Optional[str] = None
     updated_at: Optional[datetime] = None
@@ -1102,7 +1134,6 @@ class PoolSettingsResponse(BaseModel):
     updated_at: Optional[datetime] = None
     message: Optional[str] = "Réglages piscine enregistrés avec succès."
     status: str = "ok"
-
 
 
 class VoteSubmissionRequest(BaseModel):

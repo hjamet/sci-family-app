@@ -39,6 +39,7 @@ from .schemas import (
     StatsResponse, UserWorkloadStats, WorkloadSummaryResponse,
     HeatingStatusResponse, HeatingModeRequest, HeatingTemperatureRequest,
     HeatingSettingsRequest, HeatingSettingsResponse, PoolSettingsRequest, PoolSettingsResponse,
+    PoolPumpModeRequest, PoolHeatingModeRequest,
     DhwModeRequest, DhwTemperatureRequest,
     PiscineStatusResponse, StayBalanceResponse, StayBalanceMember,
     TaskCreate, TaskUpdate, TaskResponse, TaskCommentCreate, TaskCommentResponse, TaskCommentReactRequest, TaskCloseRequest,
@@ -4613,25 +4614,72 @@ def set_dhw_mode(req: DhwModeRequest):
 @app.post("/api/heating/dhw-temperature", response_model=HeatingStatusResponse)
 @app.post("/api/vicare/dhw/temperature", response_model=HeatingStatusResponse)
 def set_dhw_temperature(req: DhwTemperatureRequest):
-    return ViCareService.set_dhw_temperature(req.target_temperature)
+    temp = req.get_temperature()
+    return ViCareService.set_dhw_temperature(temp, target=req.target)
 
 
-# --- Piscine Rosing Telemetry Endpoints (PAC Rosing F08) ---
+# --- Piscine Rosing Telemetry & Controls Endpoints (PAC Rosing F08) ---
 
 @app.get("/api/pool/status", response_model=PiscineStatusResponse, tags=["Pool"])
 @app.get("/api/klereo/status", response_model=PiscineStatusResponse, tags=["Pool"])
 def get_klereo_pool_status(refresh: bool = Query(False), force_refresh: bool = Query(False)):
     """Returns Klereo Connect live passive telemetry without simulation."""
     is_refresh = refresh or force_refresh
-    telemetry = KlereoService.get_status(force_refresh=is_refresh)
+    telemetry = KlereoService.get_pool_status(force_refresh=is_refresh)
     return PiscineStatusResponse(**telemetry)
 
 @app.get("/api/piscine/status", response_model=PiscineStatusResponse, tags=["Pool"])
 def get_piscine_status(live: bool = True, refresh: bool = Query(False), force_refresh: bool = Query(False)):
     """Returns PAC Rosing passive telemetry directly from live Klereo Connect API."""
     is_refresh = refresh or force_refresh
-    telemetry = KlereoService.get_status(force_refresh=is_refresh)
+    telemetry = KlereoService.get_pool_status(force_refresh=is_refresh)
     return PiscineStatusResponse(**telemetry)
+
+@app.post("/api/pool/pump/mode", response_model=PiscineStatusResponse, tags=["Pool"])
+@app.post("/api/piscine/pump/mode", response_model=PiscineStatusResponse, tags=["Pool"])
+def set_pool_pump_mode(req: PoolPumpModeRequest, db: Session = Depends(get_db)):
+    """
+    Arbitrage et contrôle de la pompe de filtration piscine Klereo.
+    Payload: {"mode": "auto" | "on" | "off"} ou {"active": bool}.
+    """
+    active_input = req.active if req.active is not None else req.is_active
+    result = KlereoService.set_pump_mode(mode=req.mode, active=active_input)
+    try:
+        active_val = result.get("is_pump_active", False)
+        mode_val = result.get("pump_mode") or req.mode or ("on" if active_val else "off")
+        db.add(Log(
+            action="POOL_PUMP_MODE_UPDATE",
+            user_name="Système",
+            details=f"Pompe filtration piscine réglée sur : {mode_val} (active={active_val})"
+        ))
+        db.commit()
+    except Exception as e:
+        logger.warning(f"[POOL] Log DB pompe non bloquant: {e}")
+    return PiscineStatusResponse(**result)
+
+@app.post("/api/pool/heating/mode", response_model=PiscineStatusResponse, tags=["Pool"])
+@app.post("/api/pool/pac/mode", response_model=PiscineStatusResponse, tags=["Pool"])
+@app.post("/api/piscine/heating/mode", response_model=PiscineStatusResponse, tags=["Pool"])
+@app.post("/api/piscine/pac/mode", response_model=PiscineStatusResponse, tags=["Pool"])
+def set_pool_heating_mode(req: PoolHeatingModeRequest, db: Session = Depends(get_db)):
+    """
+    Arbitrage et contrôle du chauffage PAC Inopac 20 kW piscine Klereo.
+    Payload: {"mode": "auto" | "on" | "off"} ou {"active": bool}.
+    """
+    active_input = req.active if req.active is not None else req.is_active
+    result = KlereoService.set_heating_mode(mode=req.mode, active=active_input)
+    try:
+        active_val = result.get("is_heating_active", False)
+        mode_val = result.get("heating_mode") or req.mode or ("on" if active_val else "off")
+        db.add(Log(
+            action="POOL_HEATING_MODE_UPDATE",
+            user_name="Système",
+            details=f"Chauffage PAC piscine réglé sur : {mode_val} (active={active_val})"
+        ))
+        db.commit()
+    except Exception as e:
+        logger.warning(f"[POOL] Log DB PAC non bloquant: {e}")
+    return PiscineStatusResponse(**result)
 
 @app.post("/api/piscine/mode", tags=["Pool"])
 @app.post("/api/piscine/temperature", tags=["Pool"])
@@ -4880,6 +4928,48 @@ def update_pool_settings(
         message=f"Réglages piscine enregistrés ({filt_str}) et notification transmise aux associés abonnés.",
         status="ok"
     )
+
+
+@app.post("/api/pool/pump/mode", tags=["Pool"])
+def set_pool_pump_mode(
+    req: PoolPumpModeRequest,
+    db: Session = Depends(get_db),
+    current_user: Optional[User] = Depends(get_optional_current_user)
+):
+    """Bascule Marche/Arrêt de la pompe de filtration piscine."""
+    author = req.author_name or (current_user.name if current_user else "Henri Jamet (Coordinateur)")
+    is_active = req.is_active if req.is_active is not None else (str(req.mode).lower() in ["marche", "auto", "on", "1", "true"])
+    setting = db.query(ThermalSettings).filter(ThermalSettings.equipment_type == "pool").first()
+    if not setting:
+        setting = ThermalSettings(equipment_type="pool")
+        db.add(setting)
+    setting.filtration_mode = "marche" if is_active else "arret"
+    setting.updated_by = author
+    setting.updated_at = datetime.utcnow()
+    db.commit()
+    db.refresh(setting)
+    return {"status": "ok", "is_active": is_active, "filtration_mode": setting.filtration_mode}
+
+
+@app.post("/api/pool/heating/mode", tags=["Pool"])
+def set_pool_heating_mode(
+    req: PoolHeatingModeRequest,
+    db: Session = Depends(get_db),
+    current_user: Optional[User] = Depends(get_optional_current_user)
+):
+    """Bascule Marche/Arrêt du chauffage de la piscine (PAC Inopac 20 kW)."""
+    author = req.author_name or (current_user.name if current_user else "Henri Jamet (Coordinateur)")
+    is_active = req.is_active if req.is_active is not None else (str(req.mode).lower() in ["marche", "confort", "on", "1", "true"])
+    setting = db.query(ThermalSettings).filter(ThermalSettings.equipment_type == "pool").first()
+    if not setting:
+        setting = ThermalSettings(equipment_type="pool")
+        db.add(setting)
+    setting.mode = "confort" if is_active else "standby"
+    setting.updated_by = author
+    setting.updated_at = datetime.utcnow()
+    db.commit()
+    db.refresh(setting)
+    return {"status": "ok", "is_active": is_active, "mode": setting.mode}
 
 
 # --- Open Banking DSP2 (Enable Banking & Swan France) Endpoints ---

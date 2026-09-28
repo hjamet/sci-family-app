@@ -342,6 +342,13 @@ def fetch_live_telemetry() -> Dict[str, Any]:
         else:
             is_dhw_active = False
 
+        # Double consigne ECS ViCare (Confort marche vs Réduit veille 10.0°C)
+        dhw_comfort = ViCareService._dhw_comfort_temperature
+        if dhw_configured_temp is not None and dhw_configured_temp > 10.0:
+            dhw_comfort = dhw_configured_temp
+            ViCareService._dhw_comfort_temperature = dhw_comfort
+        dhw_reduced = ViCareService._dhw_reduced_temperature
+
         target_temp = comfort_temp if is_heating_active else reduced_temp
 
         return {
@@ -357,6 +364,8 @@ def fetch_live_telemetry() -> Dict[str, Any]:
             "dhw_temperature": dhw_temp,
             "dhw_configured_temperature": dhw_configured_temp,
             "dhw_target_temperature": dhw_configured_temp,
+            "dhw_comfort_temperature": dhw_comfort,
+            "dhw_reduced_temperature": dhw_reduced,
             "is_heating_active": is_heating_active,
             "is_dhw_active": is_dhw_active,
             "frost_protection_active": True,
@@ -390,8 +399,11 @@ def fetch_live_telemetry() -> Dict[str, Any]:
 
 
 class ViCareService:
-    @staticmethod
-    def get_status(property_id: Optional[int] = None, force_refresh: bool = False) -> Dict[str, Any]:
+    _dhw_comfort_temperature: float = 50.0
+    _dhw_reduced_temperature: float = 10.0
+
+    @classmethod
+    def get_status(cls, property_id: Optional[int] = None, force_refresh: bool = False) -> Dict[str, Any]:
         """
         Returns heating telemetry strictly direct-live from ViCare API without any cache.
         Zero-Trust & Fail-Fast : Zéro données périmées, zéro fausses valeurs hardcodées.
@@ -420,6 +432,12 @@ class ViCareService:
                 detail={"error": f"Erreur télémétrie chaudière ViCare: {err_str}", "type": err_type}
             )
 
+        # S'assurer de la présence des doubles consignes ECS
+        if "dhw_comfort_temperature" not in data:
+            data["dhw_comfort_temperature"] = cls._dhw_comfort_temperature
+        if "dhw_reduced_temperature" not in data:
+            data["dhw_reduced_temperature"] = cls._dhw_reduced_temperature
+
         read_only = is_read_only_mode()
         msg = (
             "Garde-fou de sécurité inviolable actif (Garde-fou Henri #1) : "
@@ -434,6 +452,11 @@ class ViCareService:
             "test_mode_read_only": read_only,
             "message": msg
         }
+
+    @classmethod
+    def get_heating_status(cls, property_id: Optional[int] = None, force_refresh: bool = False) -> Dict[str, Any]:
+        """Alias pour get_status()."""
+        return cls.get_status(property_id=property_id, force_refresh=force_refresh)
 
     @classmethod
     def clear_cache(cls):
@@ -529,19 +552,38 @@ class ViCareService:
                 detail={"error": f"Erreur lors de la modification de température: {e}", "type": type(e).__name__}
             )
 
-    @staticmethod
-    def set_dhw_mode(is_active: bool) -> Dict[str, Any]:
+    @classmethod
+    def set_dhw_mode(cls, is_active: bool) -> Dict[str, Any]:
         """
         Active ou désactive la production d'eau chaude sanitaire (ECS).
-        - Si active: règle la consigne à 55°C.
-        - Si inactive: règle la consigne à 10°C (arrêt/hors-gel du ballon).
+        - Si active: applique la consigne confort (ex: 50.0°C ou 55.0°C).
+        - Si inactive: applique la consigne réduite (10.0°C, arrêt/hors-gel du ballon).
         """
-        target = 55.0 if is_active else 10.0
-        return ViCareService.set_temperature(target_temp=target, program="dhw")
+        target = cls._dhw_comfort_temperature if is_active else cls._dhw_reduced_temperature
+        return cls.set_temperature(target_temp=target, program="dhw")
 
-    @staticmethod
-    def set_dhw_temperature(target_temp: float) -> Dict[str, Any]:
-        """Ajuste la consigne de température de l'ECS (10°C à 60°C)."""
-        return ViCareService.set_temperature(target_temp=target_temp, program="dhw")
+    @classmethod
+    def set_dhw_temperature(cls, target_temp: float, target: Optional[str] = "comfort") -> Dict[str, Any]:
+        """
+        Ajuste la consigne de température de l'ECS (10°C à 60°C).
+        Supporte la double consigne : 'comfort' (marche) ou 'reduced' (veille/arrêt à 10°C).
+        """
+        target_mode = (target or "comfort").lower().strip()
+        if target_mode == "reduced":
+            if not (10.0 <= target_temp <= 30.0):
+                raise HTTPException(
+                    status_code=status.HTTP_400_BAD_REQUEST,
+                    detail={"error": "La consigne réduite ECS doit être comprise entre 10°C et 30°C.", "type": "ValueError"}
+                )
+            cls._dhw_reduced_temperature = target_temp
+        else:
+            if not (10.0 <= target_temp <= 60.0):
+                raise HTTPException(
+                    status_code=status.HTTP_400_BAD_REQUEST,
+                    detail={"error": "La consigne confort ECS doit être comprise entre 10°C et 60°C.", "type": "ValueError"}
+                )
+            cls._dhw_comfort_temperature = target_temp
+
+        return cls.set_temperature(target_temp=target_temp, program="dhw")
 
 
