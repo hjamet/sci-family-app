@@ -275,6 +275,7 @@ function VoteRoofModalInner({
     return activeProject.badgeStatus || 'Scrutin ouvert';
   };
   const projectBadgeStatus = formatBadgeStatus(activeProject.status);
+  const isProjectOpen = String(activeProject?.status || '').toUpperCase() === 'OPEN' || String(activeProject?.status || '').toUpperCase() === 'EN_VOTE';
 
   // Ref vers la section de vote pour défilement fluide
   const voteSectionRef = useRef(null);
@@ -563,6 +564,10 @@ function VoteRoofModalInner({
 
   // Enregistrement direct du vote (Annotation 3 & 11 : support choix unique et multiple, zéro lag)
   const handleCastVote = async (voteChoice) => {
+    if (!isProjectOpen) {
+      alert("Ce scrutin n'est pas ouvert au vote actuellement.");
+      return;
+    }
     if (!voteChoice && voteChoice !== '') return;
     const now = new Date();
     const formattedDate = `${now.getDate()} mai 2026, ${now.getHours().toString().padStart(2, '0')}:${now.getMinutes().toString().padStart(2, '0')}`;
@@ -701,6 +706,15 @@ function VoteRoofModalInner({
     }
     setIsSubmittingEdit(true);
     try {
+      const cleanDocs = (editDocuments || []).map(d => typeof d === 'string' ? d : ({
+        id: d.id,
+        title: d.title || d.name || d.filename || 'Document',
+        filename: d.filename || d.file_name || d.title || 'document.pdf',
+        file_url: d.file_url || d.url || `/api/documents/${d.id}/download`,
+        url: d.file_url || d.url || `/api/documents/${d.id}/download`,
+        file_type: d.file_type || d.mime_type || 'application/pdf'
+      }));
+
       if (isNewProject) {
         const newPayload = {
           title: editTitle.trim(),
@@ -711,7 +725,7 @@ function VoteRoofModalInner({
           submitted_by: currentUserName,
           options: editOptions.filter(Boolean).length > 0 ? editOptions.filter(Boolean) : ['Approuver le projet', 'Rejeter le projet'],
           allow_multiple_choices: editAllowMultipleChoices,
-          document_urls: editDocuments,
+          document_urls: cleanDocs,
           external_links: editExternalLinks
         };
         const created = await createProject(newPayload);
@@ -729,7 +743,7 @@ function VoteRoofModalInner({
           category: editCategory.trim(),
           options: editOptions.filter(Boolean),
           allow_multiple_choices: editAllowMultipleChoices,
-          document_urls: editDocuments,
+          document_urls: cleanDocs,
           external_links: editExternalLinks
         };
         const updated = await updateProject(activeProject.id, payload);
@@ -1389,15 +1403,25 @@ function VoteRoofModalInner({
                     </div>
                   </div>
 
+                  {/* Bandeau d'information si le scrutin n'est pas ouvert au vote (Annotation 9) */}
+                  {!isProjectOpen && (
+                    <div className="p-3 bg-amber-50 dark:bg-amber-950/40 border border-amber-200 dark:border-amber-800 rounded-xl flex items-center gap-2.5 text-xs sm:text-sm text-amber-800 dark:text-amber-200">
+                      <span className="material-symbols-outlined text-amber-600 dark:text-amber-400 text-lg flex-shrink-0">lock</span>
+                      <span>
+                        Ce scrutin n'est pas ouvert au vote actuellement (en attente d'arbitrage ou archivé). Les votes sont consultables en lecture seule.
+                      </span>
+                    </div>
+                  )}
+
                   {/* Rendu dynamique du sondage WhatsApp (Annotations 2, 3 & 11) */}
                   <WhatsAppPollView
                     project={activeProject}
                     associatesVotes={associatesVotes}
                     currentUser={currentUserName}
                     onCastVote={handleCastVote}
-                    isVotingDisabled={false}
+                    isVotingDisabled={!isProjectOpen}
                     compact={false}
-                    readOnly={false}
+                    readOnly={!isProjectOpen}
                   />
                 </div>
 

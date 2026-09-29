@@ -89,14 +89,16 @@ function normalizeDocItem(docItem, idx = 0) {
     const url = isUploadOrHttp ? docItem : `/api/documents/${encodeURIComponent(docItem)}/download`;
     const cleanBasename = docItem.split('/').pop().replace(/^[a-f0-9]{32}_/, '') || docItem;
     const isImg = Boolean(cleanBasename.match(/\.(png|jpe?g|webp|gif|svg)$/i));
-    const properFilename = isImg ? cleanBasename : (cleanBasename.includes('.') ? cleanBasename : `${cleanBasename}.pdf`);
+    const isText = Boolean(cleanBasename.match(/\.(txt|log|md|json)$/i));
+    const properFilename = isImg || isText ? cleanBasename : (cleanBasename.includes('.') ? cleanBasename : `${cleanBasename}.pdf`);
     return {
       id: docItem,
       name: cleanBasename,
       filename: properFilename,
       file_url: url,
       url: url,
-      type: isImg ? 'Image' : 'PDF',
+      type: isImg ? 'Image' : (isText ? 'Text' : 'PDF'),
+      file_type: isText ? 'text/plain' : undefined,
       size: '',
     };
   }
@@ -104,7 +106,8 @@ function normalizeDocItem(docItem, idx = 0) {
   const rawName = docItem.name || docItem.filename || docItem.title || (url ? url.split('/').pop() : `Document_${idx + 1}`);
   const cleanName = String(rawName).replace(/^[a-f0-9]{32}_/, '');
   const isImg = Boolean(cleanName.match(/\.(png|jpe?g|webp|gif|svg)$/i)) || (docItem.type === 'Image') || (docItem.file_type && docItem.file_type.startsWith('image/'));
-  const properFilename = isImg ? cleanName : (cleanName.includes('.') ? cleanName : `${cleanName}.pdf`);
+  const isText = Boolean(cleanName.match(/\.(txt|log|md|json)$/i)) || (docItem.type === 'Text') || (docItem.file_type === 'text/plain');
+  const properFilename = isImg || isText ? cleanName : (cleanName.includes('.') ? cleanName : `${cleanName}.pdf`);
   return {
     ...docItem,
     id: docItem.id || url || `doc-${idx}`,
@@ -112,7 +115,8 @@ function normalizeDocItem(docItem, idx = 0) {
     filename: properFilename,
     file_url: url,
     url: url,
-    type: isImg ? 'Image' : 'PDF',
+    type: isImg ? 'Image' : (isText ? 'Text' : 'PDF'),
+    file_type: isText ? 'text/plain' : docItem.file_type,
     size: docItem.size || '',
   };
 }
@@ -243,7 +247,7 @@ export default function TaskDetailModal({
   const [editVoteOptions, setEditVoteOptions] = useState([]);
   const [editDocuments, setEditDocuments] = useState([]);
   const [editExternalLinks, setEditExternalLinks] = useState([]);
-  const [editOnsitePresence, setEditOnsitePresence] = useState(true);
+  const [editOnsitePresence, setEditOnsitePresence] = useState(isBugReportEffective ? false : (initialTask?.onsite_presence !== undefined ? initialTask.onsite_presence !== false : true));
   const [editIsRecurring, setEditIsRecurring] = useState(false);
   const [editRecurrenceInterval, setEditRecurrenceInterval] = useState(1);
   const [editRecurrenceUnit, setEditRecurrenceUnit] = useState('semaines');
@@ -510,6 +514,7 @@ export default function TaskDetailModal({
       checklist: isNew ? [] : parseChecklistItems(initialTask?.checklist),
       options: initialTask?.options || (isVoteInitiative ? ['Approuver le projet', 'Rejeter le projet'] : []),
       documents: parseTaskDocuments(initialTask?.documents || initialTask?.completion_docs || initialTask?.document_urls),
+      onsite_presence: isBugReportEffective ? false : (initialTask?.onsite_presence !== undefined ? initialTask.onsite_presence !== false : true),
       is_recurring: initialTask?.is_recurring || false,
       recurrence_interval: initialTask?.recurrence_interval || 1,
       recurrence_unit: initialTask?.recurrence_unit || 'semaines',
@@ -551,7 +556,7 @@ export default function TaskDetailModal({
     return () => {
       isMounted = false;
     };
-  }, [isOpen, initialTask, initialMode, isEditing, isVoteInitiative]);
+  }, [isOpen, initialTask, initialMode, isEditing, isVoteInitiative, isBugReportEffective]);
 
   const syncEditFields = (t, isNew = false) => {
     if (!t) return;
@@ -563,7 +568,7 @@ export default function TaskDetailModal({
     setEditChecklist(isNew ? [] : parseChecklistItems(t.checklist));
     setEditDocuments(parseTaskDocuments(t.documents || t.completion_docs || t.document_urls));
     setEditExternalLinks(Array.isArray(t.external_links) ? t.external_links : []);
-    setEditOnsitePresence(t.onsite_presence !== false);
+    setEditOnsitePresence(isBugReportEffective ? false : (t.onsite_presence !== undefined ? t.onsite_presence !== false : true));
     setEditIsRecurring(Boolean(t.is_recurring));
     setEditRecurrenceInterval(t.recurrence_interval || 1);
     setEditRecurrenceUnit(t.recurrence_unit || 'semaines');
@@ -769,7 +774,9 @@ export default function TaskDetailModal({
       if (task?.id) {
         validated = await validateTask(task.id);
       }
-      if (onTaskUpdated) onTaskUpdated(validated || { ...task, status: 'DONE' });
+      const refreshed = (validated && validated.id) ? validated : { ...task, status: 'DONE' };
+      setTask(refreshed);
+      if (onTaskUpdated) onTaskUpdated(refreshed);
       onClose();
     } catch (err) {
       console.error('Erreur validation tâche:', err);
@@ -781,10 +788,13 @@ export default function TaskDetailModal({
     const reason = window.prompt("Motif d'invalidation (optionnel) :", "");
     if (reason === null) return;
     try {
+      let invalidated = null;
       if (task?.id) {
-        await invalidateTask(task.id, reason);
+        invalidated = await invalidateTask(task.id, reason);
       }
-      if (onTaskUpdated) onTaskUpdated();
+      const refreshed = (invalidated && invalidated.id) ? invalidated : { ...task, status: 'A_FAIRE' };
+      setTask(refreshed);
+      if (onTaskUpdated) onTaskUpdated(refreshed);
       onClose();
     } catch (err) {
       console.error('Erreur invalidation tâche:', err);
@@ -795,13 +805,17 @@ export default function TaskDetailModal({
   // Arbitrage Proposition Coordinateur (Accepter / Refuser)
   const handleAcceptModalTask = async () => {
     try {
+      let refreshed = null;
       if (task?.id) {
-        await acceptTask(task.id);
-        const refreshed = await fetchTaskById(task.id).catch(() => ({ ...task, status: 'EN_COURS' }));
+        const accepted = await acceptTask(task.id);
+        refreshed = (accepted && accepted.id) ? accepted : await fetchTaskById(task.id).catch(() => ({ ...task, status: 'EN_COURS' }));
         setTask(refreshed);
         syncEditFields(refreshed);
+      } else {
+        refreshed = { ...task, status: 'EN_COURS' };
+        setTask(refreshed);
       }
-      if (onTaskUpdated) onTaskUpdated();
+      if (onTaskUpdated) onTaskUpdated(refreshed);
     } catch (err) {
       console.error('Erreur acceptation tâche:', err);
       alert(err.message || "Erreur lors de l'acceptation de la tâche.");
@@ -812,10 +826,13 @@ export default function TaskDetailModal({
     const reason = window.prompt("Motif du refus de la proposition (optionnel) :", "");
     if (reason === null) return;
     try {
+      let rejected = null;
       if (task?.id) {
-        await rejectTask(task.id, reason);
+        rejected = await rejectTask(task.id, reason);
       }
-      if (onTaskUpdated) onTaskUpdated();
+      const refreshed = (rejected && rejected.id) ? rejected : { ...task, status: 'REJECTED' };
+      setTask(refreshed);
+      if (onTaskUpdated) onTaskUpdated(refreshed);
       onClose();
     } catch (err) {
       console.error('Erreur refus tâche:', err);
@@ -1271,7 +1288,7 @@ export default function TaskDetailModal({
                               <div className="flex items-center gap-3 min-w-0">
                                 <div className="w-10 h-10 rounded-xl bg-error-container/40 text-error flex items-center justify-center shrink-0">
                                   <span className="material-symbols-outlined text-[20px]">
-                                    {norm.type === 'Image' ? 'image' : 'picture_as_pdf'}
+                                    {norm.type === 'Image' ? 'image' : (norm.type === 'Text' ? 'description' : 'picture_as_pdf')}
                                   </span>
                                 </div>
                                 <div className="min-w-0">
@@ -1945,7 +1962,7 @@ export default function TaskDetailModal({
                             <div className="flex items-center gap-3 min-w-0">
                               <div className="w-10 h-10 rounded-xl bg-error-container/40 text-error flex items-center justify-center shrink-0">
                                 <span className="material-symbols-outlined text-[20px]">
-                                  {norm.type === 'Image' ? 'image' : 'picture_as_pdf'}
+                                  {norm.type === 'Image' ? 'image' : (norm.type === 'Text' ? 'description' : 'picture_as_pdf')}
                                 </span>
                               </div>
                               <div className="min-w-0">

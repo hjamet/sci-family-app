@@ -58,8 +58,25 @@ export default function TasksPage({ currentUser = 'Henri Jamet' }) {
   // Search & Filter state
   const [searchTerm, setSearchTerm] = useState('');
   const [sortBy, setSortBy] = useState('urgency');
-  const [selectedPriority, setSelectedPriority] = useState('Toutes');
-  const [selectedAssignee, setSelectedAssignee] = useState('all');
+  const [selectedAssignee, setSelectedAssignee] = useState(() => {
+    const meta = resolveUserMeta(currentUser);
+    const found = AUTHENTIC_ASSOCIATES.find(a => a.id !== 'all' && (
+      a.id === meta.lowerPrenom ||
+      (meta.lowerPrenom === 'elisabeth' && a.id === 'maman')
+    ));
+    return found ? found.id : 'all';
+  });
+
+  useEffect(() => {
+    const meta = resolveUserMeta(currentUser);
+    const found = AUTHENTIC_ASSOCIATES.find(a => a.id !== 'all' && (
+      a.id === meta.lowerPrenom ||
+      (meta.lowerPrenom === 'elisabeth' && a.id === 'maman')
+    ));
+    if (found) {
+      setSelectedAssignee(found.id);
+    }
+  }, [currentUser]);
   const [selectedSubject, setSelectedSubject] = useState('all');
   const [selectedCategory, setSelectedCategory] = useState('all');
   const [workflowFilter, setWorkflowFilter] = useState('OPEN'); // 'ALL' | 'PROPOSED' | 'OPEN' | 'PENDING_VALIDATION' | 'ARCHIVED'
@@ -343,6 +360,156 @@ export default function TasksPage({ currentUser = 'Henri Jamet' }) {
     } catch (err) {
       alert(`Erreur lors de la suppression du scrutin : ${err.message}`);
     }
+  };
+
+  const isVoteAuthor = (vote) => {
+    if (!vote) return false;
+    const authorStr = String(vote.submitted_by || vote.created_by || vote.author || vote.reporter?.name || '').toLowerCase();
+    if (!authorStr) return false;
+    if (userMeta?.lowerPrenom && authorStr.includes(userMeta.lowerPrenom)) return true;
+    if (userMeta?.lowerName && authorStr.includes(userMeta.lowerName)) return true;
+    if (currentUserLower && (authorStr.includes(currentUserLower) || currentUserLower.includes(authorStr))) return true;
+    return false;
+  };
+
+  const renderVoteActionButton = (vote) => {
+    if (!vote) return null;
+    const isAuthor = isVoteAuthor(vote);
+
+    if (isVoteOpen(vote)) {
+      return (
+        <button
+          onClick={(e) => {
+            e.stopPropagation();
+            setSelectedVoteForModal(vote);
+            setIsVoteModalInitialEditing(false);
+            setIsRoofVoteModalOpen(true);
+          }}
+          className="h-[44px] px-5 rounded-DEFAULT bg-emerald-600 hover:bg-emerald-700 text-white border-2 border-emerald-600 font-label-md text-label-md transition-all flex items-center gap-2 font-bold cursor-pointer shadow-sm"
+          type="button"
+        >
+          <span className="material-symbols-outlined text-[18px]">how_to_vote</span>
+          <span>Participer au vote</span>
+        </button>
+      );
+    }
+
+    if (isVoteProposed(vote)) {
+      if (isCoordinator) {
+        return (
+          <button
+            onClick={(e) => {
+              e.stopPropagation();
+              setSelectedVoteForModal(vote);
+              setIsVoteModalInitialEditing(false);
+              setIsRoofVoteModalOpen(true);
+            }}
+            className="h-[44px] px-5 rounded-DEFAULT bg-amber-500 hover:bg-amber-600 text-white border-2 border-amber-500 font-label-md text-label-md transition-all flex items-center gap-2 font-bold cursor-pointer shadow-sm"
+            type="button"
+          >
+            <span className="material-symbols-outlined text-[18px]">gavel</span>
+            <span>Arbitrer la création</span>
+          </button>
+        );
+      }
+      if (isAuthor) {
+        return (
+          <button
+            onClick={(e) => {
+              e.stopPropagation();
+              handleEditVote(vote);
+            }}
+            className="h-[44px] px-5 rounded-DEFAULT bg-slate-700 hover:bg-slate-800 text-white border-2 border-slate-700 font-label-md text-label-md transition-all flex items-center gap-2 font-bold cursor-pointer shadow-sm"
+            type="button"
+          >
+            <span className="material-symbols-outlined text-[18px]">edit</span>
+            <span>Éditer</span>
+          </button>
+        );
+      }
+      return (
+        <button
+          onClick={(e) => {
+            e.stopPropagation();
+            setSelectedVoteForModal(vote);
+            setIsVoteModalInitialEditing(false);
+            setIsRoofVoteModalOpen(true);
+          }}
+          className="h-[44px] px-5 rounded-DEFAULT bg-surface-container-lowest border-2 border-outline-variant text-on-surface hover:bg-canvas-slate font-label-md text-label-md transition-all flex items-center gap-2 font-semibold cursor-pointer"
+          type="button"
+        >
+          <span className="material-symbols-outlined text-[18px]">visibility</span>
+          <span>Consulter la proposition</span>
+        </button>
+      );
+    }
+
+    if (isVotePendingValidation(vote)) {
+      if (isCoordinator) {
+        return (
+          <button
+            onClick={(e) => {
+              e.stopPropagation();
+              setSelectedVoteForModal(vote);
+              setIsVoteModalInitialEditing(false);
+              setIsRoofVoteModalOpen(true);
+            }}
+            className="h-[44px] px-5 rounded-DEFAULT bg-emerald-600 hover:bg-emerald-700 text-white border-2 border-emerald-600 font-label-md text-label-md transition-all flex items-center gap-2 font-bold cursor-pointer shadow-sm"
+            type="button"
+          >
+            <span className="material-symbols-outlined text-[18px]">verified</span>
+            <span>Arbitrer la validation</span>
+          </button>
+        );
+      }
+      if (isAuthor) {
+        return (
+          <button
+            onClick={(e) => {
+              e.stopPropagation();
+              handleEditVote(vote);
+            }}
+            className="h-[44px] px-5 rounded-DEFAULT bg-slate-700 hover:bg-slate-800 text-white border-2 border-slate-700 font-label-md text-label-md transition-all flex items-center gap-2 font-bold cursor-pointer shadow-sm"
+            type="button"
+          >
+            <span className="material-symbols-outlined text-[18px]">edit</span>
+            <span>Éditer</span>
+          </button>
+        );
+      }
+      return (
+        <button
+          onClick={(e) => {
+            e.stopPropagation();
+            setSelectedVoteForModal(vote);
+            setIsVoteModalInitialEditing(false);
+            setIsRoofVoteModalOpen(true);
+          }}
+          className="h-[44px] px-5 rounded-DEFAULT bg-surface-container-lowest border-2 border-outline-variant text-on-surface hover:bg-canvas-slate font-label-md text-label-md transition-all flex items-center gap-2 font-semibold cursor-pointer"
+          type="button"
+        >
+          <span className="material-symbols-outlined text-[18px]">visibility</span>
+          <span>Consulter le résultat</span>
+        </button>
+      );
+    }
+
+    // Archivé ou par défaut
+    return (
+      <button
+        onClick={(e) => {
+          e.stopPropagation();
+          setSelectedVoteForModal(vote);
+          setIsVoteModalInitialEditing(false);
+          setIsRoofVoteModalOpen(true);
+        }}
+        className="h-[44px] px-5 rounded-DEFAULT bg-surface-container-lowest border-2 border-slate-300 dark:border-slate-700 text-slate-700 dark:text-slate-300 hover:bg-slate-100 dark:hover:bg-slate-800 font-label-md text-label-md transition-all flex items-center gap-2 font-semibold cursor-pointer"
+        type="button"
+      >
+        <span className="material-symbols-outlined text-[18px]">inventory_2</span>
+        <span>Consulter les résultats</span>
+      </button>
+    );
   };
 
   const handleValidateTask = async (taskId) => {
@@ -729,14 +896,14 @@ export default function TasksPage({ currentUser = 'Henri Jamet' }) {
         <button
           type="button"
           onClick={() => handleVoteFilterChange('ALL')}
-          className={`flex-1 sm:flex-initial inline-flex items-center justify-center gap-2 px-4 py-2.5 rounded-xl font-label-md text-xs sm:text-sm font-semibold transition-all cursor-pointer ${
+          className={`flex-1 sm:flex-initial inline-flex items-center justify-center gap-2 px-4 py-2.5 rounded-xl font-label-md text-xs sm:text-sm font-semibold transition-all cursor-pointer whitespace-nowrap ${
             voteFilter === 'ALL'
               ? 'bg-slate-700 text-white shadow-sm font-bold'
               : 'text-slate-600 dark:text-slate-300 hover:bg-white dark:hover:bg-slate-700 hover:text-on-surface'
           }`}
         >
           <span className="material-symbols-outlined text-[18px]">how_to_vote</span>
-          <span>Toutes les Délibérations</span>
+          <span className="whitespace-nowrap">Tous</span>
           <span
             className={`text-xs px-2 py-0.5 rounded-full font-bold ${
               voteFilter === 'ALL'
@@ -752,14 +919,14 @@ export default function TasksPage({ currentUser = 'Henri Jamet' }) {
         <button
           type="button"
           onClick={() => handleVoteFilterChange('PROPOSED')}
-          className={`flex-1 sm:flex-initial inline-flex items-center justify-center gap-2 px-4 py-2.5 rounded-xl font-label-md text-xs sm:text-sm font-semibold transition-all cursor-pointer ${
+          className={`flex-1 sm:flex-initial inline-flex items-center justify-center gap-2 px-4 py-2.5 rounded-xl font-label-md text-xs sm:text-sm font-semibold transition-all cursor-pointer whitespace-nowrap ${
             voteFilter === 'PROPOSED'
               ? 'bg-amber-500 text-white shadow-sm font-bold'
               : 'text-slate-600 dark:text-slate-300 hover:bg-white dark:hover:bg-slate-700 hover:text-on-surface'
           }`}
         >
           <span className="material-symbols-outlined text-[18px]">gavel</span>
-          <span>Propositions en attente</span>
+          <span className="whitespace-nowrap">En attente de création</span>
           <span
             className={`text-xs px-2 py-0.5 rounded-full font-bold ${
               voteFilter === 'PROPOSED'
@@ -775,14 +942,14 @@ export default function TasksPage({ currentUser = 'Henri Jamet' }) {
         <button
           type="button"
           onClick={() => handleVoteFilterChange('OPEN')}
-          className={`flex-1 sm:flex-initial inline-flex items-center justify-center gap-2 px-4 py-2.5 rounded-xl font-label-md text-xs sm:text-sm font-semibold transition-all cursor-pointer ${
+          className={`flex-1 sm:flex-initial inline-flex items-center justify-center gap-2 px-4 py-2.5 rounded-xl font-label-md text-xs sm:text-sm font-semibold transition-all cursor-pointer whitespace-nowrap ${
             voteFilter === 'OPEN'
               ? 'bg-primary text-white shadow-sm font-bold'
               : 'text-slate-600 dark:text-slate-300 hover:bg-white dark:hover:bg-slate-700 hover:text-on-surface'
           }`}
         >
           <span className="material-symbols-outlined text-[18px]">play_circle</span>
-          <span>Scrutins en cours</span>
+          <span className="whitespace-nowrap">En cours</span>
           <span
             className={`text-xs px-2 py-0.5 rounded-full font-bold ${
               voteFilter === 'OPEN'
@@ -794,18 +961,18 @@ export default function TasksPage({ currentUser = 'Henri Jamet' }) {
           </span>
         </button>
 
-        {/* 4. En attente d'arbitrage (PENDING_VALIDATION, émeraude) */}
+        {/* 4. En attente de validation (PENDING_VALIDATION, émeraude) */}
         <button
           type="button"
           onClick={() => handleVoteFilterChange('PENDING_VALIDATION')}
-          className={`flex-1 sm:flex-initial inline-flex items-center justify-center gap-2 px-4 py-2.5 rounded-xl font-label-md text-xs sm:text-sm font-semibold transition-all cursor-pointer ${
+          className={`flex-1 sm:flex-initial inline-flex items-center justify-center gap-2 px-4 py-2.5 rounded-xl font-label-md text-xs sm:text-sm font-semibold transition-all cursor-pointer whitespace-nowrap ${
             voteFilter === 'PENDING_VALIDATION'
               ? 'bg-emerald-600 text-white shadow-sm font-bold'
               : 'text-slate-600 dark:text-slate-300 hover:bg-white dark:hover:bg-slate-700 hover:text-on-surface'
           }`}
         >
           <span className="material-symbols-outlined text-[18px]">verified</span>
-          <span>En attente d'arbitrage</span>
+          <span className="whitespace-nowrap">En attente de validation</span>
           <span
             className={`text-xs px-2 py-0.5 rounded-full font-bold ${
               voteFilter === 'PENDING_VALIDATION'
@@ -821,14 +988,14 @@ export default function TasksPage({ currentUser = 'Henri Jamet' }) {
         <button
           type="button"
           onClick={() => handleVoteFilterChange('ARCHIVED')}
-          className={`flex-1 sm:flex-initial inline-flex items-center justify-center gap-2 px-4 py-2.5 rounded-xl font-label-md text-xs sm:text-sm font-semibold transition-all cursor-pointer ${
+          className={`flex-1 sm:flex-initial inline-flex items-center justify-center gap-2 px-4 py-2.5 rounded-xl font-label-md text-xs sm:text-sm font-semibold transition-all cursor-pointer whitespace-nowrap ${
             voteFilter === 'ARCHIVED'
               ? 'bg-slate-600 text-white shadow-sm font-bold'
               : 'text-slate-600 dark:text-slate-300 hover:bg-white dark:hover:bg-slate-700 hover:text-on-surface'
           }`}
         >
           <span className="material-symbols-outlined text-[18px]">inventory_2</span>
-          <span>Scrutins archivés</span>
+          <span className="whitespace-nowrap">Archivés</span>
           <span
             className={`text-xs px-2 py-0.5 rounded-full font-bold ${
               voteFilter === 'ARCHIVED'
@@ -876,7 +1043,17 @@ export default function TasksPage({ currentUser = 'Henri Jamet' }) {
             </div>
           </div>
 
-          <div className="flex items-center gap-2 shrink-0">
+          <div className="flex items-center gap-2 sm:gap-3 shrink-0">
+            <button
+              onClick={handleOpenCreateVote}
+              className="inline-flex items-center gap-1.5 px-3.5 py-2 rounded-xl bg-primary-container/10 hover:bg-primary-container/20 text-primary-container border border-primary-container/30 font-label-md text-xs sm:text-sm font-bold transition-all cursor-pointer shadow-sm whitespace-nowrap"
+              type="button"
+              title="Proposer une nouvelle délibération ou un vote"
+            >
+              <span className="material-symbols-outlined text-[18px]">how_to_vote</span>
+              <span>Proposer un vote</span>
+            </button>
+
             {votesList.length > 1 && (
               <div className="flex items-center gap-1">
                 <button
@@ -966,19 +1143,7 @@ export default function TasksPage({ currentUser = 'Henri Jamet' }) {
               </div>
 
               <div className="flex items-center gap-2">
-                <button
-                  onClick={(e) => {
-                    e.stopPropagation();
-                    setSelectedVoteForModal(currentVote);
-                    setIsVoteModalInitialEditing(false);
-                    setIsRoofVoteModalOpen(true);
-                  }}
-                  className="h-[44px] px-5 rounded-DEFAULT bg-surface-container-lowest border-2 border-primary-container text-primary-container font-label-md text-label-md hover:bg-sage-soft transition-all flex items-center gap-2 font-bold cursor-pointer"
-                  type="button"
-                >
-                  <span className="material-symbols-outlined text-[18px] text-primary-container">how_to_vote</span>
-                  <span>Participer au vote</span>
-                </button>
+                {renderVoteActionButton(currentVote)}
               </div>
             </div>
           </div>
@@ -1035,23 +1200,35 @@ export default function TasksPage({ currentUser = 'Henri Jamet' }) {
             />
           </div>
 
-          {/* Sorting Controller */}
-          <div className="flex items-center gap-space-xs shrink-0">
-            <span className="font-label-sm text-label-sm text-on-surface-variant whitespace-nowrap flex items-center gap-1 font-semibold">
-              <span className="material-symbols-outlined text-[18px]">sort</span>
-              Trier par :
-            </span>
-            <CustomSelect
-              value={sortBy}
-              onChange={(e) => setSortBy(e.target.value)}
-              options={[
-                { value: 'urgency', label: "Degré d'urgence (priorité haute)", icon: 'priority_high' },
-                { value: 'deadline', label: "Date d'échéance la plus proche", icon: 'event' },
-                { value: 'budget_desc', label: "Budget prévisionnel (décroissant)", icon: 'euro' },
-                { value: 'updated', label: "Dernière mise à jour", icon: 'update' },
-              ]}
-              className="h-[52px] min-w-[260px]"
-            />
+          {/* Sorting Controller & Quick Create Task Button */}
+          <div className="flex flex-wrap sm:flex-nowrap items-center gap-space-sm shrink-0">
+            <div className="flex items-center gap-space-xs shrink-0">
+              <span className="font-label-sm text-label-sm text-on-surface-variant whitespace-nowrap flex items-center gap-1 font-semibold">
+                <span className="material-symbols-outlined text-[18px]">sort</span>
+                Trier par :
+              </span>
+              <CustomSelect
+                value={sortBy}
+                onChange={(e) => setSortBy(e.target.value)}
+                options={[
+                  { value: 'urgency', label: "Degré d'urgence (priorité haute)", icon: 'priority_high' },
+                  { value: 'deadline', label: "Date d'échéance la plus proche", icon: 'event' },
+                  { value: 'budget_desc', label: "Budget prévisionnel (décroissant)", icon: 'euro' },
+                  { value: 'updated', label: "Dernière mise à jour", icon: 'update' },
+                ]}
+                className="h-[52px] min-w-[240px]"
+              />
+            </div>
+
+            <button
+              type="button"
+              onClick={handleOpenCreateTask}
+              className="h-[52px] px-5 rounded-DEFAULT bg-primary text-white hover:bg-forest-deep font-label-md text-label-md font-bold transition-all flex items-center justify-center gap-2 cursor-pointer shadow-sm shrink-0 whitespace-nowrap"
+              title="Proposer une nouvelle tâche"
+            >
+              <span className="material-symbols-outlined text-[20px]">add</span>
+              <span>Proposer une tâche</span>
+            </button>
           </div>
         </div>
 
@@ -1178,14 +1355,14 @@ export default function TasksPage({ currentUser = 'Henri Jamet' }) {
         <button
           type="button"
           onClick={() => setWorkflowFilter('ALL')}
-          className={`flex-1 sm:flex-initial inline-flex items-center justify-center gap-2 px-4 py-2.5 rounded-xl font-label-md text-xs sm:text-sm font-semibold transition-all cursor-pointer ${
+          className={`flex-1 sm:flex-initial inline-flex items-center justify-center gap-2 px-4 py-2.5 rounded-xl font-label-md text-xs sm:text-sm font-semibold transition-all cursor-pointer whitespace-nowrap ${
             workflowFilter === 'ALL'
               ? 'bg-slate-700 text-white shadow-sm font-bold'
               : 'text-slate-600 dark:text-slate-300 hover:bg-white dark:hover:bg-slate-700 hover:text-on-surface'
           }`}
         >
           <span className="material-symbols-outlined text-[18px]">checklist</span>
-          <span>Toutes les Missions</span>
+          <span className="whitespace-nowrap">Toutes</span>
           <span
             className={`text-xs px-2 py-0.5 rounded-full font-bold ${
               workflowFilter === 'ALL'
@@ -1201,14 +1378,14 @@ export default function TasksPage({ currentUser = 'Henri Jamet' }) {
         <button
           type="button"
           onClick={() => setWorkflowFilter('PROPOSED')}
-          className={`flex-1 sm:flex-initial inline-flex items-center justify-center gap-2 px-4 py-2.5 rounded-xl font-label-md text-xs sm:text-sm font-semibold transition-all cursor-pointer ${
+          className={`flex-1 sm:flex-initial inline-flex items-center justify-center gap-2 px-4 py-2.5 rounded-xl font-label-md text-xs sm:text-sm font-semibold transition-all cursor-pointer whitespace-nowrap ${
             workflowFilter === 'PROPOSED'
               ? 'bg-amber-500 text-white shadow-sm font-bold'
               : 'text-slate-600 dark:text-slate-300 hover:bg-white dark:hover:bg-slate-700 hover:text-on-surface'
           }`}
         >
           <span className="material-symbols-outlined text-[18px]">gavel</span>
-          <span>En cours d'arbitrage pour création</span>
+          <span className="whitespace-nowrap">En attente de création</span>
           <span
             className={`text-xs px-2 py-0.5 rounded-full font-bold ${
               workflowFilter === 'PROPOSED'
@@ -1224,14 +1401,14 @@ export default function TasksPage({ currentUser = 'Henri Jamet' }) {
         <button
           type="button"
           onClick={() => setWorkflowFilter('OPEN')}
-          className={`flex-1 sm:flex-initial inline-flex items-center justify-center gap-2 px-4 py-2.5 rounded-xl font-label-md text-xs sm:text-sm font-semibold transition-all cursor-pointer ${
+          className={`flex-1 sm:flex-initial inline-flex items-center justify-center gap-2 px-4 py-2.5 rounded-xl font-label-md text-xs sm:text-sm font-semibold transition-all cursor-pointer whitespace-nowrap ${
             workflowFilter === 'OPEN'
               ? 'bg-primary text-white shadow-sm font-bold'
               : 'text-slate-600 dark:text-slate-300 hover:bg-white dark:hover:bg-slate-700 hover:text-on-surface'
           }`}
         >
           <span className="material-symbols-outlined text-[18px]">play_circle</span>
-          <span>En cours (par défaut)</span>
+          <span className="whitespace-nowrap">En cours</span>
           <span
             className={`text-xs px-2 py-0.5 rounded-full font-bold ${
               workflowFilter === 'OPEN'
@@ -1247,14 +1424,14 @@ export default function TasksPage({ currentUser = 'Henri Jamet' }) {
         <button
           type="button"
           onClick={() => setWorkflowFilter('PENDING_VALIDATION')}
-          className={`flex-1 sm:flex-initial inline-flex items-center justify-center gap-2 px-4 py-2.5 rounded-xl font-label-md text-xs sm:text-sm font-semibold transition-all cursor-pointer ${
+          className={`flex-1 sm:flex-initial inline-flex items-center justify-center gap-2 px-4 py-2.5 rounded-xl font-label-md text-xs sm:text-sm font-semibold transition-all cursor-pointer whitespace-nowrap ${
             workflowFilter === 'PENDING_VALIDATION'
               ? 'bg-emerald-600 text-white shadow-sm font-bold'
               : 'text-slate-600 dark:text-slate-300 hover:bg-white dark:hover:bg-slate-700 hover:text-on-surface'
           }`}
         >
           <span className="material-symbols-outlined text-[18px]">verified</span>
-          <span>En cours d'arbitrage pour complétion</span>
+          <span className="whitespace-nowrap">En attente de validation</span>
           <span
             className={`text-xs px-2 py-0.5 rounded-full font-bold ${
               workflowFilter === 'PENDING_VALIDATION'
@@ -1270,14 +1447,14 @@ export default function TasksPage({ currentUser = 'Henri Jamet' }) {
         <button
           type="button"
           onClick={() => setWorkflowFilter('ARCHIVED')}
-          className={`flex-1 sm:flex-initial inline-flex items-center justify-center gap-2 px-4 py-2.5 rounded-xl font-label-md text-xs sm:text-sm font-semibold transition-all cursor-pointer ${
+          className={`flex-1 sm:flex-initial inline-flex items-center justify-center gap-2 px-4 py-2.5 rounded-xl font-label-md text-xs sm:text-sm font-semibold transition-all cursor-pointer whitespace-nowrap ${
             workflowFilter === 'ARCHIVED'
               ? 'bg-slate-600 text-white shadow-sm font-bold'
               : 'text-slate-600 dark:text-slate-300 hover:bg-white dark:hover:bg-slate-700 hover:text-on-surface'
           }`}
         >
           <span className="material-symbols-outlined text-[18px]">inventory_2</span>
-          <span>Terminées et archivées</span>
+          <span className="whitespace-nowrap">Archivées</span>
           <span
             className={`text-xs px-2 py-0.5 rounded-full font-bold ${
               workflowFilter === 'ARCHIVED'

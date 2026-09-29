@@ -410,7 +410,7 @@ class ProjectCreate(BaseModel):
     charge: Optional[int] = 1
     add_to_ag_agenda: Optional[bool] = False
     linked_documents: Optional[str] = None
-    document_urls: Optional[List[str]] = []
+    document_urls: Optional[List[Union[str, Dict[str, Any]]]] = []
     supplier_info: Optional[str] = None
     submitted_by: str
     responsible: Optional[str] = None
@@ -425,7 +425,7 @@ class ProjectCreate(BaseModel):
 class ProjectApprove(BaseModel):
     estimated_cost: Optional[float] = 0.0
     coordinator_notes: Optional[str] = None
-    document_urls: Optional[List[str]] = []
+    document_urls: Optional[List[Union[str, Dict[str, Any]]]] = []
     classification: Optional[ClassificationEnum] = ClassificationEnum.SIGNALEMENT
     task_weight: Optional[TaskWeightEnum] = TaskWeightEnum.MOYEN
     status: Optional[str] = "APPROUVE"
@@ -484,7 +484,7 @@ class ProjectResponse(BaseModel):
     task_weight: Optional[str] = "MOYEN"
     charge: Optional[int] = 1
     linked_documents: Optional[str] = None
-    document_urls: Optional[List[str]] = []
+    document_urls: Optional[List[Union[str, Dict[str, Any]]]] = []
     supplier_info: Optional[str] = None
     submitted_by: str
     responsible: Optional[str] = None

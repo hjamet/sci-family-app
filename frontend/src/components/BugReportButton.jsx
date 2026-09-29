@@ -50,7 +50,7 @@ export default function BugReportButton({ onOpenBugReport, currentUser = null })
       const fdReport = new FormData();
       fdReport.append('file', diagnosticFile);
       fdReport.append('organisme', 'Bug Reporter');
-      fdReport.append('title', `Rapport technique diagnostic - ${nowStr}`);
+      fdReport.append('title', `Rapport technique diagnostic - ${nowStr}.txt`);
       fdReport.append('category', 'Travaux & Chantiers');
       fdReport.append('uploaded_by', resolvedUploader);
       const uploadedReport = await uploadDocument(fdReport);
@@ -73,12 +73,13 @@ export default function BugReportButton({ onOpenBugReport, currentUser = null })
         },
         {
           id: uploadedReport?.id,
-          name: uploadedReport?.title || `Rapport technique diagnostic - ${nowStr}`,
-          title: uploadedReport?.title || `Rapport technique diagnostic - ${nowStr}`,
+          name: uploadedReport?.title || `Rapport technique diagnostic - ${nowStr}.txt`,
+          title: uploadedReport?.title || `Rapport technique diagnostic - ${nowStr}.txt`,
           filename: uploadedReport?.file_name || `rapport_diagnostic_${timestamp}.txt`,
           file_url: uploadedReport?.file_url || `/api/documents/${uploadedReport?.id}/download`,
           url: uploadedReport?.file_url || `/api/documents/${uploadedReport?.id}/download`,
-          type: 'Document',
+          type: 'Text',
+          file_type: 'text/plain',
           size: uploadedReport?.file_size ? `${Math.round(uploadedReport.file_size / 1024)} Ko` : '',
           category: 'Travaux & Chantiers',
           uploaded_at: new Date().toISOString(),
@@ -137,24 +138,20 @@ export default function BugReportButton({ onOpenBugReport, currentUser = null })
         onClick={handleClick}
         title="Signaler un bug ou proposer une amélioration"
         aria-label="Signaler un bug ou proposer une amélioration"
-        className="group relative flex items-center gap-2.5 h-12 px-4 rounded-full bg-rose-700 hover:bg-rose-800 text-white font-label-md text-xs sm:text-sm font-bold shadow-lg hover:shadow-xl transition-all duration-200 cursor-pointer border-2 border-rose-400/40 hover:scale-105 active:scale-95 disabled:opacity-75 disabled:pointer-events-none"
+        className="group relative w-12 h-12 rounded-full p-0 flex items-center justify-center bg-rose-700 hover:bg-rose-800 text-white shadow-lg hover:shadow-xl transition-all duration-200 cursor-pointer border-2 border-rose-400/40 hover:scale-105 active:scale-95 disabled:opacity-75 disabled:pointer-events-none"
       >
         {isProcessing ? (
-          <>
-            <span className="material-symbols-outlined text-[20px] animate-spin">
-              progress_activity
-            </span>
-            <span className="hidden sm:inline">Diagnostic en cours...</span>
-          </>
+          <span className="material-symbols-outlined text-[22px] animate-spin">
+            progress_activity
+          </span>
         ) : (
           <>
-            <span className="material-symbols-outlined text-[22px] transition-transform group-hover:rotate-12">
+            <span className="material-symbols-outlined text-[24px] transition-transform duration-200 group-hover:rotate-12">
               pest_control
             </span>
-            <span className="hidden sm:inline">Signaler un bug</span>
-            <span className="flex h-2.5 w-2.5 relative">
-              <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-rose-300 opacity-75"></span>
-              <span className="relative inline-flex rounded-full h-2.5 w-2.5 bg-rose-200"></span>
+            <span className="absolute -top-1 -right-1 flex h-3 w-3">
+              <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-rose-400 opacity-75"></span>
+              <span className="relative inline-flex rounded-full h-3 w-3 bg-rose-300"></span>
             </span>
           </>
         )}
