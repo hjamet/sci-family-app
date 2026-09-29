@@ -1821,9 +1821,11 @@ def create_project(proj: ProjectCreate, db: Session = Depends(get_db)):
     options_str = json.dumps(proj.options) if proj.options else None
     external_links_str = json.dumps(proj.external_links) if proj.external_links else None
 
-    # Cycle de vie calqué sur les tâches (Annotation 8) : PROPOSED à la création, OPEN si soumis au vote
-    if proj.status and proj.status.strip():
-        initial_status = proj.status.strip().upper()
+    # Cycle de vie calqué sur les tâches (Annotations 8, 9 & 10) :
+    # Si aucun statut n'est fourni ou s'il est par défaut ("SOUMIS"), initialiser impérativement status = "PROPOSED"
+    status_str = (proj.status or "").strip().upper()
+    if status_str and status_str != "SOUMIS":
+        initial_status = status_str
     elif proj.decision_mode == "SOUMETTRE_AU_VOTE":
         initial_status = "OPEN"
     else:
@@ -2303,102 +2305,111 @@ def process_vote_submission(
         except Exception:
             pass
 
-    if is_multi_vote:
-        if not multi_vote_choices:
-            if existing_vote:
-                try:
-                    db.delete(existing_vote)
-                    db.commit()
-                    db.refresh(db_proj)
-                except Exception as exc:
-                    db.rollback()
-                    logger.error(f"[VOTE ERROR] Erreur suppression multi-vote vide: {exc}")
-                    raise HTTPException(status_code=400, detail="Erreur lors de la réinitialisation du vote.")
-                return format_project_response(db_proj)
-            return format_project_response(db_proj)
-
-        validated_choices = []
-        has_ag_report = False
-        for choice in multi_vote_choices:
-            choice_upper = choice.upper()
-            matched = next((opt for opt in project_options if choice_upper == opt.upper()), None)
-            if matched:
-                validated_choices.append(matched)
-            elif choice_upper in valid_votes:
-                validated_choices.append(choice_upper)
-                if choice_upper in ("REPORT_PROCHAINE_AG", "REPORT_AG"):
-                    has_ag_report = True
-            else:
-                accepted_list = (project_options + ["BLANC", "REPORT_AG"]) if project_options else valid_votes
-                raise HTTPException(status_code=400, detail=f"Choix « {choice} » invalide. Doit être l'un de : {', '.join(accepted_list)}.")
-
-        if has_ag_report:
-            db_proj.status = "REPORT_AG"
-            db_proj.add_to_ag_agenda = True
-
-        vote_str = json.dumps(validated_choices)
-        vote_to_store = vote_str
-    else:
+    # Détection retrait ou annulation de vote (Annotations 9 & 10)
+    is_withdrawal = False
+    if vote_val is None:
+        is_withdrawal = True
+    elif is_multi_vote and not multi_vote_choices:
+        is_withdrawal = True
+    elif not is_multi_vote:
         raw_vote = vote_val.value if hasattr(vote_val, 'value') else str(vote_val)
         vote_upper = raw_vote.upper().strip()
+        if vote_upper in ('', 'EN_ATTENTE', 'RETIRER'):
+            is_withdrawal = True
 
-        is_custom_option = any(vote_upper == opt.upper() for opt in project_options)
-        matched_custom_option = next((opt for opt in project_options if vote_upper == opt.upper()), None)
-
-        if vote_upper not in valid_votes and not is_custom_option:
-            accepted_list = (project_options + ["BLANC", "REPORT_AG"]) if project_options else valid_votes
-            raise HTTPException(status_code=400, detail=f"Le vote doit être l'un de : {', '.join(accepted_list)}.")
-
-        vote_str = matched_custom_option if is_custom_option else vote_upper
-
-        if vote_str in ("REPORT_PROCHAINE_AG", "REPORT_AG"):
-            db_proj.status = "REPORT_AG"
-            db_proj.add_to_ag_agenda = True
-
-        # Sécurisation défensive : tronquer à 50 caractères si chaîne brute (Annotation 7)
-        vote_to_store = vote_str[:50] if isinstance(vote_str, str) else str(vote_str)[:50]
-
-    if existing_vote:
-        existing_vote.vote = vote_to_store
-        existing_vote.comment = comment
-        existing_vote.voted_at = datetime.utcnow()
-    else:
-        new_vote = ProjectVote(
-            project_id=project_id,
-            user_name=clean_name,
-            vote=vote_to_store,
-            comment=comment
-        )
-        db.add(new_vote)
-
-    try:
-        db.commit()
-        db.refresh(db_proj)
-    except IntegrityError:
-        db.rollback()
-        # Conflit d'unicité détecté : récupérer le vote existant avec ce user_name
-        fallback_vote = db.query(ProjectVote).filter(
-            ProjectVote.project_id == project_id,
-            func.lower(ProjectVote.user_name) == clean_name.lower()
-        ).first()
-        if fallback_vote:
-            fallback_vote.vote = vote_to_store
-            fallback_vote.comment = comment
-            fallback_vote.voted_at = datetime.utcnow()
+    if is_withdrawal:
+        if existing_vote:
             try:
+                db.delete(existing_vote)
                 db.commit()
                 db.refresh(db_proj)
-            except Exception as exc_inner:
+            except Exception as exc:
                 db.rollback()
-                logger.error(f"[VOTE ERROR] Echec fallback commit vote: {exc_inner}")
-                raise HTTPException(status_code=400, detail="Erreur d'intégrité lors de l'enregistrement du vote.")
+                logger.error(f"[VOTE ERROR] Erreur suppression vote lors du retrait: {exc}")
+                raise HTTPException(status_code=400, detail="Erreur lors de la réinitialisation du vote.")
+    else:
+        if is_multi_vote:
+            validated_choices = []
+            has_ag_report = False
+            for choice in multi_vote_choices:
+                choice_upper = choice.upper()
+                matched = next((opt for opt in project_options if choice_upper == opt.upper()), None)
+                if matched:
+                    validated_choices.append(matched)
+                elif choice_upper in valid_votes:
+                    validated_choices.append(choice_upper)
+                    if choice_upper in ("REPORT_PROCHAINE_AG", "REPORT_AG"):
+                        has_ag_report = True
+                else:
+                    accepted_list = (project_options + ["BLANC", "REPORT_AG"]) if project_options else valid_votes
+                    raise HTTPException(status_code=400, detail=f"Choix « {choice} » invalide. Doit être l'un de : {', '.join(accepted_list)}.")
+
+            if has_ag_report:
+                db_proj.status = "REPORT_AG"
+                db_proj.add_to_ag_agenda = True
+
+            vote_to_store = json.dumps(validated_choices)
         else:
-            logger.error("[VOTE ERROR] Conflit d'intégrité sans vote existant trouvé")
-            raise HTTPException(status_code=400, detail="Conflit d'intégrité lors de l'enregistrement du vote.")
-    except Exception as exc:
-        db.rollback()
-        logger.error(f"[VOTE ERROR] Echec commit vote: {exc}")
-        raise HTTPException(status_code=400, detail=f"Erreur lors de l'enregistrement du vote: {str(exc)}")
+            raw_vote = vote_val.value if hasattr(vote_val, 'value') else str(vote_val)
+            vote_upper = raw_vote.upper().strip()
+
+            is_custom_option = any(vote_upper == opt.upper() for opt in project_options)
+            matched_custom_option = next((opt for opt in project_options if vote_upper == opt.upper()), None)
+
+            if vote_upper not in valid_votes and not is_custom_option:
+                accepted_list = (project_options + ["BLANC", "REPORT_AG"]) if project_options else valid_votes
+                raise HTTPException(status_code=400, detail=f"Le vote doit être l'un de : {', '.join(accepted_list)}.")
+
+            vote_str = matched_custom_option if is_custom_option else vote_upper
+
+            if vote_str in ("REPORT_PROCHAINE_AG", "REPORT_AG"):
+                db_proj.status = "REPORT_AG"
+                db_proj.add_to_ag_agenda = True
+
+            # Sécurisation défensive : tronquer à 50 caractères si chaîne brute (Annotation 7)
+            vote_to_store = vote_str[:50] if isinstance(vote_str, str) else str(vote_str)[:50]
+
+        if existing_vote:
+            existing_vote.vote = vote_to_store
+            existing_vote.comment = comment
+            existing_vote.voted_at = datetime.utcnow()
+        else:
+            new_vote = ProjectVote(
+                project_id=project_id,
+                user_name=clean_name,
+                vote=vote_to_store,
+                comment=comment
+            )
+            db.add(new_vote)
+
+        try:
+            db.commit()
+            db.refresh(db_proj)
+        except IntegrityError:
+            db.rollback()
+            # Conflit d'unicité détecté : récupérer le vote existant avec ce user_name
+            fallback_vote = db.query(ProjectVote).filter(
+                ProjectVote.project_id == project_id,
+                func.lower(ProjectVote.user_name) == clean_name.lower()
+            ).first()
+            if fallback_vote:
+                fallback_vote.vote = vote_to_store
+                fallback_vote.comment = comment
+                fallback_vote.voted_at = datetime.utcnow()
+                try:
+                    db.commit()
+                    db.refresh(db_proj)
+                except Exception as exc_inner:
+                    db.rollback()
+                    logger.error(f"[VOTE ERROR] Echec fallback commit vote: {exc_inner}")
+                    raise HTTPException(status_code=400, detail="Erreur d'intégrité lors de l'enregistrement du vote.")
+            else:
+                logger.error("[VOTE ERROR] Conflit d'intégrité sans vote existant trouvé")
+                raise HTTPException(status_code=400, detail="Conflit d'intégrité lors de l'enregistrement du vote.")
+        except Exception as exc:
+            db.rollback()
+            logger.error(f"[VOTE ERROR] Echec commit vote: {exc}")
+            raise HTTPException(status_code=400, detail=f"Erreur lors de l'enregistrement du vote: {str(exc)}")
 
     # Check if ALL associates have voted (7 associates in SCI Familiale)
     all_project_votes = db.query(ProjectVote).filter(ProjectVote.project_id == project_id).all()
@@ -2471,6 +2482,17 @@ def process_vote_submission(
                 )
         except Exception as e:
             logger.error(f"[EMAIL ERROR] Failed to send vote closed notification: {e}")
+
+    elif not quorum_reached and db_proj.status == "PENDING_VALIDATION":
+        # Annotation 10 : Si le total des votants repasse sous 7 (suite à un retrait), réverser automatiquement le statut à OPEN !
+        db_proj.status = "OPEN"
+        try:
+            db_proj.updated_at = datetime.utcnow()
+            db.commit()
+            db.refresh(db_proj)
+        except Exception as exc:
+            db.rollback()
+            logger.error(f"[VOTE ERROR] Echec réversion statut vers OPEN: {exc}")
 
     return format_project_response(db_proj)
 

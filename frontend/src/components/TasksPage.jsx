@@ -58,25 +58,7 @@ export default function TasksPage({ currentUser = 'Henri Jamet' }) {
   // Search & Filter state
   const [searchTerm, setSearchTerm] = useState('');
   const [sortBy, setSortBy] = useState('urgency');
-  const [selectedAssignee, setSelectedAssignee] = useState(() => {
-    const meta = resolveUserMeta(currentUser);
-    const found = AUTHENTIC_ASSOCIATES.find(a => a.id !== 'all' && (
-      a.id === meta.lowerPrenom ||
-      (meta.lowerPrenom === 'elisabeth' && a.id === 'maman')
-    ));
-    return found ? found.id : 'all';
-  });
-
-  useEffect(() => {
-    const meta = resolveUserMeta(currentUser);
-    const found = AUTHENTIC_ASSOCIATES.find(a => a.id !== 'all' && (
-      a.id === meta.lowerPrenom ||
-      (meta.lowerPrenom === 'elisabeth' && a.id === 'maman')
-    ));
-    if (found) {
-      setSelectedAssignee(found.id);
-    }
-  }, [currentUser]);
+  const [selectedAssignee, setSelectedAssignee] = useState('all');
   const [selectedSubject, setSelectedSubject] = useState('all');
   const [selectedCategory, setSelectedCategory] = useState('all');
   const [selectedPriority, setSelectedPriority] = useState('Toutes');
@@ -687,6 +669,11 @@ export default function TasksPage({ currentUser = 'Henri Jamet' }) {
       return isTaskAssignedToUser(t, userMeta);
     }).length;
   }, [tasks, userMeta, isCoordinator]);
+
+  // Section conditionnelle "Mes Missions" attribuées à l'utilisateur connecté (Annotation 7)
+  const myAssignedTasks = useMemo(() => {
+    return tasks.filter(t => (isTaskOpen(t) || isTaskPendingValidation(t) || isTaskProposed(t)) && isTaskAssignedToUser(t, userMeta));
+  }, [tasks, userMeta]);
 
   // Avancement global
   const avgProgress = totalTasks === 0 || totalOpenTasksCount === 0
@@ -1468,6 +1455,38 @@ export default function TasksPage({ currentUser = 'Henri Jamet' }) {
         </button>
 
       </div>
+
+      {/* ========================================================================= */}
+      {/* 5a. SECTION CONDITIONNELLE : MES MISSIONS (Annotation 7)                  */}
+      {/* ========================================================================= */}
+      {myAssignedTasks.length > 0 && selectedAssignee === 'all' && (
+        <section className="mb-space-lg" id="myAssignedTasksSection">
+          <div className="flex items-center justify-between gap-3 mb-space-md">
+            <div className="flex items-center gap-2">
+              <span className="material-symbols-outlined text-[24px] text-primary">assignment_ind</span>
+              <h2 className="font-headline-md text-headline-md text-forest-deep tracking-tight font-bold">
+                Mes Missions
+              </h2>
+              <span className="bg-primary/10 text-primary font-label-sm text-label-sm font-bold px-2.5 py-0.5 rounded-full">
+                {myAssignedTasks.length}
+              </span>
+            </div>
+          </div>
+
+          <div className="grid grid-cols-1 lg:grid-cols-2 gap-space-md mb-8">
+            {myAssignedTasks.map((t) => (
+              <TaskCard
+                key={`my-${t.id || t.ref}`}
+                task={t}
+                currentUser={currentUser}
+                onOpen={(taskToOpen) => handleOpenInspectTask(taskToOpen)}
+                onAccept={handleAcceptTask}
+                onReject={handleRejectTask}
+              />
+            ))}
+          </div>
+        </section>
+      )}
 
       {/* ========================================================================= */}
       {/* 5b. SECTION TITLE & COUNTER SUMMARY (Stitch)                              */}

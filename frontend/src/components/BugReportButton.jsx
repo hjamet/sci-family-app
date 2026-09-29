@@ -145,15 +145,9 @@ export default function BugReportButton({ onOpenBugReport, currentUser = null })
             progress_activity
           </span>
         ) : (
-          <>
-            <span className="material-symbols-outlined text-[24px] transition-transform duration-200 group-hover:rotate-12">
-              pest_control
-            </span>
-            <span className="absolute -top-1 -right-1 flex h-3 w-3">
-              <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-rose-400 opacity-75"></span>
-              <span className="relative inline-flex rounded-full h-3 w-3 bg-rose-300"></span>
-            </span>
-          </>
+          <span className="material-symbols-outlined text-[24px] transition-transform duration-200 group-hover:rotate-12">
+            pest_control
+          </span>
         )}
       </button>
     </div>

@@ -116,6 +116,14 @@ export function normalizeTimeInput(val, fallback = '15:00') {
 
 function resolveCurrentUserFullName(currentUser) {
   if (typeof currentUser === 'string' && currentUser.trim()) {
+    try {
+      const parsed = JSON.parse(currentUser);
+      if (parsed && typeof parsed === 'object') {
+        return resolveCurrentUserFullName(parsed);
+      }
+    } catch (_) {
+      // Format chaîne simple
+    }
     const match = ASSOCIATES_LIST.find(
       (a) => a.toLowerCase().includes(currentUser.toLowerCase()) || currentUser.toLowerCase().includes(a.toLowerCase().split(' ')[0])
     );
@@ -130,12 +138,21 @@ function resolveCurrentUserFullName(currentUser) {
       return match || `${currentUser.prenom} Jamet`;
     }
     if (currentUser.name) return currentUser.name;
+    if (currentUser.username) return currentUser.username;
   }
   try {
     const stored = localStorage.getItem('sci_user');
     if (stored) {
+      try {
+        const parsedStored = JSON.parse(stored);
+        if (parsedStored && typeof parsedStored === 'object') {
+          return resolveCurrentUserFullName(parsedStored);
+        }
+      } catch (_) {
+        // Format chaîne simple
+      }
       const match = ASSOCIATES_LIST.find((a) =>
-        a.toLowerCase().includes(stored.toLowerCase())
+        a.toLowerCase().includes(stored.toLowerCase()) || stored.toLowerCase().includes(a.toLowerCase().split(' ')[0])
       );
       return match || stored;
     }
@@ -244,6 +261,25 @@ function BookingModalContent({
 
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState(null);
+
+  const rosingRooms = ROOMS.filter((r) => r.house === 'rosing');
+  const presbytereRooms = ROOMS.filter((r) => r.house === 'presbytere');
+  const safeSelectedRooms = Array.isArray(selectedRooms) ? selectedRooms : [];
+  const hasSelectedRosing = safeSelectedRooms.some((rName) => {
+    const found = ROOMS.find((r) => r.name === rName);
+    return found ? found.house === 'rosing' : false;
+  });
+  const hasSelectedPresb = safeSelectedRooms.some((rName) => {
+    const found = ROOMS.find((r) => r.name === rName);
+    return found ? found.house === 'presbytere' : false;
+  });
+  const isOtherBuildingDisabled = hasSelectedRosing && hasSelectedPresb;
+
+  useEffect(() => {
+    if (isOtherBuildingDisabled && cohabitationType === 'other_building') {
+      setCohabitationType('total');
+    }
+  }, [isOtherBuildingDisabled, cohabitationType]);
 
   useEffect(() => {
     if (initialReservation) {
@@ -363,8 +399,6 @@ function BookingModalContent({
       setPresbytereHeatingManual(false);
     }
   }, [initialReservation, isOpen, loggedInUserName]);
-
-  if (!isOpen) return null;
 
   const { week_number, year } = getISOWeekAndYear(startDate);
 
@@ -525,25 +559,6 @@ function BookingModalContent({
     }
   };
 
-  const rosingRooms = ROOMS.filter((r) => r.house === 'rosing');
-  const presbytereRooms = ROOMS.filter((r) => r.house === 'presbytere');
-  const safeSelectedRooms = Array.isArray(selectedRooms) ? selectedRooms : [];
-  const hasSelectedRosing = safeSelectedRooms.some((rName) => {
-    const found = ROOMS.find((r) => r.name === rName);
-    return found ? found.house === 'rosing' : false;
-  });
-  const hasSelectedPresb = safeSelectedRooms.some((rName) => {
-    const found = ROOMS.find((r) => r.name === rName);
-    return found ? found.house === 'presbytere' : false;
-  });
-  const isOtherBuildingDisabled = hasSelectedRosing && hasSelectedPresb;
-
-  useEffect(() => {
-    if (isOtherBuildingDisabled && cohabitationType === 'other_building') {
-      setCohabitationType('total');
-    }
-  }, [isOtherBuildingDisabled, cohabitationType]);
-
   const safeSelectedMembers = Array.isArray(selectedMembers) ? selectedMembers : [];
   const safeExternalGuests = Array.isArray(externalGuests) ? externalGuests : [];
   const totalOccupants = safeSelectedMembers.length + safeExternalGuests.length;
@@ -614,7 +629,7 @@ function BookingModalContent({
                 <input
                   id="stay-title"
                   type="text"
-                  value={stayTitle}
+                  value={stayTitle || ''}
                   onChange={(e) => setStayTitle(e.target.value)}
                   placeholder="Ex: Vacances de Pâques, Retrouvailles..."
                   className="w-full h-11 px-3.5 bg-surface-container-lowest text-on-surface font-body-md text-body-md rounded-DEFAULT border-2 border-border-subtle focus:border-primary-container focus:outline-none transition-all placeholder:text-on-surface-variant/60"
@@ -628,7 +643,7 @@ function BookingModalContent({
                 <input
                   id="stay-description"
                   type="text"
-                  value={description}
+                  value={description || ''}
                   onChange={(e) => setDescription(e.target.value)}
                   placeholder="Ex: Télétravail et taille des haies..."
                   className="w-full h-11 px-3.5 bg-surface-container-lowest text-on-surface font-body-md text-body-md rounded-DEFAULT border-2 border-border-subtle focus:border-primary-container focus:outline-none transition-all placeholder:text-on-surface-variant/60"
@@ -664,7 +679,7 @@ function BookingModalContent({
                     <input
                       id="date-arrivee"
                       type="date"
-                      value={startDate}
+                      value={startDate || ''}
                       onChange={(e) => setStartDate(e.target.value)}
                       className="w-full h-11 px-3 bg-surface-container-lowest text-on-surface font-body-md text-body-md rounded-DEFAULT border border-border-subtle focus:border-primary-container focus:outline-none transition-colors"
                     />
@@ -674,7 +689,7 @@ function BookingModalContent({
                     <input
                       id="heure-arrivee"
                       type="time"
-                      value={arrivalTime}
+                      value={arrivalTime || '15:00'}
                       onChange={(e) => setArrivalTime(e.target.value)}
                       className="w-full h-11 px-3 bg-surface-container-lowest text-on-surface font-body-md text-body-md rounded-DEFAULT border border-border-subtle focus:border-primary-container focus:outline-none transition-colors"
                     />
@@ -696,7 +711,7 @@ function BookingModalContent({
                     <input
                       id="date-depart"
                       type="date"
-                      value={endDate}
+                      value={endDate || ''}
                       onChange={(e) => setEndDate(e.target.value)}
                       className="w-full h-11 px-3 bg-surface-container-lowest text-on-surface font-body-md text-body-md rounded-DEFAULT border border-border-subtle focus:border-primary-container focus:outline-none transition-colors"
                     />
@@ -706,7 +721,7 @@ function BookingModalContent({
                     <input
                       id="heure-depart"
                       type="time"
-                      value={departureTime}
+                      value={departureTime || '11:00'}
                       onChange={(e) => setDepartureTime(e.target.value)}
                       className="w-full h-11 px-3 bg-surface-container-lowest text-on-surface font-body-md text-body-md rounded-DEFAULT border border-border-subtle focus:border-primary-container focus:outline-none transition-colors"
                     />
@@ -1026,7 +1041,7 @@ function BookingModalContent({
                   <div className="flex items-center gap-2">
                     <input
                       type="text"
-                      value={guestInputValue}
+                      value={guestInputValue || ''}
                       onChange={(e) => setGuestInputValue(e.target.value)}
                       onKeyDown={(e) => {
                         if (e.key === 'Enter') {
@@ -1192,7 +1207,7 @@ function BookingModalContent({
               <textarea
                 id="stay-notes"
                 rows={3}
-                value={notes}
+                value={notes || ''}
                 onChange={(e) => setNotes(e.target.value)}
                 placeholder="Heure d'arrivée estimée, besoins spécifiques, présence d'enfants en bas âge, animaux de compagnie..."
                 className="w-full p-3 bg-surface-container-lowest text-on-surface font-body-md text-body-md rounded-DEFAULT border-2 border-border-subtle focus:border-primary-container focus:outline-none transition-colors resize-none placeholder:text-on-surface-variant/60"
@@ -1241,6 +1256,7 @@ function BookingModalContent({
 }
 
 export default function BookingModal(props) {
+  if (!props.isOpen) return null;
   return (
     <BookingErrorBoundary onClose={props.onClose}>
       <BookingModalContent {...props} />

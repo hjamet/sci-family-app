@@ -649,7 +649,7 @@ export default function TaskDetailModal({
         recurrence_unit: editRecurrenceUnit,
         auto_assign_by_workload: editAutoAssignByWorkload,
         created_by: currentUserName || 'Henri Jamet',
-        status: isVoteInitiative ? 'EN_VOTE' : (task?.id ? (task?.status || 'PROPOSED') : 'PROPOSED'),
+        status: isVoteInitiative ? 'PROPOSED' : (task?.id ? (task?.status || 'PROPOSED') : 'PROPOSED'),
         progress: 0,
       };
 
@@ -672,7 +672,7 @@ export default function TaskDetailModal({
               category: editSubject,
               property_id: 1,
               submitted_by: currentUserName || 'Henri Jamet',
-              status: 'EN_VOTE',
+              status: 'PROPOSED',
               checklist: editChecklist,
               options: cleanOptions,
               document_urls: editDocuments.map((d) => d.file_url || d.url || d.filename),
@@ -1095,11 +1095,11 @@ export default function TaskDetailModal({
                     <button
                       type="button"
                       onClick={handleValidateModalTask}
-                      title="Clôturer immédiatement la tâche en tant que coordinateur"
+                      title="Valider la mission en tant que coordinateur"
                       className="inline-flex items-center gap-1.5 h-11 px-4 rounded-xl border-2 font-label-md text-xs sm:text-sm font-bold shadow-sm transition-colors bg-slate-800 hover:bg-slate-900 text-white border-slate-800 cursor-pointer"
                     >
                       <span className="material-symbols-outlined text-[18px]">check</span>
-                      <span>Clôturer directement</span>
+                      <span>Valider la mission</span>
                     </button>
                   )}
                 </div>
@@ -1151,9 +1151,14 @@ export default function TaskDetailModal({
                     <span className="px-3 py-1 bg-surface-container text-on-surface font-label-sm text-xs rounded-full">
                       {task.category || (isVoteInitiative ? 'Projet & Scrutin SCI' : 'Espaces Verts & Parc')}
                     </span>
-                    <span className="px-3 py-1 bg-surface-container text-on-surface font-label-sm text-xs rounded-full">
-                      {task.subject || (isVoteInitiative ? 'Presbytère' : 'Rosing')}
-                    </span>
+                    {!(
+                      (task.category || (isVoteInitiative ? 'Projet & Scrutin SCI' : 'Espaces Verts & Parc')).trim().toLowerCase() ===
+                      (task.subject || (isVoteInitiative ? 'Presbytère' : 'Rosing')).trim().toLowerCase()
+                    ) && (
+                      <span className="px-3 py-1 bg-surface-container text-on-surface font-label-sm text-xs rounded-full">
+                        {task.subject || (isVoteInitiative ? 'Presbytère' : 'Rosing')}
+                      </span>
+                    )}
                     {task.is_recurring && (
                       <span className="px-3 py-1 bg-amber-50 text-amber-900 border border-amber-200 font-label-sm text-xs rounded-full flex items-center gap-1 font-semibold">
                         <span className="material-symbols-outlined text-[14px] text-amber-700">update</span>
@@ -1481,7 +1486,7 @@ export default function TaskDetailModal({
                               className="inline-flex items-center gap-2 px-5 py-2.5 rounded-xl bg-slate-800 hover:bg-slate-900 text-white font-bold text-xs sm:text-sm shadow-md transition-all cursor-pointer"
                             >
                               <span className="material-symbols-outlined text-[18px]">check</span>
-                              <span>Clôturer directement</span>
+                              <span>Valider la mission</span>
                             </button>
                           )}
                         </div>

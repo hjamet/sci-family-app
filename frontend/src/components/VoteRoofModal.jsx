@@ -264,21 +264,30 @@ function VoteRoofModalInner({
   const projectReporter = activeProject.submitted_by || activeProject.reporter?.name || (typeof activeProject.reporter === 'string' ? activeProject.reporter : currentUserName);
   const projectSubject = activeProject.category || activeProject.subject || 'Presbytère';
 
+  const projectStatusUpper = String(activeProject?.status || '').toUpperCase();
+  const isProposed = projectStatusUpper === 'PROPOSED';
+  const isPendingValidation = projectStatusUpper === 'PENDING_VALIDATION' || projectStatusUpper === 'EN_ATTENTE_VALIDATION';
+  const isProjectArchived = ['ARCHIVE', 'ARCHIVEE', 'ARCHIVED', 'CLOSED', 'ANNULE', 'ANNULEE'].includes(projectStatusUpper);
+  const isProjectOpen = projectStatusUpper === 'OPEN' || projectStatusUpper === 'EN_VOTE';
+
   // Badge de statut harmonisé et sobre
   const formatBadgeStatus = (status) => {
     const s = String(status || '').toUpperCase();
-    if (s === 'EN_VOTE') return 'Scrutin ouvert';
+    if (s === 'OPEN' || s === 'EN_VOTE') return 'Scrutin ouvert';
+    if (s === 'PROPOSED') return 'Initiative proposée';
+    if (s === 'PENDING_VALIDATION' || s === 'EN_ATTENTE_VALIDATION') return 'En attente de validation';
     if (s === 'SOUMIS') return 'En délibération';
     if (s === 'APPROUVE') return 'Adopté';
     if (s === 'REFUSE') return 'Rejeté';
     if (s === 'REPORT_AG') return 'Reporté en AG';
+    if (['ARCHIVE', 'ARCHIVEE', 'ARCHIVED', 'CLOSED', 'ANNULE', 'ANNULEE'].includes(s)) return 'Archivé & Clos';
     return activeProject.badgeStatus || 'Scrutin ouvert';
   };
   const projectBadgeStatus = formatBadgeStatus(activeProject.status);
-  const isProjectOpen = String(activeProject?.status || '').toUpperCase() === 'OPEN' || String(activeProject?.status || '').toUpperCase() === 'EN_VOTE';
 
-  // Ref vers la section de vote pour défilement fluide
+  // Ref vers la section de vote et d'arbitrage pour défilement fluide
   const voteSectionRef = useRef(null);
+  const arbitrationSectionRef = useRef(null);
 
   // Droits de gouvernance : Coordinateur ou Auteur du vote (Annotations 4, 5, 6, 12)
   const isCoordinator = Boolean(
@@ -328,43 +337,54 @@ function VoteRoofModalInner({
   const [editExternalLinks, setEditExternalLinks] = useState(() => parseExternalLinks(activeProject?.external_links));
   const activeExternalLinks = useMemo(() => parseExternalLinks(activeProject?.external_links), [activeProject?.external_links]);
 
-  // Synchronisation lors de l'ouverture du mode édition
-  useEffect(() => {
-    setEditTitle(activeProject.title || '');
-    setEditDescription(activeProject.description || '');
-    setEditCategory(activeProject.category || activeProject.subject || 'Presbytère');
-    setEditExternalLinks(parseExternalLinks(activeProject?.external_links));
-    const opts = (() => {
-      if (Array.isArray(activeProject.options) && activeProject.options.length > 0) return activeProject.options;
-      if (typeof activeProject.options === 'string' && activeProject.options.trim()) {
-        try {
-          const p = JSON.parse(activeProject.options);
-          if (Array.isArray(p)) return p;
-        } catch (_) {
-          return activeProject.options.split(',').map(s => s.trim()).filter(Boolean);
-        }
-      }
-      return ['Approuver le projet', 'Rejeter le projet'];
-    })();
-    setEditOptions(opts);
-    setEditAllowMultipleChoices(Boolean(activeProject.allow_multiple_choices));
+  // Annotation 8 : Préservation des champs de saisie en évitant l'écrasement sur ajout de doc/lien
+  const lastLoadedProjectIdRef = useRef(null);
 
-    // Initialisation de la liste des documents éditables
-    const list = [];
-    const seen = new Set();
-    const addDoc = (d) => {
-      if (!d) return;
-      const key = typeof d === 'string' ? d : (d.url || d.file_url || d.filename || d.title || JSON.stringify(d));
-      if (seen.has(key)) return;
-      seen.add(key);
-      list.push(d);
-    };
-    if (Array.isArray(activeProject.documents)) activeProject.documents.forEach(addDoc);
-    if (Array.isArray(activeProject.files)) activeProject.files.forEach(addDoc);
-    if (Array.isArray(activeProject.document_urls)) activeProject.document_urls.forEach(addDoc);
-    if (activeProject.devis_url) addDoc({ url: activeProject.devis_url, title: `Devis Prestataire - ${activeProject.title || 'Projet'}.pdf` });
-    setEditDocuments(list);
-  }, [activeProject, isEditing]);
+  // Synchronisation lors de l'ouverture ou du changement effectif de projet (Annotation 8)
+  useEffect(() => {
+    if (!isOpen) {
+      lastLoadedProjectIdRef.current = null;
+      return;
+    }
+    const currentProjKey = activeProject?.id ?? (activeProject?.isNew ? 'new' : null);
+    if (currentProjKey !== lastLoadedProjectIdRef.current) {
+      lastLoadedProjectIdRef.current = currentProjKey;
+      setEditTitle(activeProject.title || '');
+      setEditDescription(activeProject.description || '');
+      setEditCategory(activeProject.category || activeProject.subject || 'Presbytère');
+      setEditExternalLinks(parseExternalLinks(activeProject?.external_links));
+      const opts = (() => {
+        if (Array.isArray(activeProject.options) && activeProject.options.length > 0) return activeProject.options;
+        if (typeof activeProject.options === 'string' && activeProject.options.trim()) {
+          try {
+            const p = JSON.parse(activeProject.options);
+            if (Array.isArray(p)) return p;
+          } catch (_) {
+            return activeProject.options.split(',').map(s => s.trim()).filter(Boolean);
+          }
+        }
+        return ['Approuver le projet', 'Rejeter le projet'];
+      })();
+      setEditOptions(opts);
+      setEditAllowMultipleChoices(Boolean(activeProject.allow_multiple_choices));
+
+      // Initialisation de la liste des documents éditables
+      const list = [];
+      const seen = new Set();
+      const addDoc = (d) => {
+        if (!d) return;
+        const key = typeof d === 'string' ? d : (d.url || d.file_url || d.filename || d.title || JSON.stringify(d));
+        if (seen.has(key)) return;
+        seen.add(key);
+        list.push(d);
+      };
+      if (Array.isArray(activeProject.documents)) activeProject.documents.forEach(addDoc);
+      if (Array.isArray(activeProject.files)) activeProject.files.forEach(addDoc);
+      if (Array.isArray(activeProject.document_urls)) activeProject.document_urls.forEach(addDoc);
+      if (activeProject.devis_url) addDoc({ url: activeProject.devis_url, title: `Devis Prestataire - ${activeProject.title || 'Projet'}.pdf` });
+      setEditDocuments(list);
+    }
+  }, [isOpen, activeProject?.id, activeProject?.isNew]);
 
   // Liste nominative des 7 associés avec leurs votes réels synchronisés
   const [associatesVotes, setAssociatesVotes] = useState(() => {
@@ -562,10 +582,10 @@ function VoteRoofModalInner({
     setTimeout(() => setToastMessage(null), 3000);
   };
 
-  // Enregistrement direct du vote (Annotation 3 & 11 : support choix unique et multiple, zéro lag)
+  // Enregistrement direct du vote (Annotations 3, 10 & 11 : support choix unique et multiple, zéro lag)
   const handleCastVote = async (voteChoice) => {
-    if (!isProjectOpen) {
-      alert("Ce scrutin n'est pas ouvert au vote actuellement.");
+    if (isProjectArchived) {
+      alert("Ce scrutin est archivé et clos. Aucun vote supplémentaire ne peut être exprimé.");
       return;
     }
     if (!voteChoice && voteChoice !== '') return;
@@ -678,6 +698,79 @@ function VoteRoofModalInner({
     }
   };
 
+  // Annotations 2 & 3 : Actions d'arbitrage coordinateur
+  const [isSubmittingArbitration, setIsSubmittingArbitration] = useState(false);
+
+  // Approbation de la mise au vote (PROPOSED -> OPEN)
+  const handleApproveVote = async () => {
+    if (!activeProject?.id || isSubmittingArbitration) return;
+    setIsSubmittingArbitration(true);
+    try {
+      const updated = await updateProject(activeProject.id, { status: 'OPEN' });
+      setLocalProject(updated);
+      setToastMessage('Le scrutin est désormais ouvert au vote !');
+      setTimeout(() => setToastMessage(null), 3000);
+      if (typeof onVoteSubmit === 'function') onVoteSubmit(updated);
+    } catch (err) {
+      alert(`Erreur lors de l'approbation du scrutin : ${err.message}`);
+    } finally {
+      setIsSubmittingArbitration(false);
+    }
+  };
+
+  // Rejet de l'initiative (PROPOSED -> REFUSE)
+  const handleRejectVote = async () => {
+    if (!activeProject?.id || isSubmittingArbitration) return;
+    if (!window.confirm("Êtes-vous sûr de vouloir rejeter cette initiative ?")) return;
+    setIsSubmittingArbitration(true);
+    try {
+      const updated = await updateProject(activeProject.id, { status: 'REFUSE' });
+      setLocalProject(updated);
+      setToastMessage("L'initiative a été rejetée.");
+      setTimeout(() => setToastMessage(null), 3000);
+      if (typeof onVoteSubmit === 'function') onVoteSubmit(updated);
+    } catch (err) {
+      alert(`Erreur lors du rejet de l'initiative : ${err.message}`);
+    } finally {
+      setIsSubmittingArbitration(false);
+    }
+  };
+
+  // Validation et archivage de la délibération (PENDING_VALIDATION -> ARCHIVED)
+  const handleArchiveVote = async () => {
+    if (!activeProject?.id || isSubmittingArbitration) return;
+    if (!window.confirm("Confirmer la validation et l'archivage définitif de cette délibération ?")) return;
+    setIsSubmittingArbitration(true);
+    try {
+      const updated = await updateProject(activeProject.id, { status: 'ARCHIVED' });
+      setLocalProject(updated);
+      setToastMessage('Délibération validée et archivée avec succès !');
+      setTimeout(() => setToastMessage(null), 3000);
+      if (typeof onVoteSubmit === 'function') onVoteSubmit(updated);
+    } catch (err) {
+      alert(`Erreur lors de l'archivage du scrutin : ${err.message}`);
+    } finally {
+      setIsSubmittingArbitration(false);
+    }
+  };
+
+  // Réouverture du vote (PENDING_VALIDATION -> OPEN)
+  const handleReopenVote = async () => {
+    if (!activeProject?.id || isSubmittingArbitration) return;
+    setIsSubmittingArbitration(true);
+    try {
+      const updated = await updateProject(activeProject.id, { status: 'OPEN' });
+      setLocalProject(updated);
+      setToastMessage('Le scrutin a été rouvert.');
+      setTimeout(() => setToastMessage(null), 3000);
+      if (typeof onVoteSubmit === 'function') onVoteSubmit(updated);
+    } catch (err) {
+      alert(`Erreur lors de la réouverture du scrutin : ${err.message}`);
+    } finally {
+      setIsSubmittingArbitration(false);
+    }
+  };
+
   // Suppression du vote
   const handleDeleteVote = async () => {
     if (!activeProject?.id) return;
@@ -720,7 +813,7 @@ function VoteRoofModalInner({
           title: editTitle.trim(),
           description: editDescription.trim(),
           category: editCategory.trim() || 'Presbytère',
-          status: 'EN_VOTE',
+          status: 'PROPOSED',
           property_id: 1,
           submitted_by: currentUserName,
           options: editOptions.filter(Boolean).length > 0 ? editOptions.filter(Boolean) : ['Approuver le projet', 'Rejeter le projet'],
@@ -731,7 +824,7 @@ function VoteRoofModalInner({
         const created = await createProject(newPayload);
         setLocalProject(created);
         setIsEditing(false);
-        setToastMessage('Scrutin lancé avec succès !');
+        setToastMessage('Initiative proposée avec succès !');
         setTimeout(() => setToastMessage(null), 3000);
         if (typeof onVoteSubmit === 'function') {
           onVoteSubmit(created);
@@ -1224,7 +1317,7 @@ function VoteRoofModalInner({
                     onClick={handleSaveEdit}
                     className="px-5 py-2 rounded-xl bg-emerald-600 hover:bg-emerald-700 text-white text-xs font-bold shadow-xs transition-all cursor-pointer disabled:opacity-50"
                   >
-                    {isSubmittingEdit ? 'Enregistrement...' : (isNewProject ? 'Lancer le scrutin' : 'Enregistrer les modifications')}
+                    {isSubmittingEdit ? 'Enregistrement...' : (isNewProject ? 'Proposer l\'initiative' : 'Enregistrer les modifications')}
                   </button>
                 </div>
               </div>
@@ -1240,7 +1333,17 @@ function VoteRoofModalInner({
                     <span className="px-2.5 py-0.5 rounded-full bg-surface-container text-on-surface-variant font-label-sm text-xs font-medium">
                       {projectSubject}
                     </span>
-                    <span className="px-2.5 py-0.5 rounded-full bg-slate-100 dark:bg-slate-800 text-slate-700 dark:text-slate-300 border border-slate-200 dark:border-slate-700 font-label-sm text-xs font-semibold">
+                    <span className={`px-2.5 py-0.5 rounded-full border font-label-sm text-xs font-semibold ${
+                      isProposed
+                        ? 'bg-amber-100 text-amber-800 dark:bg-amber-950/60 dark:text-amber-300 border-amber-300 dark:border-amber-700'
+                        : isPendingValidation
+                        ? 'bg-indigo-100 text-indigo-800 dark:bg-indigo-950/60 dark:text-indigo-300 border-indigo-300 dark:border-indigo-700'
+                        : isProjectOpen
+                        ? 'bg-emerald-100 text-emerald-800 dark:bg-emerald-950/60 dark:text-emerald-300 border-emerald-300 dark:border-emerald-700'
+                        : isProjectArchived
+                        ? 'bg-slate-100 text-slate-700 dark:bg-slate-800 dark:text-slate-300 border-slate-300 dark:border-slate-700'
+                        : 'bg-slate-100 dark:bg-slate-800 text-slate-700 dark:text-slate-300 border-slate-200 dark:border-slate-700'
+                    }`}>
                       {projectBadgeStatus}
                     </span>
                   </div>
@@ -1271,13 +1374,37 @@ function VoteRoofModalInner({
                   </div>
                 </div>
 
-                {/* ANNOTATION 7 : BOUTON "👇 Voter 👇" DÉPLACÉ SOUS LA DESCRIPTION */}
+                {/* ANNOTATIONS 2, 3 & 7 : BOUTON D'ACTION RAPIDE (ARBITRER OU VOTER) */}
                 <button
                   type="button"
-                  onClick={() => voteSectionRef.current?.scrollIntoView({ behavior: 'smooth' })}
-                  className="w-full py-2.5 px-4 bg-emerald-50 dark:bg-emerald-950/40 border border-emerald-200 dark:border-emerald-800 text-emerald-800 dark:text-emerald-200 rounded-xl flex items-center justify-center font-bold text-xs sm:text-sm hover:bg-emerald-100 dark:hover:bg-emerald-900/50 transition-all cursor-pointer shadow-xs gap-2"
+                  onClick={() => {
+                    if (isProposed || isPendingValidation) {
+                      arbitrationSectionRef.current?.scrollIntoView({ behavior: 'smooth' });
+                    } else {
+                      voteSectionRef.current?.scrollIntoView({ behavior: 'smooth' });
+                    }
+                  }}
+                  className={`w-full py-2.5 px-4 rounded-xl flex items-center justify-center font-bold text-xs sm:text-sm transition-all cursor-pointer shadow-xs gap-2 ${
+                    isProposed
+                      ? 'bg-amber-50 dark:bg-amber-950/40 border border-amber-300 dark:border-amber-800 text-amber-900 dark:text-amber-200 hover:bg-amber-100 dark:hover:bg-amber-900/50'
+                      : isPendingValidation
+                      ? 'bg-indigo-50 dark:bg-indigo-950/40 border border-indigo-300 dark:border-indigo-800 text-indigo-900 dark:text-indigo-200 hover:bg-indigo-100 dark:hover:bg-indigo-900/50'
+                      : 'bg-emerald-50 dark:bg-emerald-950/40 border border-emerald-200 dark:border-emerald-800 text-emerald-800 dark:text-emerald-200 hover:bg-emerald-100 dark:hover:bg-emerald-900/50'
+                  }`}
                 >
-                  <span>👇 Voter 👇</span>
+                  {isProposed ? (
+                    <>
+                      <span className="material-symbols-outlined text-[18px]">balance</span>
+                      <span>⚖️ Arbitrer la création</span>
+                    </>
+                  ) : isPendingValidation ? (
+                    <>
+                      <span className="material-symbols-outlined text-[18px]">gavel</span>
+                      <span>⚖️ Arbitrer la validation</span>
+                    </>
+                  ) : (
+                    <span>👇 Voter 👇</span>
+                  )}
                 </button>
 
                 {/* Documents & Justificatifs rattachés (Annotations 4, 6 & 12 : Documents et URLs web fusionnés) */}
@@ -1403,26 +1530,118 @@ function VoteRoofModalInner({
                     </div>
                   </div>
 
-                  {/* Bandeau d'information si le scrutin n'est pas ouvert au vote (Annotation 9) */}
-                  {!isProjectOpen && (
-                    <div className="p-3 bg-amber-50 dark:bg-amber-950/40 border border-amber-200 dark:border-amber-800 rounded-xl flex items-center gap-2.5 text-xs sm:text-sm text-amber-800 dark:text-amber-200">
-                      <span className="material-symbols-outlined text-amber-600 dark:text-amber-400 text-lg flex-shrink-0">lock</span>
+                  {/* Bandeau d'information si le scrutin est archivé (Annotation 10) */}
+                  {isProjectArchived && (
+                    <div className="p-3 bg-slate-100 dark:bg-slate-800/60 border border-slate-200 dark:border-slate-700 rounded-xl flex items-center gap-2.5 text-xs sm:text-sm text-slate-700 dark:text-slate-300">
+                      <span className="material-symbols-outlined text-slate-500 text-lg flex-shrink-0">lock</span>
                       <span>
-                        Ce scrutin n'est pas ouvert au vote actuellement (en attente d'arbitrage ou archivé). Les votes sont consultables en lecture seule.
+                        Ce scrutin est archivé et clos. Les votes sont consultables en lecture seule.
                       </span>
                     </div>
                   )}
 
-                  {/* Rendu dynamique du sondage WhatsApp (Annotations 2, 3 & 11) */}
+                  {/* Rendu dynamique du sondage WhatsApp (Annotations 2, 3, 10 & 11) */}
                   <WhatsAppPollView
                     project={activeProject}
                     associatesVotes={associatesVotes}
                     currentUser={currentUserName}
                     onCastVote={handleCastVote}
-                    isVotingDisabled={!isProjectOpen}
+                    isVotingDisabled={isProjectArchived}
                     compact={false}
-                    readOnly={!isProjectOpen}
+                    readOnly={isProjectArchived}
                   />
+                </div>
+
+                {/* SECTION D'ARBITRAGE DU SCRUTIN (Annotations 2 & 3) */}
+                <div
+                  ref={arbitrationSectionRef}
+                  id="section-vote-validation"
+                  className="flex flex-col gap-3 scroll-mt-6 pt-2"
+                >
+                  {isCoordinator ? (
+                    isProposed ? (
+                      <div className="p-4 bg-amber-50/70 dark:bg-amber-950/40 border border-amber-200 dark:border-amber-800/80 rounded-2xl flex flex-col gap-3 shadow-xs">
+                        <div className="flex items-center gap-2 text-amber-900 dark:text-amber-200">
+                          <span className="material-symbols-outlined text-amber-600 dark:text-amber-400 text-xl">balance</span>
+                          <h3 className="font-bold text-sm sm:text-base">
+                            Arbitrage de l'initiative (Coordinateur)
+                          </h3>
+                        </div>
+                        <p className="text-xs sm:text-sm text-amber-800/90 dark:text-amber-300/90 leading-relaxed">
+                          Cette proposition a été soumise et nécessite votre validation pour être officiellement ouverte au vote des 7 associés.
+                        </p>
+                        <div className="flex items-center gap-3 pt-1 flex-wrap">
+                          <button
+                            type="button"
+                            disabled={isSubmittingArbitration}
+                            onClick={handleApproveVote}
+                            className="px-4 py-2 bg-emerald-600 hover:bg-emerald-700 text-white rounded-xl font-bold text-xs sm:text-sm flex items-center gap-2 transition-all shadow-xs cursor-pointer disabled:opacity-50"
+                          >
+                            <span className="material-symbols-outlined text-[18px]">check_circle</span>
+                            <span>Approuver la mise au vote</span>
+                          </button>
+                          <button
+                            type="button"
+                            disabled={isSubmittingArbitration}
+                            onClick={handleRejectVote}
+                            className="px-4 py-2 bg-rose-600 hover:bg-rose-700 text-white rounded-xl font-bold text-xs sm:text-sm flex items-center gap-2 transition-all shadow-xs cursor-pointer disabled:opacity-50"
+                          >
+                            <span className="material-symbols-outlined text-[18px]">cancel</span>
+                            <span>Rejeter l'initiative</span>
+                          </button>
+                        </div>
+                      </div>
+                    ) : isPendingValidation ? (
+                      <div className="p-4 bg-indigo-50/70 dark:bg-indigo-950/40 border border-indigo-200 dark:border-indigo-800/80 rounded-2xl flex flex-col gap-3 shadow-xs">
+                        <div className="flex items-center gap-2 text-indigo-900 dark:text-indigo-200">
+                          <span className="material-symbols-outlined text-indigo-600 dark:text-indigo-400 text-xl">gavel</span>
+                          <h3 className="font-bold text-sm sm:text-base">
+                            Validation et clôture du scrutin (Coordinateur)
+                          </h3>
+                        </div>
+                        <p className="text-xs sm:text-sm text-indigo-800/90 dark:text-indigo-300/90 leading-relaxed">
+                          Le quorum complet de 7 associés a été atteint. En tant que coordinateur, vous pouvez valider et archiver définitivement la délibération ou rouvrir le vote.
+                        </p>
+                        <div className="flex items-center gap-3 pt-1 flex-wrap">
+                          <button
+                            type="button"
+                            disabled={isSubmittingArbitration}
+                            onClick={handleArchiveVote}
+                            className="px-4 py-2 bg-emerald-600 hover:bg-emerald-700 text-white rounded-xl font-bold text-xs sm:text-sm flex items-center gap-2 transition-all shadow-xs cursor-pointer disabled:opacity-50"
+                          >
+                            <span className="material-symbols-outlined text-[18px]">archive</span>
+                            <span>Valider et archiver la délibération</span>
+                          </button>
+                          <button
+                            type="button"
+                            disabled={isSubmittingArbitration}
+                            onClick={handleReopenVote}
+                            className="px-4 py-2 bg-amber-600 hover:bg-amber-700 text-white rounded-xl font-bold text-xs sm:text-sm flex items-center gap-2 transition-all shadow-xs cursor-pointer disabled:opacity-50"
+                          >
+                            <span className="material-symbols-outlined text-[18px]">lock_open</span>
+                            <span>Rouvrir le vote</span>
+                          </button>
+                        </div>
+                      </div>
+                    ) : null
+                  ) : (
+                    /* Non coordinateur : bandeau informatif élégant */
+                    isProposed ? (
+                      <div className="p-3.5 bg-slate-50 dark:bg-slate-900/60 border border-slate-200 dark:border-slate-800 rounded-xl flex items-center gap-3 text-xs sm:text-sm text-slate-700 dark:text-slate-300">
+                        <span className="material-symbols-outlined text-amber-500 text-xl flex-shrink-0">hourglass_top</span>
+                        <span>
+                          Cette initiative a été soumise et est actuellement en attente d'arbitrage par les coordinateurs avant ouverture officielle du vote.
+                        </span>
+                      </div>
+                    ) : isPendingValidation ? (
+                      <div className="p-3.5 bg-indigo-50/50 dark:bg-indigo-950/30 border border-indigo-200 dark:border-indigo-800 rounded-xl flex items-center gap-3 text-xs sm:text-sm text-indigo-900 dark:text-indigo-200">
+                        <span className="material-symbols-outlined text-indigo-500 text-xl flex-shrink-0">verified</span>
+                        <span>
+                          Le quorum des 7 associés est atteint. La délibération est en cours de validation finale par les coordinateurs.
+                        </span>
+                      </div>
+                    ) : null
+                  )}
                 </div>
 
                 {/* ANNOTATION 1 : L'ancien bloc div#section-vote redondant est définitivement supprimé */}
