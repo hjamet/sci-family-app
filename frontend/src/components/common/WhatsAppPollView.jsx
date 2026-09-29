@@ -207,6 +207,7 @@ export default function WhatsAppPollView({
   onCastVote = null,
   isVotingDisabled = false,
   compact = false,
+  readOnly = false,
 }) {
   const currentUserName = typeof currentUser === 'string'
     ? currentUser
@@ -429,7 +430,7 @@ export default function WhatsAppPollView({
 
   // Gestion du clic de vote (Annotation 11 : Choix unique vs Choix multiples)
   const handleOptionClick = (clickedOptValue) => {
-    if (isVotingDisabled || typeof onCastVote !== 'function') return;
+    if (readOnly || isVotingDisabled || typeof onCastVote !== 'function') return;
 
     let nextChoice;
     if (!allowMultipleChoices) {
@@ -477,6 +478,7 @@ export default function WhatsAppPollView({
       <div className="flex flex-col gap-2.5">
         {pollOptions.map((opt) => {
           const isSelectedByCurrentUser = hasVotedForOption(currentAssociate?.vote, opt.voteValue);
+          const isInteractive = !readOnly && !isVotingDisabled && typeof onCastVote === 'function';
 
           // Pourcentage de cette option sur le total statutaire (7 voix)
           const optionPct = Math.round((opt.count / totalAssociates) * 100);
@@ -484,12 +486,12 @@ export default function WhatsAppPollView({
           return (
             <div
               key={opt.id}
-              onClick={() => handleOptionClick(opt.voteValue)}
+              onClick={isInteractive ? () => handleOptionClick(opt.voteValue) : undefined}
               className={`relative overflow-hidden rounded-2xl border p-3 sm:p-3.5 transition-all duration-200 select-none ${
                 isSelectedByCurrentUser
                   ? `${opt.palette.selectedBorder} ${opt.palette.lightBg} shadow-xs`
                   : `${opt.palette.border} bg-white dark:bg-slate-900/80 hover:bg-slate-50 dark:hover:bg-slate-800/60 shadow-xs`
-              } ${!isVotingDisabled && typeof onCastVote === 'function' ? 'cursor-pointer hover:shadow-md' : ''}`}
+              } ${isInteractive ? 'cursor-pointer hover:shadow-md' : 'cursor-default'}`}
             >
               {/* Barre de progression horizontale façon WhatsApp en arrière-plan */}
               <div
@@ -566,14 +568,6 @@ export default function WhatsAppPollView({
                       </span>
                     )}
                   </div>
-
-                  {/* Action interactive rapide */}
-                  {!isVotingDisabled && typeof onCastVote === 'function' && !isSelectedByCurrentUser && (
-                    <span className="text-[11px] font-semibold text-emerald-700 dark:text-emerald-400 opacity-0 group-hover:opacity-100 transition-opacity flex items-center gap-0.5">
-                      <span>{allowMultipleChoices ? 'Ajouter' : 'Choisir'}</span>
-                      <span className="material-symbols-outlined text-[13px]">arrow_forward</span>
-                    </span>
-                  )}
                 </div>
               </div>
             </div>

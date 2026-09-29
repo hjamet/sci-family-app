@@ -672,7 +672,10 @@ La société réunit 7 membres d'une même famille selon une convention de déme
   * **Hauteur Minimale des Cibles Tactiles** : `>= 52px` (`min-h-[52px]`) sur tous les boutons, champs de saisie, case à cocher et tuiles de profils (`min-h-[92px]`), garantissant une manipulation sans friction sur écran tactile partagé.
   * **Case à Cocher « Mémoriser sur cette tablette »** : Maintien persistant du jeton JWT et pré-sélection automatique du dernier membre actif sur la tablette du domaine.
   * **Bouton & Espace Dédié « Vadémécum & Clés »** : Accès d'urgence immédiat pour les prestataires et artisans (digicode portail `2724#`, boîtes à clés Rosing `4812` et Presbytère `1984`, vannes de coupure générale).
-  * **Bandeau d'Assistance Gérance au Bas de Page** : Point de contact direct avec Henri Jamet (e-mail, téléphone, rappel de la réinitialisation de mot de passe Bcrypt).
+* **Rayon de Courbure des Formulaires & Inputs (Règle d'Or Anti-Pilule)** :
+  * **Bords Rectangulaires Adoucis (Arrondi Léger 8-12px Max)** : Tous les champs de saisie (`<input>`, `<select>`, `<textarea>`) et contrôles de formulaire adoptent impérativement des angles rectangulaires sobres et élégants (`rounded-lg` standard de 8-12px max). La silhouette doit rester nettement rectangulaire pour maximiser l'espace utile et le confort visuel de lecture.
+  * **Interdiction Formelle des Pilules & Ovales Démesurés** : Proscription absolue des rayons excessifs (`rounded-2xl`, `rounded-full` ou surdéfinitions historiques `> 12px` / `2rem`) sur les champs de saisie. Ces courbures circulaires étouffent le texte saisi aux extrémités, écrasent l'alignement typographique et dégradent l'esthétique générale de l'interface.
+  * **Alignement Cohérent Tailwind** : Les tokens de configuration `borderRadius` dans `tailwind.config.js` sont normalisés (`DEFAULT: 0.5rem` / 8px, `lg: 0.5rem` / 8px, `xl: 0.75rem` / 12px) afin d'assurer une géométrie sobre et harmonieuse sur l'ensemble des écrans sans déformation de capsule.
 
 ---
 

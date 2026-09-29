@@ -3,6 +3,7 @@ import { MarkdownContent } from './common/RichTextEditor';
 import DocumentViewerModal from './DocumentViewerModal';
 import UploadDocumentModal from './UploadDocumentModal';
 import SelectExistingDocumentModal from './SelectExistingDocumentModal';
+import ExternalLinksSection from './common/ExternalLinksSection';
 import FamilyChat from './common/FamilyChat';
 import WhatsAppPollView, { STATUTORY_ASSOCIATES, parseVotesArray, hasVotedForOption } from './common/WhatsAppPollView';
 import { castProjectVote, createProject, updateProject, deleteProject, attachDocumentsToProject } from '../api';
@@ -287,11 +288,15 @@ function VoteRoofModalInner({
   const [isUploadModalOpen, setIsUploadModalOpen] = useState(false);
   const [isSelectExistingDocModalOpen, setIsSelectExistingDocModalOpen] = useState(false);
 
+  // Liens web et sources externes en mode édition
+  const [editExternalLinks, setEditExternalLinks] = useState(() => activeProject?.external_links || []);
+
   // Synchronisation lors de l'ouverture du mode édition
   useEffect(() => {
     setEditTitle(activeProject.title || '');
     setEditDescription(activeProject.description || '');
     setEditCategory(activeProject.category || activeProject.subject || 'Presbytère');
+    setEditExternalLinks(activeProject?.external_links || []);
     const opts = (() => {
       if (Array.isArray(activeProject.options) && activeProject.options.length > 0) return activeProject.options;
       if (typeof activeProject.options === 'string' && activeProject.options.trim()) {
@@ -665,7 +670,8 @@ function VoteRoofModalInner({
           submitted_by: currentUserName,
           options: editOptions.filter(Boolean).length > 0 ? editOptions.filter(Boolean) : ['Approuver le projet', 'Rejeter le projet'],
           allow_multiple_choices: editAllowMultipleChoices,
-          document_urls: editDocuments
+          document_urls: editDocuments,
+          external_links: editExternalLinks
         };
         const created = await createProject(newPayload);
         setLocalProject(created);
@@ -682,7 +688,8 @@ function VoteRoofModalInner({
           category: editCategory.trim(),
           options: editOptions.filter(Boolean),
           allow_multiple_choices: editAllowMultipleChoices,
-          document_urls: editDocuments
+          document_urls: editDocuments,
+          external_links: editExternalLinks
         };
         const updated = await updateProject(activeProject.id, payload);
         setLocalProject(updated);
@@ -1261,6 +1268,7 @@ function VoteRoofModalInner({
                     onCastVote={handleCastVote}
                     isVotingDisabled={false}
                     compact={false}
+                    readOnly={false}
                   />
                 </div>
 

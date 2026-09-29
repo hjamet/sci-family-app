@@ -2012,16 +2012,6 @@ export default function VademecumPage({ properties, currentUser, reservations = 
                     <span className="px-2 py-0.5 rounded-md bg-canvas-slate border border-border-subtle text-[11px] font-bold text-on-surface-variant">
                       {item.category}
                     </span>
-                    {item.importance === 'CRITIQUE' && (
-                      <span className="px-2 py-0.5 rounded-full text-[10px] font-black bg-rose-50 text-rose-700 border border-rose-200">
-                        CRITIQUE
-                      </span>
-                    )}
-                    {item.importance === 'IMPORTANT' && (
-                      <span className="px-2 py-0.5 rounded-full text-[10px] font-black bg-amber-soft text-amber-rich border border-amber-200">
-                        IMPORTANT
-                      </span>
-                    )}
                   </div>
 
                   <h4 className="text-sm font-bold text-on-surface mb-1">{item.title}</h4>

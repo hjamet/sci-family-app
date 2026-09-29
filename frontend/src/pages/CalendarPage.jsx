@@ -1,4 +1,5 @@
 import React, { useState, useEffect, useRef } from 'react';
+import { useNavigate } from 'react-router-dom';
 import { fetchReservations, getCachedData } from '../api';
 import BookingModal from '../components/BookingModal';
 import { StayCardSkeleton } from '../components/SkeletonLoaders';
@@ -65,7 +66,7 @@ export function formatStayDates(startDateStr, endDateStr) {
 }
 
 export function extractParticipants(reservation) {
-  let rawNotes = reservation?.notes || '';
+  let rawNotes = typeof reservation?.notes === 'string' ? reservation.notes : (reservation?.notes ? String(reservation.notes) : '');
   let members = [];
   let guests = [];
 
@@ -126,6 +127,7 @@ export function extractParticipants(reservation) {
 }
 
 export default function CalendarPage({ properties, currentUser = 'Henri Jamet' }) {
+  const navigate = useNavigate();
   const [selectedYear, setSelectedYear] = useState(2026);
   const [viewMode, setViewMode] = useState('agenda'); // 'agenda' | 'month' | 'year'
   const [currentDate, setCurrentDate] = useState(() => new Date(2026, 7, 1)); // Août 2026 par défaut
@@ -227,7 +229,7 @@ export default function CalendarPage({ properties, currentUser = 'Henri Jamet' }
     setEditingReservation({
       start_date: start,
       end_date: end,
-      user_name: currentUser || 'Henri Jamet',
+      user_name: (typeof currentUser === 'string' && currentUser) ? currentUser : (currentUser?.name || currentUser?.prenom || 'Associé'),
       arrival_time: isSingleDay ? '10:00' : '15:00',
       departure_time: isSingleDay ? '18:00' : '11:00',
     });
@@ -396,7 +398,7 @@ export default function CalendarPage({ properties, currentUser = 'Henri Jamet' }
       {/* ========================================================================= */}
       {/* 1. EN-TÊTE HARMONISÉ HERO                                                 */}
       {/* ========================================================================= */}
-      <section className="relative overflow-hidden rounded-2xl bg-gradient-to-r from-amber-50/80 via-yellow-50/60 to-amber-50/70 border border-amber-200/60 dark:bg-amber-950/20 dark:border-amber-800/40 p-6 sm:p-8 shadow-sm mb-6">
+      <section className="relative overflow-hidden rounded-2xl bg-gradient-to-r from-amber-50/80 via-yellow-50/60 to-amber-50/70 border border-amber-200/60 dark:bg-amber-950/20 dark:border-amber-800/40 p-6 sm:p-8 shadow-sm mb-6 print:hidden">
         {/* Subtle decorative glow */}
         <div className="absolute -right-24 -top-24 w-96 h-96 rounded-full bg-amber-200/40 dark:bg-amber-800/10 blur-3xl pointer-events-none"></div>
         <div className="absolute -left-12 -bottom-12 w-64 h-64 rounded-full bg-yellow-200/30 dark:bg-yellow-800/10 blur-2xl pointer-events-none"></div>
@@ -416,7 +418,31 @@ export default function CalendarPage({ properties, currentUser = 'Henri Jamet' }
           </div>
 
           {/* Boutons d'Action Rapide */}
-          <div className="flex flex-wrap sm:flex-nowrap items-center gap-3 shrink-0 pt-2 md:pt-0">
+          <div className="flex flex-wrap sm:flex-nowrap items-center gap-3 shrink-0 pt-2 md:pt-0 print:hidden">
+            <button
+              type="button"
+              onClick={() => navigate('/sejour')}
+              className="group flex items-center justify-center gap-2 px-4 py-3.5 rounded-DEFAULT bg-white dark:bg-slate-900 border-2 border-slate-300 text-on-surface hover:bg-slate-50 dark:hover:bg-slate-800 font-label-lg text-sm sm:text-base font-bold shadow-sm hover:shadow-md transition-all duration-200 cursor-pointer whitespace-nowrap"
+              title="Accéder à la page Séjour et voir le prochain séjour"
+            >
+              <span className="material-symbols-outlined text-[22px] text-primary group-hover:scale-110 transition-transform">
+                cottage
+              </span>
+              <span>Voir mon prochain séjour</span>
+            </button>
+
+            <button
+              type="button"
+              onClick={() => window.print()}
+              className="group flex items-center justify-center gap-2 px-4 py-3.5 rounded-DEFAULT bg-white dark:bg-slate-900 border-2 border-slate-300 text-on-surface hover:bg-slate-50 dark:hover:bg-slate-800 font-label-lg text-sm sm:text-base font-bold shadow-sm hover:shadow-md transition-all duration-200 cursor-pointer whitespace-nowrap"
+              title="Exporter la vue calendrier actuellement sélectionnée en PDF"
+            >
+              <span className="material-symbols-outlined text-[22px] text-primary group-hover:scale-110 transition-transform">
+                picture_as_pdf
+              </span>
+              <span>Exporter PDF</span>
+            </button>
+
             <button
               type="button"
               onClick={() => {
@@ -435,7 +461,7 @@ export default function CalendarPage({ properties, currentUser = 'Henri Jamet' }
       </section>
 
       {/* Barre de Contrôles & Filtres Horizontale */}
-      <section className="w-full">
+      <section className="w-full print:hidden">
         <div className="bg-surface-container-lowest rounded-2xl p-4 sm:p-space-md shadow-sm border border-border-subtle flex flex-col xl:flex-row items-stretch xl:items-center justify-between gap-4">
           
           {/* Commutateur de Vues (3 onglets Stitch) */}
@@ -679,7 +705,7 @@ export default function CalendarPage({ properties, currentUser = 'Henri Jamet' }
       {/* ========================================== */}
       {/* 2. AGENDA & PLANNING CHRONOLOGIQUE         */}
       {/* ========================================== */}
-      <div className="w-full space-y-6">
+      <div id="calendar-active-view" className="w-full space-y-6">
         
         {/* VUE 1 : AGENDA */}
         {viewMode === 'agenda' && (
@@ -928,7 +954,7 @@ export default function CalendarPage({ properties, currentUser = 'Henri Jamet' }
                                 key={stay.id}
                                 onClick={(e) => {
                                   e.stopPropagation();
-                                  setEditingReservation(stay);
+                                  setEditingReservation(stay.rawReservation || stay);
                                   setIsBookingOpen(true);
                                 }}
                                 className={`text-[11px] font-semibold px-1.5 py-0.5 rounded truncate cursor-pointer hover:opacity-85 transition-opacity ${
@@ -1036,7 +1062,7 @@ export default function CalendarPage({ properties, currentUser = 'Henri Jamet' }
                     key={w}
                     onClick={() => {
                       if (stay) {
-                        setEditingReservation(stay);
+                        setEditingReservation(stay.rawReservation || stay);
                         setIsBookingOpen(true);
                       } else {
                         handleOpenBooking(weekStartDate, weekEndDate);
@@ -1079,6 +1105,29 @@ export default function CalendarPage({ properties, currentUser = 'Henri Jamet' }
         initialReservation={editingReservation}
         onBooked={loadReservations}
       />
+
+      {/* Styles d'impression dédiés pour l'export PDF (Annotation 4) */}
+      <style>{`
+        @media print {
+          @page {
+            size: landscape;
+            margin: 10mm;
+          }
+          body {
+            background-color: white !important;
+            color: #131b2e !important;
+          }
+          .print\\:hidden {
+            display: none !important;
+          }
+          #calendar-active-view {
+            display: block !important;
+            width: 100% !important;
+            margin: 0 !important;
+            padding: 0 !important;
+          }
+        }
+      `}</style>
 
     </div>
   );

@@ -37,6 +37,7 @@ export default function ExternalLinksSection({
   onChange = null,
   isEditing = false,
   title = "Liens web & Sources externes",
+  hideList = false,
 }) {
   const [newUrl, setNewUrl] = useState('');
   const [newTitle, setNewTitle] = useState('');
@@ -134,7 +135,7 @@ export default function ExternalLinksSection({
                     handleAddLink();
                   }
                 }}
-                placeholder="Titre du site (optionnel)"
+                placeholder="Intitulé de la ressource web (ex: Page produit, Notice, Devis)"
                 className="w-full h-9 px-3 text-xs bg-white dark:bg-slate-900 text-on-surface rounded-lg border border-slate-300 dark:border-slate-700 focus:outline-none focus:ring-1 focus:ring-primary focus:border-primary placeholder:text-slate-400"
               />
               <button
@@ -155,7 +156,7 @@ export default function ExternalLinksSection({
       )}
 
       {/* Liste des liens cliquables */}
-      {safeLinks.length > 0 && (
+      {!hideList && safeLinks.length > 0 && (
         <div className="flex flex-col gap-1.5">
           {safeLinks.map((item, idx) => {
             const rawUrl = typeof item === 'string' ? item : item?.url || '';

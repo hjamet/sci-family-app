@@ -63,6 +63,7 @@ export default function TasksPage({ currentUser = 'Henri Jamet' }) {
   const [selectedSubject, setSelectedSubject] = useState('all');
   const [selectedCategory, setSelectedCategory] = useState('all');
   const [showArchived, setShowArchived] = useState(false);
+  const [workflowFilter, setWorkflowFilter] = useState('in_progress'); // 'proposed' | 'in_progress' | 'pending_validation' (Annotation 17)
 
   // Voting Spotlight Carrousel State
   const [activeVoteIndex, setActiveVoteIndex] = useState(0);
@@ -365,11 +366,23 @@ export default function TasksPage({ currentUser = 'Henri Jamet' }) {
   const nbArchived = archivedTasks.length;
   const nbActive = activeTasks.length;
 
+  // Compteurs dynamiques des onglets de cycle de vie (Annotation 17)
+  const countProposed = useMemo(() => activeTasks.filter(t => isTaskProposed(t)).length, [activeTasks]);
+  const countInProgress = useMemo(() => activeTasks.filter(t => !isTaskProposed(t) && !isTaskPendingValidation(t)).length, [activeTasks]);
+  const countPendingValidation = useMemo(() => activeTasks.filter(t => isTaskPendingValidation(t)).length, [activeTasks]);
+
   // Filtrage des tâches
   const filteredTasks = tasks.filter((t) => {
     // ANNOTATION 1 & 4 : Masquage par défaut des tâches archivées, ou bascule exclusive si showArchived
     const archived = isArchivedTask(t);
     if (showArchived ? !archived : archived) return false;
+
+    // ANNOTATION 17 : Filtrage par onglet de workflow (quand on consulte les tâches actives)
+    if (!showArchived) {
+      if (workflowFilter === 'proposed' && !isTaskProposed(t)) return false;
+      if (workflowFilter === 'pending_validation' && !isTaskPendingValidation(t)) return false;
+      if (workflowFilter === 'in_progress' && (isTaskProposed(t) || isTaskPendingValidation(t))) return false;
+    }
 
     // Recherche textuelle
     if (searchTerm) {
@@ -744,19 +757,16 @@ export default function TasksPage({ currentUser = 'Henri Jamet' }) {
                 <span className="font-label-sm text-label-sm text-forest-deep font-semibold">
                   {currentVote.participationText}
                 </span>
-                <span className={`text-[12px] font-medium flex items-center gap-1 ${currentVote.reportAgLabel?.startsWith('0') ? 'text-primary' : 'text-purple-700'}`}>
-                  <span className="material-symbols-outlined text-[15px]">verified</span>
-                  {currentVote.quorumText}
-                </span>
               </div>
             </div>
 
-            {/* Rendu dynamique du sondage WhatsApp */}
+            {/* Rendu dynamique du sondage WhatsApp (indicateurs visuels purs non cliquables - Annotations 5 & 9) */}
             <WhatsAppPollView
               project={currentVote}
               currentUser={currentUser}
               compact={true}
-              onCastVote={() => setIsRoofVoteModalOpen(true)}
+              readOnly={true}
+              onCastVote={null}
               showPendingVoters={true}
               showQuorumNotice={false}
             />
@@ -1002,13 +1012,92 @@ export default function TasksPage({ currentUser = 'Henri Jamet' }) {
       </section>
 
       {/* ========================================================================= */}
-      {/* 5. SECTION TITLE & COUNTER SUMMARY (Stitch)                              */}
+      {/* 5. ONGLETS DE CYCLE DE VIE & FILTRAGE WORKFLOW (Annotation 17)            */}
+      {/* ========================================================================= */}
+      {!showArchived && (
+        <div className="flex flex-wrap items-center gap-2 mb-4 p-1.5 bg-surface-container-low dark:bg-slate-800/60 rounded-2xl border border-slate-200/80 dark:border-slate-800">
+          <button
+            type="button"
+            onClick={() => setWorkflowFilter('proposed')}
+            className={`flex-1 sm:flex-initial inline-flex items-center justify-center gap-2 px-4 py-2.5 rounded-xl font-label-md text-xs sm:text-sm font-semibold transition-all cursor-pointer ${
+              workflowFilter === 'proposed'
+                ? 'bg-amber-500 text-white shadow-sm font-bold'
+                : 'text-slate-600 dark:text-slate-300 hover:bg-white dark:hover:bg-slate-700 hover:text-on-surface'
+            }`}
+          >
+            <span className="material-symbols-outlined text-[18px]">gavel</span>
+            <span>En cours d'arbitrage pour création</span>
+            <span
+              className={`text-xs px-2 py-0.5 rounded-full font-bold ${
+                workflowFilter === 'proposed'
+                  ? 'bg-white/20 text-white'
+                  : 'bg-amber-100 text-amber-900 dark:bg-amber-950 dark:text-amber-200'
+              }`}
+            >
+              {countProposed}
+            </span>
+          </button>
+
+          <button
+            type="button"
+            onClick={() => setWorkflowFilter('in_progress')}
+            className={`flex-1 sm:flex-initial inline-flex items-center justify-center gap-2 px-4 py-2.5 rounded-xl font-label-md text-xs sm:text-sm font-semibold transition-all cursor-pointer ${
+              workflowFilter === 'in_progress'
+                ? 'bg-primary text-white shadow-sm font-bold'
+                : 'text-slate-600 dark:text-slate-300 hover:bg-white dark:hover:bg-slate-700 hover:text-on-surface'
+            }`}
+          >
+            <span className="material-symbols-outlined text-[18px]">play_circle</span>
+            <span>En cours (par défaut)</span>
+            <span
+              className={`text-xs px-2 py-0.5 rounded-full font-bold ${
+                workflowFilter === 'in_progress'
+                  ? 'bg-white/20 text-white'
+                  : 'bg-sky-100 text-sky-900 dark:bg-sky-950 dark:text-sky-200'
+              }`}
+            >
+              {countInProgress}
+            </span>
+          </button>
+
+          <button
+            type="button"
+            onClick={() => setWorkflowFilter('pending_validation')}
+            className={`flex-1 sm:flex-initial inline-flex items-center justify-center gap-2 px-4 py-2.5 rounded-xl font-label-md text-xs sm:text-sm font-semibold transition-all cursor-pointer ${
+              workflowFilter === 'pending_validation'
+                ? 'bg-emerald-600 text-white shadow-sm font-bold'
+                : 'text-slate-600 dark:text-slate-300 hover:bg-white dark:hover:bg-slate-700 hover:text-on-surface'
+            }`}
+          >
+            <span className="material-symbols-outlined text-[18px]">verified</span>
+            <span>En cours d'arbitrage pour complétion</span>
+            <span
+              className={`text-xs px-2 py-0.5 rounded-full font-bold ${
+                workflowFilter === 'pending_validation'
+                  ? 'bg-white/20 text-white'
+                  : 'bg-emerald-100 text-emerald-900 dark:bg-emerald-950 dark:text-emerald-200'
+              }`}
+            >
+              {countPendingValidation}
+            </span>
+          </button>
+        </div>
+      )}
+
+      {/* ========================================================================= */}
+      {/* 5b. SECTION TITLE & COUNTER SUMMARY (Stitch)                              */}
       {/* ========================================================================= */}
       <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 mb-space-md">
         <div className="flex items-center gap-2">
-          {/* ANNOTATION 3 : Titre épuré sans "& Arbitrages" */}
+          {/* ANNOTATION 3 & 17 : Titre dynamique synchronisé avec l'onglet actif */}
           <h2 className="font-headline-md text-headline-md text-forest-deep tracking-tight font-bold">
-            {showArchived ? 'Chantiers Archivés' : 'Chantiers Actifs'}
+            {showArchived
+              ? 'Chantiers Archivés'
+              : workflowFilter === 'proposed'
+              ? "En cours d'arbitrage pour création"
+              : workflowFilter === 'pending_validation'
+              ? "En cours d'arbitrage pour complétion"
+              : 'Chantiers Actifs en cours'}
           </h2>
           <span className="bg-sage-soft text-forest-deep font-label-sm text-label-sm font-bold px-2.5 py-0.5 rounded-full">
             {sortedTasks.length} affichés
@@ -1049,7 +1138,13 @@ export default function TasksPage({ currentUser = 'Henri Jamet' }) {
               <span className="material-symbols-outlined text-[28px]">{showArchived ? 'inventory_2' : 'checklist'}</span>
             </div>
             <h3 className="font-headline-sm text-headline-sm text-forest-deep font-bold mb-4">
-              {showArchived ? 'Aucune tâche archivée' : 'Aucune tâche en cours'}
+              {showArchived
+                ? 'Aucune tâche archivée'
+                : workflowFilter === 'proposed'
+                ? "Aucune tâche en cours d'arbitrage pour création"
+                : workflowFilter === 'pending_validation'
+                ? "Aucune tâche en cours d'arbitrage pour complétion"
+                : 'Aucune tâche en cours'}
             </h3>
             {!showArchived && (
               <button

@@ -703,15 +703,12 @@ export default function DashboardPage({
               </span>
             </div>
 
-            {/* Rendu dynamique du sondage WhatsApp */}
+            {/* Rendu dynamique du sondage WhatsApp (indicateurs visuels purs non cliquables - Annotation 9) */}
             <WhatsAppPollView
               project={activeVote}
               currentUser={currentUser}
               compact={true}
-              onCastVote={() => {
-                setSelectedVoteForModal(activeVote);
-                setIsRoofVoteModalOpen(true);
-              }}
+              readOnly={true}
               showPendingVoters={true}
               showQuorumNotice={true}
             />

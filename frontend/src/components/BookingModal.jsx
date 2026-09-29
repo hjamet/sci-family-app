@@ -255,7 +255,7 @@ function BookingModalContent({
       if (initialReservation.title) setStayTitle(initialReservation.title);
 
       // Décomposition intelligente des notes
-      let rawNotes = initialReservation.notes || '';
+      let rawNotes = typeof initialReservation.notes === 'string' ? initialReservation.notes : (initialReservation.notes ? String(initialReservation.notes) : '');
       let parsedMembers = [];
       let parsedGuests = [];
 
@@ -299,7 +299,7 @@ function BookingModalContent({
         setDescription('');
       }
 
-      if (parsedMembers.length > 0) {
+      if (Array.isArray(parsedMembers) && parsedMembers.length > 0) {
         setSelectedMembers(parsedMembers);
       } else if (initialReservation.user_name) {
         setSelectedMembers([resolveSafeUserName(initialReservation.user_name)]);
@@ -307,7 +307,7 @@ function BookingModalContent({
         setSelectedMembers([loggedInUserName]);
       }
 
-      setExternalGuests(parsedGuests);
+      setExternalGuests(Array.isArray(parsedGuests) ? parsedGuests : []);
 
       // Résolution et parsing défensif de selected_rooms (gère Array, chaîne JSON ou liste virgules)
       let roomsArray = [];
@@ -456,17 +456,19 @@ function BookingModalContent({
       if (stayTitle && stayTitle.trim()) notesParts.push(stayTitle.trim());
       if (description && description.trim()) notesParts.push(description.trim());
       if (notes && notes.trim()) notesParts.push(notes.trim());
-      if (selectedMembers.length > 0) {
-        notesParts.push(`[Membres: ${selectedMembers.join(', ')}]`);
+      const safeMembers = Array.isArray(selectedMembers) ? selectedMembers : [];
+      const safeGuests = Array.isArray(externalGuests) ? externalGuests : [];
+      if (safeMembers.length > 0) {
+        notesParts.push(`[Membres: ${safeMembers.join(', ')}]`);
       }
-      if (externalGuests.length > 0) {
-        notesParts.push(`[Invités: ${externalGuests.join(', ')}]`);
+      if (safeGuests.length > 0) {
+        notesParts.push(`[Invités: ${safeGuests.join(', ')}]`);
       }
       if (domotiqueTags.length > 0) {
         notesParts.push(`[Domotique: ${domotiqueTags.join(' • ')}]`);
       }
 
-      const totalOccupants = selectedMembers.length + externalGuests.length;
+      const totalOccupants = safeMembers.length + safeGuests.length;
 
       const payload = {
         property_id: resolvedPropertyId,
@@ -479,9 +481,9 @@ function BookingModalContent({
         arrival_time: arrivalTime || '15:00',
         departure_time: departureTime || '11:00',
         guest_count: totalOccupants > 0 ? totalOccupants : 1,
-        chambers_used: selectedRooms.length,
-        selected_rooms: selectedRooms,
-        rooms_count: selectedRooms.length,
+        chambers_used: safeRooms.length,
+        selected_rooms: safeRooms,
+        rooms_count: safeRooms.length,
         cohabitation_type: cohabitationType,
         accepts_extra_family: cohabitationType !== 'exclusive',
         notes: notesParts.join(' • '),
@@ -542,7 +544,9 @@ function BookingModalContent({
     }
   }, [isOtherBuildingDisabled, cohabitationType]);
 
-  const totalOccupants = selectedMembers.length + externalGuests.length;
+  const safeSelectedMembers = Array.isArray(selectedMembers) ? selectedMembers : [];
+  const safeExternalGuests = Array.isArray(externalGuests) ? externalGuests : [];
+  const totalOccupants = safeSelectedMembers.length + safeExternalGuests.length;
 
   return (
     <div
@@ -756,7 +760,7 @@ function BookingModalContent({
                   </button>
                 </div>
                 <span className="px-2.5 py-1 rounded-full bg-sage-soft text-primary-container font-label-sm text-xs font-semibold border border-sage-border">
-                  {selectedRooms.length} / {ROOMS.length} chambres sélectionnées
+                  {safeSelectedRooms.length} / {ROOMS.length} chambres sélectionnées
                 </span>
               </div>
             </div>
@@ -775,7 +779,7 @@ function BookingModalContent({
                     </span>
                   </div>
                   {rosingRooms.map((room) => {
-                    const isChecked = selectedRooms.includes(room.name);
+                    const isChecked = safeSelectedRooms.includes(room.name);
                     return (
                       <label
                         key={room.id}
@@ -815,7 +819,7 @@ function BookingModalContent({
                     </span>
                   </div>
                   {presbytereRooms.map((room) => {
-                    const isChecked = selectedRooms.includes(room.name);
+                    const isChecked = safeSelectedRooms.includes(room.name);
                     return (
                       <label
                         key={room.id}
@@ -962,12 +966,12 @@ function BookingModalContent({
                       Membres de la famille présents
                     </span>
                     <span className="text-xs text-on-surface-variant font-medium">
-                      {selectedMembers.length} associé{selectedMembers.length > 1 ? 's' : ''}
+                      {safeSelectedMembers.length} associé{safeSelectedMembers.length > 1 ? 's' : ''}
                     </span>
                   </div>
                   <div className="flex flex-col gap-1.5 max-h-[280px] overflow-y-auto pr-1">
                     {FAMILY_MEMBERS.map((member) => {
-                      const isChecked = selectedMembers.includes(member.name);
+                      const isChecked = safeSelectedMembers.includes(member.name);
                       return (
                         <label
                           key={member.id}
@@ -995,9 +999,9 @@ function BookingModalContent({
                             checked={isChecked}
                             onChange={() => {
                               if (isChecked) {
-                                setSelectedMembers(selectedMembers.filter((m) => m !== member.name));
+                                setSelectedMembers(safeSelectedMembers.filter((m) => m !== member.name));
                               } else {
-                                setSelectedMembers([...selectedMembers, member.name]);
+                                setSelectedMembers([...safeSelectedMembers, member.name]);
                               }
                             }}
                             className="w-5 h-5 rounded accent-primary-container cursor-pointer shrink-0"
@@ -1044,12 +1048,12 @@ function BookingModalContent({
                   </div>
 
                   <div className="flex flex-wrap gap-2 pt-1 min-h-[44px] items-center p-2 rounded-DEFAULT bg-surface-container-lowest/80 border border-border-subtle/60">
-                    {externalGuests.length === 0 ? (
+                    {safeExternalGuests.length === 0 ? (
                       <span className="text-xs text-on-surface-variant/60 italic">
                         Aucun invité externe ajouté
                       </span>
                     ) : (
-                      externalGuests.map((guest, idx) => (
+                      safeExternalGuests.map((guest, idx) => (
                         <span
                           key={`${guest}-${idx}`}
                           className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-full bg-surface-container-lowest border border-border-subtle text-on-surface font-label-sm text-xs sm:text-sm shadow-xs animate-in fade-in zoom-in-95 duration-150"

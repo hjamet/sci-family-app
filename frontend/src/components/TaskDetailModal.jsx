@@ -416,6 +416,19 @@ export default function TaskDetailModal({
     resolvedUserName.toLowerCase().includes('josephine')
   );
 
+  // Annotation 18 : Vérification si l'utilisateur connecté est l'auteur ayant proposé la tâche
+  const taskCreator = String(task?.created_by || task?.submitted_by || task?.author || '').trim().toLowerCase();
+  const currentUserNameClean = resolvedUserName.trim().toLowerCase();
+  const currentUserFirstClean = (resolvedUserName.trim().split(' ')[0] || '').toLowerCase();
+  const isAuthor = Boolean(
+    taskCreator && (
+      taskCreator === currentUserNameClean ||
+      (currentUserFirstClean && (taskCreator.includes(currentUserFirstClean) || currentUserNameClean.includes(taskCreator))) ||
+      (task?.created_by_id && currentUser?.id && Number(task.created_by_id) === Number(currentUser.id))
+    )
+  );
+  const canDeleteTask = isCoordinator || isAuthor;
+
   const isAssignedToCurrentUser = isTaskAssignedToUser(task, currentUser);
   const isPendingValidation = isTaskPendingValidation(task);
   const isProposed = isTaskProposed(task);
@@ -628,8 +641,12 @@ export default function TaskDetailModal({
     }
   };
 
-  // Delete Task
+  // Delete Task (Annotation 18 : Réservé aux coordinateurs ou à la personne ayant proposé la tâche)
   const handleDeleteTask = async () => {
+    if (!canDeleteTask) {
+      alert("Seuls les coordinateurs ou la personne ayant proposé cette tâche peuvent la supprimer.");
+      return;
+    }
     if (!window.confirm("Êtes-vous certain de vouloir supprimer cette tâche ?")) return;
     try {
       if (task?.id) {
@@ -960,34 +977,10 @@ export default function TaskDetailModal({
             {/* CLARIFICATION RADICALE DU CYCLE DE VIE DES TÂCHES (ANNOTATION 8) */}
             {!isNewTask && (
               isProposed ? (
-                /* 1. Tâche Proposée (Orange) : Boutons d'arbitrage pour les coordinateurs */
-                isCoordinator ? (
-                  <div className="flex items-center gap-2">
-                    <button
-                      type="button"
-                      onClick={handleAcceptModalTask}
-                      title="Approuver la tâche et la faire passer en active (bleue)"
-                      className="inline-flex items-center gap-1.5 h-11 px-4 rounded-xl border-2 font-label-md text-xs sm:text-sm font-bold shadow-sm transition-colors bg-emerald-600 hover:bg-emerald-700 text-white border-emerald-600 cursor-pointer"
-                    >
-                      <span className="material-symbols-outlined text-[18px]">check</span>
-                      <span>Approuver la tâche</span>
-                    </button>
-                    <button
-                      type="button"
-                      onClick={handleRejectModalTask}
-                      title="Refuser la tâche proposée"
-                      className="inline-flex items-center gap-1.5 h-11 px-3.5 rounded-xl border-2 font-label-md text-xs sm:text-sm font-bold shadow-sm transition-colors bg-rose-50 hover:bg-rose-100 text-rose-700 border-rose-300 dark:border-rose-700 cursor-pointer"
-                    >
-                      <span className="material-symbols-outlined text-[18px]">close</span>
-                      <span>Rejeter</span>
-                    </button>
-                  </div>
-                ) : (
-                  <span className="inline-flex items-center gap-1.5 px-3.5 py-1.5 rounded-xl font-label-md text-xs sm:text-sm font-bold bg-amber-100 text-amber-900 border border-amber-300">
-                    <span className="material-symbols-outlined text-[18px]">pending</span>
-                    <span>Proposition à l'étude par les coordinateurs</span>
-                  </span>
-                )
+                <span className="inline-flex items-center gap-1.5 px-3.5 py-1.5 rounded-xl font-label-md text-xs sm:text-sm font-bold bg-amber-100 text-amber-900 border border-amber-300">
+                  <span className="material-symbols-outlined text-[18px]">pending</span>
+                  <span>Proposition en attente d'arbitrage</span>
+                </span>
               ) : isPendingValidation ? (
                 /* 3. Tâche À Valider (Vert) : Décision finale de clôture ou renvoi pour corrections */
                 isCoordinator ? (
@@ -1046,8 +1039,8 @@ export default function TaskDetailModal({
               )
             )}
 
-            {/* Delete Task Button: Harmonisation border-2 et alignement droite ml-auto (Annotation 3) */}
-            {!isNewTask && isCoordinator && (
+            {/* Delete Task Button: Réservé aux coordinateurs ou à l'auteur ayant proposé la tâche (Annotation 18) */}
+            {!isNewTask && canDeleteTask && (
               <button
                 type="button"
                 onClick={handleDeleteTask}
@@ -1063,7 +1056,7 @@ export default function TaskDetailModal({
             <button
               type="button"
               onClick={onClose}
-              className={`w-11 h-11 flex items-center justify-center rounded-full bg-white text-on-surface-variant hover:bg-surface-container-high transition-colors cursor-pointer border border-slate-200 ${(!isNewTask && isCoordinator) ? '' : 'ml-auto'}`}
+              className={`w-11 h-11 flex items-center justify-center rounded-full bg-white text-on-surface-variant hover:bg-surface-container-high transition-colors cursor-pointer border border-slate-200 ${(!isNewTask && canDeleteTask) ? '' : 'ml-auto'}`}
               title="Fermer la fenêtre"
             >
               <span className="material-symbols-outlined text-[20px]">close</span>
@@ -1221,7 +1214,7 @@ export default function TaskDetailModal({
                         className="inline-flex items-center gap-2 h-10 px-4 rounded-full bg-white border-2 border-emerald-600 text-emerald-800 font-label-lg text-xs font-semibold shadow-sm hover:bg-emerald-50 transition-colors cursor-pointer"
                       >
                         <span className="material-symbols-outlined text-[18px]">add_circle</span>
-                        <span>Ajouter un document</span>
+                        <span>Ajouter un nouveau document</span>
                       </button>
                       <button
                         type="button"
@@ -1230,79 +1223,121 @@ export default function TaskDetailModal({
                         title="Sélectionner parmi les documents déjà enregistrés dans la SCI"
                       >
                         <span className="material-symbols-outlined text-[18px]">search</span>
-                        <span>Associer un document existant</span>
+                        <span>Sélectionner un document existant</span>
                       </button>
                     </div>
                   </div>
 
                   <div className="flex flex-col gap-2">
-                    {parseTaskDocuments(task?.documents || task?.completion_docs).length === 0 ? (
+                    {parseTaskDocuments(task?.documents || task?.completion_docs).length === 0 && (!task?.external_links || task.external_links.length === 0) ? (
                       <p className="text-xs text-on-surface-variant italic py-2">
-                        Aucun document joint pour cette mission.
+                        Aucun document ou lien web joint pour cette mission.
                       </p>
                     ) : (
-                      parseTaskDocuments(task?.documents || task?.completion_docs).map((docItem, idx) => {
-                        const norm = normalizeDocItem(docItem, idx);
-                        return (
-                          <div key={norm.id || idx} className="p-3 bg-canvas-slate rounded-xl flex items-center justify-between gap-3 shadow-xs border border-slate-200">
-                            <div className="flex items-center gap-3 min-w-0">
-                              <div className="w-10 h-10 rounded-xl bg-error-container/40 text-error flex items-center justify-center shrink-0">
-                                <span className="material-symbols-outlined text-[20px]">
-                                  {norm.type === 'Image' ? 'image' : 'picture_as_pdf'}
-                                </span>
+                      <>
+                        {parseTaskDocuments(task?.documents || task?.completion_docs).map((docItem, idx) => {
+                          const norm = normalizeDocItem(docItem, idx);
+                          return (
+                            <div key={norm.id || idx} className="p-3 bg-canvas-slate rounded-xl flex items-center justify-between gap-3 shadow-xs border border-slate-200">
+                              <div className="flex items-center gap-3 min-w-0">
+                                <div className="w-10 h-10 rounded-xl bg-error-container/40 text-error flex items-center justify-center shrink-0">
+                                  <span className="material-symbols-outlined text-[20px]">
+                                    {norm.type === 'Image' ? 'image' : 'picture_as_pdf'}
+                                  </span>
+                                </div>
+                                <div className="min-w-0">
+                                  <p className="font-label-md text-xs font-semibold text-on-surface truncate" title={norm.name}>
+                                    {norm.name}
+                                  </p>
+                                  <p className="font-body-md text-[11px] text-outline">
+                                    {norm.type || 'Document'} {norm.size ? `• ${norm.size}` : ''}
+                                  </p>
+                                </div>
                               </div>
-                              <div className="min-w-0">
-                                <p className="font-label-md text-xs font-semibold text-on-surface truncate" title={norm.name}>
-                                  {norm.name}
-                                </p>
-                                <p className="font-body-md text-[11px] text-outline">
-                                  {norm.type || 'Document'} {norm.size ? `• ${norm.size}` : ''}
-                                </p>
+                              <div className="flex items-center gap-1.5 shrink-0">
+                                <button
+                                  type="button"
+                                  onClick={() => handleViewDocument(norm)}
+                                  className="h-8 px-2.5 rounded-lg bg-surface-container-lowest border border-primary text-primary text-xs font-semibold hover:bg-sage-soft transition-colors flex items-center gap-1 cursor-pointer"
+                                  title="Consulter sans télécharger"
+                                >
+                                  <span className="material-symbols-outlined text-[15px]">visibility</span>
+                                  <span>Consulter</span>
+                                </button>
+                                <button
+                                  type="button"
+                                  onClick={() => handleDownloadDoc(norm)}
+                                  className="h-8 px-2.5 rounded-lg bg-primary text-white text-xs font-semibold hover:bg-forest-deep transition-colors flex items-center gap-1 cursor-pointer shadow-xs"
+                                  title="Télécharger une copie"
+                                >
+                                  <span className="material-symbols-outlined text-[15px]">download</span>
+                                  <span>Télécharger</span>
+                                </button>
+                                <button
+                                  type="button"
+                                  onClick={() => handleRemoveDocument(idx)}
+                                  className="h-8 w-8 rounded-lg bg-rose-50 border border-rose-300 text-rose-700 hover:bg-rose-100 transition-colors flex items-center justify-center cursor-pointer shadow-xs"
+                                  title="Détacher / Supprimer ce document"
+                                >
+                                  <span className="material-symbols-outlined text-[16px]">delete</span>
+                                </button>
                               </div>
                             </div>
-                            <div className="flex items-center gap-1.5 shrink-0">
-                              <button
-                                type="button"
-                                onClick={() => handleViewDocument(norm)}
-                                className="h-8 px-2.5 rounded-lg bg-surface-container-lowest border border-primary text-primary text-xs font-semibold hover:bg-sage-soft transition-colors flex items-center gap-1 cursor-pointer"
-                                title="Consulter sans télécharger"
-                              >
-                                <span className="material-symbols-outlined text-[15px]">visibility</span>
-                                <span>Consulter</span>
-                              </button>
-                              <button
-                                type="button"
-                                onClick={() => handleDownloadDoc(norm)}
-                                className="h-8 px-2.5 rounded-lg bg-primary text-white text-xs font-semibold hover:bg-forest-deep transition-colors flex items-center gap-1 cursor-pointer shadow-xs"
-                                title="Télécharger une copie"
-                              >
-                                <span className="material-symbols-outlined text-[15px]">download</span>
-                                <span>Télécharger</span>
-                              </button>
-                              <button
-                                type="button"
-                                onClick={() => handleRemoveDocument(idx)}
-                                className="h-8 w-8 rounded-lg bg-rose-50 border border-rose-300 text-rose-700 hover:bg-rose-100 transition-colors flex items-center justify-center cursor-pointer shadow-xs"
-                                title="Détacher / Supprimer ce document"
-                              >
-                                <span className="material-symbols-outlined text-[16px]">delete</span>
-                              </button>
+                          );
+                        })}
+
+                        {/* Annotation 14 : Liens web fusionnés au sein des documents */}
+                        {Array.isArray(task?.external_links) && task.external_links.map((linkItem, lIdx) => {
+                          const linkUrl = typeof linkItem === 'string' ? linkItem : (linkItem?.url || '');
+                          const linkTitle = (typeof linkItem === 'object' && linkItem?.title) ? linkItem.title : (linkUrl || 'Ressource web');
+                          return (
+                            <div key={`link-${lIdx}`} className="p-3 bg-canvas-slate rounded-xl flex items-center justify-between gap-3 shadow-xs border border-slate-200">
+                              <div className="flex items-center gap-3 min-w-0">
+                                <div className="w-10 h-10 rounded-xl bg-sky-100 text-sky-700 dark:bg-sky-950/60 dark:text-sky-300 flex items-center justify-center shrink-0 border border-sky-200 dark:border-sky-800/60">
+                                  <span className="material-symbols-outlined text-[20px]">language</span>
+                                </div>
+                                <div className="min-w-0">
+                                  <div className="flex items-center gap-2">
+                                    <p className="font-label-md text-xs font-semibold text-on-surface truncate" title={linkTitle}>
+                                      {linkTitle}
+                                    </p>
+                                    <span className="px-2 py-0.5 rounded-full text-[10px] font-bold bg-sky-100 text-sky-800 dark:bg-sky-900/60 dark:text-sky-200 border border-sky-200 shrink-0">
+                                      Lien web
+                                    </span>
+                                  </div>
+                                  <a
+                                    href={linkUrl}
+                                    target="_blank"
+                                    rel="noopener noreferrer"
+                                    className="font-body-md text-[11px] text-primary hover:underline truncate block"
+                                    title={linkUrl}
+                                  >
+                                    {linkUrl}
+                                  </a>
+                                </div>
+                              </div>
+                              <div className="flex items-center gap-1.5 shrink-0">
+                                <a
+                                  href={linkUrl}
+                                  target="_blank"
+                                  rel="noopener noreferrer"
+                                  className="h-8 px-2.5 rounded-lg bg-surface-container-lowest border border-sky-400 text-sky-800 text-xs font-semibold hover:bg-sky-50 transition-colors flex items-center gap-1 cursor-pointer"
+                                  title="Ouvrir dans un nouvel onglet"
+                                >
+                                  <span className="material-symbols-outlined text-[15px]">open_in_new</span>
+                                  <span>Ouvrir</span>
+                                </a>
+                              </div>
                             </div>
-                          </div>
-                        );
-                      })
+                          );
+                        })}
+                      </>
                     )}
                   </div>
                 </div>
 
-                {/* Annotation 2 : Liens web sources & devis en ligne */}
-                <ExternalLinksSection
-                  links={task?.external_links}
-                  isEditing={false}
-                />
-
-                {/* Section Validation & Arbitrage de la Mission (#section-task-validation) */}
-                {!isNewTask && (
+                {/* Section Validation & Arbitrage de la Mission (#section-task-validation - Annotation 19 : Visible QUE par les coordinateurs) */}
+                {!isNewTask && isCoordinator && (
                   <div
                     ref={validationSectionRef}
                     id="section-task-validation"
@@ -1378,16 +1413,6 @@ export default function TaskDetailModal({
                             <span className="material-symbols-outlined text-[18px]">close</span>
                             <span>Rejeter</span>
                           </button>
-                          {mode === 'view' && (
-                            <button
-                              type="button"
-                              onClick={() => setMode('edit')}
-                              className="inline-flex items-center gap-2 px-4 py-2.5 rounded-xl bg-amber-100 hover:bg-amber-200 text-amber-900 border border-amber-300 font-semibold text-xs sm:text-sm transition-all cursor-pointer"
-                            >
-                              <span className="material-symbols-outlined text-[18px]">edit</span>
-                              <span>Compléter avant d'approuver</span>
-                            </button>
-                          )}
                         </>
                       )}
 
@@ -1620,17 +1645,18 @@ export default function TaskDetailModal({
                               onChange={(e) => setEditRecurrenceInterval(Math.max(1, parseInt(e.target.value, 10) || 1))}
                               className="w-16 h-9 px-2.5 text-xs text-center font-bold bg-white border border-slate-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-primary"
                             />
-                            <select
+                            <CustomSelect
                               id="select-recurrence-unit"
                               value={editRecurrenceUnit}
                               onChange={(e) => setEditRecurrenceUnit(e.target.value)}
-                              className="h-9 px-3 text-xs font-semibold bg-white border border-slate-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-primary cursor-pointer"
-                            >
-                              <option value="jours">Jour(s)</option>
-                              <option value="semaines">Semaine(s)</option>
-                              <option value="mois">Mois</option>
-                              <option value="sejours">Séjour(s) sur le domaine</option>
-                            </select>
+                              options={[
+                                { value: 'jours', label: 'Jour(s)' },
+                                { value: 'semaines', label: 'Semaine(s)' },
+                                { value: 'mois', label: 'Mois' },
+                                { value: 'sejours', label: 'Séjour(s) sur le domaine' },
+                              ]}
+                              className="h-9 min-w-[150px] text-xs font-semibold"
+                            />
                           </div>
                         )}
                       </div>
@@ -1796,7 +1822,7 @@ export default function TaskDetailModal({
                   </div>
                 </section>
 
-                {/* Section 3 : Documents & Pièces jointes (Annotation 3) */}
+                {/* Section 3 : Documents & Pièces jointes (Annotations 12, 13 & 14) */}
                 <section className="bg-white border border-slate-200 rounded-2xl p-4 sm:p-5 shadow-xs flex flex-col gap-4">
                   <div className="flex flex-wrap items-center justify-between gap-2 border-b border-slate-100 pb-3">
                     <div>
@@ -1805,12 +1831,30 @@ export default function TaskDetailModal({
                         <span>Documents &amp; Pièces jointes</span>
                       </h3>
                       <p className="font-body-md text-xs text-on-surface-variant">
-                        Plans, factures, justificatifs ou photos (PDF, PNG, JPG)
+                        Plans, factures, justificatifs, photos ou liens web (PDF, PNG, JPG, URL)
                       </p>
                     </div>
-                    <span className="text-xs font-semibold px-2.5 py-1 rounded-full bg-slate-100 text-slate-700">
-                      {editDocuments.length} document(s) joint(s)
-                    </span>
+                    <div className="flex flex-wrap items-center gap-2">
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setDroppedFileForUpload(null);
+                          setIsUploadDocModalOpen(true);
+                        }}
+                        className="inline-flex items-center gap-1.5 h-9 px-3 rounded-lg bg-emerald-600 hover:bg-emerald-700 text-white text-xs font-semibold shadow-xs transition-colors cursor-pointer"
+                      >
+                        <span className="material-symbols-outlined text-[16px]">upload_file</span>
+                        <span>Ajouter un nouveau document</span>
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => setIsSelectExistingDocModalOpen(true)}
+                        className="inline-flex items-center gap-1.5 h-9 px-3 rounded-lg bg-white border border-slate-300 hover:border-emerald-600 hover:text-emerald-800 text-slate-700 text-xs font-semibold shadow-xs transition-colors cursor-pointer"
+                      >
+                        <span className="material-symbols-outlined text-[16px]">library_books</span>
+                        <span>Sélectionner un document existant</span>
+                      </button>
+                    </div>
                   </div>
 
                   {/* Zone de téléversement Drag & Drop unifiée avec UploadDocumentModal */}
@@ -1844,8 +1888,8 @@ export default function TaskDetailModal({
                     </div>
                   </div>
 
-                  {/* Liste des documents attachés avec Consulter, Télécharger et Supprimer */}
-                  {editDocuments.length > 0 && (
+                  {/* Liste des documents attachés et des liens web fusionnés (Annotation 14) */}
+                  {(editDocuments.length > 0 || editExternalLinks.length > 0) && (
                     <div className="flex flex-col gap-2 pt-1">
                       {editDocuments.map((docItem, idx) => {
                         const norm = normalizeDocItem(docItem, idx);
@@ -1900,17 +1944,76 @@ export default function TaskDetailModal({
                           </div>
                         );
                       })}
+
+                      {/* Liens web fusionnés (Annotation 14) */}
+                      {editExternalLinks.map((linkItem, lIdx) => {
+                        const linkUrl = typeof linkItem === 'string' ? linkItem : (linkItem?.url || '');
+                        const linkTitle = (typeof linkItem === 'object' && linkItem?.title) ? linkItem.title : (linkUrl || 'Ressource web');
+                        return (
+                          <div
+                            key={`edit-link-${lIdx}`}
+                            className="p-3 bg-canvas-slate rounded-xl flex items-center justify-between gap-3 shadow-xs border border-slate-200"
+                          >
+                            <div className="flex items-center gap-3 min-w-0">
+                              <div className="w-10 h-10 rounded-xl bg-sky-100 text-sky-700 dark:bg-sky-950/60 dark:text-sky-300 flex items-center justify-center shrink-0 border border-sky-200 dark:border-sky-800/60">
+                                <span className="material-symbols-outlined text-[20px]">language</span>
+                              </div>
+                              <div className="min-w-0">
+                                <div className="flex items-center gap-2">
+                                  <p className="font-label-md text-xs font-semibold text-on-surface truncate" title={linkTitle}>
+                                    {linkTitle}
+                                  </p>
+                                  <span className="px-2 py-0.5 rounded-full text-[10px] font-bold bg-sky-100 text-sky-800 dark:bg-sky-900/60 dark:text-sky-200 border border-sky-200 shrink-0">
+                                    Lien web
+                                  </span>
+                                </div>
+                                <a
+                                  href={linkUrl}
+                                  target="_blank"
+                                  rel="noopener noreferrer"
+                                  className="font-body-md text-[11px] text-primary hover:underline truncate block"
+                                  title={linkUrl}
+                                >
+                                  {linkUrl}
+                                </a>
+                              </div>
+                            </div>
+                            <div className="flex items-center gap-1.5 shrink-0">
+                              <a
+                                href={linkUrl}
+                                target="_blank"
+                                rel="noopener noreferrer"
+                                className="h-8 px-2.5 rounded-lg bg-surface-container-lowest border border-sky-400 text-sky-800 text-xs font-semibold hover:bg-sky-50 transition-colors flex items-center gap-1 cursor-pointer"
+                                title="Ouvrir dans un nouvel onglet"
+                              >
+                                <span className="material-symbols-outlined text-[15px]">open_in_new</span>
+                                <span className="hidden sm:inline">Ouvrir</span>
+                              </a>
+                              <button
+                                type="button"
+                                onClick={() => setEditExternalLinks(prev => prev.filter((_, idx) => idx !== lIdx))}
+                                className="h-8 w-8 rounded-lg bg-rose-50 border border-rose-300 text-rose-700 hover:bg-rose-100 transition-colors flex items-center justify-center cursor-pointer shadow-xs"
+                                title="Supprimer ce lien web"
+                              >
+                                <span className="material-symbols-outlined text-[16px]">delete</span>
+                              </button>
+                            </div>
+                          </div>
+                        );
+                      })}
                     </div>
                   )}
-                </section>
 
-                {/* Section 4 : Liens web sources & devis en ligne (Annotation 2) */}
-                <section className="bg-white border border-slate-200 rounded-2xl p-4 sm:p-5 shadow-xs">
-                  <ExternalLinksSection
-                    links={editExternalLinks}
-                    onChange={setEditExternalLinks}
-                    isEditing={true}
-                  />
+                  {/* Formulaire d'ajout de ressource web directement dans la section Documents (Annotation 14) */}
+                  <div className="pt-3 border-t border-slate-100">
+                    <ExternalLinksSection
+                      links={editExternalLinks}
+                      onChange={setEditExternalLinks}
+                      isEditing={true}
+                      hideList={true}
+                      title="Ajouter un lien web ou ressource en ligne"
+                    />
+                  </div>
                 </section>
 
                 {/* Footer formulaire fixé / sticky en bas (Annotation 6) */}

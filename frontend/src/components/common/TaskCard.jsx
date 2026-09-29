@@ -4,8 +4,9 @@ import {
   isTaskProposed,
   getTaskColorCategory,
   getTaskStatusMeta,
+  isTaskAssignedToUser,
 } from '../../utils/taskAssignment';
-import { acceptTask, rejectTask } from '../../api';
+
 
 function getCategoryIcon(cat) {
   if (!cat) return 'category';
@@ -42,8 +43,6 @@ export default function TaskCard({
 }) {
   if (!task) return null;
 
-  const [isSubmitting, setIsSubmitting] = useState(false);
-
   // Labels canoniques stricts du cycle de vie (Annotation 4) :
   // - PROPOSED ➔ « En attente de validation » (Orange ambre)
   // - TODO / EN_COURS ➔ « En cours » (Bleu)
@@ -62,6 +61,31 @@ export default function TaskCard({
     (typeof currentUser === 'object' && (currentUser?.prenom?.toLowerCase() === 'henri' || currentUser?.prenom?.toLowerCase() === 'josephine' || currentUser?.prenom?.toLowerCase() === 'joséphine')) ||
     (typeof currentUser === 'string' && (currentUser.toLowerCase().includes('henri') || currentUser.toLowerCase().includes('josephine') || currentUser.toLowerCase().includes('joséphine')))
   );
+
+  const isAssigned = isTaskAssignedToUser(task, currentUser);
+
+  // Détermination du bouton d'action contextuel unique (Annotation 16)
+  let actionButtonLabel = 'Consulter la tâche';
+  let actionButtonIcon = 'visibility';
+  let actionButtonClass = 'bg-surface-container-lowest border-sky-300 text-sky-900 hover:bg-sky-50 text-xs sm:text-sm';
+
+  if (isCoordinator && isProposed) {
+    actionButtonLabel = 'Arbitrer la création';
+    actionButtonIcon = 'gavel';
+    actionButtonClass = 'bg-amber-100 hover:bg-amber-200 text-amber-900 border-amber-300 text-xs sm:text-sm font-bold';
+  } else if (isAssigned && isInProgress) {
+    actionButtonLabel = 'Marquer comme complétée';
+    actionButtonIcon = 'check_circle';
+    actionButtonClass = 'bg-emerald-600 hover:bg-emerald-700 text-white border-emerald-600 text-xs sm:text-sm font-bold shadow-xs';
+  } else if (isCoordinator && isValidationTask) {
+    actionButtonLabel = 'Arbitrer la complétion';
+    actionButtonIcon = 'verified';
+    actionButtonClass = 'bg-emerald-100 hover:bg-emerald-200 text-emerald-900 border-emerald-300 text-xs sm:text-sm font-bold';
+  } else if (isProposed) {
+    actionButtonClass = 'bg-amber-100/80 text-amber-900 border-amber-300 hover:bg-amber-200 text-xs sm:text-sm font-semibold';
+  } else if (isValidationTask) {
+    actionButtonClass = 'bg-emerald-100/80 text-emerald-900 border-emerald-300 hover:bg-emerald-200 text-xs sm:text-sm font-semibold';
+  }
 
   // Normalize priority to 'Normale', 'Haute', 'Critique'
   const rawPriority = (task.priority || 'Normale').trim();
@@ -134,47 +158,6 @@ export default function TaskCard({
     : 0;
   const progressPct = hasChecklist ? Math.round((completedSteps / totalSteps) * 100) : 0;
 
-  // Actions Coordinateur : Accepter
-  const handleAcceptClick = async (e) => {
-    e.stopPropagation();
-    if (isSubmitting) return;
-    try {
-      setIsSubmitting(true);
-      if (onAccept) {
-        await onAccept(task);
-      } else {
-        await acceptTask(task.id);
-        if (onOpen) onOpen(task, 'refreshed');
-      }
-    } catch (err) {
-      console.error('Erreur acceptation tâche:', err);
-      alert(err.message || 'Erreur lors de l\'acceptation de la tâche');
-    } finally {
-      setIsSubmitting(false);
-    }
-  };
-
-  // Actions Coordinateur : Refuser
-  const handleRejectClick = async (e) => {
-    e.stopPropagation();
-    if (isSubmitting) return;
-    try {
-      setIsSubmitting(true);
-      if (onReject) {
-        await onReject(task);
-      } else {
-        const reason = window.prompt('Motif du refus de la proposition (optionnel) :', '');
-        if (reason === null) return;
-        await rejectTask(task.id, reason);
-        if (onOpen) onOpen(task, 'refreshed');
-      }
-    } catch (err) {
-      console.error('Erreur refus tâche:', err);
-      alert(err.message || 'Erreur lors du refus de la tâche');
-    } finally {
-      setIsSubmitting(false);
-    }
-  };
 
   return (
     <article
@@ -400,65 +383,18 @@ export default function TaskCard({
           </div>
         </div>
 
-        {/* Boutons d'Action */}
-        {isProposed && isCoordinator ? (
-          /* Boutons d'arbitrage pour les coordinateurs sur tâche proposée (orange) */
-          <div className="flex items-center gap-2 shrink-0 flex-wrap">
-            <button
-              type="button"
-              disabled={isSubmitting}
-              onClick={handleAcceptClick}
-              className="h-[38px] px-3.5 rounded-DEFAULT bg-emerald-600 hover:bg-emerald-700 text-white font-bold text-xs sm:text-sm flex items-center gap-1.5 shadow-sm transition-all cursor-pointer disabled:opacity-50"
-              title="Approuver la proposition et faire passer la tâche en cours (active)"
-            >
-              <span className="material-symbols-outlined text-[18px]">check</span>
-              <span>Approuver la tâche</span>
-            </button>
-
-            <button
-              type="button"
-              disabled={isSubmitting}
-              onClick={handleRejectClick}
-              className="h-[38px] px-3 rounded-DEFAULT bg-white dark:bg-slate-900 border border-rose-300 dark:border-rose-800 hover:bg-rose-50 dark:hover:bg-rose-950/40 text-rose-700 dark:text-rose-300 font-bold text-xs sm:text-sm flex items-center gap-1 shadow-xs transition-all cursor-pointer disabled:opacity-50"
-              title="Rejeter la tâche proposée"
-            >
-              <span className="material-symbols-outlined text-[18px]">close</span>
-              <span>Rejeter</span>
-            </button>
-
-            <button
-              type="button"
-              onClick={(e) => {
-                e.stopPropagation();
-                if (onOpen) onOpen(task);
-              }}
-              className="h-[38px] px-3 rounded-DEFAULT bg-amber-100 hover:bg-amber-200 dark:bg-amber-900/40 dark:hover:bg-amber-900/60 text-amber-900 dark:text-amber-200 border border-amber-300 font-semibold text-xs flex items-center gap-1 transition-all cursor-pointer"
-              title="Consulter et compléter la tâche (documents, assignés, checklists) avant décision"
-            >
-              <span className="material-symbols-outlined text-[16px]">edit_note</span>
-              <span>Compléter</span>
-            </button>
-          </div>
-        ) : (
-          /* Bouton de consultation standard unifié */
-          <button
-            type="button"
-            onClick={(e) => {
-              e.stopPropagation();
-              if (onOpen) onOpen(task);
-            }}
-            className={`h-[40px] px-4 rounded-DEFAULT transition-all flex items-center justify-center gap-2 shrink-0 font-semibold cursor-pointer border-2 shadow-xs ${
-              isProposed
-                ? 'bg-amber-100/80 text-amber-900 border-amber-300 hover:bg-amber-200 text-xs sm:text-sm'
-                : isValidationTask
-                ? 'bg-emerald-100/80 text-emerald-900 border-emerald-300 hover:bg-emerald-200 text-xs sm:text-sm'
-                : 'bg-surface-container-lowest border-sky-300 text-sky-900 hover:bg-sky-50 text-xs sm:text-sm'
-            }`}
-          >
-            <span className="material-symbols-outlined text-[18px]">visibility</span>
-            <span>Consulter la tâche</span>
-          </button>
-        )}
+        {/* Bouton unique d'ouverture de modal avec libellé dynamique (Annotation 16) */}
+        <button
+          type="button"
+          onClick={(e) => {
+            e.stopPropagation();
+            if (onOpen) onOpen(task);
+          }}
+          className={`h-[40px] px-4 rounded-DEFAULT transition-all flex items-center justify-center gap-2 shrink-0 cursor-pointer border-2 shadow-xs ${actionButtonClass}`}
+        >
+          <span className="material-symbols-outlined text-[18px]">{actionButtonIcon}</span>
+          <span>{actionButtonLabel}</span>
+        </button>
       </div>
     </article>
   );
