@@ -383,6 +383,8 @@ class ReservationResponse(BaseModel):
     notes: Optional[str] = None
     created_at: datetime
     property: Optional[PropertyResponse] = None
+    _email_dispatched: Optional[Dict[str, Any]] = None
+    email_dispatched: Optional[Dict[str, Any]] = None
 
     @field_validator("selected_rooms", mode="before")
     @classmethod
@@ -505,6 +507,8 @@ class ProjectResponse(BaseModel):
     votes: List[ProjectVoteResponse] = []
     comments: List[ProjectCommentResponse] = []
     vote_summary: Optional[Dict] = None
+    _email_dispatched: Optional[Dict[str, Any]] = None
+    email_dispatched: Optional[Dict[str, Any]] = None
 
     @field_validator("document_urls", "completion_docs", "external_links", mode="before")
     @classmethod
@@ -932,6 +936,8 @@ class TaskResponse(TaskBase):
     progress_percent: Optional[int] = 0
     completed_steps: Optional[int] = 0
     total_steps: Optional[int] = 0
+    _email_dispatched: Optional[Dict[str, Any]] = None
+    email_dispatched: Optional[Dict[str, Any]] = None
 
     @field_validator("assigned_members", "checklist", "documents", "completion_docs", mode="before")
     @classmethod

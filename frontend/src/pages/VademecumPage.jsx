@@ -76,6 +76,59 @@ function formatShutdownSchedule(stay) {
   return `${dateFormatted} à ${depTime} (au départ des lieux)`;
 }
 
+function formatStayCountdown(startDateStr, arrivalTimeStr = '15:00') {
+  if (!startDateStr) return null;
+  try {
+    const parts = startDateStr.split('-').map(Number);
+    if (parts.length < 3 || parts.some(isNaN)) return null;
+    const [year, month, day] = parts;
+    let hour = 15;
+    let min = 0;
+    if (arrivalTimeStr) {
+      const tParts = String(arrivalTimeStr).split(':').map(Number);
+      if (!isNaN(tParts[0])) hour = tParts[0];
+      if (!isNaN(tParts[1])) min = tParts[1];
+    }
+    const targetDate = new Date(year, month - 1, day, hour, min, 0);
+    const now = new Date();
+    const diffMs = targetDate.getTime() - now.getTime();
+
+    if (diffMs <= 0) {
+      return 'Séjour en cours';
+    }
+
+    const diffHours = Math.floor(diffMs / (1000 * 60 * 60));
+    const diffDays = Math.floor(diffMs / (1000 * 60 * 60 * 24));
+
+    // Si moins de 7 jours : afficher le nombre d'heures (Dans X heures)
+    if (diffDays < 7) {
+      if (diffHours <= 1) return 'Dans 1 heure';
+      return `Dans ${diffHours} heures`;
+    }
+
+    // Sinon afficher `Dans X mois et Y jours` (en n'affichant le mois que si > 0)
+    let months = (targetDate.getFullYear() - now.getFullYear()) * 12 + (targetDate.getMonth() - now.getMonth());
+    let days = targetDate.getDate() - now.getDate();
+
+    if (days < 0) {
+      months -= 1;
+      const prevMonthLastDay = new Date(targetDate.getFullYear(), targetDate.getMonth(), 0).getDate();
+      days += prevMonthLastDay;
+    }
+
+    if (months > 0) {
+      if (days > 0) {
+        return `Dans ${months} mois et ${days} ${days > 1 ? 'jours' : 'jour'}`;
+      }
+      return `Dans ${months} mois`;
+    }
+
+    return `Dans ${diffDays} ${diffDays > 1 ? 'jours' : 'jour'}`;
+  } catch (_) {
+    return null;
+  }
+}
+
 function formatThermalTimeSlot(dateStr, timeStr, offsetHours = 0) {
   if (!dateStr) return '';
   const d = new Date(dateStr);
@@ -1074,189 +1127,202 @@ export default function VademecumPage({ properties, currentUser, reservations = 
           <StayCardSkeleton />
         </div>
       ) : currentPageIndex > 0 && currentStay && (
-        <section className="relative bg-surface-container-lowest rounded-2xl p-6 sm:p-8 shadow-sm border border-border-subtle mb-10 overflow-hidden w-full max-w-full">
-          <div className="relative z-10 flex flex-col xl:flex-row items-start justify-between gap-6">
-            
-            {/* Left: Stay Identifiers & Status */}
-            <div className="flex flex-col gap-4 max-w-2xl min-w-0">
-              <div className="flex flex-wrap items-center gap-3">
-                <span className="px-3 py-1 rounded-full bg-surface-container font-label-sm text-label-sm text-on-surface-variant font-medium">
-                  Semaine {currentStay.week_number || ''} • {currentStay.year || 2026}
-                </span>
-                {/* ANNOTATION 1 : BADGE STATUT CONFIRMÉE SUPPRIMÉ */}
-              </div>
+        (() => {
+          const stayCountdown = formatStayCountdown(currentStay.start_date, currentStay.arrival_time);
+          const { members: rawMembers = [], guests: rawGuests = [] } = extractParticipants(currentStay);
 
-              <div>
-                <h2 className="font-display-md text-xl sm:text-2xl text-forest-deep tracking-tight font-bold">
-                  {currentPageIndex === 1 ? 'Mon Prochain Séjour au Domaine' : `Séjour n°${currentPageIndex} au Domaine`}
-                </h2>
-              </div>
+          let membersList = [...rawMembers];
+          if (
+            currentStay?.user_name &&
+            !membersList.some(
+              (m) =>
+                m.toLowerCase().includes(currentStay.user_name.toLowerCase()) ||
+                currentStay.user_name.toLowerCase().includes(m.toLowerCase())
+            )
+          ) {
+            membersList.unshift(currentStay.user_name);
+          }
 
-              {/* Schedule badges */}
-              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 pt-2">
-                <div className="flex items-center gap-3.5 p-3.5 rounded-xl bg-canvas-slate shadow-sm border border-border-subtle min-w-0">
-                  <div className="w-10 h-10 rounded-full bg-primary/10 flex items-center justify-center shrink-0">
-                    <span className="material-symbols-outlined text-primary text-[22px]">flight_land</span>
-                  </div>
-                  <div className="flex flex-col min-w-0">
-                    <span className="font-label-sm text-label-sm text-on-surface-variant">Arrivée programmée</span>
-                    <span className="font-headline-sm text-sm sm:text-base text-on-surface font-bold truncate">
-                      {formatDateReadable(currentStay.start_date)} • {currentStay.arrival_time || '15:00'}
-                    </span>
-                  </div>
-                </div>
+          // Dépistage et suppression catégorique de tout badge aggloméré ('deux personnes', '2 personnes', etc.)
+          const parseAggregatedCount = (str) => {
+            if (!str || typeof str !== 'string') return 0;
+            const lower = str.toLowerCase().trim();
+            const wordMap = {
+              un: 1, une: 1, deux: 2, trois: 3, quatre: 4,
+              cinq: 5, six: 6, sept: 7, huit: 8
+            };
+            const mWord = lower.match(/^(un|une|deux|trois|quatre|cinq|six|sept|huit)\s*personnes?$/);
+            if (mWord) return wordMap[mWord[1]] || 1;
+            const mDigit = lower.match(/^(\d+)\s*personnes?$/);
+            if (mDigit) return parseInt(mDigit[1], 10) || 1;
+            return 0;
+          };
 
-                <div className="flex items-center gap-3.5 p-3.5 rounded-xl bg-canvas-slate shadow-sm border border-border-subtle min-w-0">
-                  <div className="w-10 h-10 rounded-full bg-primary/10 flex items-center justify-center shrink-0">
-                    <span className="material-symbols-outlined text-primary text-[22px]">flight_takeoff</span>
-                  </div>
-                  <div className="flex flex-col min-w-0">
-                    <span className="font-label-sm text-label-sm text-on-surface-variant">Départ & Hors-gel</span>
-                    <span className="font-headline-sm text-sm sm:text-base text-on-surface font-bold truncate">
-                      {formatDateReadable(currentStay.end_date)} • {currentStay.departure_time || '11:00'}
-                    </span>
-                  </div>
-                </div>
-              </div>
+          let individualGuests = [];
+          let aggregatedExtraCount = 0;
 
-              {/* Capacity & Occupants breakdown (Annotation 6 : Badges nominatifs individuels dédiés, zéro badge aggloméré 'deux personnes', teinte ambre pour les invités) */}
-              {(() => {
-                const { members: rawMembers = [], guests: rawGuests = [] } = currentStay
-                  ? extractParticipants(currentStay)
-                  : { members: [], guests: [] };
+          for (const g of rawGuests) {
+            const cnt = parseAggregatedCount(g);
+            if (cnt > 0) {
+              aggregatedExtraCount += cnt;
+            } else if (g && !g.toLowerCase().includes('personne')) {
+              individualGuests.push(g);
+            }
+          }
 
-                let membersList = [...rawMembers];
-                if (
-                  currentStay?.user_name &&
-                  !membersList.some(
-                    (m) =>
-                      m.toLowerCase().includes(currentStay.user_name.toLowerCase()) ||
-                      currentStay.user_name.toLowerCase().includes(m.toLowerCase())
-                  )
-                ) {
-                  membersList.unshift(currentStay.user_name);
-                }
+          if (Array.isArray(currentStay?.guests)) {
+            for (const g of currentStay.guests) {
+              const cnt = parseAggregatedCount(g);
+              if (cnt > 0) {
+                aggregatedExtraCount += cnt;
+              } else if (g && typeof g === 'string' && !g.toLowerCase().includes('personne') && !individualGuests.includes(g)) {
+                individualGuests.push(g);
+              }
+            }
+          }
 
-                // Dépistage et suppression catégorique de tout badge aggloméré ('deux personnes', '2 personnes', etc.)
-                const parseAggregatedCount = (str) => {
-                  if (!str || typeof str !== 'string') return 0;
-                  const lower = str.toLowerCase().trim();
-                  const wordMap = {
-                    un: 1, une: 1, deux: 2, trois: 3, quatre: 4,
-                    cinq: 5, six: 6, sept: 7, huit: 8
-                  };
-                  const mWord = lower.match(/^(un|une|deux|trois|quatre|cinq|six|sept|huit)\s*personnes?$/);
-                  if (mWord) return wordMap[mWord[1]] || 1;
-                  const mDigit = lower.match(/^(\d+)\s*personnes?$/);
-                  if (mDigit) return parseInt(mDigit[1], 10) || 1;
-                  return 0;
-                };
+          const totalDeclared = currentStay?.guest_count || (membersList.length + individualGuests.length + aggregatedExtraCount) || 1;
+          const missingGuests = Math.max(
+            aggregatedExtraCount,
+            totalDeclared - membersList.length - individualGuests.length
+          );
 
-                let individualGuests = [];
-                let aggregatedExtraCount = 0;
+          if (missingGuests > 0) {
+            const existingCount = individualGuests.length;
+            for (let i = 1; i <= missingGuests; i++) {
+              individualGuests.push(`Invité ${existingCount + i}`);
+            }
+          }
 
-                for (const g of rawGuests) {
-                  const cnt = parseAggregatedCount(g);
-                  if (cnt > 0) {
-                    aggregatedExtraCount += cnt;
-                  } else if (g && !g.toLowerCase().includes('personne')) {
-                    individualGuests.push(g);
-                  }
-                }
+          return (
+            <section className="relative overflow-hidden rounded-2xl bg-gradient-to-br from-emerald-50/70 via-stone-50/50 to-amber-50/40 dark:from-emerald-950/30 dark:via-stone-900/30 dark:to-amber-950/20 border border-emerald-200/60 dark:border-emerald-800/40 p-6 sm:p-8 shadow-sm mb-10 w-full max-w-full">
+              {/* Deux halos lumineux flous animés en pulsation lente */}
+              <div className="absolute -top-24 -left-24 w-80 h-80 rounded-full bg-emerald-200/40 dark:bg-emerald-800/20 blur-3xl animate-pulse pointer-events-none" style={{ animationDuration: '4s' }}></div>
+              <div className="absolute -bottom-24 -right-24 w-80 h-80 rounded-full bg-amber-200/35 dark:bg-amber-800/15 blur-3xl animate-pulse pointer-events-none" style={{ animationDuration: '6s' }}></div>
 
-                if (Array.isArray(currentStay?.guests)) {
-                  for (const g of currentStay.guests) {
-                    const cnt = parseAggregatedCount(g);
-                    if (cnt > 0) {
-                      aggregatedExtraCount += cnt;
-                    } else if (g && typeof g === 'string' && !g.toLowerCase().includes('personne') && !individualGuests.includes(g)) {
-                      individualGuests.push(g);
-                    }
-                  }
-                }
-
-                const totalDeclared = currentStay?.guest_count || (membersList.length + individualGuests.length + aggregatedExtraCount) || 1;
-                const missingGuests = Math.max(
-                  aggregatedExtraCount,
-                  totalDeclared - membersList.length - individualGuests.length
-                );
-
-                if (missingGuests > 0) {
-                  const existingCount = individualGuests.length;
-                  for (let i = 1; i <= missingGuests; i++) {
-                    individualGuests.push(`Invité ${existingCount + i}`);
-                  }
-                }
-
-                return (
-                  <div className="flex flex-wrap items-center gap-2 pt-1">
-                    {/* Membres de la famille (Vert émeraude / sauge) */}
-                    {membersList.map((member, mIdx) => (
-                      <div
-                        key={`mem-${mIdx}`}
-                        className="inline-flex items-center gap-1.5 px-3 py-1 rounded-xl bg-emerald-50 dark:bg-emerald-950/40 border border-emerald-200 dark:border-emerald-800/60 text-emerald-900 dark:text-emerald-200 shadow-2xs font-label-sm text-xs font-semibold"
-                      >
-                        <div className="w-5 h-5 rounded-full bg-emerald-700 text-white flex items-center justify-center shrink-0">
-                          <span className="material-symbols-outlined text-[13px]">person</span>
-                        </div>
-                        <span>{member}</span>
-                        <span className="text-[10px] text-emerald-600 dark:text-emerald-400 font-medium">Famille</span>
-                      </div>
-                    ))}
-
-                    {/* Invités extérieurs individuels nominatifs (Teinte ambre / ocre raffinée) */}
-                    {individualGuests.map((guest, gIdx) => (
-                      <div
-                        key={`gst-${gIdx}`}
-                        className="inline-flex items-center gap-1.5 px-3 py-1 rounded-xl bg-amber-50 dark:bg-amber-950/40 border border-amber-200 dark:border-amber-800/50 text-amber-900 dark:text-amber-200 shadow-2xs font-label-sm text-xs font-semibold"
-                      >
-                        <div className="w-5 h-5 rounded-full bg-amber-600 text-white flex items-center justify-center shrink-0">
-                          <span className="material-symbols-outlined text-[13px]">person_add</span>
-                        </div>
-                        <span>{guest}</span>
-                        <span className="text-[10px] text-amber-700 dark:text-amber-400 font-medium">Invité</span>
-                      </div>
-                    ))}
-                  </div>
-                );
-              })()}
-
-              {/* Annotation 3 : Noms purs des chambres sélectionnées sans mention de couchages */}
-              <div className="flex flex-col gap-2 pt-1 font-label-sm text-label-sm text-on-surface-variant">
-                <div className="flex flex-wrap items-center gap-2">
-                  <span className="material-symbols-outlined text-outline text-[18px]">bed</span>
-                  <span className="font-semibold text-on-surface">Chambres attribuées :</span>
-                  {currentStay.selected_rooms && currentStay.selected_rooms.length > 0 ? (
-                    currentStay.selected_rooms.map((room, idx) => (
-                      <span
-                        key={idx}
-                        className="px-2.5 py-0.5 rounded-full bg-surface-container-high text-on-surface font-medium text-xs"
-                      >
-                        {formatPureRoomName(room)}
+              <div className="relative z-10 flex flex-col gap-6">
+                {/* En-tête harmonisé avec Badges, Titre et Bouton d'action */}
+                <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 border-b border-emerald-200/40 dark:border-emerald-800/30 pb-4">
+                  <div className="space-y-1.5">
+                    <div className="flex flex-wrap items-center gap-2.5">
+                      <span className="px-3 py-1 rounded-full bg-white/80 dark:bg-slate-900/80 border border-border-subtle font-label-sm text-xs text-on-surface-variant font-medium shadow-2xs">
+                        Semaine {currentStay.week_number || ''} • {currentStay.year || 2026}
                       </span>
-                    ))
-                  ) : (
-                    <span className="text-xs text-on-surface-variant italic">Chambres non spécifiées</span>
-                  )}
+                      {stayCountdown && (
+                        <span className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full bg-emerald-100/90 dark:bg-emerald-900/60 border border-emerald-300/70 dark:border-emerald-700/60 text-emerald-900 dark:text-emerald-100 font-label-sm text-xs font-bold shadow-2xs">
+                          <span className="material-symbols-outlined text-[15px] text-emerald-700 dark:text-emerald-300">hourglass_top</span>
+                          <span>{stayCountdown}</span>
+                        </span>
+                      )}
+                    </div>
+                    <h2 className="font-display-md text-xl sm:text-2xl text-forest-deep dark:text-emerald-50 tracking-tight font-bold">
+                      {currentPageIndex === 1 ? 'Mon Prochain Séjour au Domaine' : `Séjour n°${currentPageIndex} au Domaine`}
+                    </h2>
+                  </div>
+
+                  {/* Bouton d'action Modifier le séjour */}
+                  <div className="shrink-0">
+                    <button
+                      onClick={() => setIsEditStayOpen(true)}
+                      className="w-full sm:w-auto py-2.5 px-4 rounded-xl bg-white dark:bg-slate-900 border border-border-subtle hover:bg-canvas-slate hover:border-primary text-on-surface font-label-md text-xs sm:text-sm font-semibold transition-all shadow-sm flex items-center justify-center gap-2 cursor-pointer active:scale-95"
+                      type="button"
+                    >
+                      <span className="material-symbols-outlined text-[20px] text-primary">edit_calendar</span>
+                      <span>Modifier le séjour</span>
+                    </button>
+                  </div>
+                </div>
+
+                {/* Grille équilibrée : Dates programmées (gauche) & Participants/Chambres (droite) */}
+                <div className="grid grid-cols-1 lg:grid-cols-12 gap-5 items-stretch">
+                  {/* Planning : 5 colonnes sur grand écran */}
+                  <div className="lg:col-span-5 flex flex-col justify-center gap-3">
+                    <div className="flex items-center gap-3.5 p-4 rounded-2xl bg-white/90 dark:bg-slate-900/80 shadow-xs border border-emerald-100 dark:border-emerald-900/40 min-w-0">
+                      <div className="w-10 h-10 rounded-xl bg-primary/10 flex items-center justify-center shrink-0">
+                        <span className="material-symbols-outlined text-primary text-[22px]">flight_land</span>
+                      </div>
+                      <div className="flex flex-col min-w-0">
+                        <span className="font-label-sm text-xs text-on-surface-variant font-medium">Arrivée programmée</span>
+                        <span className="font-headline-sm text-sm sm:text-base text-on-surface font-bold truncate">
+                          {formatDateReadable(currentStay.start_date)} • {currentStay.arrival_time || '15:00'}
+                        </span>
+                      </div>
+                    </div>
+
+                    <div className="flex items-center gap-3.5 p-4 rounded-2xl bg-white/90 dark:bg-slate-900/80 shadow-xs border border-emerald-100 dark:border-emerald-900/40 min-w-0">
+                      <div className="w-10 h-10 rounded-xl bg-primary/10 flex items-center justify-center shrink-0">
+                        <span className="material-symbols-outlined text-primary text-[22px]">flight_takeoff</span>
+                      </div>
+                      <div className="flex flex-col min-w-0">
+                        <span className="font-label-sm text-xs text-on-surface-variant font-medium">Départ &amp; Hors-gel</span>
+                        <span className="font-headline-sm text-sm sm:text-base text-on-surface font-bold truncate">
+                          {formatDateReadable(currentStay.end_date)} • {currentStay.departure_time || '11:00'}
+                        </span>
+                      </div>
+                    </div>
+                  </div>
+
+                  {/* Participants et Chambres : 7 colonnes sur grand écran */}
+                  <div className="lg:col-span-7 p-4 sm:p-5 rounded-2xl bg-white/80 dark:bg-slate-900/70 border border-emerald-100 dark:border-emerald-900/40 flex flex-col justify-between gap-4 shadow-xs">
+                    {/* Participants au séjour */}
+                    <div className="space-y-2">
+                      <span className="text-[11px] font-bold text-on-surface-variant uppercase tracking-wider block">
+                        Participants au séjour
+                      </span>
+                      <div className="flex flex-wrap items-center gap-2 pt-0.5">
+                        {/* Membres de la famille (Vert émeraude / sauge) */}
+                        {membersList.map((member, mIdx) => (
+                          <div
+                            key={`mem-${mIdx}`}
+                            className="inline-flex items-center gap-1.5 px-3 py-1 rounded-xl bg-emerald-50 dark:bg-emerald-950/40 border border-emerald-200 dark:border-emerald-800/60 text-emerald-900 dark:text-emerald-200 shadow-2xs font-label-sm text-xs font-semibold"
+                          >
+                            <div className="w-5 h-5 rounded-full bg-emerald-700 text-white flex items-center justify-center shrink-0">
+                              <span className="material-symbols-outlined text-[13px]">person</span>
+                            </div>
+                            <span>{member}</span>
+                            <span className="text-[10px] text-emerald-600 dark:text-emerald-400 font-medium">Famille</span>
+                          </div>
+                        ))}
+
+                        {/* Invités extérieurs individuels nominatifs (Teinte ambre / ocre raffinée) */}
+                        {individualGuests.map((guest, gIdx) => (
+                          <div
+                            key={`gst-${gIdx}`}
+                            className="inline-flex items-center gap-1.5 px-3 py-1 rounded-xl bg-amber-50 dark:bg-amber-950/40 border border-amber-200 dark:border-amber-800/50 text-amber-900 dark:text-amber-200 shadow-2xs font-label-sm text-xs font-semibold"
+                          >
+                            <div className="w-5 h-5 rounded-full bg-amber-600 text-white flex items-center justify-center shrink-0">
+                              <span className="material-symbols-outlined text-[13px]">person_add</span>
+                            </div>
+                            <span>{guest}</span>
+                            <span className="text-[10px] text-amber-700 dark:text-amber-400 font-medium">Invité</span>
+                          </div>
+                        ))}
+                      </div>
+                    </div>
+
+                    {/* Chambres attribuées */}
+                    <div className="pt-2 border-t border-slate-100 dark:border-slate-800 flex flex-wrap items-center gap-2 font-label-sm text-xs text-on-surface-variant">
+                      <span className="material-symbols-outlined text-outline text-[18px]">bed</span>
+                      <span className="font-semibold text-on-surface">Chambres attribuées :</span>
+                      {currentStay.selected_rooms && currentStay.selected_rooms.length > 0 ? (
+                        currentStay.selected_rooms.map((room, idx) => (
+                          <span
+                            key={idx}
+                            className="px-2.5 py-0.5 rounded-full bg-surface-container-high text-on-surface font-medium text-xs"
+                          >
+                            {formatPureRoomName(room)}
+                          </span>
+                        ))
+                      ) : (
+                        <span className="text-xs text-on-surface-variant italic">Chambres non spécifiées</span>
+                      )}
+                    </div>
+                  </div>
                 </div>
               </div>
-
-            </div>
-
-            {/* Right: Quick actions for stay */}
-            <div className="flex flex-col sm:flex-row xl:flex-col gap-3 w-full xl:w-64 shrink-0">
-              <button
-                onClick={() => setIsEditStayOpen(true)}
-                className="w-full py-3 px-4 rounded-xl bg-white border border-border-subtle hover:bg-canvas-slate text-on-surface font-label-md text-sm font-semibold transition-all shadow-sm flex items-center justify-center gap-2 cursor-pointer"
-                type="button"
-              >
-                <span className="material-symbols-outlined text-[20px] text-primary">edit_calendar</span>
-                <span>Modifier le séjour</span>
-              </button>
-            </div>
-
-          </div>
-        </section>
+            </section>
+          );
+        })()
       )}
 
       {/* ===================================================================== */}

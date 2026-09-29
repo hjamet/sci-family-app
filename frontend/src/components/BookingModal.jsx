@@ -1,5 +1,30 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import { createReservation, updateReservation, deleteReservation } from '../api';
+
+function formatYMD(d) {
+  const y = d.getFullYear();
+  const m = String(d.getMonth() + 1).padStart(2, '0');
+  const day = String(d.getDate()).padStart(2, '0');
+  return `${y}-${m}-${day}`;
+}
+
+export function getDefaultWeekendRange() {
+  const now = new Date();
+  const day = now.getDay(); // 0: Dimanche, 1: Lundi, ..., 5: Vendredi, 6: Samedi
+  let daysUntilFriday = (5 - day + 7) % 7;
+  // Si nous sommes vendredi et qu'il est déjà 18h ou plus, basculer sur le vendredi de la semaine suivante
+  if (daysUntilFriday === 0 && now.getHours() >= 18) {
+    daysUntilFriday = 7;
+  }
+  const friday = new Date(now.getFullYear(), now.getMonth(), now.getDate() + daysUntilFriday);
+  const sunday = new Date(friday.getFullYear(), friday.getMonth(), friday.getDate() + 2);
+  return {
+    startDate: formatYMD(friday),
+    endDate: formatYMD(sunday),
+    arrivalTime: '18:00',
+    departureTime: '18:00',
+  };
+}
 
 function getISOWeekAndYear(dateStr) {
   if (!dateStr) return { year: 2026, week_number: 30 };
@@ -233,15 +258,35 @@ function BookingModalContent({
   const isEditMode = Boolean(initialReservation && initialReservation.id);
   const applicant = resolveSafeUserName(isEditMode ? initialReservation?.user_name : loggedInUserName) || loggedInUserName;
 
+  const normalizeStr = (str) =>
+    (str || '')
+      .normalize('NFD')
+      .replace(/[\u0300-\u036f]/g, '')
+      .trim()
+      .toLowerCase();
+
+  const isOwner = !isEditMode || (
+    initialReservation?.user_name &&
+    (normalizeStr(loggedInUserName) === normalizeStr(initialReservation.user_name) ||
+     normalizeStr(loggedInUserName).includes(normalizeStr(initialReservation.user_name)) ||
+     normalizeStr(initialReservation.user_name).includes(normalizeStr(loggedInUserName)))
+  );
+  const isReadOnly = isEditMode && !isOwner;
+  const authorName = initialReservation?.user_name || 'un autre associé';
+
+  const todayStr = formatYMD(new Date());
+  const defaultWeekend = getDefaultWeekendRange();
+
   const [selectedHouse, setSelectedHouse] = useState('all'); // 'all' | 'rosing' | 'presbytere'
   const [selectedRooms, setSelectedRooms] = useState([]); // Annotation 1 : Zéro chambre sélectionnée par défaut
 
-  const [startDate, setStartDate] = useState('2026-08-10');
-  const [endDate, setEndDate] = useState('2026-08-17');
-  const [arrivalTime, setArrivalTime] = useState('15:00');
-  const [departureTime, setDepartureTime] = useState('11:00');
+  // Annotation 3 : Dates calculées dynamiquement au prochain week-end (Ven 18h00 - Dim 18h00)
+  const [startDate, setStartDate] = useState(defaultWeekend.startDate);
+  const [endDate, setEndDate] = useState(defaultWeekend.endDate);
+  const [arrivalTime, setArrivalTime] = useState(defaultWeekend.arrivalTime);
+  const [departureTime, setDepartureTime] = useState(defaultWeekend.departureTime);
 
-  // Annotation 2 : Intitulé vide par défaut en mode création, Description facultative
+  // Annotation 2 & 4 : Intitulé vide par défaut en mode création, Description facultative
   const [stayTitle, setStayTitle] = useState('');
   const [description, setDescription] = useState('');
 
@@ -261,6 +306,67 @@ function BookingModalContent({
 
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState(null);
+
+  // Annotation 9 : Mémorisation des valeurs initiales et confirmation de fermeture si dirty
+  const initialSnapshotRef = useRef(null);
+  const [showDiscardConfirm, setShowDiscardConfirm] = useState(false);
+
+  const isFormDirty = () => {
+    if (isReadOnly) return false;
+    if (!initialSnapshotRef.current) return false;
+    const currentSnapshot = JSON.stringify({
+      startDate,
+      endDate,
+      arrivalTime,
+      departureTime,
+      stayTitle: (stayTitle || '').trim(),
+      description: (description || '').trim(),
+      selectedRooms: [...(selectedRooms || [])].sort(),
+      selectedMembers: [...(selectedMembers || [])].sort(),
+      externalGuests: [...(externalGuests || [])].sort(),
+      cohabitationType,
+      notes: (notes || '').trim(),
+      poolHeating: Boolean(poolHeating),
+      presbytereHeating: Boolean(presbytereHeating),
+    });
+    return currentSnapshot !== initialSnapshotRef.current;
+  };
+
+  const handleSafeClose = () => {
+    if (isFormDirty()) {
+      setShowDiscardConfirm(true);
+    } else {
+      onClose();
+    }
+  };
+
+  useEffect(() => {
+    if (!isOpen) return;
+    const handleKeyDown = (e) => {
+      if (e.key === 'Escape') {
+        e.preventDefault();
+        handleSafeClose();
+      }
+    };
+    window.addEventListener('keydown', handleKeyDown);
+    return () => window.removeEventListener('keydown', handleKeyDown);
+  }, [
+    isOpen,
+    startDate,
+    endDate,
+    arrivalTime,
+    departureTime,
+    stayTitle,
+    description,
+    selectedRooms,
+    selectedMembers,
+    externalGuests,
+    cohabitationType,
+    notes,
+    poolHeating,
+    presbytereHeating,
+    isReadOnly,
+  ]);
 
   const rosingRooms = ROOMS.filter((r) => r.house === 'rosing');
   const presbytereRooms = ROOMS.filter((r) => r.house === 'presbytere');
@@ -283,12 +389,20 @@ function BookingModalContent({
 
   useEffect(() => {
     if (initialReservation) {
-      if (initialReservation.start_date) setStartDate(initialReservation.start_date);
-      if (initialReservation.end_date) setEndDate(initialReservation.end_date);
-      const isSingleDay = initialReservation.start_date && initialReservation.end_date && initialReservation.start_date === initialReservation.end_date;
-      setArrivalTime(normalizeTimeInput(initialReservation.arrival_time, isSingleDay ? '10:00' : '15:00'));
-      setDepartureTime(normalizeTimeInput(initialReservation.departure_time, isSingleDay ? '18:00' : '11:00'));
-      if (initialReservation.title) setStayTitle(initialReservation.title);
+      const initStart = initialReservation.start_date || defaultWeekend.startDate;
+      const initEnd = initialReservation.end_date || defaultWeekend.endDate;
+      const isSingleDay = initStart && initEnd && initStart === initEnd;
+      const initArrival = normalizeTimeInput(initialReservation.arrival_time, isSingleDay ? '10:00' : '15:00');
+      const initDeparture = normalizeTimeInput(initialReservation.departure_time, isSingleDay ? '18:00' : '11:00');
+
+      setStartDate(initStart);
+      setEndDate(initEnd);
+      setArrivalTime(initArrival);
+      setDepartureTime(initDeparture);
+
+      let initTitle = initialReservation.title || '';
+      let initDesc = '';
+      let initNotes = '';
 
       // Décomposition intelligente des notes
       let rawNotes = typeof initialReservation.notes === 'string' ? initialReservation.notes : (initialReservation.notes ? String(initialReservation.notes) : '');
@@ -307,10 +421,14 @@ function BookingModalContent({
         rawNotes = rawNotes.replace(invitesMatch[0], '');
       }
 
+      let initPool = false;
       if (rawNotes.toLowerCase().includes('piscine')) {
+        initPool = true;
         setPoolHeating(true);
       }
+      let initPresb = false;
       if (rawNotes.toLowerCase().includes('presbytère') || rawNotes.toLowerCase().includes('presbytere')) {
+        initPresb = true;
         setPresbytereHeating(true);
         setPresbytereHeatingManual(true);
       }
@@ -323,22 +441,36 @@ function BookingModalContent({
       const parts = rawNotes.split(' • ').map((s) => s.trim()).filter(Boolean);
       if (parts.length > 0) {
         if (!initialReservation.title && parts[0]) {
+          initTitle = parts[0];
           setStayTitle(parts[0]);
-          if (parts[1]) setDescription(parts[1]);
-          if (parts.length > 2) setNotes(parts.slice(2).join(' • '));
+          if (parts[1]) {
+            initDesc = parts[1];
+            setDescription(parts[1]);
+          }
+          if (parts.length > 2) {
+            initNotes = parts.slice(2).join(' • ');
+            setNotes(initNotes);
+          }
         } else {
+          initDesc = parts[0];
           setDescription(parts[0]);
-          if (parts.length > 1) setNotes(parts.slice(1).join(' • '));
+          if (parts.length > 1) {
+            initNotes = parts.slice(1).join(' • ');
+            setNotes(initNotes);
+          }
         }
       } else {
         setNotes('');
         setDescription('');
       }
 
+      let initMembers = [loggedInUserName];
       if (Array.isArray(parsedMembers) && parsedMembers.length > 0) {
+        initMembers = parsedMembers;
         setSelectedMembers(parsedMembers);
       } else if (initialReservation.user_name) {
-        setSelectedMembers([resolveSafeUserName(initialReservation.user_name)]);
+        initMembers = [resolveSafeUserName(initialReservation.user_name)];
+        setSelectedMembers(initMembers);
       } else {
         setSelectedMembers([loggedInUserName]);
       }
@@ -360,32 +492,55 @@ function BookingModalContent({
         }
       }
 
+      let normalizedRooms = [];
       if (roomsArray.length > 0) {
-        const normalized = roomsArray.map((r) => (r === 'Suite Parentale' ? 'Suite' : String(r).trim()));
-        setSelectedRooms(normalized);
-        const hasPresb = normalized.some((rName) => {
+        normalizedRooms = roomsArray.map((r) => (r === 'Suite Parentale' ? 'Suite' : String(r).trim()));
+        setSelectedRooms(normalizedRooms);
+        const hasPresb = normalizedRooms.some((rName) => {
           const found = ROOMS.find((r) => r.name === rName);
           return found ? found.house === 'presbytere' : false;
         });
         if (hasPresb && !presbytereHeatingManual) {
+          initPresb = true;
           setPresbytereHeating(true);
         }
       } else {
         setSelectedRooms([]);
       }
 
+      let initCohabitation = 'total';
       if (initialReservation.cohabitation_type) {
+        initCohabitation = initialReservation.cohabitation_type;
         setCohabitationType(initialReservation.cohabitation_type);
       } else if (initialReservation.accepts_extra_family === false) {
+        initCohabitation = 'exclusive';
         setCohabitationType('exclusive');
       } else {
         setCohabitationType('total');
       }
+
+      // Enregistrement de l'instantané initial pour détection des modifications non enregistrées
+      initialSnapshotRef.current = JSON.stringify({
+        startDate: initStart,
+        endDate: initEnd,
+        arrivalTime: initArrival,
+        departureTime: initDeparture,
+        stayTitle: (initTitle || '').trim(),
+        description: (initDesc || '').trim(),
+        selectedRooms: [...normalizedRooms].sort(),
+        selectedMembers: [...initMembers].sort(),
+        externalGuests: [...(Array.isArray(parsedGuests) ? parsedGuests : [])].sort(),
+        cohabitationType: initCohabitation,
+        notes: (initNotes || '').trim(),
+        poolHeating: Boolean(initPool),
+        presbytereHeating: Boolean(initPresb),
+      });
     } else {
-      setStartDate('2026-08-10');
-      setEndDate('2026-08-17');
-      setArrivalTime('15:00');
-      setDepartureTime('11:00');
+      const def = getDefaultWeekendRange();
+      setStartDate(def.startDate);
+      setEndDate(def.endDate);
+      setArrivalTime(def.arrivalTime);
+      setDepartureTime(def.departureTime);
       setStayTitle('');
       setDescription('');
       setSelectedMembers([loggedInUserName]);
@@ -397,6 +552,23 @@ function BookingModalContent({
       setPoolHeating(false);
       setPresbytereHeating(false);
       setPresbytereHeatingManual(false);
+
+      // Enregistrement de l'instantané initial pour détection des modifications en mode création
+      initialSnapshotRef.current = JSON.stringify({
+        startDate: def.startDate,
+        endDate: def.endDate,
+        arrivalTime: def.arrivalTime,
+        departureTime: def.departureTime,
+        stayTitle: '',
+        description: '',
+        selectedRooms: [],
+        selectedMembers: [loggedInUserName].sort(),
+        externalGuests: [],
+        cohabitationType: 'total',
+        notes: '',
+        poolHeating: false,
+        presbytereHeating: false,
+      });
     }
   }, [initialReservation, isOpen, loggedInUserName]);
 
@@ -444,8 +616,14 @@ function BookingModalContent({
 
   const handleSubmit = async (e) => {
     e.preventDefault();
+    if (isReadOnly) return;
     if (!startDate || !endDate) {
       setError("Veuillez sélectionner les dates d'arrivée et de départ.");
+      return;
+    }
+    // Annotation 8 : Garde-fous de date (interdiction de réserver dans le passé en création et départ >= arrivée)
+    if (!isEditMode && startDate < todayStr) {
+      setError("Il n'est pas possible de réserver un séjour à une date passée.");
       return;
     }
     if (new Date(endDate) < new Date(startDate)) {
@@ -582,12 +760,18 @@ function BookingModalContent({
             <div className="flex flex-col">
               <div className="flex items-center gap-2 flex-wrap">
                 <h1 className="font-headline-md text-headline-md text-on-surface tracking-tight">
-                  {isEditMode ? 'Modifier la réservation du séjour' : 'Réserver un Séjour au Domaine'}
+                  {isReadOnly
+                    ? 'Détails de la réservation du séjour'
+                    : isEditMode
+                    ? 'Modifier la réservation du séjour'
+                    : 'Réserver un Séjour au Domaine'}
                 </h1>
               </div>
               <div className="flex items-center gap-2 mt-0.5 flex-wrap">
                 <span className="font-body-md text-xs text-on-surface-variant">
-                  {isEditMode
+                  {isReadOnly
+                    ? 'Consultation des dates, participants, chambres et options domotiques'
+                    : isEditMode
                     ? 'Mise à jour des dates, participants, chambres et options domotiques'
                     : "Formulaire d'attribution des chambres, dates et participants"}
                 </span>
@@ -600,7 +784,7 @@ function BookingModalContent({
           </div>
           <button
             aria-label="Fermer la boîte de dialogue"
-            onClick={onClose}
+            onClick={handleSafeClose}
             className="w-10 h-10 rounded-full flex items-center justify-center text-on-surface-variant hover:text-on-surface hover:bg-surface-container-low transition-colors cursor-pointer"
             type="button"
           >
@@ -618,41 +802,64 @@ function BookingModalContent({
             </div>
           )}
 
-          {/* SECTION 1: Intitulé du séjour & Description facultative (Parité Stitch) */}
+          {/* Callout doré explicatif en tête pour consultation en lecture seule (Annotation 5) */}
+          {isReadOnly && (
+            <div className="p-3.5 rounded-DEFAULT bg-amber-50 dark:bg-amber-950/40 border border-amber-300 dark:border-amber-800 text-amber-900 dark:text-amber-200 text-xs sm:text-sm flex items-start gap-2.5 shadow-xs">
+              <span className="material-symbols-outlined text-[22px] text-amber-700 dark:text-amber-400 shrink-0 mt-0.5">
+                visibility
+              </span>
+              <div className="flex flex-col gap-0.5">
+                <span className="font-bold">Consultation en lecture seule</span>
+                <span>
+                  Ce séjour a été programmé par <strong>{authorName}</strong>. Vous êtes en mode consultation : les modifications et annulations sont réservées à l'auteur de la réservation.
+                </span>
+              </div>
+            </div>
+          )}
+
+          {/* SECTION 1: Intitulé du séjour & Description facultative (Annotation 4) */}
           <section className="flex flex-col gap-space-xs">
             <div className="grid grid-cols-1 md:grid-cols-2 gap-space-sm">
               <div className="flex flex-col gap-1.5">
                 <label className="font-label-lg text-label-lg text-on-surface flex items-center gap-2" htmlFor="stay-title">
                   <span className="flex items-center justify-center w-6 h-6 rounded-full bg-surface-container-high text-forest-deep text-xs font-bold">1</span>
-                  Intitulé du séjour
+                  <span>Intitulé du séjour <span className="text-xs font-normal text-on-surface-variant">(facultatif)</span></span>
                 </label>
                 <input
                   id="stay-title"
                   type="text"
+                  disabled={isReadOnly}
                   value={stayTitle || ''}
                   onChange={(e) => setStayTitle(e.target.value)}
-                  placeholder="Ex: Vacances de Pâques, Retrouvailles..."
-                  className="w-full h-11 px-3.5 bg-surface-container-lowest text-on-surface font-body-md text-body-md rounded-DEFAULT border-2 border-border-subtle focus:border-primary-container focus:outline-none transition-all placeholder:text-on-surface-variant/60"
+                  placeholder="Ex: Vacances de Pâques, Retrouvailles... (laisser vide pour nom de l'associé)"
+                  className="w-full h-11 px-3.5 bg-surface-container-lowest text-on-surface font-body-md text-body-md rounded-DEFAULT border-2 border-border-subtle focus:border-primary-container focus:outline-none transition-all placeholder:text-on-surface-variant/60 disabled:opacity-75 disabled:cursor-not-allowed"
                 />
+                <span className="font-body-md text-xs text-on-surface-variant">
+                  Si laissé vide, le séjour portera automatiquement le nom de l'associé ({applicant}).
+                </span>
               </div>
 
               <div className="flex flex-col gap-1.5">
                 <label className="font-label-lg text-label-lg text-on-surface flex items-center gap-2" htmlFor="stay-description">
-                  Description facultative du séjour
+                  <span>Description du séjour <span className="text-xs font-normal text-on-surface-variant">(facultatif)</span></span>
                 </label>
                 <input
                   id="stay-description"
                   type="text"
+                  disabled={isReadOnly}
                   value={description || ''}
                   onChange={(e) => setDescription(e.target.value)}
                   placeholder="Ex: Télétravail et taille des haies..."
-                  className="w-full h-11 px-3.5 bg-surface-container-lowest text-on-surface font-body-md text-body-md rounded-DEFAULT border-2 border-border-subtle focus:border-primary-container focus:outline-none transition-all placeholder:text-on-surface-variant/60"
+                  className="w-full h-11 px-3.5 bg-surface-container-lowest text-on-surface font-body-md text-body-md rounded-DEFAULT border-2 border-border-subtle focus:border-primary-container focus:outline-none transition-all placeholder:text-on-surface-variant/60 disabled:opacity-75 disabled:cursor-not-allowed"
                 />
+                <span className="font-body-md text-xs text-on-surface-variant">
+                  Précisions facultatives sur l'objet ou le programme du séjour.
+                </span>
               </div>
             </div>
           </section>
 
-          {/* SECTION 2: Dates & Heures */}
+          {/* SECTION 2: Dates & Heures (Annotation 8) */}
           <section className="flex flex-col gap-space-xs">
             <div className="flex items-center justify-between flex-wrap gap-2">
               <label className="font-label-lg text-label-lg text-on-surface flex items-center gap-2">
@@ -679,9 +886,17 @@ function BookingModalContent({
                     <input
                       id="date-arrivee"
                       type="date"
+                      disabled={isReadOnly}
+                      min={isEditMode && initialReservation?.start_date && initialReservation.start_date < todayStr ? initialReservation.start_date : todayStr}
                       value={startDate || ''}
-                      onChange={(e) => setStartDate(e.target.value)}
-                      className="w-full h-11 px-3 bg-surface-container-lowest text-on-surface font-body-md text-body-md rounded-DEFAULT border border-border-subtle focus:border-primary-container focus:outline-none transition-colors"
+                      onChange={(e) => {
+                        const newStart = e.target.value;
+                        setStartDate(newStart);
+                        if (endDate && newStart > endDate) {
+                          setEndDate(newStart);
+                        }
+                      }}
+                      className="w-full h-11 px-3 bg-surface-container-lowest text-on-surface font-body-md text-body-md rounded-DEFAULT border border-border-subtle focus:border-primary-container focus:outline-none transition-colors disabled:opacity-75 disabled:cursor-not-allowed"
                     />
                   </div>
                   <div className="col-span-2">
@@ -689,9 +904,10 @@ function BookingModalContent({
                     <input
                       id="heure-arrivee"
                       type="time"
-                      value={arrivalTime || '15:00'}
+                      disabled={isReadOnly}
+                      value={arrivalTime || '18:00'}
                       onChange={(e) => setArrivalTime(e.target.value)}
-                      className="w-full h-11 px-3 bg-surface-container-lowest text-on-surface font-body-md text-body-md rounded-DEFAULT border border-border-subtle focus:border-primary-container focus:outline-none transition-colors"
+                      className="w-full h-11 px-3 bg-surface-container-lowest text-on-surface font-body-md text-body-md rounded-DEFAULT border border-border-subtle focus:border-primary-container focus:outline-none transition-colors disabled:opacity-75 disabled:cursor-not-allowed"
                     />
                   </div>
                 </div>
@@ -711,9 +927,11 @@ function BookingModalContent({
                     <input
                       id="date-depart"
                       type="date"
+                      disabled={isReadOnly}
+                      min={startDate || todayStr}
                       value={endDate || ''}
                       onChange={(e) => setEndDate(e.target.value)}
-                      className="w-full h-11 px-3 bg-surface-container-lowest text-on-surface font-body-md text-body-md rounded-DEFAULT border border-border-subtle focus:border-primary-container focus:outline-none transition-colors"
+                      className="w-full h-11 px-3 bg-surface-container-lowest text-on-surface font-body-md text-body-md rounded-DEFAULT border border-border-subtle focus:border-primary-container focus:outline-none transition-colors disabled:opacity-75 disabled:cursor-not-allowed"
                     />
                   </div>
                   <div className="col-span-2">
@@ -721,9 +939,10 @@ function BookingModalContent({
                     <input
                       id="heure-depart"
                       type="time"
-                      value={departureTime || '11:00'}
+                      disabled={isReadOnly}
+                      value={departureTime || '18:00'}
                       onChange={(e) => setDepartureTime(e.target.value)}
-                      className="w-full h-11 px-3 bg-surface-container-lowest text-on-surface font-body-md text-body-md rounded-DEFAULT border border-border-subtle focus:border-primary-container focus:outline-none transition-colors"
+                      className="w-full h-11 px-3 bg-surface-container-lowest text-on-surface font-body-md text-body-md rounded-DEFAULT border border-border-subtle focus:border-primary-container focus:outline-none transition-colors disabled:opacity-75 disabled:cursor-not-allowed"
                     />
                   </div>
                 </div>
@@ -798,7 +1017,9 @@ function BookingModalContent({
                     return (
                       <label
                         key={room.id}
-                        className={`flex items-start gap-3 p-2.5 rounded-DEFAULT cursor-pointer border transition-all select-none ${
+                        className={`flex items-start gap-3 p-2.5 rounded-DEFAULT border transition-all select-none ${
+                          isReadOnly ? 'cursor-default opacity-85' : 'cursor-pointer'
+                        } ${
                           isChecked
                             ? 'bg-sage-soft/70 border-primary-container/40 text-forest-deep shadow-xs'
                             : 'bg-surface-container-lowest border-border-subtle/60 text-on-surface hover:bg-sage-soft/20'
@@ -806,9 +1027,10 @@ function BookingModalContent({
                       >
                         <input
                           type="checkbox"
+                          disabled={isReadOnly}
                           checked={isChecked}
-                          onChange={() => toggleRoom(room.name)}
-                          className="room-checkbox mt-1 w-5 h-5 rounded accent-primary-container cursor-pointer shrink-0"
+                          onChange={() => !isReadOnly && toggleRoom(room.name)}
+                          className="room-checkbox mt-1 w-5 h-5 rounded accent-primary-container cursor-pointer shrink-0 disabled:cursor-not-allowed"
                         />
                         <div className="flex flex-col min-w-0">
                           <span className="font-label-md text-label-md text-on-surface font-semibold">{room.name}</span>
@@ -838,7 +1060,9 @@ function BookingModalContent({
                     return (
                       <label
                         key={room.id}
-                        className={`flex items-start gap-3 p-2.5 rounded-DEFAULT cursor-pointer border transition-all select-none ${
+                        className={`flex items-start gap-3 p-2.5 rounded-DEFAULT border transition-all select-none ${
+                          isReadOnly ? 'cursor-default opacity-85' : 'cursor-pointer'
+                        } ${
                           isChecked
                             ? 'bg-sage-soft/70 border-primary-container/40 text-forest-deep shadow-xs'
                             : 'bg-surface-container-lowest border-border-subtle/60 text-on-surface hover:bg-sage-soft/20'
@@ -846,9 +1070,10 @@ function BookingModalContent({
                       >
                         <input
                           type="checkbox"
+                          disabled={isReadOnly}
                           checked={isChecked}
-                          onChange={() => toggleRoom(room.name)}
-                          className="room-checkbox mt-1 w-5 h-5 rounded accent-primary-container cursor-pointer shrink-0"
+                          onChange={() => !isReadOnly && toggleRoom(room.name)}
+                          className="room-checkbox mt-1 w-5 h-5 rounded accent-primary-container cursor-pointer shrink-0 disabled:cursor-not-allowed"
                         />
                         <div className="flex flex-col min-w-0">
                           <span className="font-label-md text-label-md text-on-surface font-semibold">{room.name}</span>
@@ -889,7 +1114,9 @@ function BookingModalContent({
                 </div>
                 <label
                   htmlFor="pool-heater-checkbox"
-                  className={`flex items-start gap-2.5 p-2.5 rounded-DEFAULT border cursor-pointer transition-all select-none ${
+                  className={`flex items-start gap-2.5 p-2.5 rounded-DEFAULT border transition-all select-none ${
+                    isReadOnly ? 'cursor-default opacity-85' : 'cursor-pointer'
+                  } ${
                     poolHeating
                       ? 'bg-sage-soft/60 border-primary-container/40 hover:bg-sage-soft'
                       : 'bg-surface-container-lowest border-border-subtle hover:border-outline'
@@ -898,9 +1125,10 @@ function BookingModalContent({
                   <input
                     id="pool-heater-checkbox"
                     type="checkbox"
+                    disabled={isReadOnly}
                     checked={poolHeating}
-                    onChange={(e) => setPoolHeating(e.target.checked)}
-                    className="mt-0.5 w-5 h-5 rounded accent-primary-container cursor-pointer shrink-0"
+                    onChange={(e) => !isReadOnly && setPoolHeating(e.target.checked)}
+                    className="mt-0.5 w-5 h-5 rounded accent-primary-container cursor-pointer shrink-0 disabled:cursor-not-allowed"
                   />
                   <div className="flex flex-col min-w-0">
                     <span className={`font-label-md text-label-md font-semibold ${poolHeating ? 'text-forest-deep' : 'text-on-surface'}`}>
@@ -930,7 +1158,9 @@ function BookingModalContent({
                 </div>
                 <label
                   htmlFor="presbytere-heating-checkbox"
-                  className={`flex items-start gap-2.5 p-2.5 rounded-DEFAULT border cursor-pointer transition-all select-none ${
+                  className={`flex items-start gap-2.5 p-2.5 rounded-DEFAULT border transition-all select-none ${
+                    isReadOnly ? 'cursor-default opacity-85' : 'cursor-pointer'
+                  } ${
                     presbytereHeating
                       ? 'bg-sage-soft/60 border-primary-container/40 hover:bg-sage-soft'
                       : 'bg-surface-container-lowest border-border-subtle hover:border-outline'
@@ -939,12 +1169,15 @@ function BookingModalContent({
                   <input
                     id="presbytere-heating-checkbox"
                     type="checkbox"
+                    disabled={isReadOnly}
                     checked={presbytereHeating}
                     onChange={(e) => {
-                      setPresbytereHeating(e.target.checked);
-                      setPresbytereHeatingManual(true);
+                      if (!isReadOnly) {
+                        setPresbytereHeating(e.target.checked);
+                        setPresbytereHeatingManual(true);
+                      }
                     }}
-                    className="mt-0.5 w-5 h-5 rounded accent-primary-container cursor-pointer shrink-0"
+                    className="mt-0.5 w-5 h-5 rounded accent-primary-container cursor-pointer shrink-0 disabled:cursor-not-allowed"
                   />
                   <div className="flex flex-col min-w-0">
                     <span className={`font-label-md text-label-md font-semibold ${presbytereHeating ? 'text-forest-deep' : 'text-on-surface'}`}>
@@ -990,7 +1223,9 @@ function BookingModalContent({
                       return (
                         <label
                           key={member.id}
-                          className={`flex items-center justify-between p-2.5 rounded-DEFAULT cursor-pointer transition-colors border select-none ${
+                          className={`flex items-center justify-between p-2.5 rounded-DEFAULT select-none transition-colors border ${
+                            isReadOnly ? 'cursor-default opacity-85' : 'cursor-pointer'
+                          } ${
                             isChecked
                               ? 'bg-sage-soft/60 border-primary-container/40 text-forest-deep shadow-xs'
                               : 'bg-surface-container-lowest border-border-subtle/70 text-on-surface hover:bg-surface-container-low/60'
@@ -1011,15 +1246,17 @@ function BookingModalContent({
                           </div>
                           <input
                             type="checkbox"
+                            disabled={isReadOnly}
                             checked={isChecked}
                             onChange={() => {
+                              if (isReadOnly) return;
                               if (isChecked) {
                                 setSelectedMembers(safeSelectedMembers.filter((m) => m !== member.name));
                               } else {
                                 setSelectedMembers([...safeSelectedMembers, member.name]);
                               }
                             }}
-                            className="w-5 h-5 rounded accent-primary-container cursor-pointer shrink-0"
+                            className="w-5 h-5 rounded accent-primary-container cursor-pointer shrink-0 disabled:cursor-not-allowed"
                           />
                         </label>
                       );
@@ -1041,21 +1278,23 @@ function BookingModalContent({
                   <div className="flex items-center gap-2">
                     <input
                       type="text"
+                      disabled={isReadOnly}
                       value={guestInputValue || ''}
                       onChange={(e) => setGuestInputValue(e.target.value)}
                       onKeyDown={(e) => {
                         if (e.key === 'Enter') {
                           e.preventDefault();
-                          handleAddGuest();
+                          if (!isReadOnly) handleAddGuest();
                         }
                       }}
                       placeholder="Prénom ou Nom de l'invité..."
-                      className="flex-1 h-11 px-3.5 bg-surface-container-lowest text-on-surface font-body-md text-body-md rounded-DEFAULT border border-border-subtle focus:border-primary-container focus:outline-none transition-colors placeholder:text-on-surface-variant/60 min-w-0"
+                      className="flex-1 h-11 px-3.5 bg-surface-container-lowest text-on-surface font-body-md text-body-md rounded-DEFAULT border border-border-subtle focus:border-primary-container focus:outline-none transition-colors placeholder:text-on-surface-variant/60 min-w-0 disabled:opacity-75 disabled:cursor-not-allowed"
                     />
                     <button
                       type="button"
+                      disabled={isReadOnly}
                       onClick={handleAddGuest}
-                      className="h-11 px-4 rounded-DEFAULT bg-sage-soft hover:bg-primary-container hover:text-white text-primary-container font-label-md text-label-md border border-sage-border flex items-center gap-1 transition-all shrink-0 cursor-pointer"
+                      className="h-11 px-4 rounded-DEFAULT bg-sage-soft hover:bg-primary-container hover:text-white text-primary-container font-label-md text-label-md border border-sage-border flex items-center gap-1 transition-all shrink-0 cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed"
                     >
                       <span className="material-symbols-outlined text-[20px]">add</span>
                       Ajouter
@@ -1077,14 +1316,16 @@ function BookingModalContent({
                             person
                           </span>
                           <span className="truncate max-w-[140px] sm:max-w-[180px]">{guest}</span>
-                          <button
-                            type="button"
-                            aria-label={`Retirer ${guest}`}
-                            onClick={() => handleRemoveGuest(guest)}
-                            className="w-4 h-4 rounded-full inline-flex items-center justify-center text-on-surface-variant hover:text-error hover:bg-error-container transition-colors ml-0.5 cursor-pointer"
-                          >
-                            <span className="material-symbols-outlined text-[14px]">close</span>
-                          </button>
+                          {!isReadOnly && (
+                            <button
+                              type="button"
+                              aria-label={`Retirer ${guest}`}
+                              onClick={() => handleRemoveGuest(guest)}
+                              className="w-4 h-4 rounded-full inline-flex items-center justify-center text-on-surface-variant hover:text-error hover:bg-error-container transition-colors ml-0.5 cursor-pointer"
+                            >
+                              <span className="material-symbols-outlined text-[14px]">close</span>
+                            </button>
+                          )}
                         </span>
                       ))
                     )}
@@ -1107,8 +1348,11 @@ function BookingModalContent({
               {/* Option 1 : Cohabitation Totale */}
               <button
                 type="button"
-                onClick={() => setCohabitationType('total')}
-                className={`flex flex-col items-start p-3.5 rounded-DEFAULT text-left border-2 transition-all cursor-pointer ${
+                disabled={isReadOnly}
+                onClick={() => !isReadOnly && setCohabitationType('total')}
+                className={`flex flex-col items-start p-3.5 rounded-DEFAULT text-left border-2 transition-all ${
+                  isReadOnly ? 'cursor-default' : 'cursor-pointer'
+                } ${
                   cohabitationType === 'total'
                     ? 'bg-sage-soft/80 border-primary-container shadow-xs text-forest-deep'
                     : 'bg-surface-container-lowest border-border-subtle hover:bg-surface-container-low/50 text-on-surface'
@@ -1134,10 +1378,10 @@ function BookingModalContent({
               <div className="relative group flex flex-col">
                 <button
                   type="button"
-                  disabled={isOtherBuildingDisabled}
-                  onClick={() => !isOtherBuildingDisabled && setCohabitationType('other_building')}
+                  disabled={isOtherBuildingDisabled || isReadOnly}
+                  onClick={() => !isOtherBuildingDisabled && !isReadOnly && setCohabitationType('other_building')}
                   className={`flex-1 flex flex-col items-start p-3.5 rounded-DEFAULT text-left border-2 transition-all w-full ${
-                    isOtherBuildingDisabled
+                    isOtherBuildingDisabled || isReadOnly
                       ? 'bg-surface-container-low/40 border-border-subtle/50 text-on-surface-variant/50 cursor-not-allowed opacity-60'
                       : cohabitationType === 'other_building'
                       ? 'bg-sage-soft/80 border-primary-container shadow-xs text-forest-deep cursor-pointer'
@@ -1174,8 +1418,11 @@ function BookingModalContent({
               {/* Option 3 : Exclusif (Privatisation) */}
               <button
                 type="button"
-                onClick={() => setCohabitationType('exclusive')}
-                className={`flex flex-col items-start p-3.5 rounded-DEFAULT text-left border-2 transition-all cursor-pointer ${
+                disabled={isReadOnly}
+                onClick={() => !isReadOnly && setCohabitationType('exclusive')}
+                className={`flex flex-col items-start p-3.5 rounded-DEFAULT text-left border-2 transition-all ${
+                  isReadOnly ? 'cursor-default' : 'cursor-pointer'
+                } ${
                   cohabitationType === 'exclusive'
                     ? 'bg-amber-50 border-amber-600 shadow-xs text-amber-900'
                     : 'bg-surface-container-lowest border-border-subtle hover:bg-surface-container-low/50 text-on-surface'
@@ -1207,48 +1454,106 @@ function BookingModalContent({
               <textarea
                 id="stay-notes"
                 rows={3}
+                disabled={isReadOnly}
                 value={notes || ''}
                 onChange={(e) => setNotes(e.target.value)}
                 placeholder="Heure d'arrivée estimée, besoins spécifiques, présence d'enfants en bas âge, animaux de compagnie..."
-                className="w-full p-3 bg-surface-container-lowest text-on-surface font-body-md text-body-md rounded-DEFAULT border-2 border-border-subtle focus:border-primary-container focus:outline-none transition-colors resize-none placeholder:text-on-surface-variant/60"
+                className="w-full p-3 bg-surface-container-lowest text-on-surface font-body-md text-body-md rounded-DEFAULT border-2 border-border-subtle focus:border-primary-container focus:outline-none transition-colors resize-none placeholder:text-on-surface-variant/60 disabled:opacity-75 disabled:cursor-not-allowed"
               />
             </div>
           </section>
 
-          {/* Modal Footer / Boutons d'action (Annotation 7) */}
+          {/* Modal Footer / Boutons d'action (Annotation 5 & 7) */}
           <footer className="flex items-center justify-between gap-3 pt-space-sm border-t border-border-subtle/80 flex-wrap shrink-0">
-            <div>
-              {isEditMode && (
+            {isReadOnly ? (
+              <div className="w-full flex justify-end">
                 <button
                   type="button"
-                  onClick={handleDeleteBooking}
-                  disabled={submitting}
-                  className="px-5 py-2.5 rounded-xl text-sm font-semibold inline-flex items-center gap-2 bg-rose-50 hover:bg-rose-100 text-rose-700 border border-rose-200 shadow-sm active:scale-95 transition-all cursor-pointer disabled:opacity-50"
+                  onClick={handleSafeClose}
+                  className="px-6 py-2.5 rounded-xl bg-slate-800 hover:bg-slate-700 text-white text-sm font-semibold inline-flex items-center gap-2 transition-all shadow-sm active:scale-95 cursor-pointer"
                 >
-                  <span className="material-symbols-outlined text-[18px]">delete</span>
-                  Annuler ce séjour
+                  <span className="material-symbols-outlined text-[18px]">close</span>
+                  Fermer
                 </button>
-              )}
-            </div>
-            <div className="flex items-center gap-3 ml-auto">
-              <button
-                type="submit"
-                disabled={submitting}
-                className="px-5 py-2.5 rounded-xl bg-surface-container-lowest border-2 border-primary-container hover:bg-sage-soft active:bg-primary-fixed text-primary-container text-sm font-semibold inline-flex items-center gap-2 transition-all shadow-sm active:scale-95 cursor-pointer disabled:opacity-50"
-              >
-                {submitting ? (
-                  <span className="inline-block w-4 h-4 border-2 border-primary-container border-t-transparent rounded-full animate-spin"></span>
-                ) : (
-                  <span className="material-symbols-outlined text-[18px]" style={{ fontVariationSettings: '"FILL" 1' }}>
-                    check_circle
-                  </span>
-                )}
-                {isEditMode ? 'Mettre à jour le séjour' : 'Confirmer la réservation du séjour'}
-              </button>
-            </div>
+              </div>
+            ) : (
+              <>
+                <div>
+                  {isEditMode && (
+                    <button
+                      type="button"
+                      onClick={handleDeleteBooking}
+                      disabled={submitting}
+                      className="px-5 py-2.5 rounded-xl text-sm font-semibold inline-flex items-center gap-2 bg-rose-50 hover:bg-rose-100 text-rose-700 border border-rose-200 shadow-sm active:scale-95 transition-all cursor-pointer disabled:opacity-50"
+                    >
+                      <span className="material-symbols-outlined text-[18px]">delete</span>
+                      Annuler ce séjour
+                    </button>
+                  )}
+                </div>
+                <div className="flex items-center gap-3 ml-auto">
+                  <button
+                    type="submit"
+                    disabled={submitting}
+                    className="px-5 py-2.5 rounded-xl bg-surface-container-lowest border-2 border-primary-container hover:bg-sage-soft active:bg-primary-fixed text-primary-container text-sm font-semibold inline-flex items-center gap-2 transition-all shadow-sm active:scale-95 cursor-pointer disabled:opacity-50"
+                  >
+                    {submitting ? (
+                      <span className="inline-block w-4 h-4 border-2 border-primary-container border-t-transparent rounded-full animate-spin"></span>
+                    ) : (
+                      <span className="material-symbols-outlined text-[18px]" style={{ fontVariationSettings: '"FILL" 1' }}>
+                        check_circle
+                      </span>
+                    )}
+                    {isEditMode ? 'Mettre à jour le séjour' : 'Confirmer la réservation du séjour'}
+                  </button>
+                </div>
+              </>
+            )}
           </footer>
 
         </form>
+
+        {/* Modale de confirmation Quitter sans enregistrer si dirty (Annotation 9) */}
+        {showDiscardConfirm && (
+          <div
+            className="fixed inset-0 z-60 bg-slate-900/60 backdrop-blur-xs flex items-center justify-center p-4 animate-in fade-in duration-150"
+            role="dialog"
+            aria-modal="true"
+          >
+            <div className="bg-surface-container-lowest rounded-2xl p-6 max-w-md w-full shadow-2xl border border-border-subtle space-y-4 animate-in zoom-in-95 duration-150">
+              <div className="flex items-center gap-3 text-amber-700 dark:text-amber-400">
+                <div className="w-10 h-10 rounded-xl bg-amber-100 dark:bg-amber-950/60 flex items-center justify-center shrink-0">
+                  <span className="material-symbols-outlined text-[24px]">warning</span>
+                </div>
+                <h3 className="font-bold text-base text-on-surface">
+                  Modifications non enregistrées
+                </h3>
+              </div>
+              <p className="text-xs sm:text-sm text-on-surface-variant leading-relaxed">
+                Vous avez modifié des informations sans les enregistrer. Voulez-vous vraiment quitter sans enregistrer vos modifications ?
+              </p>
+              <div className="pt-2 flex items-center justify-end gap-3">
+                <button
+                  type="button"
+                  onClick={() => setShowDiscardConfirm(false)}
+                  className="px-4 py-2.5 rounded-xl bg-surface-container-low hover:bg-surface-container text-on-surface font-semibold text-xs sm:text-sm transition-colors cursor-pointer"
+                >
+                  Continuer la saisie
+                </button>
+                <button
+                  type="button"
+                  onClick={() => {
+                    setShowDiscardConfirm(false);
+                    onClose();
+                  }}
+                  className="px-4 py-2.5 rounded-xl bg-rose-600 hover:bg-rose-700 text-white font-semibold text-xs sm:text-sm transition-colors cursor-pointer shadow-sm active:scale-95"
+                >
+                  Quitter sans enregistrer
+                </button>
+              </div>
+            </div>
+          </div>
+        )}
 
       </div>
     </div>

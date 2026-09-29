@@ -226,6 +226,21 @@ function VoteRoofModalInner({
 }) {
   const currentUserName = resolveUserName(currentUser);
   const currentUserLower = currentUserName.toLowerCase();
+  const currentUserId = String(
+    (typeof currentUser === 'object' && currentUser !== null)
+      ? (currentUser.id || currentUser.user_id || '')
+      : ''
+  ).toLowerCase().trim();
+  const currentUserRole = String(
+    (typeof currentUser === 'object' && currentUser !== null)
+      ? (currentUser.role || '')
+      : ''
+  ).toLowerCase().trim();
+  const currentUserFirst = String(
+    (typeof currentUser === 'object' && currentUser !== null && currentUser.prenom)
+      ? currentUser.prenom
+      : currentUserName.split(' ')[0]
+  ).toLowerCase().trim();
 
   const isNewProject = Boolean(project?.isNew || !project?.id);
 
@@ -304,25 +319,6 @@ function VoteRoofModalInner({
   // Ref vers la section de vote et d'arbitrage pour défilement fluide
   const voteSectionRef = useRef(null);
   const arbitrationSectionRef = useRef(null);
-
-  // Droits de gouvernance : Coordinateur ou Auteur du vote (Annotations 4, 5, 6, 12)
-  const isCoordinator = Boolean(
-    currentUser?.is_coordinator === true ||
-    currentUser?.is_coordinator === 'true' ||
-    currentUser?.is_coordinator === 1 ||
-    currentUserLower.includes('henri') ||
-    currentUserLower.includes('josephine') ||
-    currentUserLower.includes('joséphine')
-  );
-  const isAuthor = Boolean(
-    activeProject?.created_by && (
-      String(activeProject.created_by).toLowerCase() === currentUserLower ||
-      currentUserLower.includes(String(activeProject.created_by).toLowerCase()) ||
-      (currentAssociate?.id && String(activeProject.created_by).toLowerCase() === String(currentAssociate.id).toLowerCase())
-    )
-  );
-  const canEditOrDelete = Boolean(isCoordinator || isAuthor);
-  const canManageVote = canEditOrDelete;
 
   const [editTitle, setEditTitle] = useState(projectTitle);
   const [editDescription, setEditDescription] = useState(projectDescription);
@@ -511,6 +507,49 @@ function VoteRoofModalInner({
       );
     }) || (associatesVotes && associatesVotes[0]) || DEFAULT_ASSOCIATES[0];
   }, [associatesVotes, currentUserLower]);
+
+  // Droits de gouvernance : Coordinateur ou Créateur réel du vote (Annotation 1)
+  const isCoordinator = Boolean(
+    currentUser?.is_coordinator === true ||
+    currentUser?.is_coordinator === 'true' ||
+    currentUser?.is_coordinator === 1 ||
+    currentUserRole === 'coordinateur' ||
+    currentUserRole === 'coordinator' ||
+    currentUserLower.includes('henri') ||
+    currentUserLower.includes('josephine') ||
+    currentUserLower.includes('joséphine')
+  );
+
+  // Vérification stricte du créateur réel du vote (submitted_by, created_by, creator_id)
+  const isCreator = Boolean(
+    // 1. Vérification par creator_id
+    (activeProject?.creator_id && (
+      (currentUserId && String(activeProject.creator_id).toLowerCase() === currentUserId) ||
+      String(activeProject.creator_id).toLowerCase() === currentUserLower ||
+      (currentAssociate?.id && String(activeProject.creator_id).toLowerCase() === String(currentAssociate.id).toLowerCase())
+    )) ||
+    // 2. Vérification par created_by
+    (activeProject?.created_by && (
+      String(activeProject.created_by).toLowerCase() === currentUserLower ||
+      (currentUserId && String(activeProject.created_by).toLowerCase() === currentUserId) ||
+      currentUserLower.includes(String(activeProject.created_by).toLowerCase()) ||
+      String(activeProject.created_by).toLowerCase().includes(currentUserLower) ||
+      (currentAssociate?.id && String(activeProject.created_by).toLowerCase() === String(currentAssociate.id).toLowerCase()) ||
+      (currentUserFirst && currentUserFirst.length >= 3 && String(activeProject.created_by).toLowerCase().includes(currentUserFirst))
+    )) ||
+    // 3. Vérification par submitted_by
+    (activeProject?.submitted_by && (
+      String(activeProject.submitted_by).toLowerCase() === currentUserLower ||
+      (currentUserId && String(activeProject.submitted_by).toLowerCase() === currentUserId) ||
+      currentUserLower.includes(String(activeProject.submitted_by).toLowerCase()) ||
+      String(activeProject.submitted_by).toLowerCase().includes(currentUserLower) ||
+      (currentAssociate?.id && String(activeProject.submitted_by).toLowerCase() === String(currentAssociate.id).toLowerCase()) ||
+      (currentUserFirst && currentUserFirst.length >= 3 && String(activeProject.submitted_by).toLowerCase().includes(currentUserFirst))
+    ))
+  );
+
+  const canEditOrDelete = Boolean(isCoordinator || isCreator);
+  const canManageVote = canEditOrDelete;
 
   // Verrouillage du scroll en arrière-plan
   useEffect(() => {

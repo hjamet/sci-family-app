@@ -78,6 +78,46 @@ DEFAULT_MEMBER_EMAILS: List[str] = [
     "elizabeth_jamet@yahoo.fr"
 ]
 
+# ==============================================================================
+# REGISTRE D'EMAILS RÉCENTS DISPATCHÉS / SIMULÉS (POUR NOTIFICATIONS & PREVIEWS)
+# ==============================================================================
+RECENT_DISPATCHED_EMAILS: List[Dict[str, Any]] = []
+
+def record_dispatched_email(
+    trigger_action: str,
+    subject: str,
+    recipients: Union[str, List[str]],
+    html_content: str,
+    recipients_names: Optional[List[str]] = None,
+    status: str = "simulated"
+) -> Dict[str, Any]:
+    """Enregistre un email dans le registre en mémoire RECENT_DISPATCHED_EMAILS (max 20)."""
+    global RECENT_DISPATCHED_EMAILS
+    import uuid
+    from datetime import datetime
+
+    recips_list = [recipients] if isinstance(recipients, str) else list(recipients)
+    names = list(recipients_names) if recipients_names else []
+    if not names:
+        for r in recips_list:
+            clean = r.split("@")[0].replace(".", " ").replace("_", " ").title()
+            names.append(clean)
+
+    email_entry = {
+        "id": str(uuid.uuid4()),
+        "created_at": datetime.utcnow().isoformat() + "Z",
+        "trigger_action": trigger_action,
+        "subject": subject,
+        "recipients": recips_list,
+        "recipients_names": names,
+        "html_content": html_content,
+        "status": status
+    }
+    RECENT_DISPATCHED_EMAILS.insert(0, email_entry)
+    if len(RECENT_DISPATCHED_EMAILS) > 20:
+        RECENT_DISPATCHED_EMAILS = RECENT_DISPATCHED_EMAILS[:20]
+    return email_entry
+
 def check_firewall(to_email: Union[str, List[str]]) -> Optional[dict]:
     """
     Vérification pare-feu hermétique avant tout envoi ou rendu HTML :
@@ -358,9 +398,7 @@ def send_task_assigned_email(
     Champs réels conservés : Titre, Catégorie/Domaine, Localisation, Priorité, Charge (points), Assigné à, Description.
     Zéro champ fictif (aucune date limite).
     """
-    blocked = check_firewall(to_email)
-    if blocked:
-        return blocked
+    # Pare-feu et coupe-circuit hermétiques gérés de façon centrale dans send_email
     priority_colors = {
         "critique": ("#fee2e2", "#991b1b", "#dc2626"),
         "haute": ("#ffedd5", "#9a3412", "#ea580c"),
@@ -426,7 +464,20 @@ def send_task_assigned_email(
         action_label="Consulter la tâche sur l'application"
     )
 
-    return send_email(to_email=to_email, subject=subject, html_content=html_body)
+    names = [assignee_name] if assignee_name else []
+    email_entry = record_dispatched_email(
+        trigger_action="task_assigned",
+        subject=subject,
+        recipients=to_email,
+        html_content=html_body,
+        recipients_names=names,
+        status="simulated" if is_email_disabled() else "sent"
+    )
+
+    res = send_email(to_email=to_email, subject=subject, html_content=html_body)
+    if isinstance(res, dict):
+        res["_email_dispatched"] = email_entry
+    return res
 
 
 def send_vote_required_email(
@@ -442,9 +493,7 @@ def send_vote_required_email(
     Template 2: VOTE REQUIS
     Notifies a member that a formal decision/vote requires their ballot.
     """
-    blocked = check_firewall(to_email)
-    if blocked:
-        return blocked
+    # Pare-feu et coupe-circuit hermétiques gérés de façon centrale dans send_email
     cost_display = f"{estimated_cost:,.2f} €".replace(",", " ") if (estimated_cost is not None and estimated_cost > 0) else "Sans impact financier immédiat"
     action_url = f"{APP_BASE_URL}/#votes"
 
@@ -496,7 +545,20 @@ def send_vote_required_email(
         action_label="Exprimer mon vote"
     )
 
-    return send_email(to_email=to_email, subject=subject, html_content=html_body)
+    names = ["Tous les associés"] if (isinstance(to_email, (list, tuple, set)) and len(to_email) >= 5) else None
+    email_entry = record_dispatched_email(
+        trigger_action="vote_required",
+        subject=subject,
+        recipients=to_email,
+        html_content=html_body,
+        recipients_names=names,
+        status="simulated" if is_email_disabled() else "sent"
+    )
+
+    res = send_email(to_email=to_email, subject=subject, html_content=html_body)
+    if isinstance(res, dict):
+        res["_email_dispatched"] = email_entry
+    return res
 
 
 def send_vote_closed_email(
@@ -512,9 +574,7 @@ def send_vote_closed_email(
     Template 3: DÉCISION FINALE DE VOTE
     Notifies all members of the final result once all 7 associates have voted.
     """
-    blocked = check_firewall(to_email)
-    if blocked:
-        return blocked
+    # Pare-feu et coupe-circuit hermétiques gérés de façon centrale dans send_email
     is_adopted = "adopt" in decision.lower() or "approuv" in decision.lower()
     is_report = "report" in decision.lower()
 
@@ -597,7 +657,20 @@ def send_vote_closed_email(
         action_label="Consulter les détails du vote"
     )
 
-    return send_email(to_email=to_email, subject=subject, html_content=html_body)
+    names = ["Tous les associés"]
+    email_entry = record_dispatched_email(
+        trigger_action="vote_closed",
+        subject=subject,
+        recipients=to_email,
+        html_content=html_body,
+        recipients_names=names,
+        status="simulated" if is_email_disabled() else "sent"
+    )
+
+    res = send_email(to_email=to_email, subject=subject, html_content=html_body)
+    if isinstance(res, dict):
+        res["_email_dispatched"] = email_entry
+    return res
 
 
 def send_stay_booked_email(
@@ -615,9 +688,7 @@ def send_stay_booked_email(
     Template 4: NOUVEAU SÉJOUR RÉSERVÉ
     Notifies family members when an associate books a stay at the estate.
     """
-    blocked = check_firewall(to_email)
-    if blocked:
-        return blocked
+    # Pare-feu et coupe-circuit hermétiques gérés de façon centrale dans send_email
     rooms_display = ""
     if rooms:
         if isinstance(rooms, str):
@@ -675,7 +746,20 @@ def send_stay_booked_email(
         action_label="Consulter le calendrier des séjours"
     )
 
-    return send_email(to_email=to_email, subject=subject, html_content=html_body)
+    names = ["Famille Hellenvilliers"]
+    email_entry = record_dispatched_email(
+        trigger_action="stay_booked",
+        subject=subject,
+        recipients=to_email,
+        html_content=html_body,
+        recipients_names=names,
+        status="simulated" if is_email_disabled() else "sent"
+    )
+
+    res = send_email(to_email=to_email, subject=subject, html_content=html_body)
+    if isinstance(res, dict):
+        res["_email_dispatched"] = email_entry
+    return res
 
 
 def send_password_reset_email(
@@ -785,9 +869,7 @@ def send_thermal_change_email(
     Notifies subscribed members when heating or pool settings are adjusted.
     Enforces the strict hermetic family firewall (only hellenvillierssci@gmail.com is allowed).
     """
-    blocked = check_firewall(target_emails)
-    if blocked:
-        return blocked
+    # Pare-feu et coupe-circuit hermétiques gérés de façon centrale dans send_email
 
     subject = f"[Domaine d'Hellenvilliers] Modification des consignes thermiques — {equipment_type}"
     preheader = f"Consignes modifiées par {author_name} pour {equipment_type} : {details}"
@@ -822,7 +904,20 @@ def send_thermal_change_email(
         action_label="Consulter l'espace Séjour & Énergie"
     )
 
-    return send_email(to_email=target_emails, subject=subject, html_content=html_body)
+    names = ["Associés abonnés énergie"]
+    email_entry = record_dispatched_email(
+        trigger_action="thermal_change",
+        subject=subject,
+        recipients=target_emails,
+        html_content=html_body,
+        recipients_names=names,
+        status="simulated" if is_email_disabled() else "sent"
+    )
+
+    res = send_email(to_email=target_emails, subject=subject, html_content=html_body)
+    if isinstance(res, dict):
+        res["_email_dispatched"] = email_entry
+    return res
 
 
 def send_notification_email(

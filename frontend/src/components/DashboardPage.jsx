@@ -12,7 +12,6 @@ import {
   invalidateTask,
   acceptTask,
   rejectTask,
-  deleteProject,
   getCachedData,
 } from '../api';
 import TaskDetailModal from './TaskDetailModal';
@@ -86,6 +85,82 @@ export function formatLiteraryStayDates(startDateStr, endDateStr) {
   }
 
   return 'Dates à confirmer';
+}
+
+export const ACTIVE_VOTE_STATUSES = [
+  'OPEN',
+  'EN_VOTE',
+  'EN_COURS',
+  'SOUMIS',
+  'PENDING_VALIDATION',
+  'EN_ATTENTE_VALIDATION',
+  'A_ARBITRER',
+  'ARBITRAGE',
+];
+
+/**
+ * Vérifie si l'utilisateur connecté a déjà exprimé un vote effectif sur un projet donné (Annotation 2)
+ */
+export function hasUserParticipatedInVote(project, user) {
+  if (!project || !user) return false;
+
+  let votes = project.votes;
+  if (typeof votes === 'string') {
+    try {
+      votes = JSON.parse(votes);
+    } catch (_) {
+      votes = [];
+    }
+  }
+  if (!Array.isArray(votes) || votes.length === 0) return false;
+
+  const userObj = typeof user === 'object' && user !== null ? user : null;
+  const rawName = userObj ? (userObj.name || userObj.prenom || userObj.username || userObj.email || '') : String(user);
+  const cleanName = String(rawName).trim().toLowerCase();
+  const cleanFirst = userObj?.prenom 
+    ? String(userObj.prenom).trim().toLowerCase() 
+    : (cleanName.split(' ')[0] || '');
+  const cleanId = String(userObj?.id || userObj?.user_id || '').trim().toLowerCase();
+
+  const statutoryAliases = [
+    { id: 'henri', match: ['henri'] },
+    { id: 'josephine', match: ['josephine', 'joséphine'] },
+    { id: 'hortense', match: ['hortense'] },
+    { id: 'marguerite', match: ['marguerite'] },
+    { id: 'eugenie', match: ['eugenie', 'eugénie'] },
+    { id: 'elisabeth', match: ['elisabeth', 'élisabeth'] },
+    { id: 'frederic', match: ['frederic', 'frédéric'] },
+  ];
+  const matchedStatutory = statutoryAliases.find(a =>
+    a.match.some(m => cleanName.includes(m) || cleanFirst === m || cleanId === a.id)
+  );
+
+  return votes.some(v => {
+    if (!v) return false;
+
+    // Un vote non émis ou 'EN_ATTENTE' ne compte pas comme une participation
+    const rawChoice = v.vote ?? v.choice ?? v.value ?? (typeof v === 'string' ? v : '');
+    const choiceStr = String(rawChoice || '').trim().toUpperCase();
+    if (!choiceStr || choiceStr === 'EN_ATTENTE') return false;
+
+    let voterName = '';
+    let voterId = '';
+    if (typeof v === 'string') {
+      voterName = v.toLowerCase().trim();
+    } else if (typeof v === 'object') {
+      voterName = String(v.user_name || v.author || v.name || v.user?.name || v.user?.prenom || (typeof v.user === 'string' ? v.user : '') || '').toLowerCase().trim();
+      voterId = String(v.user_id || v.member_id || v.id || '').toLowerCase().trim();
+    }
+
+    if (cleanId && voterId && cleanId === voterId) return true;
+    if (cleanName && voterName && (cleanName === voterName || voterName.includes(cleanName) || cleanName.includes(voterName))) return true;
+    if (cleanFirst && cleanFirst.length >= 3 && voterName && voterName.includes(cleanFirst)) return true;
+    if (matchedStatutory) {
+      if (voterId === matchedStatutory.id) return true;
+      if (matchedStatutory.match.some(m => voterName.includes(m))) return true;
+    }
+    return false;
+  });
 }
 
 export default function DashboardPage({
@@ -303,8 +378,15 @@ export default function DashboardPage({
     navigate(destPath);
   };
 
-  // Find active project or null
-  const activeVote = projects.find(p => p.status === 'EN_VOTE' || p.status === 'SOUMIS' || p.status === 'EN_COURS') || (projects.length > 0 ? projects[0] : null);
+  // Sélection du scrutin actif : uniquement les scrutins en cours ou en attente d'arbitrage
+  // auxquels l'utilisateur connecté n'a PAS encore participé (Annotation 2)
+  const activeVote = projects.find(p => {
+    if (!p) return false;
+    const statusUpper = String(p.status || '').toUpperCase();
+    const isActiveStatus = ACTIVE_VOTE_STATUSES.includes(statusUpper);
+    if (!isActiveStatus) return false;
+    return !hasUserParticipatedInVote(p, currentUser);
+  }) || null;
 
   const activeVoteVotes = Array.isArray(activeVote?.votes) ? activeVote.votes : [];
   const activeVotePour = activeVoteVotes.filter(v => v && ['OUI', 'POUR'].includes(String(v.vote || v.choice || '').toUpperCase()));
@@ -332,34 +414,6 @@ export default function DashboardPage({
     currentUserName.toLowerCase().includes('joséphine') ||
     currentUserName.toLowerCase().includes('josephine')
   );
-
-  const canManageActiveVote = Boolean(
-    activeVote && (
-      isCoordinator ||
-      currentUserName.toLowerCase() === 'henri jamet' ||
-      (activeVote.submitted_by && currentUserName.toLowerCase().includes(String(activeVote.submitted_by).toLowerCase().split(' ')[0])) ||
-      (activeVote.created_by && (String(activeVote.created_by).toLowerCase() === currentUserName.toLowerCase() || currentUserName.toLowerCase().includes(String(activeVote.created_by).toLowerCase())))
-    )
-  );
-
-  const handleEditVote = (vote) => {
-    setSelectedVoteForModal(vote);
-    setIsVoteModalInitialEditing(true);
-    setIsRoofVoteModalOpen(true);
-  };
-
-  const handleDeleteVote = async (vote) => {
-    if (!vote?.id) return;
-    const ok = window.confirm(`Êtes-vous sûr de vouloir supprimer définitivement le scrutin « ${vote.title} » ? Cette action est irréversible.`);
-    if (!ok) return;
-    try {
-      await deleteProject(vote.id);
-      setProjects(prev => prev.filter(p => p.id !== vote.id));
-      await loadDashboardData({ forceRefresh: true });
-    } catch (err) {
-      alert(`Erreur lors de la suppression du scrutin : ${err.message}`);
-    }
-  };
 
   const handleValidateTask = async (taskId) => {
     try {
@@ -724,34 +778,6 @@ export default function DashboardPage({
               </div>
 
               <div className="flex items-center gap-2">
-                {canManageActiveVote && (
-                  <>
-                    <button
-                      type="button"
-                      onClick={(e) => {
-                        e.stopPropagation();
-                        handleEditVote(activeVote);
-                      }}
-                      className="inline-flex items-center gap-1 px-3 py-2 rounded-DEFAULT bg-white dark:bg-slate-800 border border-slate-300 dark:border-slate-600 text-slate-700 dark:text-slate-200 font-label-sm text-xs font-semibold hover:bg-slate-50 transition-colors shadow-2xs cursor-pointer"
-                      title="Modifier les paramètres du scrutin"
-                    >
-                      <span className="material-symbols-outlined text-[16px]">edit</span>
-                      <span>Modifier</span>
-                    </button>
-                    <button
-                      type="button"
-                      onClick={(e) => {
-                        e.stopPropagation();
-                        handleDeleteVote(activeVote);
-                      }}
-                      className="inline-flex items-center gap-1 px-3 py-2 rounded-DEFAULT bg-rose-50 border border-rose-200 text-rose-700 hover:bg-rose-100 font-label-sm text-xs font-semibold transition-colors shadow-2xs cursor-pointer"
-                      title="Supprimer définitivement ce scrutin"
-                    >
-                      <span className="material-symbols-outlined text-[16px]">delete</span>
-                      <span>Supprimer</span>
-                    </button>
-                  </>
-                )}
                 <button
                   type="button"
                   onClick={(e) => {

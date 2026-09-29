@@ -25,6 +25,7 @@ import {
   getTaskStatusMeta,
   isTaskAssignedToUser,
   isTaskOpen,
+  resolveUserMeta,
 } from '../utils/taskAssignment';
 import CustomSelect from './CustomSelect';
 import DocumentViewerModal from './DocumentViewerModal';
@@ -479,7 +480,17 @@ export default function TaskDetailModal({
   );
   const canDeleteTask = isCoordinator || isAuthor;
 
-  const isAssignedToCurrentUser = isTaskAssignedToUser(task, currentUser);
+  const userMeta = resolveUserMeta(currentUser);
+  const currentUserId = currentUser?.id ?? userMeta?.id;
+  const isAssignedToCurrentUser = Boolean(
+    (currentUserId != null && (
+      Number(task?.assigned_to) === Number(currentUserId) ||
+      Number(task?.assigned_to_id) === Number(currentUserId) ||
+      Number(task?.assigned_member_id) === Number(currentUserId) ||
+      Number(task?.assignee_id) === Number(currentUserId)
+    )) ||
+    isTaskAssignedToUser(task, currentUser)
+  );
   const isPendingValidation = isTaskPendingValidation(task);
   const isProposed = isTaskProposed(task);
   const isOpenTask = isTaskOpen(task);
@@ -746,24 +757,26 @@ export default function TaskDetailModal({
     }
   };
 
-  // Demande de validation par le membre en charge (Annotation 2)
+  // Validation de la mission par l'associé en charge (Annotation 12)
   const handleRequestValidation = async () => {
     try {
       if (task?.id) {
         await requestTaskValidation(task.id, {
-          completion_notes: `Tâche marquée comme faite par ${currentUserName || 'le membre en charge'}. Demande de validation transmise au coordinateur.`
+          completion_notes: `Mission validée par l'associé en charge (${currentUserName || 'associé en charge'}). En attente d'arbitrage pour archivage.`
         });
         const refreshed = await fetchTaskById(task.id);
-        setTask(refreshed);
-        syncEditFields(refreshed);
-        if (onTaskUpdated) onTaskUpdated(refreshed);
+        const updatedTask = (refreshed && refreshed.id) ? refreshed : { ...task, status: 'PENDING_VALIDATION' };
+        setTask(updatedTask);
+        syncEditFields(updatedTask);
+        if (onTaskUpdated) onTaskUpdated(updatedTask);
       } else {
-        setTask({ ...task, status: 'PENDING_VALIDATION' });
-        if (onTaskUpdated) onTaskUpdated({ ...task, status: 'PENDING_VALIDATION' });
+        const updatedTask = { ...task, status: 'PENDING_VALIDATION' };
+        setTask(updatedTask);
+        if (onTaskUpdated) onTaskUpdated(updatedTask);
       }
     } catch (err) {
-      console.error('Erreur demande de validation:', err);
-      alert(err.message || 'Erreur lors de la demande de validation.');
+      console.error('Erreur validation mission:', err);
+      alert(err.message || 'Erreur lors de la validation de la mission.');
     }
   };
 
@@ -1074,35 +1087,22 @@ export default function TaskDetailModal({
                 ) : (
                   <span className="inline-flex items-center gap-1.5 px-3.5 py-1.5 rounded-xl font-label-md text-xs sm:text-sm font-bold bg-emerald-100 text-emerald-800 border border-emerald-300">
                     <span className="material-symbols-outlined text-[18px]">hourglass_top</span>
-                    <span>En attente de vérification par les coordinateurs</span>
+                    <span>En attente d'arbitrage pour archivage</span>
                   </span>
                 )
               ) : (
-                /* 2. Tâche En Cours (Bleu) : Demande de vérification pour le membre OU clôture directe pour le coordinateur */
-                <div className="flex items-center gap-2">
-                  {isOpenTask && (isAssignedToCurrentUser || !isCoordinator) && (
-                    <button
-                      type="button"
-                      onClick={handleRequestValidation}
-                      title="Demander aux coordinateurs de vérifier la bonne exécution des travaux"
-                      className="inline-flex items-center gap-1.5 h-11 px-4 rounded-xl border-2 font-label-md text-xs sm:text-sm font-bold shadow-sm transition-colors bg-emerald-50 hover:bg-emerald-100 border-emerald-600 text-emerald-800 cursor-pointer"
-                    >
-                      <span className="material-symbols-outlined text-[18px] text-emerald-700">send</span>
-                      <span>Demander la vérification</span>
-                    </button>
-                  )}
-                  {isOpenTask && isCoordinator && (
-                    <button
-                      type="button"
-                      onClick={handleValidateModalTask}
-                      title="Valider la mission en tant que coordinateur"
-                      className="inline-flex items-center gap-1.5 h-11 px-4 rounded-xl border-2 font-label-md text-xs sm:text-sm font-bold shadow-sm transition-colors bg-slate-800 hover:bg-slate-900 text-white border-slate-800 cursor-pointer"
-                    >
-                      <span className="material-symbols-outlined text-[18px]">check</span>
-                      <span>Valider la mission</span>
-                    </button>
-                  )}
-                </div>
+                /* 2. Tâche En Cours (Bleu) : Bouton 'Valider la mission' STRICTEMENT réservé à l'associé en charge (Annotation 12) */
+                isOpenTask && isAssignedToCurrentUser && (
+                  <button
+                    type="button"
+                    onClick={handleRequestValidation}
+                    title="Valider la mission et soumettre à l'arbitrage des coordinateurs"
+                    className="inline-flex items-center gap-1.5 h-11 px-4 rounded-xl border-2 font-label-md text-xs sm:text-sm font-bold shadow-sm transition-colors bg-emerald-600 hover:bg-emerald-700 text-white border-emerald-600 cursor-pointer active:scale-95"
+                  >
+                    <span className="material-symbols-outlined text-[18px]">check_circle</span>
+                    <span>Valider la mission</span>
+                  </button>
+                )
               )
             )}
 
@@ -1379,8 +1379,12 @@ export default function TaskDetailModal({
                   </div>
                 </div>
 
-                {/* Section Validation & Arbitrage de la Mission (#section-task-validation - Annotation 19 : Visible QUE par les coordinateurs) */}
-                {!isNewTask && isCoordinator && (
+                {/* Section Validation & Arbitrage de la Mission (#section-task-validation - Annotation 12 & 19) */}
+                {!isNewTask && (
+                  (isOpenTask && !isPendingValidation && !isProposed && isAssignedToCurrentUser) ||
+                  (isPendingValidation && (isCoordinator || isAssignedToCurrentUser)) ||
+                  (isProposed && (isCoordinator || isAuthor))
+                ) && (
                   <div
                     ref={validationSectionRef}
                     id="section-task-validation"
@@ -1389,20 +1393,22 @@ export default function TaskDetailModal({
                         ? 'border-amber-300 bg-amber-50/70 dark:bg-amber-950/30'
                         : isPendingValidation
                         ? 'border-emerald-300 bg-emerald-50/70 dark:bg-emerald-950/30'
-                        : 'border-primary/20 bg-surface-container-low'
+                        : 'border-emerald-300/80 bg-emerald-50/60 dark:bg-emerald-950/20'
                     }`}
                   >
                     <div className="flex items-center justify-between">
                       <div className="flex items-center gap-2">
                         <span className={`material-symbols-outlined text-[24px] ${
-                          isProposed ? 'text-amber-700' : isPendingValidation ? 'text-emerald-700' : 'text-primary'
+                          isProposed ? 'text-amber-700' : isPendingValidation ? 'text-emerald-700' : 'text-emerald-700'
                         }`}>
                           {isProposed ? 'pending_actions' : 'verified'}
                         </span>
                         <h3 className="font-headline-sm text-sm sm:text-base font-bold text-forest-deep dark:text-slate-100">
                           {isProposed
                             ? 'Arbitrage de la Proposition de Tâche'
-                            : 'Validation & Clôture de la Mission'}
+                            : isPendingValidation
+                            ? 'Arbitrage & Clôture de la Mission'
+                            : 'Validation de la Mission'}
                         </h3>
                       </div>
                       {getTaskStatusMeta(task).status === 'PROPOSED' ? (
@@ -1432,8 +1438,8 @@ export default function TaskDetailModal({
                       {isProposed
                         ? "Cette tâche a été proposée par un associé. Les coordinateurs peuvent l'examiner, la compléter (documents, sous-tâches, assignés) puis l'accepter ou la refuser."
                         : isPendingValidation
-                        ? "Le membre en charge a déclaré la réalisation des travaux. Les coordinateurs statutaires peuvent valider ou rejeter la demande."
-                        : "Une fois toutes les sous-tâches accomplies et les justificatifs déposés, demandez la validation formelle des coordinateurs de la SCI."}
+                        ? "Le membre en charge a déclaré la réalisation des travaux. Les coordinateurs statutaires peuvent confirmer l'archivage ou renvoyer en cours pour corrections."
+                        : "Vous êtes l'associé en charge de cette mission. Une fois vos travaux achevés et vos justificatifs joints, validez la mission pour la soumettre à l'arbitrage des coordinateurs."}
                     </p>
 
                     <div className="pt-2 flex flex-wrap items-center gap-3">
@@ -1466,30 +1472,16 @@ export default function TaskDetailModal({
                         </div>
                       )}
 
-                      {/* Cas 2 : Tâche en cours (bleu) - Demande de vérification pour le membre OU clôture directe pour le coordinateur */}
-                      {isOpenTask && !isPendingValidation && !isProposed && (
-                        <div className="flex flex-wrap items-center gap-3">
-                          {(isAssignedToCurrentUser || !isCoordinator) && (
-                            <button
-                              type="button"
-                              onClick={handleRequestValidation}
-                              className="inline-flex items-center gap-2 px-5 py-2.5 rounded-xl bg-emerald-700 hover:bg-emerald-800 text-white font-bold text-xs sm:text-sm shadow-md transition-all cursor-pointer"
-                            >
-                              <span className="material-symbols-outlined text-[18px]">send</span>
-                              <span>Demander la vérification</span>
-                            </button>
-                          )}
-                          {isCoordinator && (
-                            <button
-                              type="button"
-                              onClick={handleValidateModalTask}
-                              className="inline-flex items-center gap-2 px-5 py-2.5 rounded-xl bg-slate-800 hover:bg-slate-900 text-white font-bold text-xs sm:text-sm shadow-md transition-all cursor-pointer"
-                            >
-                              <span className="material-symbols-outlined text-[18px]">check</span>
-                              <span>Valider la mission</span>
-                            </button>
-                          )}
-                        </div>
+                      {/* Cas 2 : Tâche en cours (bleu) - Callout & Bouton 'Valider la mission' STRICTEMENT réservé à l'associé en charge (Annotation 12) */}
+                      {isOpenTask && !isPendingValidation && !isProposed && isAssignedToCurrentUser && (
+                        <button
+                          type="button"
+                          onClick={handleRequestValidation}
+                          className="inline-flex items-center gap-2 px-5 py-2.5 rounded-xl bg-emerald-600 hover:bg-emerald-700 text-white font-bold text-xs sm:text-sm shadow-md transition-all cursor-pointer active:scale-95"
+                        >
+                          <span className="material-symbols-outlined text-[18px]">check_circle</span>
+                          <span>Valider la mission</span>
+                        </button>
                       )}
 
                       {/* Cas 3 : Tâche à valider (vert) - Validation finale coordinateur */}
@@ -1517,7 +1509,7 @@ export default function TaskDetailModal({
                       {isPendingValidation && !isCoordinator && (
                         <div className="text-xs font-semibold text-emerald-900 bg-emerald-50 p-3 rounded-xl border border-emerald-200 w-full flex items-center gap-2">
                           <span className="material-symbols-outlined text-emerald-700 text-[18px]">hourglass_top</span>
-                          <span>En attente de vérification par les coordinateurs.</span>
+                          <span>En attente d'arbitrage pour archivage par les coordinateurs.</span>
                         </div>
                       )}
                     </div>

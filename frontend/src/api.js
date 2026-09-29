@@ -19,6 +19,19 @@ export function emitAppError(detail) {
   }
 }
 
+/**
+ * Émetteur d'événements pour le système de notification des e-mails simulés ou envoyés
+ */
+export function triggerEmailNotification(email) {
+  if (typeof window !== 'undefined' && email) {
+    window.dispatchEvent(
+      new CustomEvent('email-dispatched', {
+        detail: email,
+      })
+    );
+  }
+}
+
 // Wrapper surveillé pour intercepter toutes les erreurs réseau et réponses HTTP non-ok (4xx, 5xx)
 const _nativeFetch = (typeof window !== 'undefined' ? window.fetch.bind(window) : globalThis.fetch);
 
@@ -42,6 +55,28 @@ async function monitoredFetch(input, init = {}) {
     } catch (_) {}
     throw netErr;
   }
+
+  // Interception du header HTTP X-Email-Dispatched si présent
+  const emailDispatchedHeader = res.headers.get('x-email-dispatched') || res.headers.get('_email_dispatched');
+  if (emailDispatchedHeader) {
+    try {
+      const parsedEmail = JSON.parse(emailDispatchedHeader);
+      triggerEmailNotification(parsedEmail);
+    } catch (_) {}
+  }
+
+  // Interception universelle des e-mails dispatchés lors de l'appel res.json()
+  const origJson = res.json.bind(res);
+  res.json = async () => {
+    const data = await origJson();
+    if (data && typeof data === 'object') {
+      const emailDetail = data._email_dispatched || data.email_dispatched;
+      if (emailDetail) {
+        triggerEmailNotification(emailDetail);
+      }
+    }
+    return data;
+  };
 
   // Détection fail-fast si l'API retourne du HTML au lieu de JSON (ex: fallback SPA Vercel)
   const contentType = res.headers.get('content-type') || '';
@@ -1610,6 +1645,15 @@ export async function savePoolSettings({ target_temperature, filtration_mode, mo
     throw new Error(err.detail || 'Erreur lors de l\'enregistrement des réglages piscine');
   }
   invalidateApiCache('pool');
+  return res.json();
+}
+
+// Emails récents dispatchés
+export async function fetchRecentDispatchedEmails() {
+  const res = await fetch(`${API_BASE}/emails/recent`, {
+    headers: getAuthHeaders()
+  });
+  if (!res.ok) throw new Error('Erreur lors de la récupération des e-mails récents');
   return res.json();
 }
 

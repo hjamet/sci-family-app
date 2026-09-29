@@ -16,6 +16,8 @@ import BookingModal from './components/BookingModal';
 import VoteRoofModal from './components/VoteRoofModal';
 import TaskDetailModal from './components/TaskDetailModal';
 import BugReportButton from './components/BugReportButton';
+import EmailDispatchedToast from './components/EmailDispatchedToast';
+import EmailPreviewModal from './components/EmailPreviewModal';
 import { fetchProperties, fetchProjects, fetchTaskById, castProjectVote, getCachedData } from './api';
 import GlobalErrorAlert from './components/GlobalErrorAlert';
 
@@ -26,6 +28,9 @@ export default function App() {
 
   const [properties, setProperties] = useState(() => getCachedData('properties') || []);
   const [isBookingOpen, setIsBookingOpen] = useState(false);
+
+  // Modale globale de prévisualisation des emails simulés / envoyés
+  const [previewEmail, setPreviewEmail] = useState(null);
 
   // Modales globales pour ouverture directe depuis les notifications (Annotation UI)
   const [isVoteModalOpen, setIsVoteModalOpen] = useState(false);
@@ -345,6 +350,16 @@ export default function App() {
       <BugReportButton
         currentUser={currentUser}
         onOpenBugReport={handleOpenBugReport}
+      />
+
+      {/* Toast de notification des e-mails simulés / dispatchés */}
+      <EmailDispatchedToast onViewEmail={(email) => setPreviewEmail(email)} />
+
+      {/* Modale d'aperçu du rendu HTML de l'e-mail */}
+      <EmailPreviewModal
+        isOpen={Boolean(previewEmail)}
+        email={previewEmail}
+        onClose={() => setPreviewEmail(null)}
       />
 
     </div>

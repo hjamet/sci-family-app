@@ -72,6 +72,7 @@ from .services.email_service import (
     send_mention_notification,
     notify_coordinator_new_issue,
     notify_all_members_project_vote,
+    RECENT_DISPATCHED_EMAILS,
     APP_BASE_URL
 )
 from .migrate_notifications import migrate_engine
@@ -112,7 +113,13 @@ app.add_middleware(
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
+    expose_headers=["*"]
 )
+
+@app.get("/api/emails/recent", tags=["Emails"])
+def get_recent_emails():
+    """Retourne la liste des récents e-mails dispatchés ou simulés (max 20)."""
+    return RECENT_DISPATCHED_EMAILS
 
 # Security Headers & Anti-DDoS Rate Limiting Middleware
 @app.middleware("http")
@@ -1441,6 +1448,18 @@ def list_reservations(
     status_filter: Optional[str] = Query(None, alias="status"),
     db: Session = Depends(get_db)
 ):
+    # Purge automatique des séjours passés (directive Henri)
+    today_str = datetime.utcnow().strftime('%Y-%m-%d')
+    try:
+        past_reservations = db.query(Reservation).filter(Reservation.end_date < today_str).all()
+        if past_reservations:
+            for p_res in past_reservations:
+                db.delete(p_res)
+            db.commit()
+    except Exception as purge_err:
+        logger.warning(f"[PURGE RESERVATIONS] Erreur purge des réservations passées: {purge_err}")
+        db.rollback()
+
     query = db.query(Reservation)
     if property_id:
         query = query.filter(Reservation.property_id == property_id)
@@ -1494,7 +1513,7 @@ def validate_iso_date_string(date_str: str, field_name: str = "date") -> datetim
 
 
 @app.post("/api/reservations", response_model=ReservationResponse, status_code=status.HTTP_201_CREATED)
-def create_reservation(res: ReservationCreate, db: Session = Depends(get_db)):
+def create_reservation(res: ReservationCreate, response: Response, db: Session = Depends(get_db)):
     # 1. Enforce ISO date format and start_date <= end_date
     start_dt = validate_iso_date_string(res.start_date, "start_date")
     end_dt = validate_iso_date_string(res.end_date, "end_date")
@@ -1613,6 +1632,7 @@ def create_reservation(res: ReservationCreate, db: Session = Depends(get_db)):
     db.refresh(db_res)
 
     # Email Trigger 4: Notify other family members if notif_stay_booked is True
+    dispatched_email = None
     try:
         booker_name = db_res.user_name or "Un associé"
         booker_first = booker_name.strip().split()[0].lower()
@@ -1622,7 +1642,7 @@ def create_reservation(res: ReservationCreate, db: Session = Depends(get_db)):
             if getattr(m, 'notif_stay_booked', True) and m.email and m.prenom.strip().lower() != booker_first
         ]
         if stay_recipients:
-            send_stay_booked_email(
+            send_res = send_stay_booked_email(
                 to_email=stay_recipients,
                 member_name=booker_name,
                 start_date=db_res.start_date,
@@ -1633,8 +1653,18 @@ def create_reservation(res: ReservationCreate, db: Session = Depends(get_db)):
                 reservation_id=db_res.id,
                 notes=db_res.notes
             )
+            if isinstance(send_res, dict) and "_email_dispatched" in send_res:
+                dispatched_email = send_res["_email_dispatched"]
     except Exception as e:
         logger.error(f"[EMAIL ERROR] Failed to send stay booked notification: {e}")
+
+    if dispatched_email:
+        setattr(db_res, "_email_dispatched", dispatched_email)
+        setattr(db_res, "email_dispatched", dispatched_email)
+        try:
+            response.headers["X-Email-Dispatched"] = json.dumps(dispatched_email)
+        except Exception:
+            pass
 
     return db_res
 
@@ -1864,12 +1894,13 @@ def create_project(proj: ProjectCreate, db: Session = Depends(get_db)):
         raise HTTPException(status_code=400, detail=f"Erreur lors de la création du projet: {str(exc)}")
 
     # Email notification trigger: notify members with notif_vote_needed=True if project is open for voting
+    dispatched_email = None
     if db_proj.status in ["EN_VOTE", "OPEN"]:
         try:
             member_users = db.query(Member).filter(Member.email.isnot(None)).all()
             member_emails = [u.email for u in member_users if getattr(u, 'notif_vote_needed', True) and u.email]
             if member_emails:
-                send_vote_required_email(
+                send_res = send_vote_required_email(
                     to_email=member_emails,
                     vote_title=db_proj.title,
                     submitted_by=db_proj.submitted_by or "Associé SCI",
@@ -1877,10 +1908,16 @@ def create_project(proj: ProjectCreate, db: Session = Depends(get_db)):
                     estimated_cost=float(db_proj.estimated_cost or 0.0),
                     project_id=db_proj.id
                 )
+                if isinstance(send_res, dict) and "_email_dispatched" in send_res:
+                    dispatched_email = send_res["_email_dispatched"]
         except Exception as e:
             logger.error(f"[EMAIL ERROR] Failed to send project vote notification on creation: {e}")
 
-    return format_project_response(db_proj)
+    proj_res_data = format_project_response(db_proj)
+    if dispatched_email:
+        proj_res_data["_email_dispatched"] = dispatched_email
+        proj_res_data["email_dispatched"] = dispatched_email
+    return proj_res_data
 
 @app.post("/api/projects/upload-photos")
 async def upload_project_photos(files: List[UploadFile] = File(...)):
@@ -2437,6 +2474,7 @@ def process_vote_submission(
     # Annotation 8 : Cycle de vie des votes calqué sur les tâches
     # Lorsque le total des voix exprimées atteint le quorum complet (7 voix), basculer automatiquement
     # le statut du projet en PENDING_VALIDATION (au lieu de clore directement), pour permettre l'arbitrage formel par les coordinateurs.
+    dispatched_email = None
     quorum_reached = len(distinct_voters) >= 7 or (total_associates > 0 and len(distinct_voters) >= total_associates)
     if quorum_reached and db_proj.status in [
         "EN_VOTE", "OPEN", "SOUMIS", "PROPOSED", "REPORT_AG", "APPROUVE", "REFUSE", "PENDING_VALIDATION"
@@ -2477,7 +2515,7 @@ def process_vote_submission(
                 if getattr(m, 'notif_vote_closed', True) and m.email
             ]
             if closed_recipients:
-                send_vote_closed_email(
+                send_res = send_vote_closed_email(
                     to_email=closed_recipients,
                     vote_title=db_proj.title,
                     decision=decision,
@@ -2486,6 +2524,8 @@ def process_vote_submission(
                     project_id=db_proj.id,
                     estimated_cost=float(db_proj.estimated_cost or 0.0)
                 )
+                if isinstance(send_res, dict) and "_email_dispatched" in send_res:
+                    dispatched_email = send_res["_email_dispatched"]
         except Exception as e:
             logger.error(f"[EMAIL ERROR] Failed to send vote closed notification: {e}")
 
@@ -2500,7 +2540,11 @@ def process_vote_submission(
             db.rollback()
             logger.error(f"[VOTE ERROR] Echec réversion statut vers OPEN: {exc}")
 
-    return format_project_response(db_proj)
+    proj_res_data = format_project_response(db_proj)
+    if dispatched_email:
+        proj_res_data["_email_dispatched"] = dispatched_email
+        proj_res_data["email_dispatched"] = dispatched_email
+    return proj_res_data
 
 
 @app.post("/api/projects/{project_id}/vote")
@@ -3233,6 +3277,7 @@ def create_task(
     db.refresh(db_task)
 
     # Email Trigger 1: Notify assignee if notif_task_assigned is True
+    dispatched_email = None
     try:
         assignee = None
         if db_task.assignee_id:
@@ -3247,7 +3292,7 @@ def create_task(
                 pass
 
         if assignee and assignee.email and getattr(assignee, 'notif_task_assigned', True):
-            send_task_assigned_email(
+            send_res = send_task_assigned_email(
                 to_email=assignee.email,
                 task_title=db_task.title,
                 domain=db_task.subject or db_task.category or "SCI Familiale",
@@ -3258,10 +3303,16 @@ def create_task(
                 assignee_name=assignee.prenom,
                 description=db_task.description
             )
+            if isinstance(send_res, dict) and "_email_dispatched" in send_res:
+                dispatched_email = send_res["_email_dispatched"]
     except Exception as e:
         logger.error(f"[EMAIL ERROR] Failed to send task assignment notification: {e}")
 
-    return format_task_response(db_task, include_comments=True)
+    task_res_data = format_task_response(db_task, include_comments=True)
+    if dispatched_email:
+        task_res_data["_email_dispatched"] = dispatched_email
+        task_res_data["email_dispatched"] = dispatched_email
+    return task_res_data
 
 
 @app.get("/api/tasks/{task_id}")
@@ -3438,11 +3489,12 @@ def update_task(
     db.refresh(task)
 
     # Email Trigger 1 (Reassignment): If newly assigned to a member, notify if notif_task_assigned is True
+    dispatched_email = None
     if "assignee_id" in payload and payload["assignee_id"] and payload["assignee_id"] != old_assignee_id:
         try:
             assignee = db.query(Member).filter(Member.id == payload["assignee_id"]).first()
             if assignee and assignee.email and getattr(assignee, 'notif_task_assigned', True):
-                send_task_assigned_email(
+                send_res = send_task_assigned_email(
                     to_email=assignee.email,
                     task_title=task.title,
                     domain=task.subject or task.category or "SCI Familiale",
@@ -3453,10 +3505,16 @@ def update_task(
                     assignee_name=assignee.prenom,
                     description=task.description
                 )
+                if isinstance(send_res, dict) and "_email_dispatched" in send_res:
+                    dispatched_email = send_res["_email_dispatched"]
         except Exception as e:
             logger.error(f"[EMAIL ERROR] Failed to send task assignment notification on update: {e}")
 
-    return format_task_response(task, include_comments=True)
+    task_res_data = format_task_response(task, include_comments=True)
+    if dispatched_email:
+        task_res_data["_email_dispatched"] = dispatched_email
+        task_res_data["email_dispatched"] = dispatched_email
+    return task_res_data
 
 
 @app.delete("/api/tasks/{task_id}", status_code=status.HTTP_204_NO_CONTENT)

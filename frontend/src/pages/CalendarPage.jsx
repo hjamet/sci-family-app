@@ -957,12 +957,15 @@ export default function CalendarPage({ properties, currentUser = 'Henri Jamet' }
                                   setEditingReservation(stay.rawReservation || stay);
                                   setIsBookingOpen(true);
                                 }}
-                                className={`text-[11px] font-semibold px-1.5 py-0.5 rounded truncate cursor-pointer hover:opacity-85 transition-opacity ${
+                                className={`text-[11px] font-semibold px-2 py-0.5 rounded truncate cursor-pointer transition-all duration-150 flex items-center justify-between gap-1 group/stay hover:-translate-y-0.5 hover:shadow-md hover:ring-2 hover:ring-primary/40 ${
                                   isPlenary ? 'bg-forest-deep text-white font-bold' : 'bg-sage-soft text-forest-deep'
                                 }`}
-                                title={`${stay.user_name} (${stay.property_name}) — Cliquer pour modifier`}
+                                title={`${stay.user_name} (${stay.property_name}) — Cliquer pour consulter ou modifier`}
                               >
-                                {stay.user_name}
+                                <span className="truncate">{stay.user_name}</span>
+                                <span className="material-symbols-outlined text-[13px] opacity-0 group-hover/stay:opacity-100 transition-opacity shrink-0">
+                                  visibility
+                                </span>
                               </div>
                             );
                           })}
@@ -1106,18 +1109,25 @@ export default function CalendarPage({ properties, currentUser = 'Henri Jamet' }
         onBooked={loadReservations}
       />
 
-      {/* Styles d'impression dédiés pour l'export PDF (Annotation 4) */}
+      {/* Styles d'impression dédiés pour l'export PDF (Annotation 6) */}
       <style>{`
         @media print {
           @page {
-            size: landscape;
-            margin: 10mm;
+            size: A4 landscape;
+            margin: 8mm;
           }
-          body {
+          * {
+            -webkit-print-color-adjust: exact !important;
+            print-color-adjust: exact !important;
+          }
+          html, body {
             background-color: white !important;
             color: #131b2e !important;
+            margin: 0 !important;
+            padding: 0 !important;
+            overflow: visible !important;
           }
-          .print\\:hidden {
+          .print\\:hidden, button, [role="button"], input[type="checkbox"], select, .group-hover\\:opacity-100 {
             display: none !important;
           }
           #calendar-active-view {
@@ -1125,6 +1135,15 @@ export default function CalendarPage({ properties, currentUser = 'Henri Jamet' }
             width: 100% !important;
             margin: 0 !important;
             padding: 0 !important;
+            overflow: visible !important;
+          }
+          article, .grid, [role="article"] {
+            break-inside: avoid !important;
+            page-break-inside: avoid !important;
+          }
+          .bg-surface-container-lowest, .bg-surface-container-low, .bg-canvas-slate {
+            box-shadow: none !important;
+            border-color: #cbd5e1 !important;
           }
         }
       `}</style>

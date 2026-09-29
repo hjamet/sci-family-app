@@ -312,6 +312,24 @@ def fetch_live_telemetry() -> Dict[str, Any]:
             except Exception:
                 reduced_temp = 5.0
 
+        # Consigne courante désirée ViCare
+        current_desired_temp = None
+        if circuit and hasattr(circuit, "getDesiredTemperature"):
+            try:
+                cd_val = circuit.getDesiredTemperature()
+                if cd_val is not None:
+                    current_desired_temp = float(cd_val)
+            except Exception:
+                current_desired_temp = None
+
+        if current_desired_temp is None:
+            if active_program == "reduced":
+                current_desired_temp = reduced_temp
+            elif active_program in ("comfort", "normal"):
+                current_desired_temp = comfort_temp
+            else:
+                current_desired_temp = comfort_temp if active_mode in ("dhwAndHeating", "forcedNormal") else reduced_temp
+
         # Burner telemetry
         burner_active = False
         burner_hours = None
@@ -329,8 +347,12 @@ def fetch_live_telemetry() -> Dict[str, Any]:
         eco_mode_active = (active_program == "eco")
 
         # Détection réelle Chauffage actif (is_heating_active)
-        # Actif si le mode est un mode de chauffe ET programme non standby
-        if active_mode in ("dhwAndHeating", "forcedNormal") and active_program not in ("standby", "holiday"):
+        # Sémantique Marche/Arrêt :
+        # - Chauffage 'à l'arrêt' (is_heating_active = False) si active_program == "reduced" ou si la consigne courante désirée est <= 10.0°C.
+        # - Chauffage 'en marche' (is_heating_active = True) uniquement si active_program in ("comfort", "normal") et la consigne est >= 15.0°C.
+        if active_program == "reduced" or (current_desired_temp is not None and current_desired_temp <= 10.0):
+            is_heating_active = False
+        elif active_program in ("comfort", "normal") and (current_desired_temp is not None and current_desired_temp >= 15.0):
             is_heating_active = True
         else:
             is_heating_active = False
@@ -349,7 +371,7 @@ def fetch_live_telemetry() -> Dict[str, Any]:
             ViCareService._dhw_comfort_temperature = dhw_comfort
         dhw_reduced = ViCareService._dhw_reduced_temperature
 
-        target_temp = comfort_temp if is_heating_active else reduced_temp
+        target_temp = current_desired_temp if current_desired_temp is not None else (comfort_temp if is_heating_active else reduced_temp)
 
         return {
             "room_temperature": room_temp,
