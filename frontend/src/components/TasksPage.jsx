@@ -61,6 +61,7 @@ export default function TasksPage({ currentUser = 'Henri Jamet' }) {
   const [selectedPriority, setSelectedPriority] = useState('Toutes');
   const [selectedAssignee, setSelectedAssignee] = useState('all');
   const [selectedSubject, setSelectedSubject] = useState('all');
+  const [selectedCategory, setSelectedCategory] = useState('all');
   const [workflowFilter, setWorkflowFilter] = useState('OPEN'); // 'ALL' | 'PROPOSED' | 'OPEN' | 'PENDING_VALIDATION' | 'ARCHIVED'
   const [voteFilter, setVoteFilter] = useState('OPEN'); // 'ALL' | 'PROPOSED' | 'OPEN' | 'PENDING_VALIDATION' | 'ARCHIVED'
 
