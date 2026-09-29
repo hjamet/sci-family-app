@@ -61,9 +61,8 @@ export default function TasksPage({ currentUser = 'Henri Jamet' }) {
   const [selectedPriority, setSelectedPriority] = useState('Toutes');
   const [selectedAssignee, setSelectedAssignee] = useState('all');
   const [selectedSubject, setSelectedSubject] = useState('all');
-  const [selectedCategory, setSelectedCategory] = useState('all');
-  const [showArchived, setShowArchived] = useState(false);
-  const [workflowFilter, setWorkflowFilter] = useState('in_progress'); // 'proposed' | 'in_progress' | 'pending_validation' (Annotation 17)
+  const [workflowFilter, setWorkflowFilter] = useState('OPEN'); // 'ALL' | 'PROPOSED' | 'OPEN' | 'PENDING_VALIDATION' | 'ARCHIVED'
+  const [voteFilter, setVoteFilter] = useState('OPEN'); // 'ALL' | 'PROPOSED' | 'OPEN' | 'PENDING_VALIDATION' | 'ARCHIVED'
 
   // Voting Spotlight Carrousel State
   const [activeVoteIndex, setActiveVoteIndex] = useState(0);
@@ -129,19 +128,58 @@ export default function TasksPage({ currentUser = 'Henri Jamet' }) {
     });
   }, [tasks]);
 
-  // Liste des scrutins en cours pour le carrousel (dérivée dynamiquement des projets réels en BDD)
+  // Helpers de classification des délibérations / scrutins (Annotations 8, 10, 11)
+  const isVoteArchived = (p) => {
+    if (!p) return false;
+    const st = String(p.status || '').toUpperCase().trim();
+    return ['ARCHIVE', 'ARCHIVEE', 'CLOS', 'TERMINE', 'ADOPTE', 'APPROUVE', 'REJETE', 'REFUSE'].includes(st);
+  };
+
+  const isVoteProposed = (p) => {
+    if (!p || isVoteArchived(p)) return false;
+    const st = String(p.status || '').toUpperCase().trim();
+    return ['SOUMIS', 'SOUMISE', 'PROPOSE', 'PROPOSEE', 'PROPOSED'].includes(st);
+  };
+
+  const isVotePendingValidation = (p) => {
+    if (!p || isVoteArchived(p)) return false;
+    const st = String(p.status || '').toUpperCase().trim();
+    return ['EN_ATTENTE_VALIDATION', 'PENDING_VALIDATION', 'ARBITRAGE', 'REPORT_AG', 'A_ARBITRER'].includes(st);
+  };
+
+  const isVoteOpen = (p) => {
+    if (!p || isVoteArchived(p) || isVoteProposed(p) || isVotePendingValidation(p)) return false;
+    return true;
+  };
+
+  // Compteurs dynamiques des délibérations
+  const countVotesAll = projects.length;
+  const countVotesProposed = useMemo(() => projects.filter(p => isVoteProposed(p)).length, [projects]);
+  const countVotesOpen = useMemo(() => projects.filter(p => isVoteOpen(p)).length, [projects]);
+  const countVotesPendingValidation = useMemo(() => projects.filter(p => isVotePendingValidation(p)).length, [projects]);
+  const countVotesArchived = useMemo(() => projects.filter(p => isVoteArchived(p)).length, [projects]);
+
+  const handleVoteFilterChange = (newFilter) => {
+    setVoteFilter(newFilter);
+    setActiveVoteIndex(0);
+  };
+
+  // Liste des scrutins pour le carrousel filtrée selon voteFilter (Annotations 8, 10, 11)
   const votesList = useMemo(() => {
     if (!projects || projects.length === 0) {
       return [];
     }
-    // Ne proposer au vote que les projets actifs (non archivés, non clôturés, non déjà adoptés/rejetés)
-    const activeProjects = projects.filter((p) => {
+    const filteredProjects = projects.filter((p) => {
       if (!p) return false;
-      const st = String(p.status || '').toUpperCase().trim();
-      return !['ARCHIVE', 'ARCHIVEE', 'CLOS', 'TERMINE', 'ADOPTE', 'REJETE'].includes(st);
+      if (voteFilter === 'ALL') return true;
+      if (voteFilter === 'PROPOSED') return isVoteProposed(p);
+      if (voteFilter === 'OPEN') return isVoteOpen(p);
+      if (voteFilter === 'PENDING_VALIDATION') return isVotePendingValidation(p);
+      if (voteFilter === 'ARCHIVED') return isVoteArchived(p);
+      return true;
     });
 
-    return activeProjects.map((p, idx) => {
+    return filteredProjects.map((p, idx) => {
       const votes = Array.isArray(p.votes) ? p.votes : [];
       const pourVotes = votes.filter(v => v && ['OUI', 'POUR'].includes(String(v.vote || v.choice || '').toUpperCase()));
       const absVotes = votes.filter(v => v && String(v.vote || v.choice || '').toUpperCase() === 'ABSTENTION');
@@ -163,7 +201,7 @@ export default function TasksPage({ currentUser = 'Henri Jamet' }) {
       return {
         ...p,
         id: p.id,
-        number: `${idx + 1} sur ${activeProjects.length}`,
+        number: `${idx + 1} sur ${filteredProjects.length}`,
         badgeStatus: p.status === 'EN_COURS' ? 'Vote formel en cours' : (p.status || 'Consultation'),
         budgetText: `Enveloppe budgétaire : ${(p.estimated_cost || 0).toLocaleString('fr-FR')} € TTC`,
         title: p.title,
@@ -192,7 +230,7 @@ export default function TasksPage({ currentUser = 'Henri Jamet' }) {
         isRoofVote: isRoof,
       };
     });
-  }, [projects]);
+  }, [projects, voteFilter]);
 
   const currentVote = votesList.length > 0 ? (votesList[activeVoteIndex] || votesList[0]) : null;
 
@@ -371,17 +409,19 @@ export default function TasksPage({ currentUser = 'Henri Jamet' }) {
   const countInProgress = useMemo(() => activeTasks.filter(t => !isTaskProposed(t) && !isTaskPendingValidation(t)).length, [activeTasks]);
   const countPendingValidation = useMemo(() => activeTasks.filter(t => isTaskPendingValidation(t)).length, [activeTasks]);
 
-  // Filtrage des tâches
+  // Filtrage des tâches selon les 5 onglets unifiés (Annotations 1, 2, 9)
   const filteredTasks = tasks.filter((t) => {
-    // ANNOTATION 1 & 4 : Masquage par défaut des tâches archivées, ou bascule exclusive si showArchived
     const archived = isArchivedTask(t);
-    if (showArchived ? !archived : archived) return false;
-
-    // ANNOTATION 17 : Filtrage par onglet de workflow (quand on consulte les tâches actives)
-    if (!showArchived) {
-      if (workflowFilter === 'proposed' && !isTaskProposed(t)) return false;
-      if (workflowFilter === 'pending_validation' && !isTaskPendingValidation(t)) return false;
-      if (workflowFilter === 'in_progress' && (isTaskProposed(t) || isTaskPendingValidation(t))) return false;
+    if (workflowFilter === 'ARCHIVED') {
+      if (!archived) return false;
+    } else if (workflowFilter === 'PROPOSED') {
+      if (archived || !isTaskProposed(t)) return false;
+    } else if (workflowFilter === 'OPEN') {
+      if (archived || isTaskProposed(t) || isTaskPendingValidation(t)) return false;
+    } else if (workflowFilter === 'PENDING_VALIDATION') {
+      if (archived || !isTaskPendingValidation(t)) return false;
+    } else if (workflowFilter === 'ALL') {
+      // Toutes les missions : afficher toutes les tâches sans restriction de statut
     }
 
     // Recherche textuelle
@@ -451,8 +491,12 @@ export default function TasksPage({ currentUser = 'Henri Jamet' }) {
     return 0;
   });
 
-  // Comptages dynamiques pour les pilules (alignés sur la vue active vs archivée)
-  const currentViewTasks = showArchived ? archivedTasks : activeTasks;
+  // Comptages dynamiques pour les pilules (alignés sur l'onglet actif)
+  const currentViewTasks = workflowFilter === 'ARCHIVED'
+    ? archivedTasks
+    : workflowFilter === 'ALL'
+    ? tasks
+    : activeTasks;
   const countsByPriority = {
     Toutes: currentViewTasks.length,
     Critique: currentViewTasks.filter(t => t.priority === 'Critique').length,
@@ -676,6 +720,128 @@ export default function TasksPage({ currentUser = 'Henri Jamet' }) {
       </div>
 
       {/* ========================================================================= */}
+      {/* 2b. ONGLETS DE SÉLECTION DES DÉLIBÉRATIONS & SCRUTINS (Annotations 8, 10, 11) */}
+      {/* ========================================================================= */}
+      <div className="flex flex-wrap items-center gap-2 mb-4 p-1.5 bg-surface-container-low dark:bg-slate-800/60 rounded-2xl border border-slate-200/80 dark:border-slate-800">
+        
+        {/* 1. Toutes les Délibérations (ALL) */}
+        <button
+          type="button"
+          onClick={() => handleVoteFilterChange('ALL')}
+          className={`flex-1 sm:flex-initial inline-flex items-center justify-center gap-2 px-4 py-2.5 rounded-xl font-label-md text-xs sm:text-sm font-semibold transition-all cursor-pointer ${
+            voteFilter === 'ALL'
+              ? 'bg-slate-700 text-white shadow-sm font-bold'
+              : 'text-slate-600 dark:text-slate-300 hover:bg-white dark:hover:bg-slate-700 hover:text-on-surface'
+          }`}
+        >
+          <span className="material-symbols-outlined text-[18px]">how_to_vote</span>
+          <span>Toutes les Délibérations</span>
+          <span
+            className={`text-xs px-2 py-0.5 rounded-full font-bold ${
+              voteFilter === 'ALL'
+                ? 'bg-white/20 text-white'
+                : 'bg-slate-200 text-slate-800 dark:bg-slate-700 dark:text-slate-200'
+            }`}
+          >
+            {countVotesAll}
+          </span>
+        </button>
+
+        {/* 2. Propositions en attente (PROPOSED, ambre) */}
+        <button
+          type="button"
+          onClick={() => handleVoteFilterChange('PROPOSED')}
+          className={`flex-1 sm:flex-initial inline-flex items-center justify-center gap-2 px-4 py-2.5 rounded-xl font-label-md text-xs sm:text-sm font-semibold transition-all cursor-pointer ${
+            voteFilter === 'PROPOSED'
+              ? 'bg-amber-500 text-white shadow-sm font-bold'
+              : 'text-slate-600 dark:text-slate-300 hover:bg-white dark:hover:bg-slate-700 hover:text-on-surface'
+          }`}
+        >
+          <span className="material-symbols-outlined text-[18px]">gavel</span>
+          <span>Propositions en attente</span>
+          <span
+            className={`text-xs px-2 py-0.5 rounded-full font-bold ${
+              voteFilter === 'PROPOSED'
+                ? 'bg-white/20 text-white'
+                : 'bg-amber-100 text-amber-900 dark:bg-amber-950 dark:text-amber-200'
+            }`}
+          >
+            {countVotesProposed}
+          </span>
+        </button>
+
+        {/* 3. Scrutins en cours (OPEN, bleu) */}
+        <button
+          type="button"
+          onClick={() => handleVoteFilterChange('OPEN')}
+          className={`flex-1 sm:flex-initial inline-flex items-center justify-center gap-2 px-4 py-2.5 rounded-xl font-label-md text-xs sm:text-sm font-semibold transition-all cursor-pointer ${
+            voteFilter === 'OPEN'
+              ? 'bg-primary text-white shadow-sm font-bold'
+              : 'text-slate-600 dark:text-slate-300 hover:bg-white dark:hover:bg-slate-700 hover:text-on-surface'
+          }`}
+        >
+          <span className="material-symbols-outlined text-[18px]">play_circle</span>
+          <span>Scrutins en cours</span>
+          <span
+            className={`text-xs px-2 py-0.5 rounded-full font-bold ${
+              voteFilter === 'OPEN'
+                ? 'bg-white/20 text-white'
+                : 'bg-sky-100 text-sky-900 dark:bg-sky-950 dark:text-sky-200'
+            }`}
+          >
+            {countVotesOpen}
+          </span>
+        </button>
+
+        {/* 4. En attente d'arbitrage (PENDING_VALIDATION, émeraude) */}
+        <button
+          type="button"
+          onClick={() => handleVoteFilterChange('PENDING_VALIDATION')}
+          className={`flex-1 sm:flex-initial inline-flex items-center justify-center gap-2 px-4 py-2.5 rounded-xl font-label-md text-xs sm:text-sm font-semibold transition-all cursor-pointer ${
+            voteFilter === 'PENDING_VALIDATION'
+              ? 'bg-emerald-600 text-white shadow-sm font-bold'
+              : 'text-slate-600 dark:text-slate-300 hover:bg-white dark:hover:bg-slate-700 hover:text-on-surface'
+          }`}
+        >
+          <span className="material-symbols-outlined text-[18px]">verified</span>
+          <span>En attente d'arbitrage</span>
+          <span
+            className={`text-xs px-2 py-0.5 rounded-full font-bold ${
+              voteFilter === 'PENDING_VALIDATION'
+                ? 'bg-white/20 text-white'
+                : 'bg-emerald-100 text-emerald-900 dark:bg-emerald-950 dark:text-emerald-200'
+            }`}
+          >
+            {countVotesPendingValidation}
+          </span>
+        </button>
+
+        {/* 5. Scrutins archivés (ARCHIVED, gris) */}
+        <button
+          type="button"
+          onClick={() => handleVoteFilterChange('ARCHIVED')}
+          className={`flex-1 sm:flex-initial inline-flex items-center justify-center gap-2 px-4 py-2.5 rounded-xl font-label-md text-xs sm:text-sm font-semibold transition-all cursor-pointer ${
+            voteFilter === 'ARCHIVED'
+              ? 'bg-slate-600 text-white shadow-sm font-bold'
+              : 'text-slate-600 dark:text-slate-300 hover:bg-white dark:hover:bg-slate-700 hover:text-on-surface'
+          }`}
+        >
+          <span className="material-symbols-outlined text-[18px]">inventory_2</span>
+          <span>Scrutins archivés</span>
+          <span
+            className={`text-xs px-2 py-0.5 rounded-full font-bold ${
+              voteFilter === 'ARCHIVED'
+                ? 'bg-white/20 text-white'
+                : 'bg-slate-200 text-slate-800 dark:bg-slate-700 dark:text-slate-200'
+            }`}
+          >
+            {countVotesArchived}
+          </span>
+        </button>
+
+      </div>
+
+      {/* ========================================================================= */}
       {/* 3. DÉMOCRATIE FAMILIALE & SCRUTINS EN COURS (Spotlight Unifié Stitch)    */}
       {/* ========================================================================= */}
       <section className="mb-space-lg bg-surface-container-lowest rounded-xl p-space-md lg:p-space-lg shadow-sm flex flex-col gap-space-md border border-border-subtle">
@@ -688,9 +854,17 @@ export default function TasksPage({ currentUser = 'Henri Jamet' }) {
             </div>
             <div>
               <div className="flex items-center gap-2">
-                {/* ANNOTATION 2 : Titre de section des scrutins épuré */}
+                {/* ANNOTATION 2 : Titre de section des scrutins synchronisé avec voteFilter */}
                 <h2 className="font-headline-sm text-headline-sm text-forest-deep font-bold">
-                  Scrutins en cours
+                  {voteFilter === 'ALL'
+                    ? 'Toutes les Délibérations'
+                    : voteFilter === 'PROPOSED'
+                    ? 'Propositions en attente'
+                    : voteFilter === 'PENDING_VALIDATION'
+                    ? "En attente d'arbitrage"
+                    : voteFilter === 'ARCHIVED'
+                    ? 'Scrutins archivés'
+                    : 'Scrutins en cours'}
                 </h2>
                 {currentVote && (
                   <span className="px-2.5 py-0.5 rounded-full text-xs font-semibold bg-sage-soft text-primary">
@@ -791,34 +965,6 @@ export default function TasksPage({ currentUser = 'Henri Jamet' }) {
               </div>
 
               <div className="flex items-center gap-2">
-                {canManageCurrentVote && (
-                  <>
-                    <button
-                      type="button"
-                      onClick={(e) => {
-                        e.stopPropagation();
-                        handleEditVote(currentVote);
-                      }}
-                      className="h-[44px] px-3.5 rounded-DEFAULT bg-white dark:bg-slate-800 border border-slate-300 dark:border-slate-600 text-slate-700 dark:text-slate-200 font-label-md text-xs sm:text-sm font-semibold hover:bg-slate-50 transition-all flex items-center gap-1.5 cursor-pointer shadow-2xs"
-                      title="Modifier les paramètres du scrutin"
-                    >
-                      <span className="material-symbols-outlined text-[17px]">edit</span>
-                      <span>Modifier</span>
-                    </button>
-                    <button
-                      type="button"
-                      onClick={(e) => {
-                        e.stopPropagation();
-                        handleDeleteVote(currentVote);
-                      }}
-                      className="h-[44px] px-3.5 rounded-DEFAULT bg-rose-50 border border-rose-200 text-rose-700 hover:bg-rose-100 font-label-md text-xs sm:text-sm font-semibold transition-all flex items-center gap-1.5 cursor-pointer shadow-2xs"
-                      title="Supprimer définitivement ce scrutin"
-                    >
-                      <span className="material-symbols-outlined text-[17px]">delete</span>
-                      <span>Supprimer</span>
-                    </button>
-                  </>
-                )}
                 <button
                   onClick={(e) => {
                     e.stopPropagation();
@@ -841,7 +987,15 @@ export default function TasksPage({ currentUser = 'Henri Jamet' }) {
               <span className="material-symbols-outlined text-[28px]">how_to_vote</span>
             </div>
             <h3 className="font-headline-sm text-headline-sm text-forest-deep font-bold mb-1">
-              Aucun scrutin statutaire en cours
+              {voteFilter === 'ALL'
+                ? 'Aucune délibération enregistrée'
+                : voteFilter === 'PROPOSED'
+                ? 'Aucune proposition en attente'
+                : voteFilter === 'PENDING_VALIDATION'
+                ? "Aucun scrutin en attente d'arbitrage"
+                : voteFilter === 'ARCHIVED'
+                ? 'Aucun scrutin archivé'
+                : 'Aucun scrutin statutaire en cours'}
             </h3>
             <p className="font-body-md text-body-md text-on-surface-variant max-w-md text-sm mb-4">
               Les projets et initiatives de travaux soumis à la délibération et au vote des associés de la SCI apparaîtront ici.
@@ -1014,116 +1168,149 @@ export default function TasksPage({ currentUser = 'Henri Jamet' }) {
       {/* ========================================================================= */}
       {/* 5. ONGLETS DE CYCLE DE VIE & FILTRAGE WORKFLOW (Annotation 17)            */}
       {/* ========================================================================= */}
-      {!showArchived && (
-        <div className="flex flex-wrap items-center gap-2 mb-4 p-1.5 bg-surface-container-low dark:bg-slate-800/60 rounded-2xl border border-slate-200/80 dark:border-slate-800">
-          <button
-            type="button"
-            onClick={() => setWorkflowFilter('proposed')}
-            className={`flex-1 sm:flex-initial inline-flex items-center justify-center gap-2 px-4 py-2.5 rounded-xl font-label-md text-xs sm:text-sm font-semibold transition-all cursor-pointer ${
-              workflowFilter === 'proposed'
-                ? 'bg-amber-500 text-white shadow-sm font-bold'
-                : 'text-slate-600 dark:text-slate-300 hover:bg-white dark:hover:bg-slate-700 hover:text-on-surface'
+      {/* ========================================================================= */}
+      {/* 5. ONGLETS DE CYCLE DE VIE & FILTRAGE WORKFLOW (Annotations 1, 2, 9)       */}
+      {/* ========================================================================= */}
+      <div className="flex flex-wrap items-center gap-2 mb-4 p-1.5 bg-surface-container-low dark:bg-slate-800/60 rounded-2xl border border-slate-200/80 dark:border-slate-800">
+        
+        {/* 1. Toutes les Missions (ALL) */}
+        <button
+          type="button"
+          onClick={() => setWorkflowFilter('ALL')}
+          className={`flex-1 sm:flex-initial inline-flex items-center justify-center gap-2 px-4 py-2.5 rounded-xl font-label-md text-xs sm:text-sm font-semibold transition-all cursor-pointer ${
+            workflowFilter === 'ALL'
+              ? 'bg-slate-700 text-white shadow-sm font-bold'
+              : 'text-slate-600 dark:text-slate-300 hover:bg-white dark:hover:bg-slate-700 hover:text-on-surface'
+          }`}
+        >
+          <span className="material-symbols-outlined text-[18px]">checklist</span>
+          <span>Toutes les Missions</span>
+          <span
+            className={`text-xs px-2 py-0.5 rounded-full font-bold ${
+              workflowFilter === 'ALL'
+                ? 'bg-white/20 text-white'
+                : 'bg-slate-200 text-slate-800 dark:bg-slate-700 dark:text-slate-200'
             }`}
           >
-            <span className="material-symbols-outlined text-[18px]">gavel</span>
-            <span>En cours d'arbitrage pour création</span>
-            <span
-              className={`text-xs px-2 py-0.5 rounded-full font-bold ${
-                workflowFilter === 'proposed'
-                  ? 'bg-white/20 text-white'
-                  : 'bg-amber-100 text-amber-900 dark:bg-amber-950 dark:text-amber-200'
-              }`}
-            >
-              {countProposed}
-            </span>
-          </button>
+            {tasks.length}
+          </span>
+        </button>
 
-          <button
-            type="button"
-            onClick={() => setWorkflowFilter('in_progress')}
-            className={`flex-1 sm:flex-initial inline-flex items-center justify-center gap-2 px-4 py-2.5 rounded-xl font-label-md text-xs sm:text-sm font-semibold transition-all cursor-pointer ${
-              workflowFilter === 'in_progress'
-                ? 'bg-primary text-white shadow-sm font-bold'
-                : 'text-slate-600 dark:text-slate-300 hover:bg-white dark:hover:bg-slate-700 hover:text-on-surface'
+        {/* 2. En cours d'arbitrage pour création (PROPOSED, ambre) */}
+        <button
+          type="button"
+          onClick={() => setWorkflowFilter('PROPOSED')}
+          className={`flex-1 sm:flex-initial inline-flex items-center justify-center gap-2 px-4 py-2.5 rounded-xl font-label-md text-xs sm:text-sm font-semibold transition-all cursor-pointer ${
+            workflowFilter === 'PROPOSED'
+              ? 'bg-amber-500 text-white shadow-sm font-bold'
+              : 'text-slate-600 dark:text-slate-300 hover:bg-white dark:hover:bg-slate-700 hover:text-on-surface'
+          }`}
+        >
+          <span className="material-symbols-outlined text-[18px]">gavel</span>
+          <span>En cours d'arbitrage pour création</span>
+          <span
+            className={`text-xs px-2 py-0.5 rounded-full font-bold ${
+              workflowFilter === 'PROPOSED'
+                ? 'bg-white/20 text-white'
+                : 'bg-amber-100 text-amber-900 dark:bg-amber-950 dark:text-amber-200'
             }`}
           >
-            <span className="material-symbols-outlined text-[18px]">play_circle</span>
-            <span>En cours (par défaut)</span>
-            <span
-              className={`text-xs px-2 py-0.5 rounded-full font-bold ${
-                workflowFilter === 'in_progress'
-                  ? 'bg-white/20 text-white'
-                  : 'bg-sky-100 text-sky-900 dark:bg-sky-950 dark:text-sky-200'
-              }`}
-            >
-              {countInProgress}
-            </span>
-          </button>
+            {countProposed}
+          </span>
+        </button>
 
-          <button
-            type="button"
-            onClick={() => setWorkflowFilter('pending_validation')}
-            className={`flex-1 sm:flex-initial inline-flex items-center justify-center gap-2 px-4 py-2.5 rounded-xl font-label-md text-xs sm:text-sm font-semibold transition-all cursor-pointer ${
-              workflowFilter === 'pending_validation'
-                ? 'bg-emerald-600 text-white shadow-sm font-bold'
-                : 'text-slate-600 dark:text-slate-300 hover:bg-white dark:hover:bg-slate-700 hover:text-on-surface'
+        {/* 3. En cours (par défaut) (OPEN, bleu) */}
+        <button
+          type="button"
+          onClick={() => setWorkflowFilter('OPEN')}
+          className={`flex-1 sm:flex-initial inline-flex items-center justify-center gap-2 px-4 py-2.5 rounded-xl font-label-md text-xs sm:text-sm font-semibold transition-all cursor-pointer ${
+            workflowFilter === 'OPEN'
+              ? 'bg-primary text-white shadow-sm font-bold'
+              : 'text-slate-600 dark:text-slate-300 hover:bg-white dark:hover:bg-slate-700 hover:text-on-surface'
+          }`}
+        >
+          <span className="material-symbols-outlined text-[18px]">play_circle</span>
+          <span>En cours (par défaut)</span>
+          <span
+            className={`text-xs px-2 py-0.5 rounded-full font-bold ${
+              workflowFilter === 'OPEN'
+                ? 'bg-white/20 text-white'
+                : 'bg-sky-100 text-sky-900 dark:bg-sky-950 dark:text-sky-200'
             }`}
           >
-            <span className="material-symbols-outlined text-[18px]">verified</span>
-            <span>En cours d'arbitrage pour complétion</span>
-            <span
-              className={`text-xs px-2 py-0.5 rounded-full font-bold ${
-                workflowFilter === 'pending_validation'
-                  ? 'bg-white/20 text-white'
-                  : 'bg-emerald-100 text-emerald-900 dark:bg-emerald-950 dark:text-emerald-200'
-              }`}
-            >
-              {countPendingValidation}
-            </span>
-          </button>
-        </div>
-      )}
+            {countInProgress}
+          </span>
+        </button>
+
+        {/* 4. En cours d'arbitrage pour complétion (PENDING_VALIDATION, émeraude) */}
+        <button
+          type="button"
+          onClick={() => setWorkflowFilter('PENDING_VALIDATION')}
+          className={`flex-1 sm:flex-initial inline-flex items-center justify-center gap-2 px-4 py-2.5 rounded-xl font-label-md text-xs sm:text-sm font-semibold transition-all cursor-pointer ${
+            workflowFilter === 'PENDING_VALIDATION'
+              ? 'bg-emerald-600 text-white shadow-sm font-bold'
+              : 'text-slate-600 dark:text-slate-300 hover:bg-white dark:hover:bg-slate-700 hover:text-on-surface'
+          }`}
+        >
+          <span className="material-symbols-outlined text-[18px]">verified</span>
+          <span>En cours d'arbitrage pour complétion</span>
+          <span
+            className={`text-xs px-2 py-0.5 rounded-full font-bold ${
+              workflowFilter === 'PENDING_VALIDATION'
+                ? 'bg-white/20 text-white'
+                : 'bg-emerald-100 text-emerald-900 dark:bg-emerald-950 dark:text-emerald-200'
+            }`}
+          >
+            {countPendingValidation}
+          </span>
+        </button>
+
+        {/* 5. Terminées et archivées (ARCHIVED, gris) */}
+        <button
+          type="button"
+          onClick={() => setWorkflowFilter('ARCHIVED')}
+          className={`flex-1 sm:flex-initial inline-flex items-center justify-center gap-2 px-4 py-2.5 rounded-xl font-label-md text-xs sm:text-sm font-semibold transition-all cursor-pointer ${
+            workflowFilter === 'ARCHIVED'
+              ? 'bg-slate-600 text-white shadow-sm font-bold'
+              : 'text-slate-600 dark:text-slate-300 hover:bg-white dark:hover:bg-slate-700 hover:text-on-surface'
+          }`}
+        >
+          <span className="material-symbols-outlined text-[18px]">inventory_2</span>
+          <span>Terminées et archivées</span>
+          <span
+            className={`text-xs px-2 py-0.5 rounded-full font-bold ${
+              workflowFilter === 'ARCHIVED'
+                ? 'bg-white/20 text-white'
+                : 'bg-slate-200 text-slate-800 dark:bg-slate-700 dark:text-slate-200'
+            }`}
+          >
+            {nbArchived}
+          </span>
+        </button>
+
+      </div>
 
       {/* ========================================================================= */}
       {/* 5b. SECTION TITLE & COUNTER SUMMARY (Stitch)                              */}
       {/* ========================================================================= */}
       <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 mb-space-md">
         <div className="flex items-center gap-2">
-          {/* ANNOTATION 3 & 17 : Titre dynamique synchronisé avec l'onglet actif */}
+          {/* Titre dynamique synchronisé avec l'onglet actif */}
           <h2 className="font-headline-md text-headline-md text-forest-deep tracking-tight font-bold">
-            {showArchived
-              ? 'Chantiers Archivés'
-              : workflowFilter === 'proposed'
+            {workflowFilter === 'ALL'
+              ? 'Toutes les Missions'
+              : workflowFilter === 'PROPOSED'
               ? "En cours d'arbitrage pour création"
-              : workflowFilter === 'pending_validation'
+              : workflowFilter === 'PENDING_VALIDATION'
               ? "En cours d'arbitrage pour complétion"
-              : 'Chantiers Actifs en cours'}
+              : workflowFilter === 'ARCHIVED'
+              ? 'Missions Terminées & Archivées'
+              : 'Missions En Cours'}
           </h2>
           <span className="bg-sage-soft text-forest-deep font-label-sm text-label-sm font-bold px-2.5 py-0.5 rounded-full">
             {sortedTasks.length} affichés
           </span>
         </div>
-
-        {/* ANNOTATIONS 2 & 4 : Bouton Toggle Tâches Actives vs Archivées (Date de synchronisation statique purgée) */}
-        <button
-          type="button"
-          onClick={() => setShowArchived((prev) => !prev)}
-          className={`inline-flex items-center gap-2 px-4 py-2.5 rounded-xl font-label-md text-xs sm:text-sm font-bold transition-all cursor-pointer shadow-xs ${
-            showArchived
-              ? 'bg-primary text-white hover:bg-forest-deep border border-transparent shadow-sm'
-              : 'bg-white dark:bg-slate-800 text-slate-700 dark:text-slate-200 hover:bg-slate-100 dark:hover:bg-slate-700 border border-slate-300 dark:border-slate-600'
-          }`}
-          title={showArchived ? "Revenir aux chantiers actifs en cours" : "Afficher les chantiers achevés et archivés"}
-        >
-          <span className="material-symbols-outlined text-[19px]">
-            {showArchived ? 'bolt' : 'inventory_2'}
-          </span>
-          <span>
-            {showArchived
-              ? `⚡ Voir les tâches actives (${nbActive})`
-              : `📦 Voir les tâches archivées (${nbArchived})`}
-          </span>
-        </button>
       </div>
 
       {/* ========================================================================= */}
@@ -1135,18 +1322,20 @@ export default function TasksPage({ currentUser = 'Henri Jamet' }) {
         ) : sortedTasks.length === 0 ? (
           <div className="col-span-full bg-surface-container-low border border-subtle rounded-2xl p-8 flex flex-col items-center justify-center text-center py-12">
             <div className="w-14 h-14 rounded-full bg-surface-container flex items-center justify-center text-on-surface-variant mb-3">
-              <span className="material-symbols-outlined text-[28px]">{showArchived ? 'inventory_2' : 'checklist'}</span>
+              <span className="material-symbols-outlined text-[28px]">{workflowFilter === 'ARCHIVED' ? 'inventory_2' : 'checklist'}</span>
             </div>
             <h3 className="font-headline-sm text-headline-sm text-forest-deep font-bold mb-4">
-              {showArchived
+              {workflowFilter === 'ARCHIVED'
                 ? 'Aucune tâche archivée'
-                : workflowFilter === 'proposed'
+                : workflowFilter === 'PROPOSED'
                 ? "Aucune tâche en cours d'arbitrage pour création"
-                : workflowFilter === 'pending_validation'
+                : workflowFilter === 'PENDING_VALIDATION'
                 ? "Aucune tâche en cours d'arbitrage pour complétion"
+                : workflowFilter === 'ALL'
+                ? 'Aucune mission trouvée'
                 : 'Aucune tâche en cours'}
             </h3>
-            {!showArchived && (
+            {workflowFilter !== 'ARCHIVED' && (
               <button
                 type="button"
                 onClick={handleOpenCreateTask}

@@ -17,6 +17,7 @@ from fastapi.staticfiles import StaticFiles
 from fastapi.responses import FileResponse, Response, RedirectResponse
 from sqlalchemy.orm import Session, selectinload, joinedload
 from sqlalchemy import func, or_, and_
+from sqlalchemy.exc import IntegrityError
 
 from .database import engine, Base, get_db
 from .models import (
@@ -434,20 +435,38 @@ def format_project_response(project: Project) -> dict:
     options_counts = {}
     for opt in options_list:
         count = 0
-        opt_lower = opt.strip().lower()
+        if isinstance(opt, dict):
+            opt_str = str(opt.get('label') or opt.get('title') or opt.get('name') or opt.get('value') or '').strip()
+        elif isinstance(opt, str):
+            opt_str = opt.strip()
+        else:
+            opt_str = str(opt or '').strip()
+
+        if not opt_str:
+            continue
+
+        opt_lower = opt_str.lower()
         for v in votes:
             v_str = str(v.vote or "").strip()
             if v_str.startswith("[") and v_str.endswith("]"):
                 try:
                     parsed_multi = json.loads(v_str)
-                    if isinstance(parsed_multi, list) and any(str(p).strip().lower() == opt_lower for p in parsed_multi):
-                        count += 1
-                        continue
+                    if isinstance(parsed_multi, list):
+                        matched_in_multi = False
+                        for p in parsed_multi:
+                            p_str = p.get('label') if isinstance(p, dict) else str(p)
+                            if str(p_str).strip().lower() == opt_lower:
+                                matched_in_multi = True
+                                break
+                        if matched_in_multi:
+                            count += 1
+                            continue
                 except Exception:
                     pass
             if v_str.lower() == opt_lower:
                 count += 1
-        options_counts[opt] = count
+        key = opt if isinstance(opt, str) else opt_str
+        options_counts[key] = count
 
     return {
         "id": project.id,
@@ -1802,6 +1821,14 @@ def create_project(proj: ProjectCreate, db: Session = Depends(get_db)):
     options_str = json.dumps(proj.options) if proj.options else None
     external_links_str = json.dumps(proj.external_links) if proj.external_links else None
 
+    # Cycle de vie calqué sur les tâches (Annotation 8) : PROPOSED à la création, OPEN si soumis au vote
+    if proj.status and proj.status.strip():
+        initial_status = proj.status.strip().upper()
+    elif proj.decision_mode == "SOUMETTRE_AU_VOTE":
+        initial_status = "OPEN"
+    else:
+        initial_status = "PROPOSED"
+
     db_proj = Project(
         property_id=proj.property_id,
         title=proj.title,
@@ -1821,16 +1848,21 @@ def create_project(proj: ProjectCreate, db: Session = Depends(get_db)):
         responsible=proj.responsible,
         photo_url=first_photo,
         photo_urls=photo_urls_str,
-        status="EN_VOTE" if proj.decision_mode == "SOUMETTRE_AU_VOTE" else "SOUMIS",
+        status=initial_status,
         options=options_str,
         allow_multiple_choices=bool(proj.allow_multiple_choices) if proj.allow_multiple_choices is not None else False
     )
     db.add(db_proj)
-    db.commit()
-    db.refresh(db_proj)
+    try:
+        db.commit()
+        db.refresh(db_proj)
+    except Exception as exc:
+        db.rollback()
+        logger.error(f"[PROJECT ERROR] Echec création projet: {exc}")
+        raise HTTPException(status_code=400, detail=f"Erreur lors de la création du projet: {str(exc)}")
 
     # Email notification trigger: notify members with notif_vote_needed=True if project is open for voting
-    if db_proj.status == "EN_VOTE":
+    if db_proj.status in ["EN_VOTE", "OPEN"]:
         try:
             member_users = db.query(Member).filter(Member.email.isnot(None)).all()
             member_emails = [u.email for u in member_users if getattr(u, 'notif_vote_needed', True) and u.email]
@@ -2033,12 +2065,41 @@ def review_project(project_id: int, review: ProjectReview, db: Session = Depends
     if review.linked_documents is not None and (review.linked_documents or "").strip() != (db_proj.linked_documents or "").strip():
         docs_were_modified = True
 
+    # Détection modification liens externes (Annotation 6 & 12)
+    old_raw_ext = db_proj.external_links
+    old_ext_sig = []
+    if old_raw_ext:
+        try:
+            parsed_ext = json.loads(old_raw_ext) if isinstance(old_raw_ext, str) else list(old_raw_ext)
+            if isinstance(parsed_ext, list):
+                old_ext_sig = sorted([str(x.get("url") or x.get("title") or x).strip() for x in parsed_ext if x])
+        except Exception:
+            old_ext_sig = [str(old_raw_ext).strip()]
+
+    ext_were_modified = False
+    if review.external_links is not None:
+        new_ext_sig = []
+        if isinstance(review.external_links, list):
+            new_ext_sig = sorted([str(x.get("url") or x.get("title") or x).strip() for x in review.external_links if x])
+        elif isinstance(review.external_links, str):
+            try:
+                parsed_new = json.loads(review.external_links)
+                if isinstance(parsed_new, list):
+                    new_ext_sig = sorted([str(x.get("url") or x.get("title") or x).strip() for x in parsed_new if x])
+                else:
+                    new_ext_sig = [review.external_links.strip()]
+            except Exception:
+                new_ext_sig = [review.external_links.strip()]
+        if new_ext_sig != old_ext_sig:
+            ext_were_modified = True
+
     should_reset_votes = (
         title_was_modified or
         desc_was_modified or
         options_were_modified or
         multi_was_modified or
-        docs_were_modified
+        docs_were_modified or
+        ext_were_modified
     )
 
     if review.title is not None and review.title.strip():
@@ -2050,7 +2111,7 @@ def review_project(project_id: int, review: ProjectReview, db: Session = Depends
     if review.decision_mode is not None:
         db_proj.decision_mode = review.decision_mode
         if review.decision_mode == "SOUMETTRE_AU_VOTE":
-            db_proj.status = "EN_VOTE"
+            db_proj.status = "OPEN" if review.status is None else review.status
         elif review.decision_mode == "VALIDER_DIRECTEMENT":
             db_proj.status = "EN_COURS" if review.status is None else review.status
     if review.classification is not None:
@@ -2091,8 +2152,8 @@ def review_project(project_id: int, review: ProjectReview, db: Session = Depends
         if hasattr(db_proj, 'votes') and isinstance(db_proj.votes, list):
             db_proj.votes.clear()
         db.expire(db_proj, ['votes'])
-        if db_proj.status == "REPORT_AG":
-            db_proj.status = "EN_VOTE"
+        if db_proj.status in ["REPORT_AG", "PENDING_VALIDATION"]:
+            db_proj.status = "OPEN" if getattr(db_proj, "decision_mode", None) == "SOUMETTRE_AU_VOTE" else "EN_VOTE"
 
         notif_msg = f"Le scrutin « {db_proj.title} » a été modifié. Les votes précédents ont été réinitialisés. Merci d'exprimer à nouveau votre voix."
         sys_comment = ProjectComment(
@@ -2117,12 +2178,17 @@ def review_project(project_id: int, review: ProjectReview, db: Session = Depends
         except Exception as e:
             logger.error(f"[EMAIL ERROR] Failed to send vote reset notification: {e}")
 
-    db_proj.updated_at = datetime.utcnow()
-    db.commit()
-    db.refresh(db_proj)
+    try:
+        db_proj.updated_at = datetime.utcnow()
+        db.commit()
+        db.refresh(db_proj)
+    except Exception as exc:
+        db.rollback()
+        logger.error(f"[PROJECT REVIEW ERROR] Echec commit review: {exc}")
+        raise HTTPException(status_code=400, detail=f"Erreur lors de la mise à jour du projet: {str(exc)}")
 
     # Email notification trigger: notify members with notif_vote_needed=True when project enters voting
-    if db_proj.status == "EN_VOTE" and (old_status != "EN_VOTE" or review.decision_mode == "SOUMETTRE_AU_VOTE"):
+    if db_proj.status in ["EN_VOTE", "OPEN"] and (old_status not in ["EN_VOTE", "OPEN"] or review.decision_mode == "SOUMETTRE_AU_VOTE"):
         try:
             member_users = db.query(Member).filter(Member.email.isnot(None)).all()
             member_emails = [u.email for u in member_users if getattr(u, 'notif_vote_needed', True) and u.email]
@@ -2140,6 +2206,13 @@ def review_project(project_id: int, review: ProjectReview, db: Session = Depends
             print(f"[EMAIL ERROR] Failed to send project vote notification from review: {e}")
 
     return format_project_response(db_proj)
+
+
+@app.put("/api/projects/{project_id}")
+@app.patch("/api/projects/{project_id}")
+def update_project(project_id: int, review: ProjectReview, db: Session = Depends(get_db)):
+    """Mise à jour d'un projet / scrutin (alias complet vers review_project avec sauvegarde external_links)."""
+    return review_project(project_id, review, db)
 
 
 @app.patch("/api/projects/{project_id}/cost")
@@ -2170,24 +2243,32 @@ def process_vote_submission(
         raise HTTPException(status_code=404, detail="Projet non trouvé")
 
     clean_name = (user_name or "").strip()
-    first_name = clean_name.split()[0].lower() if clean_name else ""
+    norm_clean = normalize_text_for_matching(clean_name)
+    norm_first = norm_clean.split()[0] if norm_clean else ""
 
     all_project_votes = db.query(ProjectVote).filter(ProjectVote.project_id == project_id).all()
     existing_vote = None
     for pv in all_project_votes:
         pv_name = (pv.user_name or "").strip()
-        pv_first = pv_name.split()[0].lower() if pv_name else ""
-        if pv_name.lower() == clean_name.lower() or (first_name and pv_first == first_name):
+        norm_pv = normalize_text_for_matching(pv_name)
+        norm_pv_first = norm_pv.split()[0] if norm_pv else ""
+        if norm_pv == norm_clean or (norm_first and norm_pv_first == norm_first):
             existing_vote = pv
             break
 
+    if existing_vote is None and clean_name:
+        existing_vote = db.query(ProjectVote).filter(
+            ProjectVote.project_id == project_id,
+            func.lower(ProjectVote.user_name) == clean_name.lower()
+        ).first()
+
     proj_status = (db_proj.status or "").strip().upper()
-    closed_or_archived = ["ARCHIVE", "ARCHIVEE", "ANNULE", "ANNULEE"]
+    closed_or_archived = ["ARCHIVE", "ARCHIVEE", "ANNULE", "ANNULEE", "ARCHIVED", "CLOSED"]
 
     allowed_vote_statuses = [
-        "EN_VOTE", "SOUMIS", "VOTE_EN_COURS", "OUVERT", "OUVERTE",
-        "EN_COURS", "REPORT_AG", "APPROUVE", "REFUSE", "EN_ATTENTE_VALIDATION",
-        "VALIDE", "VALIDEE"
+        "EN_VOTE", "SOUMIS", "VOTE_EN_COURS", "OUVERT", "OUVERTE", "OPEN",
+        "EN_COURS", "REPORT_AG", "APPROUVE", "REFUSE", "EN_ATTENTE_VALIDATION", "PENDING_VALIDATION",
+        "VALIDE", "VALIDEE", "PROPOSED"
     ]
     if proj_status in closed_or_archived or (not existing_vote and proj_status not in allowed_vote_statuses):
         raise HTTPException(status_code=400, detail="Ce projet n'est pas ouvert au vote actuellement.")
@@ -2225,9 +2306,14 @@ def process_vote_submission(
     if is_multi_vote:
         if not multi_vote_choices:
             if existing_vote:
-                db.delete(existing_vote)
-                db.commit()
-                db.refresh(db_proj)
+                try:
+                    db.delete(existing_vote)
+                    db.commit()
+                    db.refresh(db_proj)
+                except Exception as exc:
+                    db.rollback()
+                    logger.error(f"[VOTE ERROR] Erreur suppression multi-vote vide: {exc}")
+                    raise HTTPException(status_code=400, detail="Erreur lors de la réinitialisation du vote.")
                 return format_project_response(db_proj)
             return format_project_response(db_proj)
 
@@ -2251,6 +2337,7 @@ def process_vote_submission(
             db_proj.add_to_ag_agenda = True
 
         vote_str = json.dumps(validated_choices)
+        vote_to_store = vote_str
     else:
         raw_vote = vote_val.value if hasattr(vote_val, 'value') else str(vote_val)
         vote_upper = raw_vote.upper().strip()
@@ -2268,27 +2355,56 @@ def process_vote_submission(
             db_proj.status = "REPORT_AG"
             db_proj.add_to_ag_agenda = True
 
+        # Sécurisation défensive : tronquer à 50 caractères si chaîne brute (Annotation 7)
+        vote_to_store = vote_str[:50] if isinstance(vote_str, str) else str(vote_str)[:50]
+
     if existing_vote:
-        existing_vote.vote = vote_str
+        existing_vote.vote = vote_to_store
         existing_vote.comment = comment
         existing_vote.voted_at = datetime.utcnow()
     else:
         new_vote = ProjectVote(
             project_id=project_id,
             user_name=clean_name,
-            vote=vote_str,
+            vote=vote_to_store,
             comment=comment
         )
         db.add(new_vote)
 
-    db.commit()
-    db.refresh(db_proj)
+    try:
+        db.commit()
+        db.refresh(db_proj)
+    except IntegrityError:
+        db.rollback()
+        # Conflit d'unicité détecté : récupérer le vote existant avec ce user_name
+        fallback_vote = db.query(ProjectVote).filter(
+            ProjectVote.project_id == project_id,
+            func.lower(ProjectVote.user_name) == clean_name.lower()
+        ).first()
+        if fallback_vote:
+            fallback_vote.vote = vote_to_store
+            fallback_vote.comment = comment
+            fallback_vote.voted_at = datetime.utcnow()
+            try:
+                db.commit()
+                db.refresh(db_proj)
+            except Exception as exc_inner:
+                db.rollback()
+                logger.error(f"[VOTE ERROR] Echec fallback commit vote: {exc_inner}")
+                raise HTTPException(status_code=400, detail="Erreur d'intégrité lors de l'enregistrement du vote.")
+        else:
+            logger.error("[VOTE ERROR] Conflit d'intégrité sans vote existant trouvé")
+            raise HTTPException(status_code=400, detail="Conflit d'intégrité lors de l'enregistrement du vote.")
+    except Exception as exc:
+        db.rollback()
+        logger.error(f"[VOTE ERROR] Echec commit vote: {exc}")
+        raise HTTPException(status_code=400, detail=f"Erreur lors de l'enregistrement du vote: {str(exc)}")
 
     # Check if ALL associates have voted (7 associates in SCI Familiale)
     all_project_votes = db.query(ProjectVote).filter(ProjectVote.project_id == project_id).all()
     distinct_voters = {
-        (v.user_name or "").strip().split()[0].lower()
-        for v in all_project_votes if v.user_name
+        normalize_text_for_matching(v.user_name).split()[0]
+        for v in all_project_votes if v.user_name and normalize_text_for_matching(v.user_name)
     }
     total_associates = db.query(Member).count() or 7
 
@@ -2298,11 +2414,16 @@ def process_vote_submission(
         for v in all_project_votes
     )
     if not has_report_ag_vote and db_proj.status == "REPORT_AG":
-        db_proj.status = "EN_VOTE"
+        db_proj.status = "OPEN" if getattr(db_proj, "decision_mode", None) == "SOUMETTRE_AU_VOTE" else "EN_VOTE"
         db_proj.add_to_ag_agenda = False
 
-    # If all members have expressed their vote, finalize decision and trigger final email
-    if len(distinct_voters) >= total_associates and db_proj.status in ["EN_VOTE", "SOUMIS", "REPORT_AG", "APPROUVE", "REFUSE"]:
+    # Annotation 8 : Cycle de vie des votes calqué sur les tâches
+    # Lorsque le total des voix exprimées atteint le quorum complet (7 voix), basculer automatiquement
+    # le statut du projet en PENDING_VALIDATION (au lieu de clore directement), pour permettre l'arbitrage formel par les coordinateurs.
+    quorum_reached = len(distinct_voters) >= 7 or (total_associates > 0 and len(distinct_voters) >= total_associates)
+    if quorum_reached and db_proj.status in [
+        "EN_VOTE", "OPEN", "SOUMIS", "PROPOSED", "REPORT_AG", "APPROUVE", "REFUSE", "PENDING_VALIDATION"
+    ]:
         votes_summary = {"pour": 0, "contre": 0, "abstention": 0, "report_prochaine_ag": 0}
         for v in all_project_votes:
             v_s = (v.vote or "").upper()
@@ -2319,16 +2440,17 @@ def process_vote_submission(
             db_proj.status = "REPORT_AG"
             db_proj.add_to_ag_agenda = True
             decision = "REPORTÉ PROCHAINE AG"
-        elif votes_summary["pour"] > votes_summary["contre"]:
-            db_proj.status = "APPROUVE"
-            decision = "ADOPTÉ"
         else:
-            db_proj.status = "REFUSE"
-            decision = "REJETÉ"
+            db_proj.status = "PENDING_VALIDATION"
+            decision = "QUORUM ATTEINT (7/7) - EN ATTENTE DE VALIDATION COORDINATEURS"
 
-        db_proj.updated_at = datetime.utcnow()
-        db.commit()
-        db.refresh(db_proj)
+        try:
+            db_proj.updated_at = datetime.utcnow()
+            db.commit()
+            db.refresh(db_proj)
+        except Exception as exc:
+            db.rollback()
+            logger.error(f"[VOTE ERROR] Echec commit mise à jour statut quorum: {exc}")
 
         # Email Trigger 3: Send final decision email if notif_vote_closed is True
         try:

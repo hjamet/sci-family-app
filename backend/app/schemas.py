@@ -498,6 +498,7 @@ class ProjectResponse(BaseModel):
     completion_docs: Optional[List[str]] = []
     options: Optional[List[str]] = []
     allow_multiple_choices: Optional[bool] = False
+    external_links: Optional[List[Dict[str, Any]]] = None
     created_at: datetime
     updated_at: datetime
     property: Optional[PropertyResponse] = None
@@ -505,12 +506,13 @@ class ProjectResponse(BaseModel):
     comments: List[ProjectCommentResponse] = []
     vote_summary: Optional[Dict] = None
 
-    @field_validator("document_urls", "completion_docs", mode="before")
+    @field_validator("document_urls", "completion_docs", "external_links", mode="before")
     @classmethod
     def parse_json_lists(cls, v):
         if isinstance(v, str):
             try:
-                return json.loads(v)
+                parsed = json.loads(v)
+                return parsed if isinstance(parsed, list) else [parsed]
             except Exception:
                 return [s.strip() for s in v.split(",") if s.strip()]
         return v

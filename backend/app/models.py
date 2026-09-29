@@ -246,7 +246,7 @@ class ProjectVote(Base):
     id = Column(Integer, primary_key=True, index=True)
     project_id = Column(Integer, ForeignKey("projects.id"), nullable=False)
     user_name = Column(String, nullable=False)
-    vote = Column(String, nullable=False)  # POUR, CONTRE, ABSTENTION
+    vote = Column(Text, nullable=False)  # POUR, CONTRE, ABSTENTION ou texte long / JSON sans troncature
     comment = Column(Text, nullable=True)
     voted_at = Column(DateTime, default=datetime.utcnow)
 

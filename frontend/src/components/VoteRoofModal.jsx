@@ -173,6 +173,40 @@ export const resolveDocumentInfo = (doc, project = null) => {
   };
 };
 
+/**
+ * Normalise une adresse URL avec protocole https://
+ */
+export const normalizeUrl = (rawUrl) => {
+  if (!rawUrl || typeof rawUrl !== 'string') return '';
+  const trimmed = rawUrl.trim();
+  if (/^https?:\/\//i.test(trimmed)) return trimmed;
+  return `https://${trimmed}`;
+};
+
+/**
+ * Décode et normalise la liste des liens web (external_links)
+ */
+export const parseExternalLinks = (raw) => {
+  if (!raw) return [];
+  if (Array.isArray(raw)) {
+    return raw.map(link => {
+      if (typeof link === 'string') return { url: link, title: link };
+      return { url: link?.url || '', title: link?.title || link?.url || '' };
+    }).filter(l => Boolean(l.url));
+  }
+  if (typeof raw === 'string' && raw.trim()) {
+    try {
+      const parsed = JSON.parse(raw);
+      if (Array.isArray(parsed)) {
+        return parseExternalLinks(parsed);
+      }
+    } catch (_) {
+      return [{ url: raw.trim(), title: raw.trim() }];
+    }
+  }
+  return [];
+};
+
 function VoteRoofModalInner({
   isOpen,
   onClose,
@@ -245,7 +279,7 @@ function VoteRoofModalInner({
   // Ref vers la section de vote pour défilement fluide
   const voteSectionRef = useRef(null);
 
-  // Droits de gouvernance (Coordinateur ou Porteur)
+  // Droits de gouvernance : Coordinateur ou Auteur du vote (Annotations 4, 5, 6, 12)
   const isCoordinator = Boolean(
     currentUser?.is_coordinator === true ||
     currentUser?.is_coordinator === 'true' ||
@@ -254,14 +288,15 @@ function VoteRoofModalInner({
     currentUserLower.includes('josephine') ||
     currentUserLower.includes('joséphine')
   );
-  const isOwner = Boolean(
-    (activeProject?.submitted_by &&
-      currentUserLower.includes(String(activeProject.submitted_by).toLowerCase().split(' ')[0])) ||
-    (activeProject?.created_by &&
-      (String(activeProject.created_by).toLowerCase() === currentUserLower ||
-       currentUserLower.includes(String(activeProject.created_by).toLowerCase())))
+  const isAuthor = Boolean(
+    activeProject?.created_by && (
+      String(activeProject.created_by).toLowerCase() === currentUserLower ||
+      currentUserLower.includes(String(activeProject.created_by).toLowerCase()) ||
+      (currentAssociate?.id && String(activeProject.created_by).toLowerCase() === String(currentAssociate.id).toLowerCase())
+    )
   );
-  const canManageVote = isCoordinator || isOwner || currentUserLower === 'henri jamet';
+  const canEditOrDelete = Boolean(isCoordinator || isAuthor);
+  const canManageVote = canEditOrDelete;
 
   const [editTitle, setEditTitle] = useState(projectTitle);
   const [editDescription, setEditDescription] = useState(projectDescription);
@@ -288,15 +323,16 @@ function VoteRoofModalInner({
   const [isUploadModalOpen, setIsUploadModalOpen] = useState(false);
   const [isSelectExistingDocModalOpen, setIsSelectExistingDocModalOpen] = useState(false);
 
-  // Liens web et sources externes en mode édition
-  const [editExternalLinks, setEditExternalLinks] = useState(() => activeProject?.external_links || []);
+  // Liens web et sources externes en mode édition et consultation (Annotations 4 & 12)
+  const [editExternalLinks, setEditExternalLinks] = useState(() => parseExternalLinks(activeProject?.external_links));
+  const activeExternalLinks = useMemo(() => parseExternalLinks(activeProject?.external_links), [activeProject?.external_links]);
 
   // Synchronisation lors de l'ouverture du mode édition
   useEffect(() => {
     setEditTitle(activeProject.title || '');
     setEditDescription(activeProject.description || '');
     setEditCategory(activeProject.category || activeProject.subject || 'Presbytère');
-    setEditExternalLinks(activeProject?.external_links || []);
+    setEditExternalLinks(parseExternalLinks(activeProject?.external_links));
     const opts = (() => {
       if (Array.isArray(activeProject.options) && activeProject.options.length > 0) return activeProject.options;
       if (typeof activeProject.options === 'string' && activeProject.options.trim()) {
@@ -485,6 +521,11 @@ function VoteRoofModalInner({
   // Annotation 4 : Détacher un document de la liste en mode édition / création
   const handleDetachDocument = (indexToRemove) => {
     setEditDocuments(prev => prev.filter((_, idx) => idx !== indexToRemove));
+  };
+
+  // Annotation 12 : Détacher un lien web de la liste en mode édition / création
+  const handleDetachExternalLink = (indexToRemove) => {
+    setEditExternalLinks(prev => prev.filter((_, idx) => idx !== indexToRemove));
   };
 
   // Annotation 4 : Succès du téléversement d'un document justificatif
@@ -812,8 +853,8 @@ function VoteRoofModalInner({
           </div>
 
           <div className="flex items-center gap-2">
-            {/* Boutons Éditer et Supprimer pour coordinateurs / porteur (scrutin existant uniquement) */}
-            {!isNewProject && canManageVote && !isEditing && (
+            {/* Boutons Éditer et Supprimer pour coordinateurs / créateur du vote (scrutin existant uniquement) */}
+            {!isNewProject && canEditOrDelete && !isEditing && (
               <div className="flex items-center gap-1.5 mr-2">
                 <button
                   type="button"
@@ -1008,12 +1049,12 @@ function VoteRoofModalInner({
                   )}
                 </div>
 
-                {/* ANNOTATION 4 & 6 : Gestion des pièces jointes en mode édition / création */}
+                {/* ANNOTATION 4 & 6 & 12 : Gestion unifiée des pièces jointes et liens web en mode édition / création */}
                 <div className="flex flex-col gap-2 pt-2 border-t border-slate-200 dark:border-slate-800">
                   <div className="flex items-center justify-between flex-wrap gap-2">
                     <label className="text-xs font-bold text-slate-700 dark:text-slate-300 flex items-center gap-1.5">
                       <span className="material-symbols-outlined text-sm text-forest-deep">attach_file</span>
-                      <span>Documents justificatifs &amp; Devis ({editDocuments.length})</span>
+                      <span>Documents justificatifs &amp; Liens web ({editDocuments.length + editExternalLinks.length})</span>
                     </label>
                     <div className="flex items-center gap-2">
                       <button
@@ -1036,17 +1077,18 @@ function VoteRoofModalInner({
                     </div>
                   </div>
 
-                  {editDocuments.length === 0 ? (
+                  {editDocuments.length === 0 && editExternalLinks.length === 0 ? (
                     <div className="p-3 bg-white dark:bg-slate-800 rounded-xl text-center text-xs text-slate-500 dark:text-slate-400 border border-dashed border-slate-300 dark:border-slate-700">
-                      Aucun document rattaché. Cliquez sur « Ajouter un document » pour téléverser un devis ou une pièce justificative.
+                      Aucun document ni lien rattaché. Utilisez les boutons ci-dessus ou le formulaire ci-dessous pour ajouter un document ou une URL web.
                     </div>
                   ) : (
                     <div className="flex flex-col gap-1.5">
+                      {/* Documents téléversés ou rattachés */}
                       {editDocuments.map((doc, idx) => {
                         const docInfo = resolveDocumentInfo(doc, activeProject);
                         return (
                           <div
-                            key={idx}
+                            key={`doc-${idx}`}
                             className="flex items-center justify-between p-2.5 bg-white dark:bg-slate-800 rounded-xl border border-slate-200 dark:border-slate-700 text-xs"
                           >
                             <div className="flex items-center gap-2 min-w-0">
@@ -1078,17 +1120,73 @@ function VoteRoofModalInner({
                           </div>
                         );
                       })}
+
+                      {/* Liens web externes fusionnés (Annotation 12) */}
+                      {editExternalLinks.map((link, idx) => {
+                        const rawUrl = typeof link === 'string' ? link : link?.url || '';
+                        const normalized = normalizeUrl(rawUrl);
+                        const linkTitle = (typeof link === 'object' && link?.title) ? link.title : normalized;
+                        return (
+                          <div
+                            key={`link-${idx}`}
+                            className="flex items-center justify-between p-2.5 bg-white dark:bg-slate-800 rounded-xl border border-slate-200 dark:border-slate-700 text-xs"
+                          >
+                            <div className="flex items-center gap-2 min-w-0">
+                              <span className="material-symbols-outlined text-sky-600 text-base shrink-0">
+                                language
+                              </span>
+                              <span className="font-medium text-slate-800 dark:text-slate-200 truncate" title={linkTitle}>
+                                {linkTitle}
+                              </span>
+                              <span className="px-1.5 py-0.5 rounded text-[10px] font-bold bg-sky-100 text-sky-800 dark:bg-sky-950 dark:text-sky-300 border border-sky-200 dark:border-sky-800 shrink-0">
+                                Lien web
+                              </span>
+                              <a
+                                href={normalized}
+                                target="_blank"
+                                rel="noopener noreferrer"
+                                className="text-[11px] text-sky-600 dark:text-sky-400 hover:underline truncate max-w-[200px] font-mono hidden sm:inline"
+                                title={normalized}
+                              >
+                                {normalized}
+                              </a>
+                            </div>
+                            <div className="flex items-center gap-1.5 shrink-0 ml-2">
+                              <a
+                                href={normalized}
+                                target="_blank"
+                                rel="noopener noreferrer"
+                                className="px-2 py-1 rounded-lg bg-slate-100 hover:bg-slate-200 text-slate-700 dark:bg-slate-700 dark:text-slate-200 text-[11px] font-semibold transition-colors cursor-pointer flex items-center gap-1"
+                                title="Ouvrir le lien web"
+                              >
+                                <span>Ouvrir</span>
+                                <span className="material-symbols-outlined text-[13px]">open_in_new</span>
+                              </a>
+                              <button
+                                type="button"
+                                onClick={() => handleDetachExternalLink(idx)}
+                                className="px-2 py-1 rounded-lg bg-rose-50 hover:bg-rose-100 text-rose-700 dark:bg-rose-950/60 dark:text-rose-300 text-[11px] font-semibold transition-colors cursor-pointer"
+                                title="Détacher ce lien web"
+                              >
+                                Détacher
+                              </button>
+                            </div>
+                          </div>
+                        );
+                      })}
                     </div>
                   )}
-                </div>
 
-                {/* Annotation 2 : Liens web & sources externes */}
-                <div className="pt-2 border-t border-slate-200 dark:border-slate-800">
-                  <ExternalLinksSection
-                    links={editExternalLinks}
-                    onChange={setEditExternalLinks}
-                    isEditing={true}
-                  />
+                  {/* Formulaire d'ajout rapide d'URL web (Annotation 12) */}
+                  <div className="pt-2">
+                    <ExternalLinksSection
+                      links={editExternalLinks}
+                      onChange={setEditExternalLinks}
+                      isEditing={true}
+                      hideList={true}
+                      title="Ajouter un lien web ou une source externe"
+                    />
+                  </div>
                 </div>
 
                 {/* Boutons d'action édition / création */}
@@ -1168,86 +1266,117 @@ function VoteRoofModalInner({
                   <span>👇 Voter 👇</span>
                 </button>
 
-                {/* Documents & Justificatifs rattachés (Annotation 6 : Vrais noms & visionneuse universelle) */}
+                {/* Documents & Justificatifs rattachés (Annotations 4, 6 & 12 : Documents et URLs web fusionnés) */}
                 <div className="flex flex-col gap-2.5">
                   <div className="flex items-center justify-between flex-wrap gap-2">
                     <h2 className="font-headline-sm text-sm sm:text-base font-bold text-on-surface flex items-center gap-2">
                       <span className="material-symbols-outlined text-forest-deep text-xl">folder_open</span>
-                      Documents &amp; Justificatifs rattachés
+                      Documents justificatifs &amp; Liens rattachés
                     </h2>
-                    <div className="flex items-center gap-2">
-                      {canManageVote && (
-                        <button
-                          type="button"
-                          onClick={() => setIsSelectExistingDocModalOpen(true)}
-                          className="inline-flex items-center gap-1 px-2.5 py-1 rounded-lg bg-slate-100 dark:bg-slate-800 border border-slate-300 dark:border-slate-700 text-slate-700 dark:text-slate-200 text-xs font-semibold hover:bg-slate-200 dark:hover:bg-slate-700 transition-colors cursor-pointer"
-                          title="Associer un document déjà présent dans la base documentaire"
-                        >
-                          <span className="material-symbols-outlined text-sm">search</span>
-                          <span>Associer un document existant</span>
-                        </button>
-                      )}
-                      <span className="text-xs text-on-surface-variant font-medium">
-                        {documentsList.length} pièce{documentsList.length > 1 ? 's' : ''}
-                      </span>
-                    </div>
+                    <span className="text-xs text-on-surface-variant font-medium">
+                      {documentsList.length + activeExternalLinks.length} ressource{(documentsList.length + activeExternalLinks.length) > 1 ? 's' : ''}
+                    </span>
                   </div>
 
                   <div className="flex flex-col gap-2">
-                    {documentsList.length === 0 ? (
+                    {documentsList.length === 0 && activeExternalLinks.length === 0 ? (
                       <div className="p-3.5 bg-canvas-slate dark:bg-slate-900/40 rounded-xl text-center text-xs text-on-surface-variant border border-dashed border-border-subtle">
-                        Aucune pièce jointe ou devis téléversé pour ce projet.
+                        Aucune pièce jointe ou ressource liée pour ce projet.
                       </div>
                     ) : (
-                      documentsList.map((doc, idx) => {
-                        const docInfo = resolveDocumentInfo(doc, activeProject);
-                        return (
-                          <div key={idx} className="flex items-center justify-between p-3 bg-canvas-slate dark:bg-slate-900/50 hover:bg-surface-container transition-colors rounded-xl border border-border-subtle">
-                            <div className="flex items-center gap-3 min-w-0">
-                              <div className="w-10 h-10 rounded-lg bg-rose-100 text-rose-700 dark:bg-rose-950/60 dark:text-rose-400 flex items-center justify-center shrink-0">
-                                <span className="material-symbols-outlined text-xl">
-                                  {docInfo.isImage ? 'image' : 'picture_as_pdf'}
-                                </span>
+                      <>
+                        {/* 1. Documents joints */}
+                        {documentsList.map((doc, idx) => {
+                          const docInfo = resolveDocumentInfo(doc, activeProject);
+                          return (
+                            <div key={`doc-${idx}`} className="flex items-center justify-between p-3 bg-canvas-slate dark:bg-slate-900/50 hover:bg-surface-container transition-colors rounded-xl border border-border-subtle">
+                              <div className="flex items-center gap-3 min-w-0">
+                                <div className="w-10 h-10 rounded-lg bg-rose-100 text-rose-700 dark:bg-rose-950/60 dark:text-rose-400 flex items-center justify-center shrink-0">
+                                  <span className="material-symbols-outlined text-xl">
+                                    {docInfo.isImage ? 'image' : 'picture_as_pdf'}
+                                  </span>
+                                </div>
+                                <div className="flex flex-col min-w-0">
+                                  <span className="text-xs sm:text-sm font-semibold text-on-surface truncate" title={docInfo.title}>
+                                    {docInfo.title}
+                                  </span>
+                                </div>
                               </div>
-                              <div className="flex flex-col min-w-0">
-                                <span className="text-xs sm:text-sm font-semibold text-on-surface truncate" title={docInfo.title}>
-                                  {docInfo.title}
-                                </span>
-                                {/* Annotation 6 : Le sous-titre "Pièce certifiée" est supprimé */}
+                              <div className="flex items-center gap-1.5 shrink-0 ml-2">
+                                <button 
+                                  onClick={() => handleViewDocument(doc)}
+                                  className="px-2.5 py-1.5 rounded-lg bg-surface-container-lowest text-primary hover:bg-sage-soft text-xs font-semibold flex items-center gap-1 shadow-xs border border-primary transition-all cursor-pointer" 
+                                  type="button"
+                                  title="Consulter sans télécharger"
+                                >
+                                  <span className="material-symbols-outlined text-[15px]">visibility</span>
+                                  <span>Consulter</span>
+                                </button>
+                                <button 
+                                  onClick={() => handleDownloadDocument(doc)}
+                                  className="px-2.5 py-1.5 rounded-lg bg-primary text-white hover:bg-forest-deep text-xs font-semibold flex items-center gap-1 shadow-xs transition-all cursor-pointer" 
+                                  type="button"
+                                  title="Télécharger une copie"
+                                >
+                                  <span className="material-symbols-outlined text-[15px]">download</span>
+                                  <span>Télécharger</span>
+                                </button>
                               </div>
                             </div>
-                            <div className="flex items-center gap-1.5 shrink-0 ml-2">
-                              <button 
-                                onClick={() => handleViewDocument(doc)}
-                                className="px-2.5 py-1.5 rounded-lg bg-surface-container-lowest text-primary hover:bg-sage-soft text-xs font-semibold flex items-center gap-1 shadow-xs border border-primary transition-all cursor-pointer" 
-                                type="button"
-                                title="Consulter sans télécharger"
-                              >
-                                <span className="material-symbols-outlined text-[15px]">visibility</span>
-                                <span>Consulter</span>
-                              </button>
-                              <button 
-                                onClick={() => handleDownloadDocument(doc)}
-                                className="px-2.5 py-1.5 rounded-lg bg-primary text-white hover:bg-forest-deep text-xs font-semibold flex items-center gap-1 shadow-xs transition-all cursor-pointer" 
-                                type="button"
-                                title="Télécharger une copie"
-                              >
-                                <span className="material-symbols-outlined text-[15px]">download</span>
-                                <span>Télécharger</span>
-                              </button>
+                          );
+                        })}
+
+                        {/* 2. Liens web externes fusionnés (Annotation 12) */}
+                        {activeExternalLinks.map((link, idx) => {
+                          const rawUrl = typeof link === 'string' ? link : link?.url || '';
+                          const normalized = normalizeUrl(rawUrl);
+                          const linkTitle = (typeof link === 'object' && link?.title) ? link.title : normalized;
+                          return (
+                            <div key={`link-${idx}`} className="flex items-center justify-between p-3 bg-canvas-slate dark:bg-slate-900/50 hover:bg-surface-container transition-colors rounded-xl border border-border-subtle">
+                              <div className="flex items-center gap-3 min-w-0">
+                                <div className="w-10 h-10 rounded-lg bg-sky-100 text-sky-700 dark:bg-sky-950/60 dark:text-sky-300 flex items-center justify-center shrink-0">
+                                  <span className="material-symbols-outlined text-xl">language</span>
+                                </div>
+                                <div className="flex flex-col min-w-0">
+                                  <div className="flex items-center gap-2">
+                                    <span className="text-xs sm:text-sm font-semibold text-on-surface truncate" title={linkTitle}>
+                                      {linkTitle}
+                                    </span>
+                                    <span className="px-2 py-0.5 rounded text-[10px] font-bold bg-sky-100 dark:bg-sky-950/80 text-sky-800 dark:text-sky-300 border border-sky-200 dark:border-sky-800 shrink-0">
+                                      Lien web
+                                    </span>
+                                  </div>
+                                  <a
+                                    href={normalized}
+                                    target="_blank"
+                                    rel="noopener noreferrer"
+                                    className="text-[11px] text-sky-700 dark:text-sky-400 font-mono truncate hover:underline flex items-center gap-1 mt-0.5"
+                                    title={normalized}
+                                  >
+                                    <span className="truncate">{normalized}</span>
+                                    <span className="material-symbols-outlined text-[13px] shrink-0">open_in_new</span>
+                                  </a>
+                                </div>
+                              </div>
+                              <div className="flex items-center gap-1.5 shrink-0 ml-2">
+                                <a
+                                  href={normalized}
+                                  target="_blank"
+                                  rel="noopener noreferrer"
+                                  className="px-2.5 py-1.5 rounded-lg bg-surface-container-lowest text-sky-700 dark:text-sky-300 hover:bg-sky-50 dark:hover:bg-slate-800 text-xs font-semibold flex items-center gap-1 shadow-xs border border-sky-300 dark:border-sky-700 transition-all cursor-pointer"
+                                  title="Consulter le lien web dans un nouvel onglet"
+                                >
+                                  <span className="material-symbols-outlined text-[15px]">open_in_new</span>
+                                  <span>Consulter le lien</span>
+                                </a>
+                              </div>
                             </div>
-                          </div>
-                        );
-                      })
+                          );
+                        })}
+                      </>
                     )}
                   </div>
                 </div>
-
-                {/* Annotation 2 : Liens web & sources externes */}
-                <ExternalLinksSection
-                  links={activeProject.external_links}
-                  isEditing={false}
-                />
 
                 {/* ANNOTATIONS 4 & 5 : TITRE ÉPURÉ "Voter" & SONDAGE STYLE WHATSAPP */}
                 <div ref={voteSectionRef} id="section-sondage-whatsapp" className="flex flex-col gap-2.5 scroll-mt-6">

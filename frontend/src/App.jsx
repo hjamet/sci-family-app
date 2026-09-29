@@ -15,6 +15,7 @@ import StatistiquesPage from './pages/StatistiquesPage';
 import BookingModal from './components/BookingModal';
 import VoteRoofModal from './components/VoteRoofModal';
 import TaskDetailModal from './components/TaskDetailModal';
+import BugReportButton from './components/BugReportButton';
 import { fetchProperties, fetchProjects, fetchTaskById, castProjectVote, getCachedData } from './api';
 import GlobalErrorAlert from './components/GlobalErrorAlert';
 
@@ -32,6 +33,8 @@ export default function App() {
 
   const [isTaskModalOpen, setIsTaskModalOpen] = useState(false);
   const [activeTask, setActiveTask] = useState(null);
+  const [isBugReportMode, setIsBugReportMode] = useState(false);
+  const [tempUploadedDocIds, setTempUploadedDocIds] = useState([]);
 
   const handleOpenVoteModal = async (projectId, projectData) => {
     if (projectData && (projectData.title || projectData.id)) {
@@ -63,6 +66,8 @@ export default function App() {
   };
 
   const handleOpenTaskModal = async (taskId, taskData) => {
+    setIsBugReportMode(false);
+    setTempUploadedDocIds([]);
     if (taskData && taskData.title) {
       setActiveTask(taskData);
       setIsTaskModalOpen(true);
@@ -83,6 +88,13 @@ export default function App() {
     }
 
     navigate('/taches');
+  };
+
+  const handleOpenBugReport = ({ task: bugTask, tempUploadedDocIds: docIds }) => {
+    setActiveTask(bugTask);
+    setIsBugReportMode(true);
+    setTempUploadedDocIds(docIds || []);
+    setIsTaskModalOpen(true);
   };
 
   // Sync active tab with current location pathname
@@ -309,21 +321,31 @@ export default function App() {
         }}
       />
 
-      {/* Global Task Detail Modal (Ouverture directe par-dessus la page active depuis les notifications) */}
+      {/* Global Task Detail Modal (Ouverture directe par-dessus la page active depuis les notifications ou le Bug Reporter) */}
       {isTaskModalOpen && (
         <TaskDetailModal
           isOpen={isTaskModalOpen}
           task={activeTask}
-          isEditing={false}
-          initialMode="view"
+          isEditing={isBugReportMode}
+          initialMode={isBugReportMode ? 'edit' : 'view'}
+          isBugReport={isBugReportMode}
+          tempUploadedDocIds={tempUploadedDocIds}
           onClose={() => {
             setIsTaskModalOpen(false);
             setActiveTask(null);
+            setIsBugReportMode(false);
+            setTempUploadedDocIds([]);
           }}
           currentUser={currentUser}
           onTaskUpdated={() => {}}
         />
       )}
+
+      {/* Bouton Bug Reporter permanent */}
+      <BugReportButton
+        currentUser={currentUser}
+        onOpenBugReport={handleOpenBugReport}
+      />
 
     </div>
   );

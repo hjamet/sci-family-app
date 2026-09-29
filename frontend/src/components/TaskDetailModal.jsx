@@ -16,6 +16,7 @@ import {
   reactToTaskComment,
   uploadTaskDocuments,
   fetchDocumentCategories,
+  deleteDocument,
 } from '../api';
 import {
   isTaskPendingValidation,
@@ -124,11 +125,56 @@ export default function TaskDetailModal({
   onTaskUpdated,
   initialMode = 'view',
   isEditing = false,
+  isBugReport = false,
+  tempUploadedDocIds = [],
 }) {
   const isVoteInitiative = !!(initialTask?.isVoteInitiative || initialTask?.isVote || initialTask?.is_project);
+  const isBugReportEffective = Boolean(isBugReport || initialTask?.isBugReport);
   const isNewTask = !initialTask || !initialTask.id || isEditing || initialMode === 'edit';
   const [task, setTask] = useState(initialTask || {});
   const [mode, setMode] = useState(isNewTask ? 'edit' : (initialMode || 'view')); // 'view' | 'edit'
+
+  // Gestion Zero-Leak des documents temporaires
+  const isSavedRef = useRef(false);
+  const tempDocIdsRef = useRef(tempUploadedDocIds || initialTask?.tempUploadedDocIds || []);
+
+  useEffect(() => {
+    isSavedRef.current = false;
+    tempDocIdsRef.current = Array.isArray(tempUploadedDocIds) && tempUploadedDocIds.length > 0
+      ? tempUploadedDocIds
+      : (initialTask?.tempUploadedDocIds || []);
+  }, [isOpen, tempUploadedDocIds, initialTask]);
+
+  const purgeTempDocuments = async () => {
+    if (!isSavedRef.current && tempDocIdsRef.current && tempDocIdsRef.current.length > 0) {
+      const idsToPurge = [...tempDocIdsRef.current];
+      tempDocIdsRef.current = [];
+      for (const docId of idsToPurge) {
+        try {
+          await deleteDocument(docId);
+        } catch (purgeErr) {
+          console.warn(`[Purge Zero-Leak] Erreur suppression document temporaire #${docId}:`, purgeErr);
+        }
+      }
+    }
+  };
+
+  const handleSafeClose = async () => {
+    await purgeTempDocuments();
+    onClose();
+  };
+
+  // Fermeture par touche Échap avec purge Zero-Leak
+  useEffect(() => {
+    if (!isOpen) return;
+    const handleKeyDown = (e) => {
+      if (e.key === 'Escape') {
+        handleSafeClose();
+      }
+    };
+    window.addEventListener('keydown', handleKeyDown);
+    return () => window.removeEventListener('keydown', handleKeyDown);
+  }, [isOpen]);
   
   // Initialisation des commentaires (avec message d'accueil si nouvelle création, ou task.comments si existant)
   const [comments, setComments] = useState(() => {
@@ -602,6 +648,10 @@ export default function TaskDetailModal({
         progress: 0,
       };
 
+      // Sauvegarde réussie : sécurisation Zero-Leak (les pièces jointes sont conservées)
+      isSavedRef.current = true;
+      tempDocIdsRef.current = [];
+
       if (task?.id) {
         const updated = await updateTask(task.id, payload);
         setTask(updated);
@@ -1055,7 +1105,7 @@ export default function TaskDetailModal({
             {/* Close Modal 'X' */}
             <button
               type="button"
-              onClick={onClose}
+              onClick={handleSafeClose}
               className={`w-11 h-11 flex items-center justify-center rounded-full bg-white text-on-surface-variant hover:bg-surface-container-high transition-colors cursor-pointer border border-slate-200 ${(!isNewTask && canDeleteTask) ? '' : 'ml-auto'}`}
               title="Fermer la fenêtre"
             >
@@ -1204,28 +1254,7 @@ export default function TaskDetailModal({
                       </p>
                     </div>
 
-                    <div className="flex flex-wrap items-center gap-2">
-                      <button
-                        type="button"
-                        onClick={() => {
-                          setDroppedFileForUpload(null);
-                          setIsUploadDocModalOpen(true);
-                        }}
-                        className="inline-flex items-center gap-2 h-10 px-4 rounded-full bg-white border-2 border-emerald-600 text-emerald-800 font-label-lg text-xs font-semibold shadow-sm hover:bg-emerald-50 transition-colors cursor-pointer"
-                      >
-                        <span className="material-symbols-outlined text-[18px]">add_circle</span>
-                        <span>Ajouter un nouveau document</span>
-                      </button>
-                      <button
-                        type="button"
-                        onClick={() => setIsSelectExistingDocModalOpen(true)}
-                        className="inline-flex items-center gap-2 h-10 px-4 rounded-full bg-white border-2 border-slate-300 text-slate-700 hover:border-emerald-600 hover:text-emerald-800 font-label-lg text-xs font-semibold shadow-sm hover:bg-emerald-50 transition-colors cursor-pointer"
-                        title="Sélectionner parmi les documents déjà enregistrés dans la SCI"
-                      >
-                        <span className="material-symbols-outlined text-[18px]">search</span>
-                        <span>Sélectionner un document existant</span>
-                      </button>
-                    </div>
+                    {/* Mode consultation étanche : boutons d'ajout réservés au mode édition */}
                   </div>
 
                   <div className="flex flex-col gap-2">
@@ -1272,14 +1301,6 @@ export default function TaskDetailModal({
                                 >
                                   <span className="material-symbols-outlined text-[15px]">download</span>
                                   <span>Télécharger</span>
-                                </button>
-                                <button
-                                  type="button"
-                                  onClick={() => handleRemoveDocument(idx)}
-                                  className="h-8 w-8 rounded-lg bg-rose-50 border border-rose-300 text-rose-700 hover:bg-rose-100 transition-colors flex items-center justify-center cursor-pointer shadow-xs"
-                                  title="Détacher / Supprimer ce document"
-                                >
-                                  <span className="material-symbols-outlined text-[16px]">delete</span>
                                 </button>
                               </div>
                             </div>
@@ -1487,6 +1508,29 @@ export default function TaskDetailModal({
             {/* MODE ÉDITION */}
             {mode === 'edit' && (
               <div className="space-y-6 animate-in fade-in duration-150">
+                {/* Callout d'Henri pour Bug Report */}
+                {isBugReportEffective && (
+                  <div className="bg-amber-50/90 dark:bg-amber-950/40 border-2 border-amber-400 dark:border-amber-600 rounded-2xl p-4 sm:p-5 shadow-sm space-y-3 animate-in fade-in duration-200">
+                    <div className="flex items-center gap-2.5 text-amber-900 dark:text-amber-200">
+                      <span className="material-symbols-outlined text-[24px] text-amber-700 dark:text-amber-400">
+                        pest_control
+                      </span>
+                      <h4 className="font-headline-sm text-sm sm:text-base font-bold">
+                        Message d'Henri Jamet — Traque aux bugs &amp; suggestions
+                      </h4>
+                    </div>
+                    <div className="p-4 bg-white/90 dark:bg-slate-900/80 rounded-xl border border-amber-200 dark:border-amber-800/60 font-body-md text-xs sm:text-sm text-amber-950 dark:text-amber-100 leading-relaxed space-y-2">
+                      <p>
+                        Bien que j'ai fait tout mon possible pour rendre ce site aussi parfait que faire se peut, je crains qu'il n'y ait toujours d'ignobles bugs et de merveilleuses améliorations qui s'y cachent. Et j'ai besoin de vous pour les débusquer !!! Merci de préciser ci-dessous les comportements anormaux observés, les fonctionnalités rêvées, les optimisations à apporter etc.
+                      </p>
+                      <p className="font-bold">
+                        Soyez franc.he.s, cruel.le.s, sans pitié.<br />
+                        J'encaisserai.
+                      </p>
+                    </div>
+                  </div>
+                )}
+
                 {/* Header d'édition (Sans boutons en haut - Annotation 2) */}
                 <div className="bg-canvas-slate/60 border border-slate-200 p-3.5 rounded-xl flex items-center justify-between shadow-xs">
                   <div className="flex items-center gap-2.5">
@@ -2024,7 +2068,7 @@ export default function TaskDetailModal({
                   <div className="flex items-center gap-2.5 ml-auto">
                     <button
                       type="button"
-                      onClick={() => (isNewTask ? onClose() : setMode('view'))}
+                      onClick={() => (isNewTask ? handleSafeClose() : setMode('view'))}
                       className="px-4 py-2.5 rounded-xl bg-white border border-slate-300 text-slate-700 text-xs sm:text-sm font-semibold hover:bg-slate-100 transition-colors cursor-pointer shadow-xs"
                     >
                       Annuler
