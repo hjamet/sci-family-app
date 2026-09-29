@@ -2265,12 +2265,18 @@ def process_vote_submission(
         ).first()
 
     proj_status = (db_proj.status or "").strip().upper()
+    if proj_status == "PROPOSED":
+        raise HTTPException(
+            status_code=400,
+            detail="Ce scrutin est en attente de validation de création par les coordinateurs. Les votes ne sont pas encore ouverts."
+        )
+
     closed_or_archived = ["ARCHIVE", "ARCHIVEE", "ANNULE", "ANNULEE", "ARCHIVED", "CLOSED"]
 
     allowed_vote_statuses = [
         "EN_VOTE", "SOUMIS", "VOTE_EN_COURS", "OUVERT", "OUVERTE", "OPEN",
         "EN_COURS", "REPORT_AG", "APPROUVE", "REFUSE", "EN_ATTENTE_VALIDATION", "PENDING_VALIDATION",
-        "VALIDE", "VALIDEE", "PROPOSED"
+        "VALIDE", "VALIDEE"
     ]
     if proj_status in closed_or_archived or (not existing_vote and proj_status not in allowed_vote_statuses):
         raise HTTPException(status_code=400, detail="Ce projet n'est pas ouvert au vote actuellement.")
@@ -2578,11 +2584,57 @@ def add_project_message_alias(
 ):
     return add_project_comment(project_id, comment, background_tasks, db)
 
+@app.post("/api/projects/{project_id}/reject-and-reopen")
+def reject_and_reopen_project(project_id: int, db: Session = Depends(get_db)):
+    db_proj = db.query(Project).filter(Project.id == project_id).first()
+    if not db_proj:
+        raise HTTPException(status_code=404, detail="Projet non trouvé")
+
+    # 1. Annulation / suppression de tous les votes enregistrés
+    db.query(ProjectVote).filter(ProjectVote.project_id == project_id).delete()
+    if hasattr(db_proj, 'votes') and isinstance(db_proj.votes, list):
+        db_proj.votes.clear()
+    db.expire(db_proj, ['votes'])
+
+    # 2. Réouverture du scrutin
+    db_proj.status = "OPEN"
+    db_proj.add_to_ag_agenda = False
+    db_proj.updated_at = datetime.utcnow()
+
+    # 3. Commentaire système dans le chat familial
+    notif_msg = f"La coordination a refusé la clôture du scrutin « {db_proj.title} ». L'ensemble des votes précédents a été annulé et le scrutin est rouvert. Merci d'exprimer à nouveau votre voix."
+    sys_comment = ProjectComment(
+        project_id=project_id,
+        author_name="Coordination SCI",
+        content=notif_msg
+    )
+    db.add(sys_comment)
+
+    # 4. Envoi email de notification (avec try/except silencieux)
+    try:
+        member_users = db.query(Member).filter(Member.email.isnot(None)).all()
+        member_emails = [u.email for u in member_users if getattr(u, 'notif_vote_needed', True) and u.email]
+        if member_emails:
+            send_vote_required_email(
+                to_email=member_emails,
+                vote_title=db_proj.title,
+                submitted_by="Coordination SCI",
+                description=f"{notif_msg}\n\n{db_proj.description or ''}",
+                estimated_cost=float(db_proj.estimated_cost or 0.0),
+                project_id=db_proj.id
+            )
+    except Exception as e:
+        logger.error(f"[EMAIL ERROR] Failed to send vote reset notification: {e}")
+
+    db.commit()
+    db.refresh(db_proj)
+    return format_project_response(db_proj)
+
 @app.delete("/api/projects/{project_id}", status_code=status.HTTP_204_NO_CONTENT)
 def delete_project(project_id: int, db: Session = Depends(get_db)):
     db_proj = db.query(Project).filter(Project.id == project_id).first()
     if not db_proj:
-        raise HTTPException(status_code=404, detail="Projet non trouvé")
+        return Response(status_code=status.HTTP_204_NO_CONTENT)
 
     db.query(ProjectVote).filter(ProjectVote.project_id == project_id).delete()
     db.query(ProjectComment).filter(ProjectComment.project_id == project_id).delete()

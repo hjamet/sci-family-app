@@ -6,7 +6,14 @@ import SelectExistingDocumentModal from './SelectExistingDocumentModal';
 import ExternalLinksSection from './common/ExternalLinksSection';
 import FamilyChat from './common/FamilyChat';
 import WhatsAppPollView, { STATUTORY_ASSOCIATES, parseVotesArray, hasVotedForOption } from './common/WhatsAppPollView';
-import { castProjectVote, createProject, updateProject, deleteProject, attachDocumentsToProject } from '../api';
+import {
+  castProjectVote,
+  createProject,
+  updateProject,
+  deleteProject,
+  attachDocumentsToProject,
+  rejectAndReopenProject
+} from '../api';
 
 // Error Boundary de protection intégrée pour empêcher tout écran blanc
 class VoteErrorBoundary extends React.Component {
@@ -212,6 +219,8 @@ function VoteRoofModalInner({
   onClose,
   currentUser = 'Henri Jamet',
   onVoteSubmit,
+  onVoteDeleted,
+  onProjectCreated,
   project,
   initialEditing = false,
 }) {
@@ -266,9 +275,16 @@ function VoteRoofModalInner({
 
   const projectStatusUpper = String(activeProject?.status || '').toUpperCase();
   const isProposed = projectStatusUpper === 'PROPOSED';
-  const isPendingValidation = projectStatusUpper === 'PENDING_VALIDATION' || projectStatusUpper === 'EN_ATTENTE_VALIDATION';
+  const isPendingValidation = [
+    'PENDING_VALIDATION',
+    'EN_ATTENTE_VALIDATION',
+    'REPORT_AG',
+    'A_ARBITRER',
+    'ARBITRAGE'
+  ].includes(projectStatusUpper);
   const isProjectArchived = ['ARCHIVE', 'ARCHIVEE', 'ARCHIVED', 'CLOSED', 'ANNULE', 'ANNULEE'].includes(projectStatusUpper);
   const isProjectOpen = projectStatusUpper === 'OPEN' || projectStatusUpper === 'EN_VOTE';
+  const isVotingLocked = isProjectArchived || isProposed;
 
   // Badge de statut harmonisé et sobre
   const formatBadgeStatus = (status) => {
@@ -327,6 +343,7 @@ function VoteRoofModalInner({
   const [editAllowMultipleChoices, setEditAllowMultipleChoices] = useState(Boolean(activeProject.allow_multiple_choices));
   const [newOptionInput, setNewOptionInput] = useState('');
   const [isSubmittingEdit, setIsSubmittingEdit] = useState(false);
+  const [isDeleting, setIsDeleting] = useState(false);
 
   // Annotation 4 & 6 : Gestion des documents en mode édition / création
   const [editDocuments, setEditDocuments] = useState([]);
@@ -584,6 +601,10 @@ function VoteRoofModalInner({
 
   // Enregistrement direct du vote (Annotations 3, 10 & 11 : support choix unique et multiple, zéro lag)
   const handleCastVote = async (voteChoice) => {
+    if (isProposed) {
+      alert("Ce scrutin est en attente de validation de création par les coordinateurs. Les votes ne sont pas encore ouverts.");
+      return;
+    }
     if (isProjectArchived) {
       alert("Ce scrutin est archivé et clos. Aucun vote supplémentaire ne peut être exprimé.");
       return;
@@ -754,16 +775,22 @@ function VoteRoofModalInner({
     }
   };
 
-  // Réouverture du vote (PENDING_VALIDATION -> OPEN)
-  const handleReopenVote = async () => {
+  // Refus de clôture et réouverture du scrutin (PENDING_VALIDATION / REPORT_AG -> OPEN)
+  const handleRejectAndReopenVote = async () => {
     if (!activeProject?.id || isSubmittingArbitration) return;
+    const ok = window.confirm("Confirmer le refus de clôture et la réouverture du scrutin ? Cette action annulera l'ensemble des votes enregistrés, repassera le scrutin en cours et enverra une notification aux associés.");
+    if (!ok) return;
+
     setIsSubmittingArbitration(true);
     try {
-      const updated = await updateProject(activeProject.id, { status: 'OPEN' });
+      const updated = await rejectAndReopenProject(activeProject.id);
       setLocalProject(updated);
-      setToastMessage('Le scrutin a été rouvert.');
+      setAssociatesVotes(DEFAULT_ASSOCIATES.map(assoc => ({ ...assoc, vote: 'EN_ATTENTE', date: null })));
+      setToastMessage('Le scrutin a été rouvert et les votes ont été réinitialisés.');
       setTimeout(() => setToastMessage(null), 3000);
-      if (typeof onVoteSubmit === 'function') onVoteSubmit(updated);
+      if (typeof onVoteSubmit === 'function') {
+        onVoteSubmit(updated);
+      }
     } catch (err) {
       alert(`Erreur lors de la réouverture du scrutin : ${err.message}`);
     } finally {
@@ -773,21 +800,23 @@ function VoteRoofModalInner({
 
   // Suppression du vote
   const handleDeleteVote = async () => {
-    if (!activeProject?.id) return;
+    if (!activeProject?.id || isDeleting) return;
     const ok = window.confirm(`Êtes-vous sûr de vouloir supprimer définitivement le scrutin « ${projectTitle} » ? Cette action est irréversible.`);
     if (!ok) return;
 
+    setIsDeleting(true);
     try {
       await deleteProject(activeProject.id);
       setToastMessage('Le scrutin a été supprimé avec succès.');
-      if (typeof onVoteSubmit === 'function') {
+      if (typeof onVoteDeleted === 'function') {
+        onVoteDeleted(activeProject.id);
+      } else if (typeof onVoteSubmit === 'function') {
         onVoteSubmit({ deleted: true, projectId: activeProject.id });
       }
-      setTimeout(() => {
-        onClose();
-      }, 800);
+      onClose();
     } catch (err) {
       alert(`Erreur lors de la suppression du vote : ${err.message}`);
+      setIsDeleting(false);
     }
   };
 
@@ -825,10 +854,12 @@ function VoteRoofModalInner({
         setLocalProject(created);
         setIsEditing(false);
         setToastMessage('Initiative proposée avec succès !');
-        setTimeout(() => setToastMessage(null), 3000);
-        if (typeof onVoteSubmit === 'function') {
+        if (typeof onProjectCreated === 'function') {
+          onProjectCreated(created);
+        } else if (typeof onVoteSubmit === 'function') {
           onVoteSubmit(created);
         }
+        onClose();
       } else {
         const payload = {
           title: editTitle.trim(),
@@ -974,12 +1005,13 @@ function VoteRoofModalInner({
                 </button>
                 <button
                   type="button"
+                  disabled={isDeleting}
                   onClick={handleDeleteVote}
-                  className="inline-flex items-center gap-1 px-2.5 py-1.5 rounded-lg bg-rose-50 border border-rose-200 text-rose-700 hover:bg-rose-100 text-xs font-semibold shadow-xs transition-colors cursor-pointer"
+                  className="inline-flex items-center gap-1 px-2.5 py-1.5 rounded-lg bg-rose-50 border border-rose-200 text-rose-700 hover:bg-rose-100 text-xs font-semibold shadow-xs transition-colors cursor-pointer disabled:opacity-50"
                   title="Supprimer définitivement ce scrutin"
                 >
                   <span className="material-symbols-outlined text-[15px]">delete</span>
-                  <span>Supprimer</span>
+                  <span>{isDeleting ? 'Suppression...' : 'Supprimer'}</span>
                 </button>
               </div>
             )}
@@ -1530,6 +1562,16 @@ function VoteRoofModalInner({
                     </div>
                   </div>
 
+                  {/* Callout si le scrutin est en attente de création (Annotation 4) */}
+                  {isProposed && (
+                    <div className="p-3 bg-amber-50 dark:bg-amber-950/60 border border-amber-200 dark:border-amber-800 rounded-xl flex items-center gap-2.5 text-xs sm:text-sm text-amber-900 dark:text-amber-200">
+                      <span className="material-symbols-outlined text-amber-600 dark:text-amber-400 text-lg flex-shrink-0">hourglass_top</span>
+                      <span className="font-medium">
+                        Ce scrutin est en attente de validation de création par les coordinateurs. Les votes ne sont pas encore ouverts.
+                      </span>
+                    </div>
+                  )}
+
                   {/* Bandeau d'information si le scrutin est archivé (Annotation 10) */}
                   {isProjectArchived && (
                     <div className="p-3 bg-slate-100 dark:bg-slate-800/60 border border-slate-200 dark:border-slate-700 rounded-xl flex items-center gap-2.5 text-xs sm:text-sm text-slate-700 dark:text-slate-300">
@@ -1546,9 +1588,9 @@ function VoteRoofModalInner({
                     associatesVotes={associatesVotes}
                     currentUser={currentUserName}
                     onCastVote={handleCastVote}
-                    isVotingDisabled={isProjectArchived}
+                    isVotingDisabled={isVotingLocked}
                     compact={false}
-                    readOnly={isProjectArchived}
+                    readOnly={isVotingLocked}
                   />
                 </div>
 
@@ -1610,16 +1652,16 @@ function VoteRoofModalInner({
                             className="px-4 py-2 bg-emerald-600 hover:bg-emerald-700 text-white rounded-xl font-bold text-xs sm:text-sm flex items-center gap-2 transition-all shadow-xs cursor-pointer disabled:opacity-50"
                           >
                             <span className="material-symbols-outlined text-[18px]">archive</span>
-                            <span>Valider et archiver la délibération</span>
+                            <span>Valider et archiver</span>
                           </button>
                           <button
                             type="button"
                             disabled={isSubmittingArbitration}
-                            onClick={handleReopenVote}
-                            className="px-4 py-2 bg-amber-600 hover:bg-amber-700 text-white rounded-xl font-bold text-xs sm:text-sm flex items-center gap-2 transition-all shadow-xs cursor-pointer disabled:opacity-50"
+                            onClick={handleRejectAndReopenVote}
+                            className="px-4 py-2 bg-rose-600 hover:bg-rose-700 text-white rounded-xl font-bold text-xs sm:text-sm flex items-center gap-2 transition-all shadow-xs cursor-pointer disabled:opacity-50"
                           >
-                            <span className="material-symbols-outlined text-[18px]">lock_open</span>
-                            <span>Rouvrir le vote</span>
+                            <span className="material-symbols-outlined text-[18px]">restart_alt</span>
+                            <span>Refuser et rouvrir le scrutin</span>
                           </button>
                         </div>
                       </div>

@@ -10,6 +10,7 @@ import {
   rejectTask,
   deleteProject,
   getCachedData,
+  invalidateApiCache,
 } from '../api';
 import TaskDetailModal from './TaskDetailModal';
 import VoteRoofModal from './VoteRoofModal';
@@ -297,6 +298,26 @@ export default function TasksPage({ currentUser = 'Henri Jamet' }) {
       });
     }
     await loadTasks({ forceRefresh: true });
+  };
+
+  const handleVoteDeleted = (deletedId) => {
+    setProjects(prev => prev.filter(p => p.id !== deletedId));
+    setActiveVoteIndex(0);
+    setIsRoofVoteModalOpen(false);
+    setSelectedVoteForModal(null);
+    invalidateApiCache('projects');
+    loadTasks({ forceRefresh: true });
+  };
+
+  const handleProjectCreated = (createdProject) => {
+    if (!createdProject?.id) return;
+    setProjects(prev => [createdProject, ...prev.filter(p => p.id !== createdProject.id)]);
+    setVoteFilter('PROPOSED'); // Bascule automatique sur l'onglet En attente de création !
+    setActiveVoteIndex(0);
+    setIsRoofVoteModalOpen(false);
+    setSelectedVoteForModal(null);
+    invalidateApiCache('projects');
+    loadTasks({ forceRefresh: true });
   };
 
   const userMeta = useMemo(() => resolveUserMeta(currentUser), [currentUser]);
@@ -1574,6 +1595,8 @@ export default function TasksPage({ currentUser = 'Henri Jamet' }) {
         initialEditing={isVoteModalInitialEditing}
         project={selectedVoteForModal || currentVote}
         onVoteSubmit={handleVoteRoofSubmit}
+        onVoteDeleted={handleVoteDeleted}
+        onProjectCreated={handleProjectCreated}
       />
 
       {/* Modale de Consultation et Édition Détaillée de Tâche Unifiée (Annotation 16) */}

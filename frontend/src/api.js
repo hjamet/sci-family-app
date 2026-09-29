@@ -577,6 +577,19 @@ export async function addProjectComment(projectId, data) {
   return res.json();
 }
 
+export async function rejectAndReopenProject(projectId) {
+  const res = await fetch(`${API_BASE}/projects/${projectId}/reject-and-reopen`, {
+    method: 'POST',
+    headers: getAuthJsonHeaders(),
+  });
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({}));
+    throw new Error(err.detail || 'Erreur lors de la réouverture du scrutin');
+  }
+  invalidateApiCache('projects');
+  return res.json();
+}
+
 export async function deleteProject(projectId) {
   const res = await fetch(`${API_BASE}/projects/${projectId}`, {
     method: 'DELETE',

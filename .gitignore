@@ -64,6 +64,7 @@ test_*.py
 !backend/tests/test_project_vote_modification.py
 !backend/tests/test_vicare_live_telemetry_accuracy.py
 !backend/tests/test_thermal_and_pool_controls.py
+!backend/tests/test_chantier1_votes_backend.py
 backend/app/uploads/
 backend/archive_scratch_tests/
 uploads/
