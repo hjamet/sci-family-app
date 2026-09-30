@@ -106,6 +106,9 @@ def test_drive_jail_security_exception_on_unauthorized_folder():
 def test_drive_jail_live_roundtrip():
     """Test en direct (live roundtrip) avec les identifiants OAuth réels dans le dossier SCI."""
     jail = GoogleDriveJailService()
+    if not os.getenv("GOOGLE_DRIVE_REFRESH_TOKEN") and not os.path.exists(os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(__file__))), "oauth_tokens.json")):
+        pytest.skip("Identifiants Google Drive OAuth réels non disponibles dans l'environnement pour le live roundtrip")
+
     test_content = b"Zero-Trust automated live test of Drive Jail."
     filename = "test_jail_live_cert.txt"
 

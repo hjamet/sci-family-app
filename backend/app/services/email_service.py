@@ -49,6 +49,20 @@ def is_email_disabled() -> bool:
         return True
     return DISABLE_ALL_EMAILS
 
+def is_test_mode() -> bool:
+    """
+    Mode test hermétique :
+    Si EMAIL_TEST_MODE est actif (True par défaut), AUCUN e-mail physique ne sort via Resend.
+    Zéro appel réseau HTTP, zéro crédit consommé.
+    L'e-mail est consigné en base / mémoire pour l'aperçu in-app (EmailPreviewModal / cloche).
+    """
+    env_val = os.getenv("EMAIL_TEST_MODE", "").strip().lower()
+    if env_val in ("false", "0", "no"):
+        return False
+    if env_val in ("true", "1", "yes"):
+        return True
+    return EMAIL_TEST_MODE
+
 def get_circuit_breaker_response() -> dict:
     """Retour standardisé du coupe-circuit d'urgence."""
     log_msg = "[COUPE-CIRCUIT] Envoi d'email totalement désactivé (urgence). Aucun email envoyé."
@@ -59,12 +73,12 @@ def get_circuit_breaker_response() -> dict:
 # PARE-FEU STRICT DE PROTECTION FAMILIALE
 # Tant que l'envoi global n'a pas été formellement débloqué par Henri en production :
 # SEULE l'adresse hellenvillierssci@gmail.com est autorisée à recevoir des e-mails.
-# Tout envoi vers une autre adresse (famille) est STRICTEMENT INTERCEPTÉ, SANS AUCUN APPEL RÉSEAU RESEND.
+# Tout envoi vers une boîte personnelle (ex: henri.jamet.ch@gmail.com ou famille) est STRICTEMENT INTERCEPTÉ, SANS AUCUN APPEL RÉSEAU RESEND.
 ALLOWED_RECIPIENTS: Set[str] = {"hellenvillierssci@gmail.com"}
 
 # Circuit Breaker / Hermetic Test Mode
 EMAIL_TEST_MODE: bool = os.getenv("EMAIL_TEST_MODE", "true").lower() in ("true", "1", "yes")
-EMAIL_TEST_REDIRECT_TO: str = os.getenv("EMAIL_TEST_REDIRECT_TO", "hellenvillierssci@gmail.com").strip()
+EMAIL_TEST_REDIRECT_TO: str = os.getenv("EMAIL_TEST_REDIRECT_TO", "hellenvillierssci@gmail.com").strip() or "hellenvillierssci@gmail.com"
 
 ALLOWED_TEST_RECIPIENTS: Set[str] = {"hellenvillierssci@gmail.com"}
 
@@ -128,10 +142,11 @@ def check_firewall(to_email: Union[str, List[str]]) -> Optional[dict]:
         return get_circuit_breaker_response()
 
     allowed_whitelist = {r.strip().lower() for r in ALLOWED_RECIPIENTS}
+    allowed_whitelist.discard("henri.jamet.ch@gmail.com")
     if isinstance(to_email, str):
         clean = to_email.strip().lower()
         if clean not in allowed_whitelist:
-            log_msg = f"[FIREWALL] Envoi vers {to_email} bloqué (seul hellenvillierssci@gmail.com est autorisé pour le moment)"
+            log_msg = f"[FIREWALL] Envoi vers {to_email} bloqué (seul hellenvillierssci@gmail.com est autorisé)"
             logger.warning(log_msg)
             print(log_msg)
             return {"status": "blocked_by_whitelist", "id": "local_mock_blocked"}
@@ -139,7 +154,7 @@ def check_firewall(to_email: Union[str, List[str]]) -> Optional[dict]:
         has_allowed = any(str(r).strip().lower() in allowed_whitelist for r in to_email)
         if not has_allowed:
             for r in to_email:
-                log_msg = f"[FIREWALL] Envoi vers {r} bloqué (seul hellenvillierssci@gmail.com est autorisé pour le moment)"
+                log_msg = f"[FIREWALL] Envoi vers {r} bloqué (seul hellenvillierssci@gmail.com est autorisé)"
                 logger.warning(log_msg)
                 print(log_msg)
             return {"status": "blocked_by_whitelist", "id": "local_mock_blocked"}
@@ -255,11 +270,12 @@ def send_email(
 
     # 1. VERROU HERMÉTIQUE & PARE-FEU STRICT DE PROTECTION FAMILIALE
     allowed_whitelist = {r.strip().lower() for r in ALLOWED_RECIPIENTS}
+    allowed_whitelist.discard("henri.jamet.ch@gmail.com")
 
     if isinstance(to_email, str):
         clean_email = to_email.strip().lower()
         if clean_email not in allowed_whitelist:
-            log_msg = f"[FIREWALL] Envoi vers {to_email} bloqué (seul hellenvillierssci@gmail.com est autorisé pour le moment)"
+            log_msg = f"[FIREWALL] Envoi vers {to_email} bloqué (seul hellenvillierssci@gmail.com est autorisé)"
             logger.warning(log_msg)
             print(log_msg)
             return {"status": "blocked_by_whitelist", "id": "local_mock_blocked"}
@@ -271,7 +287,7 @@ def send_email(
             if r_str.lower() in allowed_whitelist:
                 allowed.append(r_str)
             else:
-                log_msg = f"[FIREWALL] Envoi vers {r} bloqué (seul hellenvillierssci@gmail.com est autorisé pour le moment)"
+                log_msg = f"[FIREWALL] Envoi vers {r} bloqué (seul hellenvillierssci@gmail.com est autorisé)"
                 logger.warning(log_msg)
                 print(log_msg)
         if not allowed:
@@ -280,49 +296,54 @@ def send_email(
     else:
         clean_email = str(to_email).strip().lower()
         if clean_email not in allowed_whitelist:
-            log_msg = f"[FIREWALL] Envoi vers {to_email} bloqué (seul hellenvillierssci@gmail.com est autorisé pour le moment)"
+            log_msg = f"[FIREWALL] Envoi vers {to_email} bloqué (seul hellenvillierssci@gmail.com est autorisé)"
             logger.warning(log_msg)
             print(log_msg)
             return {"status": "blocked_by_whitelist", "id": "local_mock_blocked"}
         raw_recipients = [str(to_email).strip()]
 
+    # 2. MODE TEST HERMÉTIQUE (AUCUN EMAIL PHYSIQUE RESEND SORTANT)
+    # Si EMAIL_TEST_MODE est actif (par défaut en dev/test), AUCUN appel réseau n'est effectué.
+    # L'email est consigné pour prévisualisation in-app (EmailPreviewModal / cloche).
+    if is_test_mode():
+        import uuid
+        log_msg = f"[EMAIL TEST MODE] Mode test hermétique actif : 0 appel réseau Resend. Email consigné pour preview in-app : '{subject}' vers {raw_recipients}"
+        logger.info(log_msg)
+        print(log_msg)
+        return {
+            "status": "simulated",
+            "simulated": True,
+            "id": f"simulated_test_{uuid.uuid4().hex[:12]}",
+            "to": raw_recipients,
+            "subject": subject,
+            "html": html_content,
+            "intercepted": []
+        }
+
     # Normalize final recipients
-    final_recipients: List[str] = raw_recipients
     seen: Set[str] = set()
-    intercepted_recipients: List[str] = []
-
-    # Check effective test mode dynamically
-    test_mode = os.getenv("EMAIL_TEST_MODE", str(EMAIL_TEST_MODE)).lower() in ("true", "1", "yes")
-    redirect_target = os.getenv("EMAIL_TEST_REDIRECT_TO", EMAIL_TEST_REDIRECT_TO).strip() or "hellenvillierssci@gmail.com"
-
-    if test_mode:
-        final_recipients = [redirect_target]
-        logger.info(
-            f"[EMAIL TEST MODE] Coupe-circuit hermétique actif : destinataires originaux {raw_recipients} "
-            f"redirigés vers '{redirect_target}' (zéro doublon, zéro bannière injectée)."
-        )
-    else:
-        cleaned_final = []
-        for r in final_recipients:
-            if r.lower() not in seen:
-                seen.add(r.lower())
-                cleaned_final.append(r)
-        final_recipients = cleaned_final
+    cleaned_final = []
+    for r in raw_recipients:
+        if r.lower() not in seen and r.lower() in allowed_whitelist:
+            seen.add(r.lower())
+            cleaned_final.append(r)
+    final_recipients: List[str] = cleaned_final
 
     if not final_recipients:
         msg = "[EMAIL SERVICE] No valid recipients to send to."
         logger.warning(msg)
-        return {"warning": msg}
+        return {"status": "blocked_by_whitelist", "id": "local_mock_blocked"}
 
     api_key = os.environ.get("RESEND_API_KEY", RESEND_API_KEY).strip()
     if not api_key:
         logger.warning("[EMAIL SERVICE] RESEND_API_KEY non configurée. Mode dégradé : email simulé et loggé.")
         return {
+            "status": "simulated",
             "simulated": True,
             "to": final_recipients,
             "subject": subject,
             "html": html_content,
-            "intercepted": intercepted_recipients
+            "intercepted": []
         }
 
     effective_from = from_email or DEFAULT_FROM_EMAIL
@@ -471,7 +492,7 @@ def send_task_assigned_email(
         recipients=to_email,
         html_content=html_body,
         recipients_names=names,
-        status="simulated" if is_email_disabled() else "sent"
+        status="simulated" if (is_email_disabled() or is_test_mode()) else "sent"
     )
 
     res = send_email(to_email=to_email, subject=subject, html_content=html_body)
@@ -568,7 +589,7 @@ def send_task_creation_pending_email(
         recipients=to_email,
         html_content=html_body,
         recipients_names=names,
-        status="simulated" if is_email_disabled() else "sent"
+        status="simulated" if (is_email_disabled() or is_test_mode()) else "sent"
     )
 
     res = send_email(to_email=to_email, subject=subject, html_content=html_body)
@@ -637,7 +658,7 @@ def send_vote_required_email(
         recipients=to_email,
         html_content=html_body,
         recipients_names=names,
-        status="simulated" if is_email_disabled() else "sent"
+        status="simulated" if (is_email_disabled() or is_test_mode()) else "sent"
     )
 
     res = send_email(to_email=to_email, subject=subject, html_content=html_body)
@@ -707,10 +728,10 @@ def send_vote_creation_pending_email(
         recipients=to_email,
         html_content=html_body,
         recipients_names=names,
-        status="sent" if (actually_send and not is_email_disabled()) else "simulated"
+        status="sent" if (actually_send and not is_email_disabled() and not is_test_mode()) else "simulated"
     )
 
-    if actually_send and not is_email_disabled():
+    if actually_send and not is_email_disabled() and not is_test_mode():
         res = send_email(to_email=to_email, subject=subject, html_content=html_body)
     else:
         res = {"status": "simulated", "id": email_entry["id"]}
@@ -789,10 +810,10 @@ def send_vote_arbitration_email(
         recipients=to_email,
         html_content=html_body,
         recipients_names=names,
-        status="sent" if (actually_send and not is_email_disabled()) else "simulated"
+        status="sent" if (actually_send and not is_email_disabled() and not is_test_mode()) else "simulated"
     )
 
-    if actually_send and not is_email_disabled():
+    if actually_send and not is_email_disabled() and not is_test_mode():
         res = send_email(to_email=to_email, subject=subject, html_content=html_body)
     else:
         res = {"status": "simulated", "id": email_entry["id"]}
@@ -905,7 +926,7 @@ def send_vote_closed_email(
         recipients=to_email,
         html_content=html_body,
         recipients_names=names,
-        status="simulated" if is_email_disabled() else "sent"
+        status="simulated" if (is_email_disabled() or is_test_mode()) else "sent"
     )
 
     res = send_email(to_email=to_email, subject=subject, html_content=html_body)
@@ -994,7 +1015,7 @@ def send_stay_booked_email(
         recipients=to_email,
         html_content=html_body,
         recipients_names=names,
-        status="simulated" if is_email_disabled() else "sent"
+        status="simulated" if (is_email_disabled() or is_test_mode()) else "sent"
     )
 
     res = send_email(to_email=to_email, subject=subject, html_content=html_body)
@@ -1152,7 +1173,7 @@ def send_thermal_change_email(
         recipients=target_emails,
         html_content=html_body,
         recipients_names=names,
-        status="simulated" if is_email_disabled() else "sent"
+        status="simulated" if (is_email_disabled() or is_test_mode()) else "sent"
     )
 
     res = send_email(to_email=target_emails, subject=subject, html_content=html_body)
@@ -1168,7 +1189,7 @@ def send_notification_email(
     title: str = "Notification Domaine d'Hellenvilliers"
 ) -> dict:
     """Helper générique d'envoi de notification."""
-    if is_email_disabled():
+    if is_email_disabled() or is_test_mode():
         return get_circuit_breaker_response()
     blocked = check_firewall(to_email)
     if blocked:
@@ -1179,7 +1200,7 @@ def send_notification_email(
 
 def send_welcome_email(to_email: str, member_name: str) -> dict:
     """Envoi d'un email de bienvenue / accès portail."""
-    if is_email_disabled():
+    if is_email_disabled() or is_test_mode():
         return get_circuit_breaker_response()
     return send_notification_email(
         to_email=to_email,
@@ -1197,7 +1218,7 @@ def send_reservation_confirmation(
     property_name: str
 ) -> dict:
     """Alias pour la confirmation de séjour."""
-    if is_email_disabled():
+    if is_email_disabled() or is_test_mode():
         return get_circuit_breaker_response()
     return send_stay_booked_email(
         to_email=to_email,
@@ -1223,7 +1244,7 @@ def send_mention_notification(
     Garde-fous Resend & Anti-Spam :
     - Ne pas envoyer d'email si l'auteur du message se mentionne lui-même.
     - Ne pas envoyer d'email si notify_mentions (ou notify_mention_all) == False.
-    - Respecter le commutateur global DISABLE_ALL_EMAILS et le pare-feu.
+    - Respecter le commutateur global DISABLE_ALL_EMAILS, EMAIL_TEST_MODE et le pare-feu.
     Returns True if sent/simulated/dispatched successfully, False otherwise.
     """
     if not mentioned_member:
@@ -1304,7 +1325,7 @@ def send_mention_notification(
         recipients=to_email or "famille@sci-familiale.fr",
         html_content=html_body,
         recipients_names=[greeting_name],
-        status="sent" if (actually_send and not is_email_disabled() and to_email and "@" in str(to_email)) else "simulated"
+        status="sent" if (actually_send and not is_email_disabled() and not is_test_mode() and to_email and "@" in str(to_email)) else "simulated"
     )
     setattr(send_mention_notification, "last_dispatched_email", email_entry)
 

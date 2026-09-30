@@ -169,3 +169,30 @@ def test_mixed_recipients_list_filters_unauthorized_when_enabled(disabled_circui
     assert hermetic_resend_mock.call_count == 1
     call_payload = hermetic_resend_mock.call_args[1]["json"]
     assert call_payload["to"] == ["hellenvillierssci@gmail.com"]
+
+
+def test_old_personal_email_henri_jamet_ch_is_strictly_blocked(disabled_circuit_breaker, hermetic_resend_mock):
+    """Vérifie formellement que l'ancienne adresse personnelle henri.jamet.ch@gmail.com est STRICTEMENT BLOQUÉE."""
+    result = send_email(
+        to_email="henri.jamet.ch@gmail.com",
+        subject="Test blocage ancienne boîte perso Henri",
+        html_content="<p>Test</p>"
+    )
+    assert result == {"status": "blocked_by_whitelist", "id": "local_mock_blocked"}
+    assert hermetic_resend_mock.call_count == 0
+
+
+def test_email_test_mode_never_calls_resend(monkeypatch, hermetic_resend_mock):
+    """Vérifie que lorsque EMAIL_TEST_MODE=True, AUCUN appel réseau n'est effectué vers Resend."""
+    monkeypatch.setattr(email_mod, "DISABLE_ALL_EMAILS", False)
+    monkeypatch.setenv("DISABLE_ALL_EMAILS", "false")
+    monkeypatch.setenv("EMAIL_TEST_MODE", "true")
+
+    result = send_email(
+        to_email="hellenvillierssci@gmail.com",
+        subject="Test simulation pure en mode test",
+        html_content="<p>Simulation test</p>"
+    )
+    assert result.get("status") == "simulated"
+    assert result.get("simulated") is True
+    assert hermetic_resend_mock.call_count == 0

@@ -112,6 +112,12 @@ def clean_database(engine_url: str, label: str):
         conn.execute(text("DELETE FROM comments"))
         conn.execute(text("DELETE FROM issues"))
         print("  [x] Signalements/issues vidés.")
+
+        # 5b. Vider notifications & documents factices
+        conn.execute(text("DELETE FROM notifications"))
+        conn.execute(text("DELETE FROM bank_transactions WHERE transaction_id LIKE 'EXP-%'"))
+        conn.execute(text("DELETE FROM admin_documents WHERE id IN (1, 2, 3, 4)"))
+        print("  [x] Notifications et pièces de test vidées.")
         
         # 6. S'assurer que Property 1 existe
         prop = conn.execute(text("SELECT id FROM properties LIMIT 1")).fetchone()

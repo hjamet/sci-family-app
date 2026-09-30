@@ -61,6 +61,31 @@ app.dependency_overrides[get_db] = override_get_db
 
 
 @pytest.fixture(autouse=True)
+def hermetic_resend_mock():
+    """
+    STRICT HERMETIC MOCK:
+    Intercepte TOUT appel sortant vers Resend API pour 100% des tests pytest.
+    Garantit 0 requête réseau et 0 email envoyé accidentellement en test.
+    """
+    import httpx
+    real_post = httpx.Client.post
+    mock_post = MagicMock()
+    mock_resp = MagicMock()
+    mock_resp.status_code = 200
+    mock_resp.json.return_value = {"id": "mock_conftest_hermetic_resend"}
+    mock_resp.text = '{"id": "mock_conftest_hermetic_resend"}'
+    mock_post.return_value = mock_resp
+
+    def selective_post(self, url, *args, **kwargs):
+        if "resend" in str(url):
+            return mock_post(url, *args, **kwargs)
+        return real_post(self, url, *args, **kwargs)
+
+    with patch.object(httpx.Client, "post", selective_post):
+        yield mock_post
+
+
+@pytest.fixture(autouse=True)
 def isolate_test_database_and_drive():
     """
     Fixture autouse exécutée pour 100% des tests pytest :
