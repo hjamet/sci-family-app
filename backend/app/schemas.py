@@ -48,6 +48,9 @@ class MemberBase(BaseModel):
     notif_stay_booked: bool = True
     notif_thermal_changes: bool = False
     notify_mentions: bool = True
+    notify_vote_creation: bool = False
+    notify_vote_arbitration: bool = False
+    notify_mention_all: bool = True
 
 class MemberCreate(MemberBase):
     password: str = "pass123"
@@ -67,6 +70,9 @@ class MemberUpdate(BaseModel):
     notif_thermal_changes: Optional[bool] = None
     notify_mentions: Optional[bool] = None
     notify_task_creation: Optional[bool] = False
+    notify_vote_creation: Optional[bool] = None
+    notify_vote_arbitration: Optional[bool] = None
+    notify_mention_all: Optional[bool] = None
 
 class MemberResponse(MemberBase):
     id: int
@@ -90,6 +96,10 @@ class MemberSettingsResponse(BaseModel):
     notif_thermal_changes: bool = False
     notify_mentions: bool = True
     notify_task_creation: bool = False
+    notify_vote_creation: bool = False
+    notify_vote_arbitration: bool = False
+    notify_mention_all: bool = True
+    is_coordinator: Optional[bool] = False
 
     class Config:
         from_attributes = True
@@ -103,6 +113,9 @@ class MemberSettingsUpdate(BaseModel):
     notif_thermal_changes: Optional[bool] = None
     notify_mentions: Optional[bool] = None
     notify_task_creation: Optional[bool] = None
+    notify_vote_creation: Optional[bool] = None
+    notify_vote_arbitration: Optional[bool] = None
+    notify_mention_all: Optional[bool] = None
 
 class ChangePasswordRequest(BaseModel):
     old_password: str
@@ -695,6 +708,11 @@ class HeatingStatusResponse(BaseModel):
     dhw_reduced_temperature: Optional[float] = 10.0
     is_heating_active: bool = False
     is_dhw_active: bool = False
+    dhw_charging_active: bool = False
+    is_dhw_heating: bool = False
+    dhw_status_state: str = "off"
+    dhw_status_label: str = "À l'arrêt (Veille 10°C)"
+    dhw_status_subtext: Optional[str] = None
     frost_protection_active: bool = True
     eco_mode_active: bool = False
     burner_active: bool = False
@@ -1080,6 +1098,9 @@ class ProfileUpdateRequest(BaseModel):
     notify_thermal_changes: Optional[bool] = None
     notify_mentions: Optional[bool] = None
     notify_task_creation: Optional[bool] = None
+    notify_vote_creation: Optional[bool] = None
+    notify_vote_arbitration: Optional[bool] = None
+    notify_mention_all: Optional[bool] = None
 
 
 class ChangePasswordRequest(BaseModel):
@@ -1102,6 +1123,10 @@ class MemberSettingsResponse(BaseModel):
     notif_thermal_changes: bool = False
     notify_mentions: bool = True
     notify_task_creation: bool = False
+    notify_vote_creation: bool = False
+    notify_vote_arbitration: bool = False
+    notify_mention_all: bool = True
+    is_coordinator: Optional[bool] = False
     # Aliases for legacy compatibility
     notify_new_task: bool = True
     notify_pending_vote: bool = True
@@ -1122,6 +1147,9 @@ class MemberSettingsUpdate(BaseModel):
     notif_thermal_changes: Optional[bool] = None
     notify_mentions: Optional[bool] = None
     notify_task_creation: Optional[bool] = None
+    notify_vote_creation: Optional[bool] = None
+    notify_vote_arbitration: Optional[bool] = None
+    notify_mention_all: Optional[bool] = None
     notify_new_task: Optional[bool] = None
     notify_pending_vote: Optional[bool] = None
     notify_final_decision: Optional[bool] = None

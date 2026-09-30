@@ -19,7 +19,8 @@ import {
   RefreshCw,
   CheckCheck,
   Thermometer,
-  AtSign
+  AtSign,
+  Megaphone
 } from 'lucide-react';
 import {
   fetchUserProfile,
@@ -95,15 +96,18 @@ export default function SettingsPage({ currentUser }) {
   const [passwordLoading, setPasswordLoading] = useState(false);
   const [passwordError, setPasswordError] = useState(null);
 
-  // --- États Préférences de Notifications (6 Toggles) ---
+  // --- États Préférences de Notifications ---
   const [notifications, setNotifications] = useState({
     notify_new_task: true,
     notify_pending_vote: true,
     notify_final_decision: true,
     notify_new_stay: true,
     notify_mentions: true,
+    notify_mention_all: true,
     notif_thermal_changes: false,
-    notify_task_creation: false
+    notify_task_creation: false,
+    notify_vote_creation: false,
+    notify_vote_arbitration: false
   });
   const [notificationsLoading, setNotificationsLoading] = useState(false);
 
@@ -168,14 +172,32 @@ export default function SettingsPage({ currentUser }) {
               ? settings.notify_task_creation
               : (userProfile?.notify_task_creation ?? false)
           );
+          const mentionAllPref = Boolean(
+            settings.notify_mention_all != null
+              ? settings.notify_mention_all
+              : (userProfile?.notify_mention_all ?? true)
+          );
+          const voteCreationPref = Boolean(
+            settings.notify_vote_creation != null
+              ? settings.notify_vote_creation
+              : (userProfile?.notify_vote_creation ?? false)
+          );
+          const voteArbitrationPref = Boolean(
+            settings.notify_vote_arbitration != null
+              ? settings.notify_vote_arbitration
+              : (userProfile?.notify_vote_arbitration ?? false)
+          );
           setNotifications({
             notify_new_task: settings.notify_new_task !== false,
             notify_pending_vote: settings.notify_pending_vote !== false,
             notify_final_decision: settings.notify_final_decision !== false,
             notify_new_stay: settings.notify_new_stay !== false,
             notify_mentions: settings.notify_mentions !== false,
+            notify_mention_all: mentionAllPref,
             notif_thermal_changes: thermalPref,
-            notify_task_creation: taskCreationPref
+            notify_task_creation: taskCreationPref,
+            notify_vote_creation: voteCreationPref,
+            notify_vote_arbitration: voteArbitrationPref
           });
         }
       } catch (err) {
@@ -273,9 +295,12 @@ export default function SettingsPage({ currentUser }) {
       notify_final_decision: status,
       notify_new_stay: status,
       notify_mentions: status,
+      notify_mention_all: status,
       notif_thermal_changes: status,
       notify_thermal_changes: status,
-      notify_task_creation: status
+      notify_task_creation: status,
+      notify_vote_creation: status,
+      notify_vote_arbitration: status
     });
   };
 
@@ -748,6 +773,42 @@ export default function SettingsPage({ currentUser }) {
             </div>
           </div>
 
+          {/* Toggle : Mention collective (@all) (Annotation 10) */}
+          <div
+            id="toggle-notify-mention-all"
+            onClick={() => handleToggleNotification('notify_mention_all')}
+            className="flex items-start justify-between gap-4 p-4 rounded-2xl border border-slate-200 hover:border-amber-300 bg-slate-50/50 hover:bg-amber-50/20 transition-all cursor-pointer select-none"
+          >
+            <div className="flex items-start gap-3.5">
+              <div className="w-9 h-9 rounded-xl bg-amber-100 text-amber-800 flex items-center justify-center shrink-0 mt-0.5 border border-amber-200">
+                <Megaphone className="w-5 h-5 text-amber-800" />
+              </div>
+              <div>
+                <span className="text-sm font-bold text-slate-900">
+                  📢 M'alerter lors d'une mention collective (@all)
+                </span>
+                <p className="text-xs text-slate-600 mt-1">
+                  Recevoir une notification et un e-mail prioritaire lorsqu'un message s'adresse à l'ensemble des associés (@all / @tous).
+                </p>
+              </div>
+            </div>
+
+            {/* Custom Toggle Switch */}
+            <div className="shrink-0 pt-1">
+              <div
+                className={`w-12 h-6 flex items-center rounded-full p-1 duration-300 ease-in-out ${
+                  notifications.notify_mention_all ? 'bg-primary' : 'bg-slate-300'
+                }`}
+              >
+                <div
+                  className={`bg-white w-4 h-4 rounded-full shadow-md transform duration-300 ease-in-out ${
+                    notifications.notify_mention_all ? 'translate-x-6' : 'translate-x-0'
+                  }`}
+                />
+              </div>
+            </div>
+          </div>
+
           {/* Toggle 5 : Alertes thermiques & piscine */}
           <div
             onClick={() => handleToggleNotification('notif_thermal_changes')}
@@ -813,6 +874,78 @@ export default function SettingsPage({ currentUser }) {
                 <div
                   className={`bg-white w-4 h-4 rounded-full shadow-md transform duration-300 ease-in-out ${
                     notifications.notify_task_creation ? 'translate-x-6' : 'translate-x-0'
+                  }`}
+                />
+              </div>
+            </div>
+          </div>
+
+          {/* Toggle 7 : Notification de proposition de vote (Annotation 3) */}
+          <div
+            id="toggle-notify-vote-creation"
+            onClick={() => handleToggleNotification('notify_vote_creation')}
+            className="flex items-start justify-between gap-4 p-4 rounded-2xl border border-slate-200 hover:border-emerald-300 bg-slate-50/50 hover:bg-emerald-50/20 transition-all cursor-pointer select-none"
+          >
+            <div className="flex items-start gap-3.5">
+              <div className="w-9 h-9 rounded-xl bg-purple-100 text-purple-800 flex items-center justify-center shrink-0 mt-0.5 border border-purple-200">
+                <Vote className="w-5 h-5 text-purple-800" />
+              </div>
+              <div>
+                <span className="text-sm font-bold text-slate-900">
+                  🗳️ Notification de proposition de vote
+                </span>
+                <p className="text-xs text-slate-600 mt-1">
+                  M'alerter par e-mail dès qu'un projet est soumis en attente d'ouverture de scrutin (réservé à la coordination).
+                </p>
+              </div>
+            </div>
+
+            {/* Custom Toggle Switch */}
+            <div className="shrink-0 pt-1">
+              <div
+                className={`w-12 h-6 flex items-center rounded-full p-1 duration-300 ease-in-out ${
+                  notifications.notify_vote_creation ? 'bg-primary' : 'bg-slate-300'
+                }`}
+              >
+                <div
+                  className={`bg-white w-4 h-4 rounded-full shadow-md transform duration-300 ease-in-out ${
+                    notifications.notify_vote_creation ? 'translate-x-6' : 'translate-x-0'
+                  }`}
+                />
+              </div>
+            </div>
+          </div>
+
+          {/* Toggle 8 : Notification d'arbitrage de scrutin (Annotation 8) */}
+          <div
+            id="toggle-notify-vote-arbitration"
+            onClick={() => handleToggleNotification('notify_vote_arbitration')}
+            className="flex items-start justify-between gap-4 p-4 rounded-2xl border border-slate-200 hover:border-emerald-300 bg-slate-50/50 hover:bg-emerald-50/20 transition-all cursor-pointer select-none"
+          >
+            <div className="flex items-start gap-3.5">
+              <div className="w-9 h-9 rounded-xl bg-amber-100 text-amber-800 flex items-center justify-center shrink-0 mt-0.5 border border-amber-200">
+                <Scale className="w-5 h-5 text-amber-800" />
+              </div>
+              <div>
+                <span className="text-sm font-bold text-slate-900">
+                  ⚖️ Notification d'arbitrage de scrutin
+                </span>
+                <p className="text-xs text-slate-600 mt-1">
+                  M'alerter lorsqu'un scrutin atteint le quorum ou nécessite un arbitrage final (validation du résultat ou report en AG).
+                </p>
+              </div>
+            </div>
+
+            {/* Custom Toggle Switch */}
+            <div className="shrink-0 pt-1">
+              <div
+                className={`w-12 h-6 flex items-center rounded-full p-1 duration-300 ease-in-out ${
+                  notifications.notify_vote_arbitration ? 'bg-primary' : 'bg-slate-300'
+                }`}
+              >
+                <div
+                  className={`bg-white w-4 h-4 rounded-full shadow-md transform duration-300 ease-in-out ${
+                    notifications.notify_vote_arbitration ? 'translate-x-6' : 'translate-x-0'
                   }`}
                 />
               </div>

@@ -149,7 +149,8 @@ def test_accept_task_proposal_by_coordinator(auth_headers):
     # 1. Création d'une proposition par Hortense
     res_create = client.post("/api/tasks", json={
         "title": "TEST_Remplacement Filtre Piscine",
-        "description": "Nouveau filtre à sable nécessaire"
+        "description": "Nouveau filtre à sable nécessaire",
+        "assigned_members": ["Hortense"]
     }, headers=auth_headers["hortense"])
     assert res_create.status_code == 201
     task_id = res_create.json()["id"]

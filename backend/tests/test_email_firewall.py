@@ -88,7 +88,8 @@ def test_circuit_breaker_blocks_all_send_functions(hermetic_resend_mock):
     ]
     for fn in functions_to_test:
         res = fn()
-        assert res == {"status": "disabled", "id": "mock_emergency_off"}
+        assert res.get("status") == "disabled"
+        assert res.get("id") == "mock_emergency_off"
         assert hermetic_resend_mock.call_count == 0
 
 
@@ -101,6 +102,8 @@ def disabled_circuit_breaker(monkeypatch):
     """Désactive temporairement le coupe-circuit pour tester la logique de filtrage whitelist."""
     monkeypatch.setattr(email_mod, "DISABLE_ALL_EMAILS", False)
     monkeypatch.setenv("DISABLE_ALL_EMAILS", "false")
+    monkeypatch.setenv("EMAIL_TEST_MODE", "false")
+    monkeypatch.setenv("EMAIL_TEST_REDIRECT_TO", "hellenvillierssci@gmail.com")
     assert email_mod.is_email_disabled() is False
 
 def test_whitelist_contains_only_henri():

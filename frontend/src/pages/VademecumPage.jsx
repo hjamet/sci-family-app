@@ -1575,12 +1575,32 @@ export default function VademecumPage({ properties, currentUser, reservations = 
             {/* Volet 2 : Eau Chaude Sanitaire (ViCare 250L) */}
             <div className="p-5 rounded-2xl bg-canvas-slate border border-border-subtle flex flex-col justify-between gap-5 shadow-sm min-w-0">
               <div className="flex flex-col gap-4">
-                {/* En-tête ECS */}
+                {/* En-tête ECS avec Badge d'état réel */}
                 <div className="flex items-center justify-between border-b border-border-subtle pb-3 gap-2 flex-wrap">
                   <div className="flex items-center gap-2 min-w-0">
                     <span className="material-symbols-outlined text-primary text-[22px]">water_heater</span>
                     <h3 className="font-headline-sm text-headline-sm text-on-surface font-semibold truncate">Eau Chaude (250L)</h3>
                   </div>
+                  <span className={`inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full font-label-sm text-[11px] font-bold shrink-0 ${
+                    heatingStatus?.is_dhw_heating || heatingStatus?.dhw_status_state === 'heating'
+                      ? 'bg-rose-100 text-rose-800 border border-rose-300 animate-pulse'
+                      : isDhwActive
+                        ? 'bg-sky-50 text-sky-800 border border-sky-200'
+                        : 'bg-slate-100 text-slate-700 border border-slate-200'
+                  }`}>
+                    <span className={`w-1.5 h-1.5 rounded-full ${
+                      heatingStatus?.is_dhw_heating || heatingStatus?.dhw_status_state === 'heating'
+                        ? 'bg-rose-600 animate-ping'
+                        : isDhwActive
+                          ? 'bg-sky-500'
+                          : 'bg-slate-400'
+                    }`}></span>
+                    {heatingStatus?.dhw_status_label || (
+                      isDhwActive
+                        ? 'Au repos / Refroidissement naturel'
+                        : 'À l\'arrêt (Veille 10°C)'
+                    )}
+                  </span>
                 </div>
 
                 {/* Gros Switch Marche / Arrêt géant (Annotation 1) */}
@@ -1599,6 +1619,19 @@ export default function VademecumPage({ properties, currentUser, reservations = 
                     ariaLabel="Interrupteur principal Eau Chaude Sanitaire"
                   />
                 </div>
+
+                {/* Information explicite si le ballon est au repos avec température mesurée basse vs consigne (Annotation 2) */}
+                {isDhwActive && !heatingStatus?.is_dhw_heating && heatingStatus?.dhw_temperature != null && ((dhwTarget || 50.0) - heatingStatus.dhw_temperature > 5.0) && (
+                  <div className="p-3 bg-sky-50/90 dark:bg-sky-950/40 rounded-xl border border-sky-200 dark:border-sky-800/60 flex items-start gap-2.5 text-xs shadow-2xs">
+                    <span className="material-symbols-outlined text-sky-600 text-[18px] shrink-0 mt-0.5">info</span>
+                    <div className="flex flex-col text-sky-950 dark:text-sky-100 leading-tight">
+                      <span className="font-bold">Ballon au repos ({heatingStatus.dhw_temperature.toFixed(1)}°C mesuré vs consigne confort {dhwTarget.toFixed(1)}°C)</span>
+                      <span className="text-[11px] text-sky-800 dark:text-sky-300 mt-1 leading-normal">
+                        Le brûleur fioul est éteint. Le chauffe-eau est autorisé mais n'est pas en chauffe continue (refroidissement naturel en attente de la relance programmée du séjour).
+                      </span>
+                    </div>
+                  </div>
+                )}
 
                 {/* Consigne et Horaires prévus pour le séjour (Annotation 8 Stitch 2c313f81e4f5499abb218f5b1dc25c68) */}
                 {currentPageIndex > 0 && currentStay && (
@@ -1638,7 +1671,12 @@ export default function VademecumPage({ properties, currentUser, reservations = 
                 {/* Sondes réelles ViCare : Température actuelle du ballon & Capacité (Annotation 5) */}
                 <div className="grid grid-cols-2 gap-2">
                   <div className="p-3 bg-white dark:bg-slate-900 rounded-xl border border-border-subtle flex flex-col gap-0.5 shadow-2xs">
-                    <span className="text-[11px] text-on-surface-variant font-medium">Température ballon</span>
+                    <div className="flex items-center justify-between">
+                      <span className="text-[11px] text-on-surface-variant font-medium">Température ballon</span>
+                      <span className="text-[10px] text-on-surface-variant font-medium">
+                        {heatingStatus?.is_dhw_heating ? '🔥 chauffe active' : (isDhwActive ? '⏸️ au repos' : '❄️ veille')}
+                      </span>
+                    </div>
                     <span className="font-headline-md text-base sm:text-lg font-bold text-on-surface tabular-nums">
                       {heatingStatus?.dhw_temperature != null ? `${heatingStatus.dhw_temperature.toFixed(1)}°C` : '--°C'}
                     </span>
@@ -1665,7 +1703,9 @@ export default function VademecumPage({ properties, currentUser, reservations = 
                       </div>
                       <div className="flex flex-col min-w-0">
                         <span className="text-xs font-bold text-on-surface leading-tight">En fonctionnement</span>
-                        <span className="text-[10px] text-on-surface-variant">Chauffe confort ({isDhwActive ? 'actif' : 'prévu'})</span>
+                        <span className="text-[10px] text-on-surface-variant">
+                          Chauffe confort ({isDhwActive ? (heatingStatus?.is_dhw_heating ? 'chauffe active' : 'au repos') : 'prévu'})
+                        </span>
                       </div>
                     </div>
                     <div className="flex items-center gap-1.5 shrink-0 bg-canvas-slate p-1 rounded-full border border-border-subtle">

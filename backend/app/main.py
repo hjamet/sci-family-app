@@ -66,6 +66,8 @@ from .services.email_service import (
     send_email,
     send_task_assigned_email,
     send_task_creation_pending_email,
+    send_vote_creation_pending_email,
+    send_vote_arbitration_email,
     send_vote_required_email,
     send_vote_closed_email,
     send_stay_booked_email,
@@ -75,6 +77,7 @@ from .services.email_service import (
     notify_coordinator_new_issue,
     notify_all_members_project_vote,
     record_dispatched_email,
+    render_email_layout,
     RECENT_DISPATCHED_EMAILS,
     APP_BASE_URL
 )
@@ -129,6 +132,64 @@ def get_recent_emails():
 # UNIFIED NOTIFICATIONS SERVICE & API (Annotation 13)
 # ==============================================================================
 
+def synthesize_email_entry_for_notification(
+    title: str,
+    description: str,
+    notif_type: str = "info",
+    link_path: Optional[str] = None,
+    member: Optional[Member] = None
+) -> dict:
+    """
+    Annotation 13:
+    Génère un objet e-mail riche et canonique conforme pour toute notification qui n'en a pas.
+    Garantit que le bouton ✉️ est TOUJOURS présent et cliquable dans la cloche.
+    """
+    subject = f"[SCI Hellenvilliers] {title}"
+    action_url = f"{APP_BASE_URL}{link_path}" if link_path else f"{APP_BASE_URL}/"
+    greeting = f"Bonjour {member.prenom}," if (member and getattr(member, 'prenom', None)) else "Bonjour,"
+
+    import html as html_lib
+    safe_desc = html_lib.escape(description or title).replace("\n", "<br>")
+
+    content_html = f"""
+    <p>{greeting}</p>
+    <p>Une nouvelle notification a été enregistrée au Domaine d'Hellenvilliers :</p>
+    <div style="background-color: #f9f8f6; border: 1px solid #e5e3dc; border-left: 4px solid #1e3a2f; border-radius: 6px; padding: 16px 20px; margin: 20px 0;">
+        <div style="font-size: 16px; font-weight: bold; color: #1e3a2f; margin-bottom: 8px;">
+            {title}
+        </div>
+        <p style="color: #374151; font-size: 14px; margin: 0; line-height: 1.6;">
+            {safe_desc}
+        </p>
+    </div>
+    <p style="color: #4b5563; font-size: 14px;">
+        Retrouvez tous les détails et gérez vos actions directement depuis le portail de la SCI.
+    </p>
+    """
+    html_body = render_email_layout(
+        title=title,
+        preheader=(description or title)[:120],
+        content_html=content_html,
+        action_url=action_url,
+        action_label="Consulter sur le portail"
+    )
+    recips = [member.email] if (member and getattr(member, 'email', None)) else ["hellenvillierssci@gmail.com"]
+    names = [member.name or member.prenom] if (member and (getattr(member, 'name', None) or getattr(member, 'prenom', None))) else ["Famille Hellenvilliers"]
+
+    return {
+        "id": str(uuid.uuid4()),
+        "created_at": datetime.utcnow().isoformat() + "Z",
+        "trigger_action": notif_type or "notification",
+        "subject": subject,
+        "recipients": recips,
+        "to": recips,
+        "recipients_names": names,
+        "html_content": html_body,
+        "status": "simulated",
+        "is_simulated": True
+    }
+
+
 def create_internal_notification(
     db: Session,
     title: str,
@@ -143,8 +204,18 @@ def create_internal_notification(
     Règle unifiée de notification (Annotation 13) :
     Tout événement générant un email DOIT obligatoirement publier une notification interne
     dans la cloche en haut à droite (NotificationBell / table notifications).
+    Toute notification dans la cloche a OBLIGATOIREMENT un courriel formaté associé.
     """
     try:
+        if not email_entry or not isinstance(email_entry, dict) or not email_entry.get("html_content"):
+            target_m = None
+            if member_id:
+                try:
+                    target_m = db.query(Member).filter(Member.id == member_id).first()
+                except Exception:
+                    pass
+            email_entry = synthesize_email_entry_for_notification(title, description, notif_type, link_path, target_m)
+
         raw_email_str = json.dumps(email_entry) if email_entry else None
         notif = Notification(
             member_id=member_id,
@@ -157,6 +228,7 @@ def create_internal_notification(
             is_read=False,
             created_at=datetime.utcnow()
         )
+        db.expire_on_commit = False
         db.add(notif)
         db.commit()
         db.refresh(notif)
@@ -178,6 +250,24 @@ def format_notification_response(notif: Notification) -> dict:
             email_data = json.loads(notif.email_entry) if isinstance(notif.email_entry, str) else notif.email_entry
         except Exception:
             email_data = None
+
+    if not email_data or not isinstance(email_data, dict) or not email_data.get("html_content"):
+        email_data = synthesize_email_entry_for_notification(
+            title=notif.title,
+            description=notif.description or "",
+            notif_type=notif.type or "info",
+            link_path=notif.link_path,
+            member=getattr(notif, "member", None)
+        )
+
+    # Assure la présence de to / recipients et du flag is_simulated
+    if isinstance(email_data, dict):
+        if "to" not in email_data and "recipients" in email_data:
+            email_data["to"] = email_data["recipients"]
+        if "recipients" not in email_data and "to" in email_data:
+            email_data["recipients"] = email_data["to"]
+        if "is_simulated" not in email_data:
+            email_data["is_simulated"] = (email_data.get("status") == "simulated")
 
     return {
         "id": notif.id,
@@ -562,6 +652,13 @@ def find_mentioned_members(content: str, db: Session) -> List[Member]:
         m_norm = normalize_text_for_matching(raw_mention)
         if not m_norm:
             continue
+        if m_norm in ["all", "tous"]:
+            for member in all_members:
+                if member.id not in seen_ids:
+                    matched_members.append(member)
+                    seen_ids.add(member.id)
+            continue
+
         for member in all_members:
             if member.id in seen_ids:
                 continue
@@ -580,6 +677,106 @@ def find_mentioned_members(content: str, db: Session) -> List[Member]:
                 break
 
     return matched_members
+
+
+def has_collective_mention(content: str) -> bool:
+    """Détecte si un contenu comporte une mention collective @all ou @tous."""
+    if not content:
+        return False
+    return bool(re.search(r'@(?:all|tous)\b', content, re.IGNORECASE))
+
+
+def dispatch_chat_mentions(
+    db: Session,
+    content: str,
+    author_name: str,
+    context_title: str,
+    target_url: str,
+    link_path: str,
+    link_id: Any,
+    background_tasks: Optional[BackgroundTasks] = None
+):
+    """
+    Annotation 10 & 13:
+    Pipeline unifié de traitement des mentions (@membre et @all/@tous) :
+    1. Détecte les mentions individuelles ou collectives (@all / @tous).
+    2. Pour chaque membre mentionné (hors l'auteur lui-même) :
+       - Vérifie la préférence appropriée (notify_mention_all si @all, sinon notify_mentions).
+       - Envoie l'e-mail Resend (ou simulation) et enregistre l'objet e-mail.
+       - Crée obligatoirement la notification interne liée dans la cloche avec son e-mail associé.
+    """
+    if not content or "@" not in content:
+        return
+
+    db.expire_on_commit = False
+    is_all = has_collective_mention(content)
+    all_members = db.query(Member).all()
+
+    if is_all:
+        target_members = all_members
+    else:
+        target_members = find_mentioned_members(content, db)
+
+    for m in target_members:
+        _ = (m.id, m.prenom, m.name, m.email)
+
+    author_clean = (author_name or "").strip().lower()
+
+    for member in target_members:
+        # Anti-auto-mention
+        m_name = (member.name or "").strip().lower()
+        m_prenom = (member.prenom or "").strip().lower()
+        if author_clean and (
+            author_clean == m_name
+            or author_clean == m_prenom
+            or (len(author_clean) >= 3 and (author_clean in m_name or m_name in author_clean))
+            or (len(m_prenom) >= 3 and (m_prenom in author_clean or author_clean in m_prenom))
+        ):
+            continue
+
+        pref = getattr(member, "notify_mention_all", True) if is_all else getattr(member, "notify_mentions", True)
+
+        dispatched_email = None
+        try:
+            if background_tasks:
+                background_tasks.add_task(
+                    send_mention_notification,
+                    mentioned_member=member,
+                    author_name=author_name,
+                    context_title=context_title,
+                    message_text=content,
+                    target_url=target_url,
+                    is_collective=is_all,
+                    actually_send=bool(pref and member.email)
+                )
+            else:
+                send_mention_notification(
+                    mentioned_member=member,
+                    author_name=author_name,
+                    context_title=context_title,
+                    message_text=content,
+                    target_url=target_url,
+                    is_collective=is_all,
+                    actually_send=bool(pref and member.email)
+                )
+            dispatched_email = getattr(send_mention_notification, "last_dispatched_email", None)
+        except Exception as err:
+            logger.error(f"[MENTIONS ERROR] Échec notification email pour {member.prenom}: {err}")
+
+        # Notification interne systématique dans la cloche (Annotation 13 & 10)
+        notif_title = f"📢 Mention @all dans {context_title}" if is_all else f"💬 Mention de {author_name}"
+        snippet = content[:80] + ("..." if len(content) > 80 else "")
+        notif_desc = f"{author_name} a mentionné la famille : « {snippet} »" if is_all else f"« {snippet} »"
+        create_internal_notification(
+            db=db,
+            member_id=member.id,
+            title=notif_title,
+            description=notif_desc,
+            notif_type="mention",
+            link_path=link_path,
+            link_id=str(link_id) if link_id is not None else None,
+            email_entry=dispatched_email
+        )
 
 def get_week_dates(year: int, week_number: int):
     """Returns start_date (Monday) and end_date (Sunday) strings for ISO week number."""
@@ -977,6 +1174,10 @@ def get_auth_profile(current_user: User = Depends(get_current_user)):
         "notify_new_stay": getattr(current_user, "notif_stay_booked", True),
         "notify_thermal_changes": getattr(current_user, "notif_thermal_changes", False),
         "notify_task_creation": getattr(current_user, "notify_task_creation", False),
+        "notify_vote_creation": getattr(current_user, "notify_vote_creation", False),
+        "notify_vote_arbitration": getattr(current_user, "notify_vote_arbitration", False),
+        "notify_mention_all": getattr(current_user, "notify_mention_all", True),
+        "is_coordinator": getattr(current_user, "is_coordinator", False),
     }
 
 @app.patch("/api/auth/profile", response_model=MemberSettingsResponse)
@@ -1028,6 +1229,18 @@ def update_auth_profile(
     if data.notify_mentions is not None:
         current_user.notify_mentions = data.notify_mentions
 
+    if data.notify_task_creation is not None:
+        current_user.notify_task_creation = data.notify_task_creation
+
+    if data.notify_vote_creation is not None:
+        current_user.notify_vote_creation = data.notify_vote_creation
+
+    if data.notify_vote_arbitration is not None:
+        current_user.notify_vote_arbitration = data.notify_vote_arbitration
+
+    if data.notify_mention_all is not None:
+        current_user.notify_mention_all = data.notify_mention_all
+
     db.commit()
     db.refresh(current_user)
 
@@ -1048,6 +1261,11 @@ def update_auth_profile(
         "notify_final_decision": getattr(current_user, "notif_vote_closed", True),
         "notify_new_stay": getattr(current_user, "notif_stay_booked", True),
         "notify_thermal_changes": getattr(current_user, "notif_thermal_changes", False),
+        "notify_task_creation": getattr(current_user, "notify_task_creation", False),
+        "notify_vote_creation": getattr(current_user, "notify_vote_creation", False),
+        "notify_vote_arbitration": getattr(current_user, "notify_vote_arbitration", False),
+        "notify_mention_all": getattr(current_user, "notify_mention_all", True),
+        "is_coordinator": getattr(current_user, "is_coordinator", False),
     }
 
 @app.post("/api/auth/change-password")
@@ -1129,6 +1347,10 @@ def get_member_settings(
         "notify_new_stay": getattr(member, "notif_stay_booked", True),
         "notify_thermal_changes": getattr(member, "notif_thermal_changes", False),
         "notify_task_creation": getattr(member, "notify_task_creation", False),
+        "notify_vote_creation": getattr(member, "notify_vote_creation", False),
+        "notify_vote_arbitration": getattr(member, "notify_vote_arbitration", False),
+        "notify_mention_all": getattr(member, "notify_mention_all", True),
+        "is_coordinator": getattr(member, "is_coordinator", False),
     }
 
 @app.get("/api/members/me/settings", response_model=MemberSettingsResponse)
@@ -1202,6 +1424,32 @@ def update_member_settings(
     if data.notify_task_creation is not None:
         member.notify_task_creation = data.notify_task_creation
 
+    if data.notify_vote_creation is not None:
+        member.notify_vote_creation = data.notify_vote_creation
+
+    if data.notify_vote_arbitration is not None:
+        member.notify_vote_arbitration = data.notify_vote_arbitration
+
+    if data.notify_mention_all is not None:
+        member.notify_mention_all = data.notify_mention_all
+
+    # Sync MemberSettings table if present
+    try:
+        ms = db.query(MemberSettings).filter(MemberSettings.member_id == member.id).first()
+        if ms:
+            if data.notify_task_creation is not None:
+                ms.notify_task_creation = data.notify_task_creation
+            if data.notify_vote_creation is not None:
+                ms.notify_vote_creation = data.notify_vote_creation
+            if data.notify_vote_arbitration is not None:
+                ms.notify_vote_arbitration = data.notify_vote_arbitration
+            if data.notify_mention_all is not None:
+                ms.notify_mention_all = data.notify_mention_all
+            if data.notify_mentions is not None:
+                ms.notify_mentions = data.notify_mentions
+    except Exception:
+        pass
+
     db.commit()
     db.refresh(member)
     return {
@@ -1217,11 +1465,15 @@ def update_member_settings(
         "notif_thermal_changes": getattr(member, "notif_thermal_changes", False),
         "notify_mentions": getattr(member, "notify_mentions", True),
         "notify_task_creation": getattr(member, "notify_task_creation", False),
+        "notify_vote_creation": getattr(member, "notify_vote_creation", False),
+        "notify_vote_arbitration": getattr(member, "notify_vote_arbitration", False),
+        "notify_mention_all": getattr(member, "notify_mention_all", True),
         "notify_new_task": getattr(member, "notif_task_assigned", True),
         "notify_pending_vote": getattr(member, "notif_vote_needed", True),
         "notify_final_decision": getattr(member, "notif_vote_closed", True),
         "notify_new_stay": getattr(member, "notif_stay_booked", True),
         "notify_thermal_changes": getattr(member, "notif_thermal_changes", False),
+        "is_coordinator": getattr(member, "is_coordinator", False),
     }
 
 @app.get("/api/auth/settings", response_model=MemberSettingsResponse)
@@ -1436,28 +1688,18 @@ def add_comment(
     db.commit()
     db.refresh(db_comment)
 
-    # Extraction et notification des membres mentionnés (@membre)
+    # Traitement unifié des mentions (@membre et @all/@tous - Annotations 10 & 13)
     try:
-        mentioned_members = find_mentioned_members(db_comment.content, db)
-        target_url = f"{APP_BASE_URL}/admin?issue_id={db_issue.id}"
-        for member in mentioned_members:
-            if background_tasks:
-                background_tasks.add_task(
-                    send_mention_notification,
-                    mentioned_member=member,
-                    author_name=author_name,
-                    context_title=db_issue.title,
-                    message_text=db_comment.content,
-                    target_url=target_url
-                )
-            else:
-                send_mention_notification(
-                    mentioned_member=member,
-                    author_name=author_name,
-                    context_title=db_issue.title,
-                    message_text=db_comment.content,
-                    target_url=target_url
-                )
+        dispatch_chat_mentions(
+            db=db,
+            content=db_comment.content,
+            author_name=author_name,
+            context_title=db_issue.title,
+            target_url=f"{APP_BASE_URL}/admin?issue_id={db_issue.id}",
+            link_path="/admin",
+            link_id=db_issue.id,
+            background_tasks=background_tasks
+        )
     except Exception as e:
         logger.error(f"[MENTIONS ERROR] Issue comment mention notification failed: {e}")
 
@@ -1488,28 +1730,18 @@ def add_issue_comment(
     db.commit()
     db.refresh(db_comment)
 
-    # Extraction et notification des membres mentionnés (@membre)
+    # Traitement unifié des mentions (@membre et @all/@tous - Annotations 10 & 13)
     try:
-        mentioned_members = find_mentioned_members(db_comment.comment_text, db)
-        target_url = f"{APP_BASE_URL}/admin?issue_id={db_issue.id}"
-        for member in mentioned_members:
-            if background_tasks:
-                background_tasks.add_task(
-                    send_mention_notification,
-                    mentioned_member=member,
-                    author_name=author_name,
-                    context_title=db_issue.title,
-                    message_text=db_comment.comment_text,
-                    target_url=target_url
-                )
-            else:
-                send_mention_notification(
-                    mentioned_member=member,
-                    author_name=author_name,
-                    context_title=db_issue.title,
-                    message_text=db_comment.comment_text,
-                    target_url=target_url
-                )
+        dispatch_chat_mentions(
+            db=db,
+            content=db_comment.comment_text,
+            author_name=author_name,
+            context_title=db_issue.title,
+            target_url=f"{APP_BASE_URL}/admin?issue_id={db_issue.id}",
+            link_path="/admin",
+            link_id=db_issue.id,
+            background_tasks=background_tasks
+        )
     except Exception as e:
         logger.error(f"[MENTIONS ERROR] Issue comment mention notification failed: {e}")
 
@@ -2087,6 +2319,46 @@ def create_project(proj: ProjectCreate, db: Session = Depends(get_db)):
             link_id=db_proj.id,
             email_entry=dispatched_email
         )
+    elif db_proj.status == "PROPOSED":
+        try:
+            coordinators = db.query(Member).filter(
+                or_(
+                    Member.is_coordinator == True,
+                    func.lower(Member.prenom).in_(["henri", "joséphine", "josephine"])
+                ),
+                Member.email.isnot(None)
+            ).all()
+
+            coord_email_template = None
+            for coord in coordinators:
+                send_coord_res = send_vote_creation_pending_email(
+                    to_email=coord.email,
+                    vote_title=db_proj.title,
+                    submitted_by=db_proj.submitted_by or "Associé SCI",
+                    coordinator_name=coord.prenom,
+                    description=db_proj.description or "",
+                    project_id=db_proj.id,
+                    actually_send=bool(getattr(coord, "notify_vote_creation", False))
+                )
+                if isinstance(send_coord_res, dict) and "_email_dispatched" in send_coord_res:
+                    coord_email_template = send_coord_res["_email_dispatched"]
+
+            if coord_email_template:
+                dispatched_email = coord_email_template
+
+            for coord in coordinators:
+                create_internal_notification(
+                    db=db,
+                    member_id=coord.id,
+                    title=f"Scrutin proposé : {db_proj.title}",
+                    description=f"Le scrutin « {db_proj.title} » a été soumis et attend votre arbitrage pour ouverture.",
+                    notif_type="vote",
+                    link_path="/taches",
+                    link_id=db_proj.id,
+                    email_entry=coord_email_template
+                )
+        except Exception as e:
+            logger.error(f"[EMAIL ERROR] Failed to send coordinator vote proposal notification: {e}")
 
     proj_res_data = format_project_response(db_proj)
     if dispatched_email:
@@ -2893,6 +3165,45 @@ def process_vote_submission(
         except Exception as e:
             logger.error(f"[EMAIL ERROR] Failed to send vote closed notification: {e}")
 
+        # Notification des coordinateurs pour arbitrage (Annotation 8)
+        coord_email_template = None
+        try:
+            coordinators = db.query(Member).filter(
+                or_(
+                    Member.is_coordinator == True,
+                    func.lower(Member.prenom).in_(["henri", "joséphine", "josephine"])
+                ),
+                Member.email.isnot(None)
+            ).all()
+
+            for coord in coordinators:
+                send_coord_res = send_vote_arbitration_email(
+                    to_email=coord.email,
+                    vote_title=db_proj.title,
+                    decision=decision,
+                    votes_summary=votes_summary,
+                    coordinator_name=coord.prenom,
+                    project_id=db_proj.id,
+                    description=db_proj.description or "",
+                    actually_send=bool(getattr(coord, "notify_vote_arbitration", False))
+                )
+                if isinstance(send_coord_res, dict) and "_email_dispatched" in send_coord_res:
+                    coord_email_template = send_coord_res["_email_dispatched"]
+
+            for coord in coordinators:
+                create_internal_notification(
+                    db=db,
+                    member_id=coord.id,
+                    title=f"Arbitrage requis : {db_proj.title}",
+                    description=f"Le scrutin « {db_proj.title} » est en attente d'arbitrage par la coordination ({decision}).",
+                    notif_type="vote",
+                    link_path="/taches",
+                    link_id=db_proj.id,
+                    email_entry=coord_email_template
+                )
+        except Exception as coord_err:
+            logger.error(f"[EMAIL ERROR] Failed to send coordinator vote arbitration notification: {coord_err}")
+
         # Notification interne globale pour la cloche (Annotation 13)
         create_internal_notification(
             db=db,
@@ -2901,7 +3212,7 @@ def process_vote_submission(
             notif_type="vote",
             link_path="/taches",
             link_id=db_proj.id,
-            email_entry=dispatched_email
+            email_entry=dispatched_email or coord_email_template
         )
 
     elif not quorum_reached and db_proj.status == "PENDING_VALIDATION":
@@ -2967,28 +3278,18 @@ def add_project_comment(
     db.commit()
     db.refresh(db_comment)
 
-    # Extraction et notification des membres mentionnés (@membre)
+    # Traitement unifié des mentions (@membre et @all/@tous - Annotations 10 & 13)
     try:
-        mentioned_members = find_mentioned_members(db_comment.content, db)
-        target_url = f"{APP_BASE_URL}/taches?project_id={db_proj.id}"
-        for member in mentioned_members:
-            if background_tasks:
-                background_tasks.add_task(
-                    send_mention_notification,
-                    mentioned_member=member,
-                    author_name=author_name,
-                    context_title=db_proj.title,
-                    message_text=db_comment.content,
-                    target_url=target_url
-                )
-            else:
-                send_mention_notification(
-                    mentioned_member=member,
-                    author_name=author_name,
-                    context_title=db_proj.title,
-                    message_text=db_comment.content,
-                    target_url=target_url
-                )
+        dispatch_chat_mentions(
+            db=db,
+            content=db_comment.content,
+            author_name=author_name,
+            context_title=db_proj.title,
+            target_url=f"{APP_BASE_URL}/taches?project_id={db_proj.id}",
+            link_path="/taches",
+            link_id=db_proj.id,
+            background_tasks=background_tasks
+        )
     except Exception as e:
         logger.error(f"[MENTIONS ERROR] Project comment mention notification failed: {e}")
 
@@ -3021,11 +3322,12 @@ def reject_and_reopen_project(project_id: int, db: Session = Depends(get_db)):
     db_proj.updated_at = datetime.utcnow()
 
     # 3. Commentaire système dans le chat familial
-    notif_msg = f"La coordination a refusé la clôture du scrutin « {db_proj.title} ». L'ensemble des votes précédents a été annulé et le scrutin est rouvert. Merci d'exprimer à nouveau votre voix."
+    notif_msg = "Suite à un problème lors de l'arbitrage, le scrutin a été annulé par la coordination et réouvert. Merci d'exprimer à nouveau votre vote."
+    comment_text = f"La coordination a refusé la clôture du scrutin « {db_proj.title} ». L'ensemble des votes précédents a été annulé et le scrutin est rouvert. {notif_msg}"
     sys_comment = ProjectComment(
         project_id=project_id,
         author_name="Coordination SCI",
-        content=notif_msg
+        content=comment_text
     )
     db.add(sys_comment)
 
@@ -3047,6 +3349,17 @@ def reject_and_reopen_project(project_id: int, db: Session = Depends(get_db)):
                 dispatched_email = send_res["_email_dispatched"]
     except Exception as e:
         logger.error(f"[EMAIL ERROR] Failed to send vote reset notification: {e}")
+
+    # 5. Notification interne systématique dans la cloche (Annotation 9 & 13)
+    create_internal_notification(
+        db=db,
+        title=f"Scrutin réouvert : {db_proj.title}",
+        description=notif_msg,
+        notif_type="vote",
+        link_path="/taches",
+        link_id=db_proj.id,
+        email_entry=dispatched_email
+    )
 
     db.commit()
     db.refresh(db_proj)
@@ -3453,7 +3766,7 @@ def list_tasks(
     property_id: Optional[int] = Query(None),
     db: Session = Depends(get_db)
 ):
-    response.headers["Cache-Control"] = "public, s-maxage=5, stale-while-revalidate=30"
+    response.headers["Cache-Control"] = "no-cache, no-store, must-revalidate"
     query = db.query(Task)
 
     if priority and priority not in ["Toutes", "ALL"]:
@@ -4201,28 +4514,18 @@ def create_task_comment(
     db.commit()
     db.refresh(db_comment)
 
-    # Extraction et notification des membres mentionnés (@membre)
+    # Traitement unifié des mentions (@membre et @all/@tous - Annotations 10 & 13)
     try:
-        mentioned_members = find_mentioned_members(db_comment.content, db)
-        target_url = f"{APP_BASE_URL}/taches?id={task.id}"
-        for member in mentioned_members:
-            if background_tasks:
-                background_tasks.add_task(
-                    send_mention_notification,
-                    mentioned_member=member,
-                    author_name=author_name,
-                    context_title=task.title,
-                    message_text=db_comment.content,
-                    target_url=target_url
-                )
-            else:
-                send_mention_notification(
-                    mentioned_member=member,
-                    author_name=author_name,
-                    context_title=task.title,
-                    message_text=db_comment.content,
-                    target_url=target_url
-                )
+        dispatch_chat_mentions(
+            db=db,
+            content=db_comment.content,
+            author_name=author_name,
+            context_title=task.title,
+            target_url=f"{APP_BASE_URL}/taches?id={task.id}",
+            link_path="/taches",
+            link_id=task.id,
+            background_tasks=background_tasks
+        )
     except Exception as e:
         logger.error(f"[MENTIONS ERROR] Task comment mention notification failed: {e}")
 
@@ -6433,7 +6736,8 @@ def trigger_banking_sync(db: Session = Depends(get_db)):
 @app.post("/api/accounting/transactions", status_code=status.HTTP_201_CREATED, tags=["Accounting", "Banking"])
 @app.post("/api/banking/transactions", status_code=status.HTTP_201_CREATED, tags=["Accounting", "Banking"])
 async def create_accounting_transaction(
-    file: UploadFile = File(..., description="Justificatif ou facture obligatoire"),
+    file: Optional[UploadFile] = File(None, description="Justificatif ou facture obligatoire si aucun document existant rattaché"),
+    document_id: Optional[int] = Form(None, description="ID d'un document existant dans admin_documents"),
     justification: str = Form(..., description="Justification de paiement obligatoire"),
     amount: float = Form(..., description="Montant de la dépense"),
     booking_date: Optional[str] = Form(None, description="Date de valeur YYYY-MM-DD"),
@@ -6443,10 +6747,10 @@ async def create_accounting_transaction(
 ):
     """
     Enregistre une dépense déductible pour la SCI et archive obligatoirement le justificatif associé.
-    Annotations 5, 6 & 7 :
+    Annotations 5, 6, 7 & 16 :
     - 100% sorties déductibles (type='out' ou 'expense'). Zéro entrée permise.
     - Justification de paiement obligatoire.
-    - Fichier justificatif / facture strictement obligatoire avec archivage canonique.
+    - Fichier justificatif / facture strictement obligatoire (soit via document_id existant, soit via upload canonique).
     """
     # 1. Validation du montant (> 0)
     try:
@@ -6470,85 +6774,96 @@ async def create_accounting_transaction(
             detail="La justification de paiement est obligatoire."
         )
 
-    # 3. Validation du justificatif / facture (obligatoire)
-    if not file or not file.filename:
+    # 3. Validation et association du justificatif / facture (obligatoire)
+    now = datetime.utcnow()
+    mmaaaa = now.strftime("%m%Y")
+    db_doc = None
+    canonical_filename = ""
+
+    if document_id:
+        db_doc = db.query(AdminDocument).filter(AdminDocument.id == document_id).first()
+        if not db_doc:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail=f"Document justificatif #{document_id} introuvable."
+            )
+        canonical_filename = db_doc.file_name or db_doc.title or f"Document-{db_doc.id}"
+    elif file and file.filename:
+        # Traitement et archivage canonique du fichier justificatif téléversé
+        original_name = file.filename or "justificatif.pdf"
+        _, ext = os.path.splitext(original_name)
+        if not ext:
+            ext = ".pdf"
+
+        # Nettoyage du titre pour la convention canonique
+        safe_title = re.sub(r'[^\w\s-]', '', clean_justification).strip()
+        if not safe_title:
+            safe_title = "Justificatif Depense"
+        canonical_filename = f"SCI {mmaaaa} {safe_title}{ext}"
+
+        file_bytes = await file.read()
+        file_size = len(file_bytes)
+        mimetype = file.content_type or "application/pdf"
+
+        # Téléversement Drive sécurisé (si configuré)
+        drive_file_id = None
+        try:
+            if drive_jail_service.is_configured():
+                drive_file = drive_jail_service.upload_file(
+                    filename=canonical_filename,
+                    content=file_bytes,
+                    mimetype=mimetype,
+                    description=f"SCI Hellenvilliers - Dépense Déductible : {clean_justification} ({amount_val:.2f} €) - Déposé par {uploaded_by}"
+                )
+                drive_file_id = drive_file.get("id") if drive_file else None
+        except Exception as drive_err:
+            logger.warning(f"Google Drive upload fallback notice: {drive_err}")
+
+        # Sauvegarde locale de secours
+        dest_path = os.path.join(DOCUMENTS_DIR, canonical_filename)
+        try:
+            with open(dest_path, "wb") as f:
+                f.write(file_bytes)
+        except Exception as e:
+            logger.warning(f"Erreur écriture cache local {canonical_filename}: {e}")
+
+        # Enregistrement du document dans admin_documents
+        db_doc = AdminDocument(
+            title=clean_justification,
+            category="Travaux & Factures",
+            file_url=f"/api/documents/drive/{drive_file_id}" if drive_file_id else "/api/documents/temp",
+            file_name=canonical_filename,
+            file_type=mimetype,
+            file_size=file_size,
+            file_data=file_bytes,
+            drive_file_id=drive_file_id,
+            source_type="EXPENSE",
+            uploaded_by=uploaded_by or "Henri Jamet",
+            notes=f"Dépense déductible : {amount_val:.2f} €"
+        )
+        db.add(db_doc)
+        db.commit()
+        db.refresh(db_doc)
+
+        db_doc.file_url = f"/api/documents/{db_doc.id}/download"
+        db.commit()
+        db.refresh(db_doc)
+    else:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail="Veuillez joindre une facture ou un justificatif de paiement pour valider la dépense."
         )
 
-    # 4. Traitement et archivage canonique du fichier justificatif
-    now = datetime.utcnow()
-    mmaaaa = now.strftime("%m%Y")
-    original_name = file.filename or "justificatif.pdf"
-    _, ext = os.path.splitext(original_name)
-    if not ext:
-        ext = ".pdf"
-
-    # Nettoyage du titre pour la convention canonique
-    safe_title = re.sub(r'[^\w\s-]', '', clean_justification).strip()
-    if not safe_title:
-        safe_title = "Justificatif Depense"
-    canonical_filename = f"SCI {mmaaaa} {safe_title}{ext}"
-
-    file_bytes = await file.read()
-    file_size = len(file_bytes)
-    mimetype = file.content_type or "application/pdf"
-
-    # Téléversement Drive sécurisé (si configuré)
-    drive_file_id = None
-    try:
-        if drive_jail_service.is_configured():
-            drive_file = drive_jail_service.upload_file(
-                filename=canonical_filename,
-                content=file_bytes,
-                mimetype=mimetype,
-                description=f"SCI Hellenvilliers - Dépense Déductible : {clean_justification} ({amount_val:.2f} €) - Déposé par {uploaded_by}"
-            )
-            drive_file_id = drive_file.get("id") if drive_file else None
-    except Exception as drive_err:
-        logger.warning(f"Google Drive upload fallback notice: {drive_err}")
-
-    # Sauvegarde locale de secours
-    dest_path = os.path.join(DOCUMENTS_DIR, canonical_filename)
-    try:
-        with open(dest_path, "wb") as f:
-            f.write(file_bytes)
-    except Exception as e:
-        logger.warning(f"Erreur écriture cache local {canonical_filename}: {e}")
-
-    # Enregistrement du document dans admin_documents
-    db_doc = AdminDocument(
-        title=clean_justification,
-        category="Travaux & Factures",
-        file_url=f"/api/documents/drive/{drive_file_id}" if drive_file_id else "/api/documents/temp",
-        file_name=canonical_filename,
-        file_type=mimetype,
-        file_size=file_size,
-        file_data=file_bytes,
-        drive_file_id=drive_file_id,
-        source_type="EXPENSE",
-        uploaded_by=uploaded_by or "Henri Jamet",
-        notes=f"Dépense déductible : {amount_val:.2f} €"
-    )
-    db.add(db_doc)
-    db.commit()
-    db.refresh(db_doc)
-
-    db_doc.file_url = f"/api/documents/{db_doc.id}/download"
-    db.commit()
-    db.refresh(db_doc)
-
     # 5. Enregistrement bancaire immuable en sortie / débit (montant négatif)
     account = db.query(BankAccount).first()
     if not account:
         account = BankAccount(
-            account_id="CA-NORMANDIE-HELLENVILLIERS",
-            name="Compte Courant SCI Hellenvilliers",
+            account_id="INDY-SWAN-HELLENVILLIERS",
+            name="Compte Pro Indy SCI Hellenvilliers",
             iban="FR76 1690 6000 1234 5678 9012 345",
             balance=0.0,
             currency="EUR",
-            aspsp_name="Crédit Agricole Normandie"
+            aspsp_name="Indy (Swan France)"
         )
         db.add(account)
         db.commit()
@@ -6611,7 +6926,9 @@ async def create_accounting_transaction(
 FRONTEND_DIST_DIR = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "..", "frontend", "dist"))
 
 if os.path.exists(FRONTEND_DIST_DIR):
-    app.mount("/assets", StaticFiles(directory=os.path.join(FRONTEND_DIST_DIR, "assets")), name="assets")
+    assets_dir = os.path.join(FRONTEND_DIST_DIR, "assets")
+    if os.path.exists(assets_dir):
+        app.mount("/assets", StaticFiles(directory=assets_dir), name="assets")
 
     @app.get("/{full_path:path}")
     async def serve_spa(full_path: str):

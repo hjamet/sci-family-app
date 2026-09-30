@@ -12,10 +12,17 @@ GENERAL_NOTIFICATION_COLUMNS = [
     ("notif_vote_closed", "BOOLEAN DEFAULT TRUE"),
     ("notif_stay_booked", "BOOLEAN DEFAULT TRUE"),
     ("notify_mentions", "BOOLEAN DEFAULT TRUE"),
+    ("notify_mention_all", "BOOLEAN DEFAULT TRUE"),
 ]
 
 # Column for thermal changes (default FALSE, activated for coordinators)
 THERMAL_NOTIFICATION_COLUMN = ("notif_thermal_changes", "BOOLEAN DEFAULT FALSE")
+
+# Columns for coordinator vote options (default FALSE)
+COORDINATOR_VOTE_COLUMNS = [
+    ("notify_vote_creation", "BOOLEAN DEFAULT FALSE"),
+    ("notify_vote_arbitration", "BOOLEAN DEFAULT FALSE"),
+]
 
 
 def migrate_sqlite_db(db_path: str = None):
@@ -75,13 +82,12 @@ def migrate_sqlite_db(db_path: str = None):
                     "OR LOWER(role) LIKE '%coordinateur g%' OR LOWER(role) LIKE '%gérant%'"
                 )
 
-                # Activate TRUE (1) for Coordinatrice Adjointe (Joséphine, ou Hortense/Marguerite si désignée)
-                cursor.execute(
-                    f"UPDATE members SET {col_name} = 1 WHERE "
-                    "LOWER(prenom) LIKE 'jos%' "
-                    "OR LOWER(role) LIKE '%coordinatrice adjointe%' "
-                    "OR (LOWER(prenom) IN ('hortense', 'marguerite') AND LOWER(role) LIKE '%coordinat%')"
-                )
+                # 2bis. Coordinator vote columns
+                for col_name, col_def in COORDINATOR_VOTE_COLUMNS:
+                    if col_name not in existing_cols:
+                        logger.info(f"[MIGRATION SQLite] Adding column {col_name} to members in {target}.")
+                        cursor.execute(f"ALTER TABLE members ADD COLUMN {col_name} {col_def}")
+                    cursor.execute(f"UPDATE members SET {col_name} = 0 WHERE {col_name} IS NULL")
 
             # 3. Create thermal_settings table if missing
             cursor.execute("""
@@ -123,9 +129,18 @@ def migrate_sqlite_db(db_path: str = None):
                 if "notify_mentions" not in ms_cols:
                     cursor.execute("ALTER TABLE member_settings ADD COLUMN notify_mentions BOOLEAN DEFAULT TRUE")
                 cursor.execute("UPDATE member_settings SET notify_mentions = 1 WHERE notify_mentions IS NULL")
+                if "notify_mention_all" not in ms_cols:
+                    cursor.execute("ALTER TABLE member_settings ADD COLUMN notify_mention_all BOOLEAN DEFAULT TRUE")
+                cursor.execute("UPDATE member_settings SET notify_mention_all = 1 WHERE notify_mention_all IS NULL")
                 if "notify_task_creation" not in ms_cols:
                     cursor.execute("ALTER TABLE member_settings ADD COLUMN notify_task_creation BOOLEAN DEFAULT FALSE")
                 cursor.execute("UPDATE member_settings SET notify_task_creation = 0 WHERE notify_task_creation IS NULL")
+                if "notify_vote_creation" not in ms_cols:
+                    cursor.execute("ALTER TABLE member_settings ADD COLUMN notify_vote_creation BOOLEAN DEFAULT FALSE")
+                cursor.execute("UPDATE member_settings SET notify_vote_creation = 0 WHERE notify_vote_creation IS NULL")
+                if "notify_vote_arbitration" not in ms_cols:
+                    cursor.execute("ALTER TABLE member_settings ADD COLUMN notify_vote_arbitration BOOLEAN DEFAULT FALSE")
+                cursor.execute("UPDATE member_settings SET notify_vote_arbitration = 0 WHERE notify_vote_arbitration IS NULL")
                 # Activate for coordinator and assistant
                 cursor.execute("""
                     UPDATE member_settings SET notify_thermal_changes = 1
@@ -182,6 +197,11 @@ def migrate_engine(engine):
                     "OR (LOWER(prenom) IN ('hortense', 'marguerite') AND LOWER(role) LIKE '%coordinat%')"
                 ))
 
+                for col_name, col_def in COORDINATOR_VOTE_COLUMNS:
+                    if col_name not in existing_cols:
+                        conn.execute(text(f"ALTER TABLE members ADD COLUMN {col_name} {col_def}"))
+                    conn.execute(text(f"UPDATE members SET {col_name} = 0 WHERE {col_name} IS NULL"))
+
                 # thermal_settings
                 conn.execute(text("""
                     CREATE TABLE IF NOT EXISTS thermal_settings (
@@ -210,6 +230,21 @@ def migrate_engine(engine):
                         created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
                     );
                 """))
+
+                # SQLite member_settings table if exists
+                try:
+                    conn.execute(text("ALTER TABLE member_settings ADD COLUMN notify_mention_all BOOLEAN DEFAULT 1;"))
+                except Exception:
+                    pass
+                try:
+                    conn.execute(text("ALTER TABLE member_settings ADD COLUMN notify_vote_creation BOOLEAN DEFAULT 0;"))
+                except Exception:
+                    pass
+                try:
+                    conn.execute(text("ALTER TABLE member_settings ADD COLUMN notify_vote_arbitration BOOLEAN DEFAULT 0;"))
+                except Exception:
+                    pass
+
                 conn.commit()
             else:
                 # PostgreSQL (Supabase)
@@ -222,6 +257,11 @@ def migrate_engine(engine):
                 col_name, col_def = THERMAL_NOTIFICATION_COLUMN
                 conn.execute(text(f"ALTER TABLE members ADD COLUMN IF NOT EXISTS {col_name} {col_def};"))
                 conn.execute(text(f"UPDATE members SET {col_name} = FALSE WHERE {col_name} IS NULL;"))
+
+                # Coordinator vote columns
+                for col_name, col_def in COORDINATOR_VOTE_COLUMNS:
+                    conn.execute(text(f"ALTER TABLE members ADD COLUMN IF NOT EXISTS {col_name} {col_def};"))
+                    conn.execute(text(f"UPDATE members SET {col_name} = FALSE WHERE {col_name} IS NULL;"))
 
                 # Activate TRUE for Henri Jamet and Coordinatrice Adjointe
                 conn.execute(text(
@@ -265,12 +305,18 @@ def migrate_engine(engine):
                     );
                 """))
 
-                # member_settings notify_mentions & notify_task_creation
+                # member_settings notifications
                 try:
                     conn.execute(text("ALTER TABLE member_settings ADD COLUMN IF NOT EXISTS notify_mentions BOOLEAN DEFAULT TRUE;"))
                     conn.execute(text("UPDATE member_settings SET notify_mentions = TRUE WHERE notify_mentions IS NULL;"))
+                    conn.execute(text("ALTER TABLE member_settings ADD COLUMN IF NOT EXISTS notify_mention_all BOOLEAN DEFAULT TRUE;"))
+                    conn.execute(text("UPDATE member_settings SET notify_mention_all = TRUE WHERE notify_mention_all IS NULL;"))
                     conn.execute(text("ALTER TABLE member_settings ADD COLUMN IF NOT EXISTS notify_task_creation BOOLEAN DEFAULT FALSE;"))
                     conn.execute(text("UPDATE member_settings SET notify_task_creation = FALSE WHERE notify_task_creation IS NULL;"))
+                    conn.execute(text("ALTER TABLE member_settings ADD COLUMN IF NOT EXISTS notify_vote_creation BOOLEAN DEFAULT FALSE;"))
+                    conn.execute(text("UPDATE member_settings SET notify_vote_creation = FALSE WHERE notify_vote_creation IS NULL;"))
+                    conn.execute(text("ALTER TABLE member_settings ADD COLUMN IF NOT EXISTS notify_vote_arbitration BOOLEAN DEFAULT FALSE;"))
+                    conn.execute(text("UPDATE member_settings SET notify_vote_arbitration = FALSE WHERE notify_vote_arbitration IS NULL;"))
                 except Exception as ms_mig_err:
                     logger.debug(f"[MIGRATION NOTICE] member_settings notice: {ms_mig_err}")
 

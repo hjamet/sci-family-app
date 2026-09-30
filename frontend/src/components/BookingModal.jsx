@@ -205,7 +205,7 @@ class BookingErrorBoundary extends React.Component {
     if (this.state.hasError) {
       return (
         <div 
-          className="fixed inset-0 z-50 bg-slate-900/70 backdrop-blur-sm flex items-center justify-center p-4 animate-in fade-in duration-200"
+          className="fixed inset-0 top-0 left-0 right-0 bottom-0 m-0 z-50 bg-slate-900/70 backdrop-blur-sm flex items-center justify-center p-4 animate-in fade-in duration-200"
           role="dialog"
           aria-modal="true"
         >
@@ -750,7 +750,7 @@ function BookingModalContent({
     <div
       aria-modal="true"
       role="dialog"
-      className="fixed inset-0 z-50 bg-inverse-surface/45 backdrop-blur-sm flex items-center justify-center p-gutter-mobile md:p-gutter overflow-y-auto"
+      className="fixed inset-0 top-0 left-0 right-0 bottom-0 m-0 z-50 bg-inverse-surface/45 backdrop-blur-sm flex items-center justify-center p-4 sm:p-6 overflow-y-auto"
     >
       <div className="w-full max-w-[780px] my-auto bg-surface-container-lowest rounded-lg shadow-[0_20px_48px_-12px_rgba(15,23,42,0.20)] p-space-md md:p-space-lg relative overflow-hidden flex flex-col max-h-[92vh] border border-border-subtle animate-in fade-in zoom-in-95 duration-200">
         
@@ -1521,7 +1521,7 @@ function BookingModalContent({
         {/* Modale de confirmation Quitter sans enregistrer si dirty (Annotation 9) */}
         {showDiscardConfirm && (
           <div
-            className="fixed inset-0 z-60 bg-slate-900/60 backdrop-blur-xs flex items-center justify-center p-4 animate-in fade-in duration-150"
+            className="fixed inset-0 top-0 left-0 right-0 bottom-0 m-0 z-60 bg-slate-900/60 backdrop-blur-xs flex items-center justify-center p-4 animate-in fade-in duration-150"
             role="dialog"
             aria-modal="true"
           >

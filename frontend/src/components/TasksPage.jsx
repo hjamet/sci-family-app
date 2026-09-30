@@ -292,6 +292,11 @@ export default function TasksPage({ currentUser = 'Henri Jamet' }) {
         handleTaskDeleted(updatedTask.id);
         return;
       }
+      // Bascule automatique sur l'onglet OPEN si la tâche passe en statut actif (Annotation 14)
+      const st = String(updatedTask.status || '').toUpperCase();
+      if (['EN_COURS', 'TODO', 'OPEN', 'A_FAIRE'].includes(st)) {
+        setWorkflowFilter('OPEN');
+      }
       setTasks((prev) => {
         const exists = prev.some((t) => t.id === updatedTask.id || (updatedTask.ref && t.ref === updatedTask.ref));
         if (exists) {
@@ -300,12 +305,22 @@ export default function TasksPage({ currentUser = 'Henri Jamet' }) {
         return [updatedTask, ...prev];
       });
     }
+    invalidateApiCache('tasks');
+    invalidateApiCache('/api/tasks');
     await loadTasks({ forceRefresh: true });
   };
 
   const handleVoteRoofSubmit = async (updatedProject) => {
     if (updatedProject?.deleted) {
-      setProjects(prev => prev.filter(p => p.id !== updatedProject.projectId));
+      const delId = updatedProject.projectId || updatedProject.id;
+      setProjects(prev => prev.filter(p => p.id !== delId));
+      invalidateApiCache('projects');
+      invalidateApiCache('/api/projects');
+      invalidateApiCache('/api/projects/pending');
+      mutate('projects');
+      await loadTasks({ forceRefresh: true });
+      setProjects(prev => prev.filter(p => p.id !== delId));
+      return;
     } else if (updatedProject?.id) {
       setProjects(prev => {
         const idx = prev.findIndex(p => p.id === updatedProject.id);
@@ -315,21 +330,26 @@ export default function TasksPage({ currentUser = 'Henri Jamet' }) {
         return [updatedProject, ...prev];
       });
     }
-    invalidateCache('/api/projects');
-    invalidateCache('/api/projects/pending');
+    invalidateApiCache('projects');
+    invalidateApiCache('/api/projects');
+    invalidateApiCache('/api/projects/pending');
     mutate('projects');
     await loadTasks({ forceRefresh: true });
   };
 
   const handleVoteDeleted = (deletedId) => {
+    // Annotation 11 : Disparition synchrone immédiate du vote supprimé du state React
     setProjects(prev => prev.filter(p => p.id !== deletedId));
     setActiveVoteIndex(0);
     setIsRoofVoteModalOpen(false);
     setSelectedVoteForModal(null);
-    invalidateCache('/api/projects');
-    invalidateCache('/api/projects/pending');
+    invalidateApiCache('projects');
+    invalidateApiCache('/api/projects');
+    invalidateApiCache('/api/projects/pending');
     mutate('projects');
-    loadTasks({ forceRefresh: true });
+    loadTasks({ forceRefresh: true }).then(() => {
+      setProjects(prev => prev.filter(p => p.id !== deletedId));
+    });
   };
 
   const handleProjectCreated = (createdProject) => {
@@ -383,21 +403,26 @@ export default function TasksPage({ currentUser = 'Henri Jamet' }) {
     const ok = window.confirm(`Êtes-vous sûr de vouloir supprimer définitivement le scrutin « ${vote.title} » ? Cette action est irréversible.`);
     if (!ok) return;
 
-    // Annotation 1, 2, 3 & 12 : Retrait immédiat de l'état React pour éliminer tout double-clic et flash 404
-    setProjects(prev => prev.filter(p => p.id !== vote.id));
-    invalidateCache('/api/projects');
-    invalidateCache('/api/projects/pending');
+    const voteId = vote.id;
+    // Annotation 11 : Retrait immédiat et synchrone de l'état React
+    setProjects(prev => prev.filter(p => p.id !== voteId));
+    invalidateApiCache('projects');
+    invalidateApiCache('/api/projects');
+    invalidateApiCache('/api/projects/pending');
     mutate('projects');
 
     try {
-      await deleteProject(vote.id);
-      invalidateCache('/api/projects');
-      invalidateCache('/api/projects/pending');
+      await deleteProject(voteId);
+      invalidateApiCache('projects');
+      invalidateApiCache('/api/projects');
+      invalidateApiCache('/api/projects/pending');
       mutate('projects');
       await loadTasks({ forceRefresh: true });
+      setProjects(prev => prev.filter(p => p.id !== voteId));
     } catch (err) {
       alert(`Erreur lors de la suppression du scrutin : ${err.message}`);
       await loadTasks({ forceRefresh: true });
+      setProjects(prev => prev.filter(p => p.id !== voteId));
     }
   };
 
@@ -590,8 +615,16 @@ export default function TasksPage({ currentUser = 'Henri Jamet' }) {
     }
 
     try {
-      setTasks(prev => prev.map(t => (t.id === taskToAccept.id || t.ref === taskToAccept.ref) ? { ...t, status: 'EN_COURS' } : t));
-      await acceptTask(taskToAccept.id, { assigned_members: currentMembers });
+      setTasks(prev => prev.map(t => (t.id === taskToAccept.id || t.ref === taskToAccept.ref) ? { ...t, status: 'EN_COURS', assigned_members: currentMembers } : t));
+      // Bascule automatique et immédiate sur l'onglet "En cours" (Annotation 14)
+      setWorkflowFilter('OPEN');
+      invalidateApiCache('tasks');
+      invalidateApiCache('/api/tasks');
+      invalidateApiCache(`tasks/${taskToAccept.id}`);
+      await acceptTask(taskToAccept.id, { assigned_members: currentMembers, status: 'EN_COURS' });
+      invalidateApiCache('tasks');
+      invalidateApiCache('/api/tasks');
+      invalidateApiCache(`tasks/${taskToAccept.id}`);
       await loadTasks({ forceRefresh: true });
     } catch (err) {
       console.error('Erreur acceptation tâche:', err);
@@ -679,9 +712,11 @@ export default function TasksPage({ currentUser = 'Henri Jamet' }) {
       }
     }
 
-    // Filtre Sujet
+    // Filtre Sujet (Annotation 12)
     if (selectedSubject !== 'all') {
-      if (t.subject?.toLowerCase() !== selectedSubject.toLowerCase()) return false;
+      const normSub = (t.subject || '').toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g, "");
+      const selSub = selectedSubject.toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g, "");
+      if (!normSub.includes(selSub) && !selSub.includes(normSub)) return false;
     }
 
     // Filtre Domaine / Catégorie
@@ -1385,11 +1420,13 @@ export default function TasksPage({ currentUser = 'Henri Jamet' }) {
               onChange={(e) => setSelectedSubject(e.target.value)}
               options={[
                 { value: 'all', label: 'Tous les sujets', icon: 'domain' },
-                { value: 'rosing', label: 'Rosing (Maison Principale)', icon: 'home' },
-                { value: 'presbytere', label: 'Presbytère', icon: 'cottage' },
-                { value: 'piscine', label: 'Piscine & Pool house', icon: 'pool' },
-                { value: 'jardin', label: 'Jardin & Espaces verts', icon: 'yard' },
-                { value: 'sci', label: 'SCI (Gouvernance & Général)', icon: 'account_balance' },
+                { value: 'Presbytère', label: 'Presbytère', icon: 'cottage' },
+                { value: 'Rosings', label: 'Rosings', icon: 'home' },
+                { value: 'Piscine', label: 'Piscine', icon: 'pool' },
+                { value: 'Jardin & Espaces Verts', label: 'Jardin & Espaces Verts', icon: 'yard' },
+                { value: 'Petites cabanes', label: 'Petites cabanes', icon: 'holiday_village' },
+                { value: 'Hangar à meuble', label: 'Hangar à meuble', icon: 'warehouse' },
+                { value: 'SCI & Administratif', label: 'SCI & Administratif', icon: 'account_balance' },
               ]}
               className="h-[46px]"
             />

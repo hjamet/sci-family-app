@@ -244,26 +244,26 @@ def fetch_live_telemetry() -> Dict[str, Any]:
                 logger.warning(f"[VICARE] getDomesticHotWaterConfiguredTemperature error: {e}")
                 dhw_configured_temp = None
 
-        dhw_active = False
+        dhw_charging_active = False
         if hasattr(boiler_device, "getDomesticHotWaterChargingActive"):
             try:
-                dhw_active = bool(boiler_device.getDomesticHotWaterChargingActive())
+                dhw_charging_active = bool(boiler_device.getDomesticHotWaterChargingActive())
             except Exception:
-                pass
-        if not dhw_active and hasattr(boiler_device, "getDomesticHotWaterActiveMode"):
+                dhw_charging_active = False
+
+        raw_dhw_mode = None
+        if hasattr(boiler_device, "getDomesticHotWaterActiveMode"):
             try:
-                dhw_mode_val = boiler_device.getDomesticHotWaterActiveMode()
-                if dhw_mode_val and dhw_mode_val != "off":
-                    dhw_active = True
+                raw_dhw_mode = boiler_device.getDomesticHotWaterActiveMode()
             except Exception:
-                pass
-        if not dhw_active and hasattr(boiler_device, "getDomesticHotWaterActive"):
+                raw_dhw_mode = None
+
+        raw_dhw_active = None
+        if hasattr(boiler_device, "getDomesticHotWaterActive"):
             try:
-                raw_dhw_act = boiler_device.getDomesticHotWaterActive()
-                if raw_dhw_act and raw_dhw_act != "error":
-                    dhw_active = bool(raw_dhw_act)
+                raw_dhw_active = boiler_device.getDomesticHotWaterActive()
             except Exception:
-                pass
+                raw_dhw_active = None
 
         room_temp = None
         if circuit and hasattr(circuit, "getRoomTemperature"):
@@ -385,19 +385,55 @@ def fetch_live_telemetry() -> Dict[str, Any]:
         else:
             is_heating_active = False
 
-        # Détection réelle Eau Chaude Sanitaire active (is_dhw_active)
-        # L'ECS est en marche si mode ECS/Hiver ET status 'on' (ou consigne > 10°C, car 10°C = arrêt/hors-gel du ballon)
-        if active_mode in ("dhw", "dhwAndHeating", "forcedNormal") and (dhw_configured_temp is None or dhw_configured_temp > 10.0) and (dhw_active or active_mode == "dhw"):
+        # Détection Mode Autorisé Eau Chaude Sanitaire (is_dhw_active)
+        # Sémantique de l'interrupteur principal ECS :
+        # - L'ECS est 'en marche' (is_dhw_active = True) si la chaudière est configurée en mode ECS/Hiver
+        #   ET que la consigne est en mode confort (> 15.0°C, car <= 10.0°C = seuil de coupure/hors-gel Vitotronic)
+        #   ET que le mode n'est pas explicitement éteint ('off' / 'standby').
+        # - L'ECS est 'à l'arrêt' (is_dhw_active = False) si la consigne est <= 10.0°C ou si le mode chaudière est hors-gel/veille.
+        is_mode_allowing_dhw = active_mode in ("dhw", "dhwAndHeating", "forcedNormal")
+        is_consigne_confort = (dhw_configured_temp is None or dhw_configured_temp > 15.0)
+        is_not_off = (raw_dhw_mode is None or str(raw_dhw_mode).lower() not in ("off", "standby"))
+
+        if is_mode_allowing_dhw and is_consigne_confort and is_not_off:
             is_dhw_active = True
         else:
             is_dhw_active = False
 
+        # Détection Chauffe Physique Réelle ECS (is_dhw_heating)
+        # Invariant physique Viessmann :
+        # Le ballon de 250L ne chauffe QUE SI la recharge est enclenchée (dhw_charging_active = True)
+        # OU si le brûleur fioul produit activement des calories (burner_active = True en mode ECS).
+        # Si le brûleur est éteint (burner_active = False) et que dhw_charging_active est False,
+        # le ballon est au repos / en refroidissement naturel (ex: 26.7°C vs consigne 53.0°C hors plage horaire).
+        if is_dhw_active and (dhw_charging_active or (burner_active and active_mode == "dhw")):
+            is_dhw_heating = True
+        else:
+            is_dhw_heating = False
+
         # Double consigne ECS ViCare (Confort marche vs Réduit veille 10.0°C)
         dhw_comfort = ViCareService._dhw_comfort_temperature
-        if dhw_configured_temp is not None and dhw_configured_temp > 10.0:
+        if dhw_configured_temp is not None and dhw_configured_temp > 15.0:
             dhw_comfort = dhw_configured_temp
             ViCareService._dhw_comfort_temperature = dhw_comfort
         dhw_reduced = ViCareService._dhw_reduced_temperature
+
+        # Qualification sémantique limpide de l'état ECS (Annotation 2)
+        if not is_dhw_active:
+            dhw_status_state = "off"
+            dhw_status_label = "À l'arrêt (Veille 10°C)"
+            dhw_status_subtext = "Consigne veille 10.0°C • Chauffe coupée"
+        elif is_dhw_heating:
+            dhw_status_state = "heating"
+            dhw_status_label = "Chauffe en cours"
+            dhw_status_subtext = f"Brûleur fioul actif • Montée en température vers {dhw_comfort:.1f}°C"
+        else:
+            dhw_status_state = "standby"
+            dhw_status_label = "Au repos / Refroidissement naturel"
+            if dhw_temp is not None and (dhw_comfort - dhw_temp) > 5.0:
+                dhw_status_subtext = f"Ballon au repos ({dhw_temp:.1f}°C mesuré vs consigne {dhw_comfort:.1f}°C) • Brûleur éteint hors plage horaire"
+            else:
+                dhw_status_subtext = f"Température stabilisée ({dhw_temp:.1f}°C) • Brûleur au repos"
 
         target_temp = current_desired_temp
 
@@ -418,6 +454,11 @@ def fetch_live_telemetry() -> Dict[str, Any]:
             "dhw_reduced_temperature": dhw_reduced,
             "is_heating_active": is_heating_active,
             "is_dhw_active": is_dhw_active,
+            "dhw_charging_active": dhw_charging_active,
+            "is_dhw_heating": is_dhw_heating,
+            "dhw_status_state": dhw_status_state,
+            "dhw_status_label": dhw_status_label,
+            "dhw_status_subtext": dhw_status_subtext,
             "frost_protection_active": True,
             "eco_mode_active": eco_mode_active,
             "burner_active": burner_active,
@@ -482,11 +523,24 @@ class ViCareService:
                 detail={"error": f"Erreur télémétrie chaudière ViCare: {err_str}", "type": err_type}
             )
 
-        # S'assurer de la présence des doubles consignes ECS
+        # S'assurer de la présence des doubles consignes ECS et statuts qualifiés
         if "dhw_comfort_temperature" not in data:
             data["dhw_comfort_temperature"] = cls._dhw_comfort_temperature
         if "dhw_reduced_temperature" not in data:
             data["dhw_reduced_temperature"] = cls._dhw_reduced_temperature
+        if "dhw_charging_active" not in data:
+            data["dhw_charging_active"] = False
+        if "is_dhw_heating" not in data:
+            data["is_dhw_heating"] = False
+        if "dhw_status_state" not in data:
+            data["dhw_status_state"] = "heating" if data.get("is_dhw_heating") else ("standby" if data.get("is_dhw_active") else "off")
+        if "dhw_status_label" not in data:
+            data["dhw_status_label"] = (
+                "Chauffe en cours" if data.get("is_dhw_heating")
+                else ("Au repos / Refroidissement naturel" if data.get("is_dhw_active") else "À l'arrêt (Veille 10°C)")
+            )
+        if "dhw_status_subtext" not in data:
+            data["dhw_status_subtext"] = None
 
         read_only = is_read_only_mode()
         msg = (

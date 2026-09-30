@@ -25,6 +25,9 @@ class Member(Base):
     notif_thermal_changes = Column(Boolean, default=False, nullable=False, server_default="0")
     notify_mentions = Column(Boolean, default=True, nullable=False, server_default="1")
     notify_task_creation = Column(Boolean, default=False, nullable=False, server_default="0")
+    notify_vote_creation = Column(Boolean, default=False, nullable=False, server_default="0")
+    notify_vote_arbitration = Column(Boolean, default=False, nullable=False, server_default="0")
+    notify_mention_all = Column(Boolean, default=True, nullable=False, server_default="1")
 
     tasks = relationship("Task", back_populates="assignee", foreign_keys="Task.assignee_id")
     task_comments = relationship("TaskComment", back_populates="author", foreign_keys="TaskComment.author_id")
@@ -415,6 +418,9 @@ class MemberSettings(Base):
     notify_thermal_changes = Column(Boolean, default=False)
     notify_mentions = Column(Boolean, default=True)
     notify_task_creation = Column(Boolean, default=False)
+    notify_vote_creation = Column(Boolean, default=False)
+    notify_vote_arbitration = Column(Boolean, default=False)
+    notify_mention_all = Column(Boolean, default=True)
     updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
 
     member = relationship("Member", backref="settings")

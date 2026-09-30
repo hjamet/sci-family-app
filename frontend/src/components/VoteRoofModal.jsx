@@ -14,20 +14,20 @@ import {
   deleteProject,
   attachDocumentsToProject,
   rejectAndReopenProject,
+  invalidateApiCache,
   invalidateCache,
   mutate
 } from '../api';
 
-// Lieux fixes statutaires en premier puis SCI (Annotations 10, 14, 15)
+// Lieux fixes statutaires en premier puis SCI (Annotations 10, 12, 14, 15)
 export const FIXED_PLACES_CATEGORIES = [
   { value: 'Presbytère', label: '📍 Presbytère' },
   { value: 'Rosings', label: '📍 Rosings' },
   { value: 'Piscine', label: '📍 Piscine' },
-  { value: 'Jardin', label: '📍 Jardin' },
+  { value: 'Jardin & Espaces Verts', label: '📍 Jardin & Espaces Verts' },
   { value: 'Petites cabanes', label: '📍 Petites cabanes' },
   { value: 'Hangar à meuble', label: '📍 Hangar à meuble' },
-  { value: 'Garage', label: '📍 Garage' },
-  { value: 'SCI', label: '🏢 SCI' },
+  { value: 'SCI & Administratif', label: '🏢 SCI & Administratif' },
 ];
 
 // Error Boundary de protection intégrée pour empêcher tout écran blanc
@@ -493,7 +493,11 @@ function VoteRoofModalInner({
       setEditTitle(activeProject.title || '');
       setEditDescription(activeProject.description || '');
       const rawCat = activeProject.category || activeProject.subject || 'Presbytère';
-      const matchedCat = FIXED_PLACES_CATEGORIES.find(c => c.value.toLowerCase() === rawCat.toLowerCase());
+      const cleanRawCat = rawCat.toLowerCase().trim();
+      const matchedCat = FIXED_PLACES_CATEGORIES.find(c => {
+        const valLower = c.value.toLowerCase();
+        return valLower === cleanRawCat || cleanRawCat.includes(valLower) || valLower.includes(cleanRawCat);
+      });
       setEditCategory(matchedCat ? matchedCat.value : 'Presbytère');
       setEditAllowMultipleChoices(Boolean(activeProject.allow_multiple_choices));
       setIsEditing(false);
@@ -950,7 +954,7 @@ function VoteRoofModalInner({
     }
   };
 
-  // Suppression du vote (Annotation 1, 2, 3 & 12 : retrait immédiat du state pour éviter les 404 sur double-clic)
+  // Suppression du vote (Annotation 11 : disparition synchrone immédiate du scrutin supprimé du state React)
   const handleDeleteVote = async () => {
     if (!activeProject?.id || isDeleting) return;
     const ok = window.confirm(`Êtes-vous sûr de vouloir supprimer définitivement le scrutin « ${projectTitle} » ? Cette action est irréversible.`);
@@ -958,8 +962,9 @@ function VoteRoofModalInner({
 
     setIsDeleting(true);
     const targetId = activeProject.id;
-    invalidateCache('/api/projects');
-    invalidateCache('/api/projects/pending');
+    invalidateApiCache('projects');
+    invalidateApiCache('/api/projects');
+    invalidateApiCache('/api/projects/pending');
     mutate('projects');
     if (typeof onVoteDeleted === 'function') {
       onVoteDeleted(targetId);
@@ -970,6 +975,10 @@ function VoteRoofModalInner({
 
     try {
       await deleteProject(targetId);
+      invalidateApiCache('projects');
+      invalidateApiCache('/api/projects');
+      invalidateApiCache('/api/projects/pending');
+      mutate('projects');
     } catch (err) {
       console.warn('API deleteProject fallback:', err.message);
     }

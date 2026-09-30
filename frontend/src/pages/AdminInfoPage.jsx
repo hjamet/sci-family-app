@@ -10,6 +10,7 @@ import FinancialLedgerModal from '../components/FinancialLedgerModal';
 import BankReauthBanner from '../components/BankReauthBanner';
 import DocumentViewerModal from '../components/DocumentViewerModal';
 import UploadDocumentModal from '../components/UploadDocumentModal';
+import SelectExistingDocumentModal from '../components/SelectExistingDocumentModal';
 import { BankMetricSkeleton } from '../components/SkeletonLoaders';
 import CustomSelect from '../components/CustomSelect';
 import {
@@ -171,10 +172,13 @@ export default function AdminInfoPage({ currentUser }) {
   const [operationDate, setOperationDate] = useState(() => new Date().toISOString().split('T')[0]);
   const [operationLabel, setOperationLabel] = useState('');
   const [operationFile, setOperationFile] = useState(null);
+  const [operationDocument, setOperationDocument] = useState(null);
   const [operationFileName, setOperationFileName] = useState('');
   const [operationFileError, setOperationFileError] = useState('');
   const [operationLabelError, setOperationLabelError] = useState('');
   const [isSubmittingOperation, setIsSubmittingOperation] = useState(false);
+  const [isOpUploadModalOpen, setIsOpUploadModalOpen] = useState(false);
+  const [isOpSelectExistingModalOpen, setIsOpSelectExistingModalOpen] = useState(false);
 
   // État persistant d'erreur bancaire (Consigne Henri : aucune disparition automatique pour les erreurs)
   const [bankingError, setBankingError] = useState(null);
@@ -251,7 +255,7 @@ export default function AdminInfoPage({ currentUser }) {
     const bankingParam = searchParams.get('banking');
     if (bankingParam === 'success') {
       setBankingError(null);
-      showToast('Liaison bancaire validée', 'Le consentement DSP2 Swan a été renouvelé avec succès.', 'check_circle');
+      showToast('Liaison bancaire validée', 'Le consentement DSP2 Indy (Swan) a été renouvelé avec succès.', 'check_circle');
       window.history.replaceState({}, '', window.location.pathname);
       loadBankStatus();
     } else if (bankingParam === 'error') {
@@ -482,7 +486,37 @@ export default function AdminInfoPage({ currentUser }) {
     showToast('Document archivé', `« ${newDoc.filename || newDoc.name} » a été archivé avec succès.`, 'cloud_done');
   };
 
-  // Operation workflow (Annotations 5, 6, 7 — Sortie Exclusive, Justification & Facture obligatoires)
+  // Callbacks documents pour l'opération financière (Annotation 16 - DRY radical)
+  const handleOpUploadSuccess = async (newDoc) => {
+    if (!newDoc) return;
+    setOperationDocument(newDoc);
+    setOperationFile(null);
+    setOperationFileName(newDoc.filename || newDoc.name || newDoc.title || 'Document justificatif');
+    setOperationFileError('');
+    setIsOpUploadModalOpen(false);
+    showToast('Justificatif rattaché', `Le document « ${newDoc.filename || newDoc.name || newDoc.title} » a été archivé et sélectionné.`, 'attach_file');
+    await loadDocuments();
+  };
+
+  const handleOpSelectExistingSuccess = (selectedDocs) => {
+    if (!selectedDocs || selectedDocs.length === 0) return;
+    const doc = selectedDocs[0];
+    setOperationDocument(doc);
+    setOperationFile(null);
+    setOperationFileName(doc.filename || doc.file_name || doc.name || doc.title || 'Document existant');
+    setOperationFileError('');
+    setIsOpSelectExistingModalOpen(false);
+    showToast('Document associé', `« ${doc.filename || doc.file_name || doc.title || doc.name} » a été sélectionné comme justificatif.`, 'check_circle');
+  };
+
+  const handleDetachOperationDoc = () => {
+    setOperationDocument(null);
+    setOperationFile(null);
+    setOperationFileName('');
+    setOperationFileError('');
+  };
+
+  // Operation workflow (Annotations 5, 6, 7 & 16 — Sortie Exclusive, Justification & Facture obligatoires)
   const handleOperationSubmit = async (e) => {
     e.preventDefault();
     setOperationFileError('');
@@ -500,7 +534,7 @@ export default function AdminInfoPage({ currentUser }) {
       return;
     }
 
-    if (!operationFile) {
+    if (!operationDocument && !operationFile) {
       const errorMsg = 'Veuillez joindre une facture ou un justificatif de paiement pour valider la dépense.';
       setOperationFileError(errorMsg);
       showToast('Justificatif obligatoire', errorMsg, 'warning');
@@ -516,7 +550,11 @@ export default function AdminInfoPage({ currentUser }) {
       ) || (typeof activeUser === 'string' ? activeUser : 'Henri Jamet');
 
       const formData = new FormData();
-      formData.append('file', operationFile);
+      if (operationDocument && operationDocument.id) {
+        formData.append('document_id', String(operationDocument.id));
+      } else if (operationFile) {
+        formData.append('file', operationFile);
+      }
       formData.append('justification', operationLabel.trim());
       formData.append('amount', String(amountNum));
       formData.append('booking_date', operationDate || new Date().toISOString().split('T')[0]);
@@ -546,6 +584,7 @@ export default function AdminInfoPage({ currentUser }) {
       setOperationAmount('');
       setOperationLabel('');
       setOperationFile(null);
+      setOperationDocument(null);
       setOperationFileName('');
       setOperationFileError('');
       setOperationLabelError('');
@@ -564,6 +603,7 @@ export default function AdminInfoPage({ currentUser }) {
     setOperationAmount(parseFloat(rawVal) || '');
     setOperationLabel(`Règlement Facture ${inv.supplier} (${inv.reference})`);
     setOperationFile(null);
+    setOperationDocument(null);
     setOperationFileName('');
     setOperationFileError('');
     setOperationLabelError('');
@@ -679,6 +719,7 @@ export default function AdminInfoPage({ currentUser }) {
               onClick={() => {
                 setOperationType('out');
                 setOperationFile(null);
+                setOperationDocument(null);
                 setOperationFileName('');
                 setOperationFileError('');
                 setOperationLabelError('');
@@ -721,7 +762,7 @@ export default function AdminInfoPage({ currentUser }) {
               <div className="space-y-1.5 min-w-0">
                 <div className="flex items-center gap-2">
                   <h3 className="font-bold text-sm sm:text-base text-rose-950">
-                    Échec du consentement bancaire Swan
+                    Échec du consentement bancaire Indy (Swan)
                   </h3>
                   <span className="inline-flex items-center px-2 py-0.5 rounded-full text-[10px] font-bold uppercase bg-rose-200 text-rose-900 border border-rose-300">
                     Erreur retour
@@ -815,6 +856,7 @@ export default function AdminInfoPage({ currentUser }) {
               onClick={() => {
                 setOperationType('out');
                 setOperationFile(null);
+                setOperationDocument(null);
                 setOperationFileName('');
                 setOperationFileError('');
                 setOperationLabelError('');
@@ -1674,41 +1716,89 @@ export default function AdminInfoPage({ currentUser }) {
                 )}
               </div>
 
-              {/* Justificatif / facture — obligatoire (Annotation 7) */}
-              <div>
-                <label className="block font-label-md text-label-md text-on-surface mb-2 font-semibold">
-                  Justificatif / facture (obligatoire)
-                </label>
-                <div className="flex items-center gap-2">
-                  <input
-                    id="op-file-name"
-                    type="text"
-                    readOnly
-                    placeholder="Aucun justificatif sélectionné (requis)"
-                    value={operationFileName}
-                    className={`flex-1 h-[52px] px-4 bg-surface-container-low border ${
-                      operationFileError ? 'border-error text-error' : 'border-border-subtle text-on-surface-variant'
-                    } rounded-DEFAULT font-body-md text-xs`}
-                  />
-                  <label className="h-[52px] px-4 rounded-DEFAULT bg-surface-container-lowest border-2 border-border-subtle text-on-surface font-label-md text-label-md hover:border-primary hover:text-primary flex items-center justify-center gap-1 cursor-pointer transition-all">
-                    <span className="material-symbols-outlined text-[18px]">attach_file</span>
-                    <span>Parcourir</span>
-                    <input
-                      id="op-file-upload"
-                      type="file"
-                      accept=".pdf,.png,.jpg,.jpeg,.webp"
-                      className="hidden"
-                      onChange={(e) => {
-                        if (e.target.files && e.target.files[0]) {
-                          const file = e.target.files[0];
-                          setOperationFile(file);
-                          setOperationFileName(file.name);
-                          setOperationFileError('');
-                        }
-                      }}
-                    />
+              {/* Justificatif / facture — obligatoire (Annotation 16 : Mécanique DRY deux boutons) */}
+              <div className="space-y-2">
+                <div className="flex items-center justify-between flex-wrap gap-2">
+                  <label className="block font-label-md text-label-md text-on-surface font-semibold">
+                    Justificatif / facture (obligatoire) <span className="text-error">*</span>
                   </label>
+                  <div className="flex items-center gap-2">
+                    <button
+                      id="btn-op-upload-doc"
+                      type="button"
+                      onClick={() => setIsOpUploadModalOpen(true)}
+                      className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-DEFAULT bg-primary text-white font-label-md text-xs font-semibold hover:bg-forest-deep shadow-2xs transition-colors cursor-pointer"
+                      title="Téléverser et archiver un nouveau justificatif officiel"
+                    >
+                      <span className="material-symbols-outlined text-[16px]">upload_file</span>
+                      <span>Parcourir un document</span>
+                    </button>
+                    <button
+                      id="btn-op-select-existing-doc"
+                      type="button"
+                      onClick={() => setIsOpSelectExistingModalOpen(true)}
+                      className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-DEFAULT bg-surface-container-lowest border border-border-subtle hover:border-primary text-on-surface font-label-md text-xs font-semibold shadow-2xs transition-colors cursor-pointer"
+                      title="Sélectionner un document déjà répertorié dans la SCI"
+                    >
+                      <span className="material-symbols-outlined text-[16px]">library_books</span>
+                      <span>Choisir un document existant</span>
+                    </button>
+                  </div>
                 </div>
+
+                {/* État du document sélectionné */}
+                {operationDocument || operationFileName ? (
+                  <div
+                    id="op-selected-doc-card"
+                    className="flex items-center justify-between p-3 bg-surface-container-low dark:bg-slate-800/80 rounded-lg border border-border-subtle text-xs animate-in fade-in duration-150"
+                  >
+                    <div className="flex items-center gap-2.5 min-w-0">
+                      <div className="w-8 h-8 rounded-lg bg-emerald-100 dark:bg-emerald-950/60 text-emerald-800 dark:text-emerald-300 flex items-center justify-center shrink-0">
+                        <span className="material-symbols-outlined text-[20px]">
+                          {(operationFileName || '').toLowerCase().endsWith('.pdf') ? 'picture_as_pdf' : 'description'}
+                        </span>
+                      </div>
+                      <div className="min-w-0">
+                        <p className="font-semibold text-on-surface truncate" title={operationFileName}>
+                          {operationFileName}
+                        </p>
+                        <p className="text-[11px] text-on-surface-variant flex items-center gap-2">
+                          <span>
+                            {operationDocument?.id ? `Document SCI #${operationDocument.id}` : 'Fichier sélectionné'}
+                          </span>
+                          {operationDocument?.category && (
+                            <span className="px-1.5 py-0.5 rounded bg-surface-container text-[10px]">
+                              {operationDocument.category}
+                            </span>
+                          )}
+                        </p>
+                      </div>
+                    </div>
+                    <button
+                      id="btn-op-detach-doc"
+                      type="button"
+                      onClick={handleDetachOperationDoc}
+                      className="w-7 h-7 rounded-full hover:bg-surface-container text-on-surface-variant hover:text-error flex items-center justify-center transition-colors cursor-pointer shrink-0 ml-2"
+                      title="Retirer ce justificatif"
+                      aria-label="Retirer ce justificatif"
+                    >
+                      <span className="material-symbols-outlined text-[16px]">close</span>
+                    </button>
+                  </div>
+                ) : (
+                  <div
+                    id="op-no-doc-placeholder"
+                    className={`p-4 rounded-lg border border-dashed text-center text-xs transition-colors ${
+                      operationFileError
+                        ? 'border-error bg-rose-50/50 dark:bg-rose-950/20 text-error'
+                        : 'border-border-subtle bg-surface-container-low/40 text-on-surface-variant'
+                    }`}
+                  >
+                    <span>
+                      Aucun justificatif sélectionné. Cliquez sur « <strong>Parcourir un document</strong> » pour téléverser un fichier ou sur « <strong>Choisir un document existant</strong> » pour associer un document déjà présent dans la SCI.
+                    </span>
+                  </div>
+                )}
 
                 {/* Avertissement rouge/ambre si aucun justificatif joint */}
                 {operationFileError && (
@@ -1825,6 +1915,27 @@ export default function AdminInfoPage({ currentUser }) {
         </div>
       )}
 
+
+      {/* ========================================================================= */}
+      {/* MODAL 4B : UPLOAD DOCUMENT JUSTIFICATIF OPÉRATION (Annotation 16 DRY)     */}
+      {/* ========================================================================= */}
+      <UploadDocumentModal
+        isOpen={isOpUploadModalOpen}
+        onClose={() => setIsOpUploadModalOpen(false)}
+        defaultCategory="Travaux & Factures"
+        currentUser={currentUser}
+        onUploadSuccess={handleOpUploadSuccess}
+      />
+
+      {/* ========================================================================= */}
+      {/* MODAL 4C : SÉLECTION DOCUMENT EXISTANT OPÉRATION (Annotation 16 DRY)      */}
+      {/* ========================================================================= */}
+      <SelectExistingDocumentModal
+        isOpen={isOpSelectExistingModalOpen}
+        onClose={() => setIsOpSelectExistingModalOpen(false)}
+        alreadyAttachedDocIds={operationDocument ? [operationDocument.id] : []}
+        onAttachSuccess={handleOpSelectExistingSuccess}
+      />
 
       {/* ========================================================================= */}
       {/* MODAL 5 : GRAND LIVRE FINANCIER & CCA                                     */}

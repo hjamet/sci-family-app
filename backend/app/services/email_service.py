@@ -589,14 +589,18 @@ def send_vote_required_email(
     """
     Template 2: VOTE REQUIS
     Notifies a member that a formal decision/vote requires their ballot.
+    Annotation 6:
+    - Supprime le montant estimé / budget qui n'a plus de sens.
+    - Ajoute la description complète du vote.
+    - Supprime l'encadré verbeux « Règle statutaire etc. ».
     """
-    # Pare-feu et coupe-circuit hermétiques gérés de façon centrale dans send_email
-    cost_display = f"{estimated_cost:,.2f} €".replace(",", " ") if (estimated_cost is not None and estimated_cost > 0) else "Sans impact financier immédiat"
+    import html as html_lib
     action_url = f"{APP_BASE_URL}/#votes"
+    safe_description = html_lib.escape(description or "").replace("\n", "<br>") if description else ""
 
     content_html = f"""
     <p>Bonjour,</p>
-    <p>Un nouveau projet ou arbitrage requiert le vote formel de tous les associés de la SCI Familiale :</p>
+    <p>Un nouveau scrutin requiert le vote formel de tous les associés de la SCI Familiale :</p>
 
     <div style="background-color: #f9f8f6; border: 1px solid #e5e3dc; border-left: 4px solid #b89047; border-radius: 6px; padding: 18px; margin: 20px 0;">
         <div style="font-size: 17px; font-weight: bold; color: #1e3a2f; margin-bottom: 12px;">
@@ -607,33 +611,17 @@ def send_vote_required_email(
                 <td style="color: #6b7280; width: 140px;">👤 Proposé par :</td>
                 <td style="font-weight: 600; color: #1f2937;">{submitted_by or 'Un associé'}</td>
             </tr>
-            <tr>
-                <td style="color: #6b7280;">💶 Montant estimé :</td>
-                <td style="font-weight: 700; color: #1e3a2f;">{cost_display}</td>
-            </tr>
         </table>
-        {f'<div style="margin-top: 14px; padding-top: 12px; border-top: 1px dashed #d1cfc7; font-style: italic; color: #4b5563; font-size: 13.5px;">« {description} »</div>' if description else ''}
+        {f'<div style="margin-top: 14px; padding-top: 12px; border-top: 1px dashed #d1cfc7; color: #374151; font-size: 14px; line-height: 1.6;"><strong>Description du scrutin :</strong><br><div style="margin-top: 6px;">{safe_description}</div></div>' if safe_description else ''}
     </div>
 
-    <div style="background-color: #faf9f6; border: 1px solid #e5e3dc; border-left: 4px solid #b89047; border-radius: 6px; padding: 16px 20px; margin: 24px 0; font-size: 14px; line-height: 1.6;">
-        <div style="font-weight: bold; color: #1e3a2f; margin-bottom: 6px; font-size: 15px;">
-            ⚖️ Règle statutaire : 1 associé = 1 voix.
-        </div>
-        <div style="color: #374151; margin-bottom: 8px;">
-            Merci de voter selon l'une des 4 options : 
-            <strong style="color: #059669;">Pour</strong>, 
-            <strong style="color: #dc2626;">Contre</strong>, 
-            <strong style="color: #6b7280;">Abstention</strong> ou 
-            <strong style="color: #d97706;">Report prochaine AG</strong>.
-        </div>
-        <div style="font-size: 13px; color: #6b7280; font-style: italic; border-top: 1px dashed #e5e3dc; padding-top: 6px;">
-            Note importante : Une seule voix demandant le report décale automatiquement la décision à la prochaine Assemblée Générale.
-        </div>
-    </div>
+    <p style="color: #4b5563; font-size: 14px;">
+        Votre avis et votre vote sont attendus afin de statuer collectivement sur cette décision patrimoniale.
+    </p>
     """
 
     subject = f"[SCI Hellenvilliers] 🗳️ Vote requis : {vote_title}"
-    preheader = f"Scrutin ouvert : votre avis est attendu sur {vote_title} ({cost_display})"
+    preheader = f"Scrutin ouvert : votre avis est attendu sur {vote_title}"
     html_body = render_email_layout(
         title="Scrutin Ouvert : Votre Vote est Requis",
         preheader=preheader,
@@ -653,6 +641,162 @@ def send_vote_required_email(
     )
 
     res = send_email(to_email=to_email, subject=subject, html_content=html_body)
+    if isinstance(res, dict):
+        res["_email_dispatched"] = email_entry
+    return res
+
+
+def send_vote_creation_pending_email(
+    to_email: Union[str, List[str]],
+    vote_title: str,
+    submitted_by: Optional[str] = None,
+    coordinator_name: Optional[str] = None,
+    description: Optional[str] = None,
+    project_id: Optional[Union[int, str]] = None,
+    actually_send: bool = True
+) -> dict:
+    """
+    Template: SCRUTIN EN ATTENTE D'ARBITRAGE DE CRÉATION (Annotation 3)
+    Notifies a coordinator that a new vote has been proposed in PROPOSED status and awaits arbitration to open.
+    """
+    import html as html_lib
+    safe_description = html_lib.escape(description or "").replace("\n", "<br>") if description else ""
+    greeting = f"Bonjour {coordinator_name}," if coordinator_name else "Bonjour,"
+    action_url = f"{APP_BASE_URL}/#votes"
+
+    content_html = f"""
+    <p>{greeting}</p>
+    <p>Un nouveau scrutin a été soumis par <strong>{submitted_by or 'un associé'}</strong> et est actuellement <strong>en attente d'arbitrage</strong> par la coordination :</p>
+
+    <div style="background-color: #fefce8; border: 1px solid #fef08a; border-left: 4px solid #ca8a04; border-radius: 6px; padding: 18px; margin: 20px 0;">
+        <div style="font-size: 17px; font-weight: bold; color: #854d0e; margin-bottom: 12px;">
+            ⏳ {vote_title}
+        </div>
+        <table role="presentation" border="0" cellpadding="0" cellspacing="0" width="100%" style="font-size: 14px; line-height: 1.8;">
+            <tr>
+                <td style="color: #6b7280; width: 140px;">👤 Proposé par :</td>
+                <td style="font-weight: 600; color: #1f2937;">{submitted_by or 'Non spécifié'}</td>
+            </tr>
+            <tr>
+                <td style="color: #6b7280;">📋 Statut :</td>
+                <td style="font-weight: 600; color: #ca8a04;">En attente d'arbitrage (Proposition)</td>
+            </tr>
+        </table>
+        {f'<div style="margin-top: 14px; padding-top: 12px; border-top: 1px dashed #e2e8f0; color: #4b5563; font-size: 13.5px;"><strong>Description complète :</strong><br><div style="margin-top: 6px;">{safe_description}</div></div>' if safe_description else ''}
+    </div>
+
+    <p style="color: #4b5563; font-size: 14px;">
+        En tant que coordinateur, vous pouvez examiner la proposition, ajuster les options de vote si nécessaire et ouvrir officiellement le scrutin à l'ensemble des associés :
+    </p>
+    """
+
+    subject = f"[SCI Hellenvilliers] 🗳️ Nouveau scrutin en attente d'arbitrage : {vote_title}"
+    preheader = f"Une nouvelle proposition de scrutin a été soumise : {vote_title}"
+    html_body = render_email_layout(
+        title="Nouveau Scrutin en Attente d'Arbitrage",
+        preheader=preheader,
+        content_html=content_html,
+        action_url=action_url,
+        action_label="Examiner et ouvrir le scrutin"
+    )
+
+    names = [coordinator_name] if coordinator_name else []
+    email_entry = record_dispatched_email(
+        trigger_action="vote_creation_pending",
+        subject=subject,
+        recipients=to_email,
+        html_content=html_body,
+        recipients_names=names,
+        status="sent" if (actually_send and not is_email_disabled()) else "simulated"
+    )
+
+    if actually_send and not is_email_disabled():
+        res = send_email(to_email=to_email, subject=subject, html_content=html_body)
+    else:
+        res = {"status": "simulated", "id": email_entry["id"]}
+
+    if isinstance(res, dict):
+        res["_email_dispatched"] = email_entry
+    return res
+
+
+def send_vote_arbitration_email(
+    to_email: Union[str, List[str]],
+    vote_title: str,
+    decision: str,
+    votes_summary: Union[dict, str],
+    coordinator_name: Optional[str] = None,
+    project_id: Optional[Union[int, str]] = None,
+    description: Optional[str] = None,
+    actually_send: bool = True
+) -> dict:
+    """
+    Template: SCRUTIN EN ATTENTE D'ARBITRAGE D'ARCHIVAGE (Annotation 8)
+    Notifies coordinators when a vote reaches quorum (7/7) or REPORT_AG and is in PENDING_VALIDATION.
+    """
+    import html as html_lib
+    greeting = f"Bonjour {coordinator_name}," if coordinator_name else "Bonjour,"
+    action_url = f"{APP_BASE_URL}/#votes"
+
+    summary_text = ""
+    if isinstance(votes_summary, dict):
+        summary_text = f"Pour : {votes_summary.get('pour', 0)} | Contre : {votes_summary.get('contre', 0)} | Abstention : {votes_summary.get('abstention', 0)} | Report AG : {votes_summary.get('report_prochaine_ag', 0)}"
+    else:
+        summary_text = str(votes_summary)
+
+    safe_description = html_lib.escape(description or "").replace("\n", "<br>") if description else ""
+
+    content_html = f"""
+    <p>{greeting}</p>
+    <p>Le scrutin <strong>« {vote_title} »</strong> vient d'atteindre le quorum complet (ou une demande de report) et est désormais <strong>en attente d'arbitrage de validation et d'archivage</strong> par la coordination :</p>
+
+    <div style="background-color: #faf5ff; border: 1px solid #e9d5ff; border-left: 4px solid #9333ea; border-radius: 6px; padding: 18px; margin: 20px 0;">
+        <div style="font-size: 17px; font-weight: bold; color: #581c87; margin-bottom: 12px;">
+            ⚖️ {vote_title}
+        </div>
+        <table role="presentation" border="0" cellpadding="0" cellspacing="0" width="100%" style="font-size: 14px; line-height: 1.8;">
+            <tr>
+                <td style="color: #6b7280; width: 150px;">📊 Statut provisoire :</td>
+                <td style="font-weight: 700; color: #581c87;">{decision}</td>
+            </tr>
+            <tr>
+                <td style="color: #6b7280;">🗳️ Synthèse des voix :</td>
+                <td style="font-weight: 600; color: #1f2937;">{summary_text}</td>
+            </tr>
+        </table>
+        {f'<div style="margin-top: 14px; padding-top: 12px; border-top: 1px dashed #e9d5ff; color: #4b5563; font-size: 13.5px;"><strong>Description du scrutin :</strong><br><div style="margin-top: 6px;">{safe_description}</div></div>' if safe_description else ''}
+    </div>
+
+    <p style="color: #4b5563; font-size: 14px;">
+        En tant que coordinateur, il vous appartient d'arbitrer formellement ce scrutin afin de valider son archivage définitif ou de demander un nouvel examen :
+    </p>
+    """
+
+    subject = f"[SCI Hellenvilliers] ⚖️ Scrutin en attente d'arbitrage d'archivage : {vote_title}"
+    preheader = f"Arbitrage requis : le quorum est atteint sur {vote_title} ({decision})"
+    html_body = render_email_layout(
+        title="Scrutin en Attente d'Arbitrage d'Archivage",
+        preheader=preheader,
+        content_html=content_html,
+        action_url=action_url,
+        action_label="Arbitrer et archiver le scrutin"
+    )
+
+    names = [coordinator_name] if coordinator_name else []
+    email_entry = record_dispatched_email(
+        trigger_action="vote_arbitration_pending",
+        subject=subject,
+        recipients=to_email,
+        html_content=html_body,
+        recipients_names=names,
+        status="sent" if (actually_send and not is_email_disabled()) else "simulated"
+    )
+
+    if actually_send and not is_email_disabled():
+        res = send_email(to_email=to_email, subject=subject, html_content=html_body)
+    else:
+        res = {"status": "simulated", "id": email_entry["id"]}
+
     if isinstance(res, dict):
         res["_email_dispatched"] = email_entry
     return res
@@ -1069,14 +1213,16 @@ def send_mention_notification(
     author_name: str,
     context_title: str,
     message_text: str,
-    target_url: str
+    target_url: str,
+    is_collective: bool = False,
+    actually_send: bool = True
 ) -> bool:
     """
-    Template 6: MENTION DANS UNE DISCUSSION (@membre)
+    Template 6: MENTION DANS UNE DISCUSSION (@membre ou @all)
     Notifies a mentioned member by email when they are @tagged in a chat (tasks, projects/votes, issues).
     Garde-fous Resend & Anti-Spam :
     - Ne pas envoyer d'email si l'auteur du message se mentionne lui-même.
-    - Ne pas envoyer d'email si mentioned_member.notify_mentions == False.
+    - Ne pas envoyer d'email si notify_mentions (ou notify_mention_all) == False.
     - Respecter le commutateur global DISABLE_ALL_EMAILS et le pare-feu.
     Returns True if sent/simulated/dispatched successfully, False otherwise.
     """
@@ -1101,22 +1247,13 @@ def send_mention_notification(
         logger.info(f"[MENTION] Anti-auto-mention ignorée : '{author_name}' s'est mentionné(e) lui-même ({member_name}). Aucun email.")
         return False
 
-    # 2. Préférence de notification du membre
-    if not getattr(mentioned_member, "notify_mentions", True):
-        logger.info(f"[MENTION] Notification désactivée pour {member_name} (notify_mentions=False). Aucun email.")
+    # 2. Préférence de notification du membre (directe ou collective @all)
+    pref_enabled = getattr(mentioned_member, "notify_mention_all", True) if is_collective else getattr(mentioned_member, "notify_mentions", True)
+    if not pref_enabled:
+        logger.info(f"[MENTION] Notification désactivée pour {member_name} (is_collective={is_collective}). Aucun email.")
         return False
 
-    # 3. Vérification de l'adresse e-mail
-    if not to_email or "@" not in str(to_email):
-        logger.warning(f"[MENTION] Aucun email valide pour le membre {member_name} ({to_email}).")
-        return False
-
-    # 4. Coupe-circuit d'urgence global
-    if is_email_disabled():
-        logger.info(f"[MENTION] Coupe-circuit global actif (DISABLE_ALL_EMAILS=True). Aucun email envoyé vers {to_email}.")
-        return False
-
-    # 5. Construction de l'e-mail HTML selon la charte de la SCI Hellenvilliers
+    # 3. Construction du message HTML selon la charte de la SCI Hellenvilliers
     import html as html_lib
     safe_message = html_lib.escape(message_text or "").replace("\n", "<br>")
     safe_author = html_lib.escape(author_name or "Un associé")
@@ -1124,12 +1261,20 @@ def send_mention_notification(
 
     greeting_name = member_prenom or member_name or "associé(e)"
 
-    subject = f'[Hellenvilliers SCI] {author_name} vous a mentionné(e) dans "{context_title}"'
-    preheader = f"{author_name} vous a mentionné(e) dans la discussion de {context_title}"
+    if is_collective:
+        subject = f'[Hellenvilliers SCI] 📢 {author_name} a mentionné tous les associés dans "{context_title}"'
+        preheader = f"{author_name} a adressé un message à tous les associés dans {context_title}"
+        email_title = "Mention collective dans une discussion"
+        intro_text = f"<strong>{safe_author}</strong> a adressé un message à <strong>l'ensemble des associés (@all)</strong> dans la discussion de <strong>{safe_title}</strong> :"
+    else:
+        subject = f'[Hellenvilliers SCI] {author_name} vous a mentionné(e) dans "{context_title}"'
+        preheader = f"{author_name} vous a mentionné(e) dans la discussion de {context_title}"
+        email_title = "Mention dans une discussion"
+        intro_text = f"<strong>{safe_author}</strong> vous a mentionné(e) dans la discussion de <strong>{safe_title}</strong> :"
 
     content_html = f"""
     <p>Bonjour {greeting_name},</p>
-    <p><strong>{safe_author}</strong> vous a mentionné(e) dans la discussion de <strong>{safe_title}</strong> :</p>
+    <p>{intro_text}</p>
 
     <div style="background-color: #f9f8f6; border: 1px solid #e5e3dc; border-left: 4px solid #1e3a2f; border-radius: 6px; padding: 16px 20px; margin: 20px 0; font-style: italic; color: #1f2937; font-size: 15px; line-height: 1.6;">
         « {safe_message} »
@@ -1145,12 +1290,27 @@ def send_mention_notification(
 
     effective_target_url = target_url or f"{APP_BASE_URL}/taches"
     html_body = render_email_layout(
-        title="Mention dans une discussion",
+        title=email_title,
         preheader=preheader,
         content_html=content_html,
         action_url=effective_target_url,
         action_label="Accéder à la discussion"
     )
+
+    # 4. Enregistrement systématique de l'email dispatché pour la cloche et aperçu modale
+    email_entry = record_dispatched_email(
+        trigger_action="mention_all" if is_collective else "mention",
+        subject=subject,
+        recipients=to_email or "famille@sci-familiale.fr",
+        html_content=html_body,
+        recipients_names=[greeting_name],
+        status="sent" if (actually_send and not is_email_disabled() and to_email and "@" in str(to_email)) else "simulated"
+    )
+    setattr(send_mention_notification, "last_dispatched_email", email_entry)
+
+    # 5. Vérification de l'adresse e-mail & coupe-circuit pour envoi réel
+    if not actually_send or not to_email or "@" not in str(to_email) or is_email_disabled():
+        return True
 
     # 6. Envoi de l'e-mail via Resend
     res = send_email(to_email=to_email, subject=subject, html_content=html_body)

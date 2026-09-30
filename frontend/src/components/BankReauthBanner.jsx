@@ -170,7 +170,7 @@ export default function BankReauthBanner({
     if (e) e.stopPropagation();
     const nowStr = new Date().toLocaleString('fr-FR');
     const reportLines = [
-      `=== RAPPORT D'INCIDENT LIAISON BANCAIRE SWAN / TILISY ===`,
+      `=== RAPPORT D'INCIDENT LIAISON BANCAIRE INDY (SWAN) / TILISY ===`,
       `Date du constat : ${nowStr}`,
       `Statut liaison : ${bankStatus.status || 'inconnu'} (needs_reauth: ${Boolean(bankStatus.needs_reauth)})`,
       errorCode ? `Code d'erreur : ${errorCode}` : null,
@@ -410,7 +410,7 @@ export default function BankReauthBanner({
                     Renouvellement de la liaison bancaire
                   </h2>
                   <p className="font-body-md text-xs text-on-surface-variant dark:text-slate-400 mt-0.5">
-                    Authentification sécurisée DSP2 Swan via Tilisy (Enable Banking)
+                    Authentification sécurisée DSP2 Indy (Swan) via Tilisy (Enable Banking)
                   </p>
                 </div>
               </div>
@@ -514,7 +514,7 @@ export default function BankReauthBanner({
                   <li className="flex items-start gap-2">
                     <span className="text-base leading-none">📱</span>
                     <span>
-                      <strong className="text-slate-800 dark:text-slate-200">Session non validée sur votre téléphone :</strong> la notification d'authentification forte (SCA) sur l'application bancaire Swan n'a pas été validée dans les 5 minutes imparties.
+                      <strong className="text-slate-800 dark:text-slate-200">Session non validée sur votre téléphone :</strong> la notification d'authentification forte (SCA) sur l'application bancaire Indy (Swan) n'a pas été validée dans les 5 minutes imparties.
                     </span>
                   </li>
                   <li className="flex items-start gap-2">
@@ -565,7 +565,7 @@ export default function BankReauthBanner({
                   </>
                 ) : (
                   <>
-                    <span>Ouvrir Tilisy pour autoriser l'accès</span>
+                    <span>Ouvrir Tilisy pour autoriser l'accès au compte Indy</span>
                     <ExternalLink className="w-4 h-4" />
                   </>
                 )}

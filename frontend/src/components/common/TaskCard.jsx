@@ -27,7 +27,7 @@ function getSubjectIcon(sub) {
   if (s.includes('presbytère') || s.includes('presbytere')) return 'cottage';
   if (s.includes('cabane')) return 'holiday_village';
   if (s.includes('piscine')) return 'pool';
-  if (s.includes('hangar') || s.includes('garage')) return 'warehouse';
+  if (s.includes('hangar')) return 'warehouse';
   if (s.includes('jardin')) return 'yard';
   if (s.includes('sci')) return 'account_balance';
   return 'home_work';

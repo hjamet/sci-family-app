@@ -81,8 +81,6 @@ export function isTaskOpen(task) {
   const closedNormalized = [
     'terminee',
     'termine',
-    'validee',
-    'valide',
     'archivee',
     'archive',
     'completed',
@@ -131,6 +129,15 @@ export function isTaskProposed(task) {
   const rawStatus = (task.status || '').trim();
   const st = rawStatus.toUpperCase();
   const normalized = stripAccents(rawStatus).toLowerCase().replace(/[_\s-]+/g, '_');
+
+  // Pare-feu strict : une tâche active (TODO, EN_COURS, OPEN) ou déjà fermée n'est JAMAIS proposée (Annotation 14)
+  if (
+    ['TODO', 'EN_COURS', 'OPEN', 'IN_PROGRESS', 'ACTIVE', 'A_FAIRE', 'DONE', 'TERMINE', 'TERMINEE', 'ARCHIVEE', 'PENDING_VALIDATION'].includes(st) ||
+    ['todo', 'en_cours', 'open', 'in_progress', 'active', 'a_faire', 'done', 'termine', 'terminee', 'archivee', 'pending_validation'].includes(normalized)
+  ) {
+    return false;
+  }
+
   return (
     st === 'PROPOSED' ||
     st === 'PROPOSEE' ||

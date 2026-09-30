@@ -355,17 +355,31 @@ export default function HeatingPage({ currentUser }) {
         {/* ---------------- CARD 2 : EAU CHAUDE SANITAIRE ---------------- */}
         <div className="p-5 rounded-2xl bg-surface-container-lowest border border-border-subtle flex flex-col justify-between gap-5 shadow-sm">
           <div className="flex flex-col gap-4">
-            <div className="flex items-center justify-between border-b border-border-subtle pb-3 gap-2">
+            <div className="flex items-center justify-between border-b border-border-subtle pb-3 gap-2 flex-wrap">
               <div className="flex items-center gap-2 min-w-0">
                 <span className="material-symbols-outlined text-primary text-[22px]">water_heater</span>
                 <h3 className="font-headline-sm text-headline-sm text-on-surface font-semibold truncate">Eau Chaude (ECS)</h3>
-                <span className={`inline-flex items-center gap-1 px-2 py-0.5 rounded-full font-label-sm text-[11px] font-bold shrink-0 ${
-                  status?.is_dhw_active
-                    ? 'bg-sage-soft text-primary'
-                    : 'bg-amber-50 text-amber-800 border border-amber-200'
+                <span className={`inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full font-label-sm text-[11px] font-bold shrink-0 ${
+                  status?.is_dhw_heating || status?.dhw_status_state === 'heating'
+                    ? 'bg-rose-100 text-rose-800 border border-rose-300 animate-pulse'
+                    : status?.is_dhw_active
+                      ? 'bg-sky-50 text-sky-800 border border-sky-200'
+                      : 'bg-slate-100 text-slate-700 border border-slate-200'
                 }`}>
-                  <span className={`w-1.5 h-1.5 rounded-full ${status?.is_dhw_active ? 'bg-primary' : 'bg-amber-500'}`}></span>
-                  {status?.is_dhw_active ? 'En chauffe' : 'À l\'arrêt (Consigne 10°C)'}
+                  <span className={`w-1.5 h-1.5 rounded-full ${
+                    status?.is_dhw_heating || status?.dhw_status_state === 'heating'
+                      ? 'bg-rose-600 animate-ping'
+                      : status?.is_dhw_active
+                        ? 'bg-sky-500'
+                        : 'bg-slate-400'
+                  }`}></span>
+                  {status?.dhw_status_label || (
+                    status?.is_dhw_heating
+                      ? 'Chauffe en cours'
+                      : status?.is_dhw_active
+                        ? 'Au repos / Refroidissement naturel'
+                        : 'À l\'arrêt (Consigne 10°C)'
+                  )}
                 </span>
               </div>
               <div className="flex items-center gap-1 px-2.5 py-1 rounded-full bg-canvas-slate border border-border-subtle shrink-0">
@@ -376,11 +390,28 @@ export default function HeatingPage({ currentUser }) {
               </div>
             </div>
 
+            {/* Encart explicatif si température mesurée basse vs consigne confort (Annotation 2) */}
+            {status?.is_dhw_active && !status?.is_dhw_heating && dhwTemp != null && ((status?.dhw_configured_temperature || status?.dhw_comfort_temperature || 50.0) - dhwTemp > 5.0) && (
+              <div className="p-3 bg-sky-50/90 dark:bg-sky-950/40 rounded-xl border border-sky-200 dark:border-sky-800/60 flex items-start gap-2.5 text-xs shadow-2xs">
+                <span className="material-symbols-outlined text-sky-600 text-[18px] shrink-0 mt-0.5">info</span>
+                <div className="flex flex-col text-sky-950 dark:text-sky-100 leading-tight">
+                  <span className="font-bold">
+                    Ballon au repos ({dhwTemp.toFixed(1)}°C mesuré vs consigne {(status?.dhw_configured_temperature || status?.dhw_comfort_temperature || 50.0).toFixed(1)}°C)
+                  </span>
+                  <span className="text-[11px] text-sky-800 dark:text-sky-300 mt-1 leading-normal">
+                    Le brûleur fioul est éteint. Le chauffe-eau est autorisé mais n'est pas en chauffe continue (refroidissement naturel en attente de la relance programmée du séjour).
+                  </span>
+                </div>
+              </div>
+            )}
+
             <div className="p-3.5 bg-canvas-slate rounded-xl border border-border-subtle flex items-center justify-between gap-2 shadow-xs">
               <div className="flex flex-col min-w-0 pr-1">
                 <span className="font-label-md text-label-md text-on-surface font-semibold leading-tight">Consigne ECS</span>
                 <span className="font-label-sm text-xs text-on-surface-variant mt-0.5 whitespace-nowrap">
-                  {status?.is_dhw_active ? 'Recommandé 50°C – 55°C' : 'Consigne minimale veille'}
+                  {status?.is_dhw_active
+                    ? (status?.is_dhw_heating ? 'Chauffe active vers la cible' : 'Autorisé • Attente relance programmée')
+                    : 'Consigne minimale veille'}
                 </span>
               </div>
               <div className="flex items-center gap-1.5 shrink-0 bg-white p-1 rounded-full border border-border-subtle shadow-xs">
@@ -394,6 +425,23 @@ export default function HeatingPage({ currentUser }) {
             </div>
 
             <div className="space-y-2.5">
+              <div className="p-2.5 rounded-xl bg-canvas-slate border border-border-subtle flex items-center justify-between gap-2">
+                <div className="flex flex-col min-w-0">
+                  <span className="font-label-sm text-[11px] text-on-surface-variant flex items-center gap-1 font-medium">
+                    <span className="material-symbols-outlined text-[14px] text-primary">local_fire_department</span>
+                    État du brûleur ECS
+                  </span>
+                  <span className="font-label-md text-xs font-semibold text-on-surface pl-4 mt-0.5">
+                    {status?.is_dhw_heating ? 'Chauffe active (Brûleur fioul allumé)' : 'Brûleur éteint (Au repos)'}
+                  </span>
+                </div>
+                <span className={`text-[11px] font-semibold px-2 py-0.5 rounded-md ${
+                  status?.is_dhw_heating ? 'bg-rose-100 text-rose-800' : 'bg-slate-200 text-slate-700'
+                }`}>
+                  {status?.is_dhw_heating ? 'En chauffe' : 'Au repos'}
+                </span>
+              </div>
+
               <div className="p-2.5 rounded-xl bg-canvas-slate border border-border-subtle flex items-center justify-between gap-2">
                 <div className="flex flex-col min-w-0">
                   <span className="font-label-sm text-[11px] text-on-surface-variant flex items-center gap-1 font-medium">

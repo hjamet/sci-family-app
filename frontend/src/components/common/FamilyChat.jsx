@@ -156,16 +156,29 @@ export function renderMessageContent(content, onOpenDocument = null) {
         </button>
       );
     } else if (match[4]) {
-      // Cas 3 : @Prénom
+      // Cas 3 : @Prénom ou @all / @tous (Annotation 10)
       const name = match[4];
-      elements.push(
-        <span
-          key={`mention-${match.index}-${name}`}
-          className="inline-flex items-center px-1.5 py-0.5 mx-0.5 rounded-md text-xs font-semibold bg-sky-50 dark:bg-sky-950/50 text-sky-800 dark:text-sky-200 border border-sky-200 dark:border-sky-800 shadow-xs align-middle"
-        >
-          @{name}
-        </span>
-      );
+      const isCollective = name.toLowerCase() === 'all' || name.toLowerCase() === 'tous';
+      if (isCollective) {
+        elements.push(
+          <span
+            key={`mention-${match.index}-${name}`}
+            className="inline-flex items-center gap-1 px-1.5 py-0.5 mx-0.5 rounded-md text-xs font-bold bg-amber-50 dark:bg-amber-950/50 text-amber-800 dark:text-amber-200 border border-amber-300 dark:border-amber-700 shadow-xs align-middle"
+          >
+            <span>📢</span>
+            <span>@all</span>
+          </span>
+        );
+      } else {
+        elements.push(
+          <span
+            key={`mention-${match.index}-${name}`}
+            className="inline-flex items-center px-1.5 py-0.5 mx-0.5 rounded-md text-xs font-semibold bg-sky-50 dark:bg-sky-950/50 text-sky-800 dark:text-sky-200 border border-sky-200 dark:border-sky-800 shadow-xs align-middle"
+          >
+            @{name}
+          </span>
+        );
+      }
     }
 
     lastIndex = combinedRegex.lastIndex;
@@ -255,13 +268,26 @@ export default function FamilyChat({
     };
   });
 
-  // Filtrage dynamique insensible à la casse et aux accents
+  // Filtrage dynamique insensible à la casse et aux accents (Annotation 10)
   const normalizeStr = (s) => (s || '').normalize('NFD').replace(/[\u0300-\u036f]/g, '').toLowerCase();
-  const filteredMembers = normalizedMembers.filter((m) => {
-    const q = normalizeStr(mentionQuery);
+
+  const collectiveEntry = {
+    id: 'collective_all',
+    isCollective: true,
+    firstName: 'all',
+    name: 'Tous les associés',
+    badge: '📢 @all'
+  };
+
+  const q = normalizeStr(mentionQuery);
+  const showCollective = !q || 'all'.includes(q) || 'tous'.includes(q) || normalizeStr('tous les associes').includes(q);
+
+  const matchedMembers = normalizedMembers.filter((m) => {
     if (!q) return true;
     return normalizeStr(m.firstName).includes(q) || normalizeStr(m.name).includes(q);
   });
+
+  const filteredMembers = showCollective ? [collectiveEntry, ...matchedMembers] : matchedMembers;
 
   // Défilement automatique au dernier message
   useEffect(() => {
@@ -370,8 +396,13 @@ export default function FamilyChat({
     const beforeAt = textBefore.slice(0, atIndex);
     const cleanAfter = textAfter.startsWith(' ') ? textAfter.slice(1) : textAfter;
 
-    const memberFirstName = member.firstName || member.prenom || formatAuthorFirstName(member.name);
-    const inserted = `@${memberFirstName} `;
+    let inserted;
+    if (member.isCollective || member.firstName === 'all' || member.firstName === 'tous') {
+      inserted = '@all ';
+    } else {
+      const memberFirstName = member.firstName || member.prenom || formatAuthorFirstName(member.name);
+      inserted = `@${memberFirstName} `;
+    }
     const newText = beforeAt + inserted + cleanAfter;
 
     setInputText(newText);
@@ -679,6 +710,39 @@ export default function FamilyChat({
                 ) : (
                   filteredMembers.map((member, idx) => {
                     const isSelected = idx === highlightedMemberIndex;
+                    if (member.isCollective) {
+                      return (
+                        <button
+                          key="collective_all"
+                          type="button"
+                          onMouseDown={(e) => {
+                            e.preventDefault();
+                            handleSelectMember(member);
+                          }}
+                          onMouseEnter={() => setHighlightedMemberIndex(idx)}
+                          className={`w-full text-left px-2.5 py-1.5 rounded-xl flex items-center gap-2.5 text-xs transition-colors cursor-pointer ${
+                            isSelected
+                              ? 'bg-amber-100/90 dark:bg-amber-950/70 text-amber-950 dark:text-amber-100 font-medium'
+                              : 'text-amber-900 dark:text-amber-200 hover:bg-amber-50 dark:hover:bg-amber-900/30'
+                          }`}
+                        >
+                          <div className="w-6 h-6 rounded-full bg-amber-500 text-white flex items-center justify-center text-[11px] font-bold shrink-0 shadow-xs">
+                            📢
+                          </div>
+                          <div className="flex flex-col min-w-0 flex-1">
+                            <span className="truncate font-bold text-amber-900 dark:text-amber-100">@all</span>
+                            <span className="truncate text-[10px] text-amber-700/80 dark:text-amber-300/80">
+                              Tous les associés (notification générale)
+                            </span>
+                          </div>
+                          {isSelected && (
+                            <span className="material-symbols-outlined text-[14px] text-amber-700 dark:text-amber-400 shrink-0">
+                              check
+                            </span>
+                          )}
+                        </button>
+                      );
+                    }
                     const initials = getInitials(member.name || member.firstName);
                     return (
                       <button

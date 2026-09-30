@@ -38,11 +38,10 @@ const SUBJECTS = [
   'Presbytère',
   'Rosings',
   'Piscine',
-  'Jardin',
+  'Jardin & Espaces Verts',
   'Petites cabanes',
   'Hangar à meuble',
-  'Garage',
-  'SCI',
+  'SCI & Administratif',
 ];
 
 const COMPLEXITIES = ['Faible', 'Modérée', 'Élevée', 'Expertise requise'];
@@ -286,16 +285,15 @@ export default function TaskDetailModal({
   const [editAutoAssignByWorkload, setEditAutoAssignByWorkload] = useState(false);
   const [savingEdit, setSavingEdit] = useState(false);
 
-  // Catégories strictement fixes : Lieux fixes en premier puis SCI (Annotation 15)
+  // Catégories strictement fixes : Lieux fixes en premier puis SCI (Annotation 12 & 15)
   const categoryOptions = React.useMemo(() => [
     { value: 'Presbytère', label: '🏡 Presbytère' },
     { value: 'Rosings', label: '🏠 Rosings' },
     { value: 'Piscine', label: '🏊 Piscine' },
-    { value: 'Jardin', label: '🌳 Jardin & Espaces Verts' },
+    { value: 'Jardin & Espaces Verts', label: '🌳 Jardin & Espaces Verts' },
     { value: 'Petites cabanes', label: '🛖 Petites cabanes' },
     { value: 'Hangar à meuble', label: '📦 Hangar à meuble' },
-    { value: 'Garage', label: '🚗 Garage' },
-    { value: 'SCI', label: '🏛️ SCI & Administratif' },
+    { value: 'SCI & Administratif', label: '🏛️ SCI & Administratif' },
   ], []);
 
   // Document Upload & Drag-and-drop State (Universal Upload Modal)
@@ -857,8 +855,12 @@ export default function TaskDetailModal({
 
     try {
       let refreshed = null;
+      invalidateApiCache('tasks');
+      invalidateApiCache('/api/tasks');
+      if (task?.id) invalidateApiCache(`tasks/${task.id}`);
+
       if (task?.id) {
-        const accepted = await acceptTask(task.id, { assigned_members: currentMembers });
+        const accepted = await acceptTask(task.id, { assigned_members: currentMembers, status: 'EN_COURS' });
         refreshed = (accepted && accepted.id) ? accepted : await fetchTaskById(task.id).catch(() => ({ ...task, status: 'EN_COURS', assigned_members: currentMembers }));
         setTask(refreshed);
         syncEditFields(refreshed);
@@ -866,7 +868,13 @@ export default function TaskDetailModal({
         refreshed = { ...task, status: 'EN_COURS', assigned_members: currentMembers };
         setTask(refreshed);
       }
+
+      invalidateApiCache('tasks');
+      invalidateApiCache('/api/tasks');
+      if (task?.id) invalidateApiCache(`tasks/${task.id}`);
+
       if (onTaskUpdated) onTaskUpdated(refreshed);
+      onClose();
     } catch (err) {
       console.error('Erreur acceptation tâche:', err);
       alert(err.message || "Erreur lors de l'acceptation de la tâche.");

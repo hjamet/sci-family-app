@@ -29,6 +29,13 @@ export default function EmailPreviewModal({ isOpen, onClose, email }) {
     ? email.recipients_names
     : recipientsList;
 
+  const isSimulated = Boolean(
+    email.is_simulated ||
+    email.test_mode ||
+    email.status === 'simulated' ||
+    email.simulated === true
+  );
+
   return (
     <div
       role="dialog"
@@ -45,9 +52,15 @@ export default function EmailPreviewModal({ isOpen, onClose, email }) {
               <span className="text-xs font-bold uppercase tracking-wider text-emerald-600 dark:text-emerald-400 bg-emerald-50 dark:bg-emerald-950/60 border border-emerald-300 dark:border-emerald-800 px-2.5 py-0.5 rounded-full">
                 Aperçu de l'e-mail
               </span>
-              <span className="text-xs font-semibold uppercase tracking-wider text-amber-700 dark:text-amber-300 bg-amber-50 dark:bg-amber-950/60 border border-amber-300 dark:border-amber-800 px-2.5 py-0.5 rounded-full">
-                Simulé (Coupe-circuit actif)
-              </span>
+              {isSimulated ? (
+                <span className="text-xs font-semibold uppercase tracking-wider text-amber-700 dark:text-amber-300 bg-amber-50 dark:bg-amber-950/60 border border-amber-300 dark:border-amber-800 px-2.5 py-0.5 rounded-full">
+                  Simulé (Coupe-circuit actif)
+                </span>
+              ) : (
+                <span className="text-xs font-semibold uppercase tracking-wider text-emerald-700 dark:text-emerald-300 bg-emerald-50 dark:bg-emerald-950/60 border border-emerald-300 dark:border-emerald-800 px-2.5 py-0.5 rounded-full">
+                  E-mail réel
+                </span>
+              )}
             </div>
             <button
               type="button"
@@ -118,17 +131,11 @@ export default function EmailPreviewModal({ isOpen, onClose, email }) {
         </div>
 
         {/* Pied de page */}
-        <div className="p-3 sm:p-4 bg-slate-50 dark:bg-slate-900 border-t border-slate-200 dark:border-slate-800 flex items-center justify-between gap-3 flex-wrap">
-          <div className="text-[11px] text-slate-500 dark:text-slate-400 flex items-center gap-1.5">
-            <span>🛡️</span>
-            <span>
-              Coupe-circuit de sécurité actif : aucun flux réseau n'a été transmis à l'extérieur.
-            </span>
-          </div>
+        <div className="p-3 sm:p-4 bg-slate-50 dark:bg-slate-900 border-t border-slate-200 dark:border-slate-800 flex items-center justify-end">
           <button
             type="button"
             onClick={onClose}
-            className="bg-slate-800 hover:bg-slate-700 text-white font-semibold text-xs sm:text-sm px-4 py-2 rounded-xl shadow-sm transition-colors ml-auto cursor-pointer"
+            className="bg-slate-800 hover:bg-slate-700 text-white font-semibold text-xs sm:text-sm px-4 py-2 rounded-xl shadow-sm transition-colors cursor-pointer"
           >
             Fermer
           </button>

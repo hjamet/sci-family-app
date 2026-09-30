@@ -253,6 +253,54 @@ export default function NotificationBell({
     };
   }, []);
 
+// Synthétise ou extrait l'objet email complet pour 100% des notifications (Annotation 13)
+function getNotificationEmail(notif, currentUser) {
+  let emailData = notif.email || notif.email_entry;
+  if (typeof emailData === 'string') {
+    try {
+      emailData = JSON.parse(emailData);
+    } catch {
+      emailData = null;
+    }
+  }
+  if (emailData && typeof emailData === 'object' && emailData.html_content) {
+    return emailData;
+  }
+
+  const userFirst = typeof currentUser === 'string'
+    ? currentUser.split(' ')[0]
+    : (currentUser?.prenom || 'Henri');
+  const userEmail = (typeof currentUser === 'object' && currentUser?.email)
+    ? currentUser.email
+    : `${userFirst.toLowerCase()}@sci-familiale.fr`;
+
+  return {
+    id: `email-syn-${notif.id || Date.now()}`,
+    subject: notif.title || "Notification de l'application SCI",
+    trigger_action: notif.type || "notification",
+    recipients: [userEmail],
+    recipients_names: [userFirst],
+    is_simulated: true,
+    status: 'simulated',
+    created_at: notif.created_at || new Date().toISOString(),
+    html_content: `
+      <div style="font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif; padding: 24px; color: #1e293b; background-color: #f8fafc;">
+        <div style="max-width: 600px; margin: 0 auto; background: #ffffff; border-radius: 12px; padding: 24px; border: 1px solid #e2e8f0; box-shadow: 0 1px 3px rgba(0,0,0,0.05);">
+          <div style="border-bottom: 2px solid #0f766e; padding-bottom: 12px; margin-bottom: 16px;">
+            <h2 style="color: #0f766e; margin: 0; font-size: 18px;">${notif.title || 'Notification SCI'}</h2>
+          </div>
+          <p style="font-size: 14px; line-height: 1.6; color: #334155; margin-bottom: 20px;">
+            ${notif.description || "Une nouvelle notification a été enregistrée sur le portail familial de la SCI Domaine d'Hellenvilliers."}
+          </p>
+          <div style="margin-top: 24px; padding-top: 14px; border-top: 1px solid #f1f5f9; font-size: 11px; color: #64748b;">
+            Notification destinée à <strong>${userFirst}</strong> (${userEmail}) • SCI Domaine d'Hellenvilliers
+          </div>
+        </div>
+      </div>
+    `
+  };
+}
+
   // Décompte des notifications non lues
   const isNotifRead = (notif) => {
     if (notif.is_read) return true;
@@ -262,6 +310,16 @@ export default function NotificationBell({
 
   const unreadNotifications = notifications.filter((n) => !isNotifRead(n));
   const unreadCount = unreadNotifications.length;
+
+  const evictNotification = (notifId) => {
+    const idStr = String(notifId);
+    const updated = Array.from(new Set([...localReadIds, idStr]));
+    persistLocalReadIds(updated);
+    setNotifications((prev) => prev.filter((n) => String(n.id) !== idStr));
+    if (typeof notifId === 'number' || !isNaN(Number(notifId))) {
+      markNotificationAsRead(notifId).catch(() => {});
+    }
+  };
 
   const handleMarkAllAsRead = async (e) => {
     if (e) e.stopPropagation();
@@ -273,21 +331,20 @@ export default function NotificationBell({
     const allIds = notifications.map((n) => String(n.id));
     const updated = Array.from(new Set([...localReadIds, ...allIds]));
     persistLocalReadIds(updated);
-    setNotifications((prev) => prev.map((n) => ({ ...n, is_read: true })));
+    setNotifications((prev) => prev.filter((n) => !updated.includes(String(n.id))));
+  };
+
+  const handleMailButtonClick = (notif) => {
+    const emailData = getNotificationEmail(notif, currentUser);
+    evictNotification(notif.id);
+    if (onViewEmail && emailData) {
+      onViewEmail(emailData);
+    }
   };
 
   const handleNotificationClick = async (notif) => {
-    // 1. Marquage comme lu local et distant
-    if (!isNotifRead(notif)) {
-      const updated = [...localReadIds, String(notif.id)];
-      persistLocalReadIds(updated);
-      setNotifications((prev) =>
-        prev.map((n) => (n.id === notif.id ? { ...n, is_read: true } : n))
-      );
-      if (typeof notif.id === 'number' || !isNaN(Number(notif.id))) {
-        markNotificationAsRead(notif.id).catch(() => {});
-      }
-    }
+    // 1. Marquage comme lu local, distant et éviction immédiate de la liste (Annotation 7)
+    evictNotification(notif.id);
 
     // 2. Fermer le popover
     setIsOpen(false);
@@ -315,7 +372,7 @@ export default function NotificationBell({
     }
 
     // 4. Si notification e-mail pure avec modal d'aperçu
-    const emailData = notif.email || notif.email_entry;
+    const emailData = getNotificationEmail(notif, currentUser);
     if (emailData && onViewEmail && notif.type === 'email') {
       onViewEmail(emailData);
       return;
@@ -420,7 +477,7 @@ export default function NotificationBell({
 
           {/* Liste des Notifications */}
           <div className="flex flex-col gap-1.5 max-h-80 overflow-y-auto pr-1">
-            {notifications.length === 0 ? (
+            {unreadNotifications.length === 0 ? (
               <div className="flex flex-col items-center justify-center py-6 px-4 text-center">
                 <div className="w-10 h-10 rounded-full bg-emerald-50 dark:bg-emerald-950/60 text-primary flex items-center justify-center mb-2 shadow-2xs">
                   <span className="material-symbols-outlined text-[20px]">done_all</span>
@@ -433,20 +490,14 @@ export default function NotificationBell({
                 </p>
               </div>
             ) : (
-              notifications.map((notif) => {
-                const isRead = isNotifRead(notif);
+              unreadNotifications.map((notif) => {
                 const iconCfg = renderNotifIcon(notif.type);
-                const emailData = notif.email || notif.email_entry;
 
                 return (
                   <div
                     key={notif.id}
                     onClick={() => handleNotificationClick(notif)}
-                    className={`p-2.5 rounded-xl transition-all cursor-pointer flex items-start gap-2.5 border shadow-2xs group relative ${
-                      isRead
-                        ? 'bg-slate-50/60 dark:bg-slate-800/40 border-slate-100 dark:border-slate-800/60 opacity-80 hover:opacity-100'
-                        : 'bg-emerald-50/80 dark:bg-emerald-950/30 hover:bg-emerald-100/80 dark:hover:bg-emerald-900/40 border-emerald-200/70 dark:border-emerald-800/50'
-                    }`}
+                    className="p-2.5 rounded-xl transition-all cursor-pointer flex items-start gap-2.5 border shadow-2xs group relative bg-emerald-50/80 dark:bg-emerald-950/30 hover:bg-emerald-100/80 dark:hover:bg-emerald-900/40 border-emerald-200/70 dark:border-emerald-800/50"
                   >
                     {/* Icône de type */}
                     <div
@@ -458,11 +509,7 @@ export default function NotificationBell({
                     {/* Contenu principal */}
                     <div className="flex-1 min-w-0">
                       <div className="flex items-center justify-between gap-1">
-                        <p
-                          className={`text-xs truncate font-bold text-slate-900 dark:text-slate-100 group-hover:text-primary transition-colors ${
-                            !isRead ? 'text-primary dark:text-emerald-400' : ''
-                          }`}
-                        >
+                        <p className="text-xs truncate font-bold text-primary dark:text-emerald-400 group-hover:text-primary transition-colors">
                           {notif.title}
                         </p>
                         <span className="text-[10px] text-slate-400 shrink-0">
@@ -474,26 +521,24 @@ export default function NotificationBell({
                       </p>
                     </div>
 
-                    {/* Bouton Action E-mail direct (Annotation 13) */}
-                    {emailData && onViewEmail && (
+                    {/* Bouton Action E-mail direct (Annotations 7 & 13) */}
+                    {onViewEmail && (
                       <button
                         type="button"
                         onClick={(e) => {
                           e.stopPropagation();
-                          onViewEmail(emailData);
+                          handleMailButtonClick(notif);
                         }}
                         className="w-7 h-7 rounded-lg bg-teal-50 dark:bg-teal-950 text-teal-700 dark:text-teal-300 hover:bg-teal-100 hover:text-teal-900 border border-teal-200 dark:border-teal-800 flex items-center justify-center shrink-0 transition-colors shadow-2xs cursor-pointer ml-0.5"
                         title="Consulter l'e-mail officiel dans la modale"
                         aria-label="Consulter l'e-mail"
                       >
-                        <span className="material-symbols-outlined text-[15px]">mark_email_read</span>
+                        <span className="material-symbols-outlined text-[15px]">mail</span>
                       </button>
                     )}
 
                     {/* Pastille non-lu */}
-                    {!isRead && (
-                      <span className="w-2 h-2 rounded-full bg-amber-500 shrink-0 mt-2"></span>
-                    )}
+                    <span className="w-2 h-2 rounded-full bg-amber-500 shrink-0 mt-2"></span>
                   </div>
                 );
               })

@@ -294,7 +294,7 @@ export default function FinancialLedgerModal({ isOpen, onClose, initialTab = 'gr
                     <span>Journal Général des Écritures Bancaires</span>
                   </h3>
                   <p className="text-xs text-slate-500">
-                    Traçabilité chronologique complète des débits et crédits sur le compte Crédit Agricole dédié.
+                    Traçabilité chronologique complète des débits et crédits sur le compte Pro Indy (Swan) dédié.
                   </p>
                 </div>
 
@@ -356,7 +356,7 @@ export default function FinancialLedgerModal({ isOpen, onClose, initialTab = 'gr
                     Aucune écriture bancaire enregistrée pour cette période.
                   </h4>
                   <p className="text-xs text-slate-500 mt-1.5 max-w-md leading-relaxed">
-                    La liaison Open Banking DSP2 est active ou en attente de synchronisation. Aucune transaction n'a été trouvée sur le compte Crédit Agricole dédié pour la période sélectionnée.
+                    La liaison Open Banking DSP2 est active ou en attente de synchronisation. Aucune transaction n'a été trouvée sur le compte Pro Indy (Swan) dédié pour la période sélectionnée.
                   </p>
                   <button
                     type="button"
@@ -455,7 +455,7 @@ export default function FinancialLedgerModal({ isOpen, onClose, initialTab = 'gr
                     <span>Apports &amp; Encaissements Réels</span>
                   </h3>
                   <p className="text-xs text-slate-500">
-                    Crédits bancaires et cotisations constatés sur le compte Crédit Agricole dédié.
+                    Crédits bancaires et cotisations constatés sur le compte Pro Indy (Swan) dédié.
                   </p>
                 </div>
                 <span className="px-3 py-1 rounded-full bg-emerald-100 text-emerald-800 text-xs font-bold border border-emerald-200">
@@ -524,7 +524,7 @@ export default function FinancialLedgerModal({ isOpen, onClose, initialTab = 'gr
                     <span>Dépenses &amp; Prélèvements Réels</span>
                   </h3>
                   <p className="text-xs text-slate-500">
-                    Débits réels constatés sur le compte Crédit Agricole dédié.
+                    Débits réels constatés sur le compte Pro Indy (Swan) dédié.
                   </p>
                 </div>
                 <div className="text-right">
@@ -638,7 +638,7 @@ export default function FinancialLedgerModal({ isOpen, onClose, initialTab = 'gr
                   Gouvernance des flux bancaires de la SCI
                 </h4>
                 <p className="text-xs text-slate-600 leading-relaxed">
-                  Toutes les écritures affichées dans ce livre financier proviennent directement de la passerelle DSP2 sécurisée avec le compte Crédit Agricole Normandie dédié.
+                  Toutes les écritures affichées dans ce livre financier proviennent directement de la passerelle DSP2 sécurisée avec le compte Pro Indy (Swan) dédié.
                   Aucune écriture simulée ou extrapolée n'est admise dans ce registre officiel.
                 </p>
               </div>

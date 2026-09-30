@@ -81,7 +81,8 @@ def test_thermal_change_email_circuit_breaker(hermetic_resend_mock):
         equipment_type="Chauffage ViCare (Presbytère)",
         details="Consigne modifiée à 20.0°C"
     )
-    assert res == {"status": "disabled", "id": "mock_emergency_off"}
+    assert res.get("status") == "disabled"
+    assert res.get("id") == "mock_emergency_off"
     assert hermetic_resend_mock.call_count == 0, "Zéro requête Resend sous coupe-circuit."
 
 

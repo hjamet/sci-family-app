@@ -11,6 +11,7 @@ os.environ["DATABASE_URL"] = "sqlite:///:memory:"
 os.environ["POSTGRES_URL"] = ""
 os.environ["EMAIL_TEST_MODE"] = "true"
 os.environ["DISABLE_ALL_EMAILS"] = "true"
+os.environ["VICARE_TEST_MODE_READ_ONLY"] = "true"
 
 # Insérer backend dans le path
 BACKEND_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
