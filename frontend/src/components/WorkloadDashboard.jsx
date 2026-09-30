@@ -217,9 +217,6 @@ function WorkloadDashboardInner({ currentUser, period: propPeriod = 'all' }) {
               <h2 className="text-lg font-extrabold text-slate-900">
                 Équilibre d'Implication &amp; Double Jauge (7 Associés)
               </h2>
-              <span className="text-[10px] font-bold uppercase tracking-wider bg-amber-100 text-amber-900 px-2 py-0.5 rounded-full border border-amber-300">
-                Annotation 10
-              </span>
             </div>
             <p className="text-xs text-slate-500">
               Classement gamifié par ratio d'implication : <em>« Celui qui fait le plus et vient le moins »</em>

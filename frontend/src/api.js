@@ -1580,10 +1580,21 @@ export async function changeUserPassword({ currentPassword, newPassword, confirm
 export async function fetchMemberSettings(memberIdOrName = 'current') {
   const defaultSettings = {
     notify_new_task: true,
+    notif_task_assigned: true,
+    notify_task_creation: false,
+    notif_task_completed: true,
     notify_pending_vote: true,
+    notif_vote_required: true,
+    notify_vote_arbitration: false,
     notify_final_decision: true,
     notify_new_stay: true,
+    notif_stay_booked: true,
+    notif_stay_confirmation: true,
+    notif_stay_reminder: true,
+    notif_heating_start: true,
+    notif_heating_stop: true,
     notify_mentions: true,
+    notify_mention_all: true,
     notif_thermal_changes: false,
     notify_thermal_changes: false
   };

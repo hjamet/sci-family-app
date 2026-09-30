@@ -20,7 +20,13 @@ import {
   CheckCheck,
   Thermometer,
   AtSign,
-  Megaphone
+  Megaphone,
+  Flame,
+  Home,
+  Users,
+  CheckSquare,
+  Clock,
+  Power
 } from 'lucide-react';
 import {
   fetchUserProfile,
@@ -96,18 +102,27 @@ export default function SettingsPage({ currentUser }) {
   const [passwordLoading, setPasswordLoading] = useState(false);
   const [passwordError, setPasswordError] = useState(null);
 
-  // --- États Préférences de Notifications ---
+  // --- États Préférences de Notifications (4 Domaines Thématiques) ---
   const [notifications, setNotifications] = useState({
+    notif_task_assigned: true,
     notify_new_task: true,
-    notify_pending_vote: true,
-    notify_final_decision: true,
-    notify_new_stay: true,
-    notify_mentions: true,
-    notify_mention_all: true,
-    notif_thermal_changes: false,
     notify_task_creation: false,
-    notify_vote_creation: false,
-    notify_vote_arbitration: false
+    notif_task_completed: true,
+    notif_vote_required: true,
+    notify_pending_vote: true,
+    notify_vote_arbitration: false,
+    notify_final_decision: true,
+    notify_mention_all: true,
+    notif_stay_booked: true,
+    notify_new_stay: true,
+    notif_stay_confirmation: true,
+    notif_stay_reminder: true,
+    notif_heating_start: true,
+    notif_heating_stop: true,
+    notify_mentions: true,
+    notif_thermal_changes: false,
+    notify_thermal_changes: false,
+    notify_vote_creation: false
   });
   const [notificationsLoading, setNotificationsLoading] = useState(false);
 
@@ -188,16 +203,25 @@ export default function SettingsPage({ currentUser }) {
               : (userProfile?.notify_vote_arbitration ?? false)
           );
           setNotifications({
-            notify_new_task: settings.notify_new_task !== false,
-            notify_pending_vote: settings.notify_pending_vote !== false,
-            notify_final_decision: settings.notify_final_decision !== false,
-            notify_new_stay: settings.notify_new_stay !== false,
-            notify_mentions: settings.notify_mentions !== false,
-            notify_mention_all: mentionAllPref,
-            notif_thermal_changes: thermalPref,
+            notif_task_assigned: (settings.notif_task_assigned != null ? settings.notif_task_assigned : (settings.notify_new_task != null ? settings.notify_new_task : (userProfile?.notif_task_assigned ?? true))) !== false,
+            notify_new_task: (settings.notify_new_task != null ? settings.notify_new_task : (settings.notif_task_assigned != null ? settings.notif_task_assigned : (userProfile?.notif_task_assigned ?? true))) !== false,
             notify_task_creation: taskCreationPref,
-            notify_vote_creation: voteCreationPref,
-            notify_vote_arbitration: voteArbitrationPref
+            notif_task_completed: (settings.notif_task_completed != null ? settings.notif_task_completed : (userProfile?.notif_task_completed ?? true)) !== false,
+            notif_vote_required: (settings.notif_vote_required != null ? settings.notif_vote_required : (settings.notif_vote_needed != null ? settings.notif_vote_needed : (settings.notify_pending_vote != null ? settings.notify_pending_vote : (userProfile?.notif_vote_needed ?? true)))) !== false,
+            notify_pending_vote: (settings.notify_pending_vote != null ? settings.notify_pending_vote : (settings.notif_vote_needed != null ? settings.notif_vote_needed : true)) !== false,
+            notify_vote_arbitration: voteArbitrationPref,
+            notify_final_decision: settings.notify_final_decision !== false,
+            notify_mention_all: mentionAllPref,
+            notif_stay_booked: (settings.notif_stay_booked != null ? settings.notif_stay_booked : (settings.notify_new_stay != null ? settings.notify_new_stay : (userProfile?.notif_stay_booked ?? true))) !== false,
+            notify_new_stay: (settings.notify_new_stay != null ? settings.notify_new_stay : (settings.notif_stay_booked != null ? settings.notif_stay_booked : true)) !== false,
+            notif_stay_confirmation: (settings.notif_stay_confirmation != null ? settings.notif_stay_confirmation : (userProfile?.notif_stay_confirmation ?? true)) !== false,
+            notif_stay_reminder: (settings.notif_stay_reminder != null ? settings.notif_stay_reminder : (userProfile?.notif_stay_reminder ?? true)) !== false,
+            notif_heating_start: (settings.notif_heating_start != null ? settings.notif_heating_start : (userProfile?.notif_heating_start ?? true)) !== false,
+            notif_heating_stop: (settings.notif_heating_stop != null ? settings.notif_heating_stop : (userProfile?.notif_heating_stop ?? true)) !== false,
+            notify_mentions: settings.notify_mentions !== false,
+            notif_thermal_changes: thermalPref,
+            notify_thermal_changes: thermalPref,
+            notify_vote_creation: voteCreationPref
           });
         }
       } catch (err) {
@@ -274,33 +298,50 @@ export default function SettingsPage({ currentUser }) {
     }
   };
 
-  // --- Actions Section 3 : Préférences de notification ---
+  // --- Actions Section 3 : Préférences de notification (4 Domaines) ---
   const handleToggleNotification = (key) => {
     setNotifications((prev) => {
       const nextVal = !prev[key];
       const updated = { ...prev, [key]: nextVal };
-      if (key === 'notif_thermal_changes') {
-        updated.notify_thermal_changes = nextVal;
-      } else if (key === 'notify_thermal_changes') {
-        updated.notif_thermal_changes = nextVal;
+      if (key === 'notif_task_assigned') updated.notify_new_task = nextVal;
+      if (key === 'notify_new_task') updated.notif_task_assigned = nextVal;
+      if (key === 'notif_vote_required') {
+        updated.notify_pending_vote = nextVal;
+        updated.notif_vote_needed = nextVal;
       }
+      if (key === 'notify_pending_vote') {
+        updated.notif_vote_required = nextVal;
+        updated.notif_vote_needed = nextVal;
+      }
+      if (key === 'notif_stay_booked') updated.notify_new_stay = nextVal;
+      if (key === 'notify_new_stay') updated.notif_stay_booked = nextVal;
+      if (key === 'notif_thermal_changes') updated.notify_thermal_changes = nextVal;
+      if (key === 'notify_thermal_changes') updated.notif_thermal_changes = nextVal;
       return updated;
     });
   };
 
   const handleSetAllNotifications = (status) => {
     setNotifications({
+      notif_task_assigned: status,
       notify_new_task: status,
+      notify_task_creation: status,
+      notif_task_completed: status,
+      notif_vote_required: status,
       notify_pending_vote: status,
+      notify_vote_arbitration: status,
       notify_final_decision: status,
-      notify_new_stay: status,
-      notify_mentions: status,
       notify_mention_all: status,
+      notif_stay_booked: status,
+      notify_new_stay: status,
+      notif_stay_confirmation: status,
+      notif_stay_reminder: status,
+      notif_heating_start: status,
+      notif_heating_stop: status,
+      notify_mentions: status,
       notif_thermal_changes: status,
       notify_thermal_changes: status,
-      notify_task_creation: status,
-      notify_vote_creation: status,
-      notify_vote_arbitration: status
+      notify_vote_creation: status
     });
   };
 
@@ -308,6 +349,7 @@ export default function SettingsPage({ currentUser }) {
     try {
       setNotificationsLoading(true);
       await updateMemberSettings(profile.id || profile.prenom, notifications);
+      await updateUserProfile(notifications);
       showToast("Préférences de notification enregistrées avec succès !", "success");
     } catch (err) {
       showToast("Erreur lors de la sauvegarde des notifications.", "error");
@@ -595,359 +637,433 @@ export default function SettingsPage({ currentUser }) {
           Définissez la fréquence et la nature des e-mails automatiques envoyés à votre adresse. Par défaut, l'ensemble des alertes prioritaires est activé pour assurer une coordination fluide du patrimoine.
         </p>
 
-        {/* Les 4 Interrupteurs Toggles Conformes aux Spécifications */}
-        <div className="space-y-4">
-          
-          {/* Toggle 1 : Nouvelle tâche assignée */}
-          <div
-            onClick={() => handleToggleNotification('notify_new_task')}
-            className="flex items-start justify-between gap-4 p-4 rounded-2xl border border-slate-200 hover:border-emerald-300 bg-slate-50/50 hover:bg-emerald-50/20 transition-all cursor-pointer select-none"
-          >
-            <div className="flex items-start gap-3.5">
-              <div className="w-9 h-9 rounded-xl bg-emerald-100 text-emerald-800 flex items-center justify-center shrink-0 mt-0.5 border border-emerald-200">
-                <ClipboardList className="w-5 h-5 text-emerald-800" />
+        {/* ======================================================== */}
+        {/* 4 CARTES THÉMATIQUES DE NOTIFICATIONS (ANNOTATION 3)    */}
+        {/* ======================================================== */}
+        <div className="space-y-6">
+
+          {/* 1. 📝 Missions & Tâches */}
+          <div className="bg-slate-50/70 rounded-2xl border border-slate-200/90 p-5 sm:p-6 space-y-4 hover:border-slate-300 transition-colors shadow-2xs">
+            <div className="flex items-center justify-between gap-3 border-b border-slate-200/70 pb-3">
+              <div className="flex items-center gap-2.5">
+                <div className="w-8 h-8 rounded-xl bg-emerald-100 text-emerald-800 flex items-center justify-center shrink-0 border border-emerald-200 shadow-2xs">
+                  <ClipboardList className="w-4 h-4" />
+                </div>
+                <div>
+                  <h3 className="text-sm font-bold text-slate-900 tracking-tight">
+                    1. 📝 Missions &amp; Tâches
+                  </h3>
+                  <p className="text-[11px] text-slate-500">
+                    Assignation de missions, propositions en attente et complétion des chantiers
+                  </p>
+                </div>
               </div>
-              <div>
-                <span className="text-sm font-bold text-slate-900">
-                  📝 Nouvelle tâche assignée
-                </span>
-                <p className="text-xs text-slate-600 mt-1">
-                  M'alerter dès qu'un chantier m'est confié ou qu'une mission de maintenance m'est assignée.
-                </p>
-              </div>
+              <span className="text-[11px] font-semibold px-2.5 py-0.5 rounded-full bg-white text-emerald-800 border border-emerald-200 shrink-0">
+                Travaux &amp; Chantiers
+              </span>
             </div>
 
-            {/* Custom Toggle Switch */}
-            <div className="shrink-0 pt-1">
+            <div className="space-y-3">
+              {/* Item 1 : Nouvelle tâche assignée */}
               <div
-                className={`w-12 h-6 flex items-center rounded-full p-1 duration-300 ease-in-out ${
-                  notifications.notify_new_task ? 'bg-primary' : 'bg-slate-300'
+                id="toggle-notif-task-assigned"
+                onClick={() => handleToggleNotification('notif_task_assigned')}
+                className={`flex items-start justify-between gap-3.5 p-3.5 sm:p-4 rounded-xl border transition-all cursor-pointer select-none ${
+                  notifications.notif_task_assigned
+                    ? 'border-emerald-300/80 bg-white hover:bg-emerald-50/20 shadow-xs'
+                    : 'border-slate-200 bg-white/70 hover:bg-slate-100/60'
                 }`}
               >
-                <div
-                  className={`bg-white w-4 h-4 rounded-full shadow-md transform duration-300 ease-in-out ${
-                    notifications.notify_new_task ? 'translate-x-6' : 'translate-x-0'
-                  }`}
-                />
+                <div className="flex items-start gap-3">
+                  <div className="w-8 h-8 rounded-xl bg-emerald-100 text-emerald-800 flex items-center justify-center shrink-0 mt-0.5 border border-emerald-200 shadow-2xs">
+                    <ClipboardList className="w-4 h-4" />
+                  </div>
+                  <div>
+                    <span className="text-sm font-bold text-slate-900 block leading-snug">
+                      Nouvelle tâche assignée
+                    </span>
+                    <p className="text-xs text-slate-600 mt-1 leading-relaxed">
+                      M'alerter dès qu'un chantier m'est confié ou qu'une mission de maintenance m'est assignée.
+                    </p>
+                  </div>
+                </div>
+                <div className="shrink-0 pt-1">
+                  <div className={`w-11 h-6 flex items-center rounded-full p-1 duration-300 ease-in-out ${notifications.notif_task_assigned ? 'bg-primary' : 'bg-slate-300'}`}>
+                    <div className={`bg-white w-4 h-4 rounded-full shadow-md transform duration-300 ease-in-out ${notifications.notif_task_assigned ? 'translate-x-5' : 'translate-x-0'}`} />
+                  </div>
+                </div>
+              </div>
+
+              {/* Item 2 : Nouvelle proposition de tâche en attente */}
+              <div
+                id="toggle-notify-task-creation"
+                onClick={() => handleToggleNotification('notify_task_creation')}
+                className={`flex items-start justify-between gap-3.5 p-3.5 sm:p-4 rounded-xl border transition-all cursor-pointer select-none ${
+                  notifications.notify_task_creation
+                    ? 'border-emerald-300/80 bg-white hover:bg-emerald-50/20 shadow-xs'
+                    : 'border-slate-200 bg-white/70 hover:bg-slate-100/60'
+                }`}
+              >
+                <div className="flex items-start gap-3">
+                  <div className="w-8 h-8 rounded-xl bg-teal-100 text-teal-800 flex items-center justify-center shrink-0 mt-0.5 border border-teal-200 shadow-2xs">
+                    <Bell className="w-4 h-4" />
+                  </div>
+                  <div>
+                    <span className="text-sm font-bold text-slate-900 block leading-snug">
+                      Nouvelle proposition de tâche en attente
+                    </span>
+                    <p className="text-xs text-slate-600 mt-1 leading-relaxed">
+                      M'alerter par e-mail lorsqu'une nouvelle tâche est soumise en attente de création (coordination).
+                    </p>
+                  </div>
+                </div>
+                <div className="shrink-0 pt-1">
+                  <div className={`w-11 h-6 flex items-center rounded-full p-1 duration-300 ease-in-out ${notifications.notify_task_creation ? 'bg-primary' : 'bg-slate-300'}`}>
+                    <div className={`bg-white w-4 h-4 rounded-full shadow-md transform duration-300 ease-in-out ${notifications.notify_task_creation ? 'translate-x-5' : 'translate-x-0'}`} />
+                  </div>
+                </div>
+              </div>
+
+              {/* Item 3 : Tâche complétée / mise à jour */}
+              <div
+                id="toggle-notif-task-completed"
+                onClick={() => handleToggleNotification('notif_task_completed')}
+                className={`flex items-start justify-between gap-3.5 p-3.5 sm:p-4 rounded-xl border transition-all cursor-pointer select-none ${
+                  notifications.notif_task_completed
+                    ? 'border-emerald-300/80 bg-white hover:bg-emerald-50/20 shadow-xs'
+                    : 'border-slate-200 bg-white/70 hover:bg-slate-100/60'
+                }`}
+              >
+                <div className="flex items-start gap-3">
+                  <div className="w-8 h-8 rounded-xl bg-green-100 text-green-800 flex items-center justify-center shrink-0 mt-0.5 border border-green-200 shadow-2xs">
+                    <CheckSquare className="w-4 h-4" />
+                  </div>
+                  <div>
+                    <span className="text-sm font-bold text-slate-900 block leading-snug">
+                      Tâche complétée / mise à jour
+                    </span>
+                    <p className="text-xs text-slate-600 mt-1 leading-relaxed">
+                      M'alerter lorsqu'une tâche que je supervise ou qui m'intéresse est marquée comme terminée ou mise à jour.
+                    </p>
+                  </div>
+                </div>
+                <div className="shrink-0 pt-1">
+                  <div className={`w-11 h-6 flex items-center rounded-full p-1 duration-300 ease-in-out ${notifications.notif_task_completed ? 'bg-primary' : 'bg-slate-300'}`}>
+                    <div className={`bg-white w-4 h-4 rounded-full shadow-md transform duration-300 ease-in-out ${notifications.notif_task_completed ? 'translate-x-5' : 'translate-x-0'}`} />
+                  </div>
+                </div>
               </div>
             </div>
           </div>
 
-          {/* Toggle 2 : Vote en attente de mon avis */}
-          <div
-            onClick={() => handleToggleNotification('notify_pending_vote')}
-            className="flex items-start justify-between gap-4 p-4 rounded-2xl border border-slate-200 hover:border-emerald-300 bg-slate-50/50 hover:bg-emerald-50/20 transition-all cursor-pointer select-none"
-          >
-            <div className="flex items-start gap-3.5">
-              <div className="w-9 h-9 rounded-xl bg-teal-100 text-teal-800 flex items-center justify-center shrink-0 mt-0.5 border border-teal-200">
-                <Vote className="w-5 h-5 text-teal-800" />
+          {/* 2. 🗳️ Votes & Scrutins */}
+          <div className="bg-slate-50/70 rounded-2xl border border-slate-200/90 p-5 sm:p-6 space-y-4 hover:border-slate-300 transition-colors shadow-2xs">
+            <div className="flex items-center justify-between gap-3 border-b border-slate-200/70 pb-3">
+              <div className="flex items-center gap-2.5">
+                <div className="w-8 h-8 rounded-xl bg-purple-100 text-purple-800 flex items-center justify-center shrink-0 border border-purple-200 shadow-2xs">
+                  <Vote className="w-4 h-4" />
+                </div>
+                <div>
+                  <h3 className="text-sm font-bold text-slate-900 tracking-tight">
+                    2. 🗳️ Votes &amp; Scrutins
+                  </h3>
+                  <p className="text-[11px] text-slate-500">
+                    Consultations formelles des associés, arbitrages et alertes collectives
+                  </p>
+                </div>
               </div>
-              <div>
-                <span className="text-sm font-bold text-slate-900">
-                  🗳️ Vote en attente de mon avis
-                </span>
-                <p className="text-xs text-slate-600 mt-1">
-                  M'alerter dès qu'un scrutin ou une décision formelle nécessite mon vote ou ma validation.
-                </p>
-              </div>
+              <span className="text-[11px] font-semibold px-2.5 py-0.5 rounded-full bg-white text-purple-800 border border-purple-200 shrink-0">
+                Gouvernance SCI
+              </span>
             </div>
 
-            {/* Custom Toggle Switch */}
-            <div className="shrink-0 pt-1">
+            <div className="space-y-3">
+              {/* Item 1 : Nouveau vote ouvert */}
               <div
-                className={`w-12 h-6 flex items-center rounded-full p-1 duration-300 ease-in-out ${
-                  notifications.notify_pending_vote ? 'bg-primary' : 'bg-slate-300'
+                id="toggle-notif-vote-required"
+                onClick={() => handleToggleNotification('notif_vote_required')}
+                className={`flex items-start justify-between gap-3.5 p-3.5 sm:p-4 rounded-xl border transition-all cursor-pointer select-none ${
+                  notifications.notif_vote_required
+                    ? 'border-emerald-300/80 bg-white hover:bg-emerald-50/20 shadow-xs'
+                    : 'border-slate-200 bg-white/70 hover:bg-slate-100/60'
                 }`}
               >
-                <div
-                  className={`bg-white w-4 h-4 rounded-full shadow-md transform duration-300 ease-in-out ${
-                    notifications.notify_pending_vote ? 'translate-x-6' : 'translate-x-0'
-                  }`}
-                />
+                <div className="flex items-start gap-3">
+                  <div className="w-8 h-8 rounded-xl bg-purple-100 text-purple-800 flex items-center justify-center shrink-0 mt-0.5 border border-purple-200 shadow-2xs">
+                    <Vote className="w-4 h-4" />
+                  </div>
+                  <div>
+                    <span className="text-sm font-bold text-slate-900 block leading-snug">
+                      Nouveau vote ouvert
+                    </span>
+                    <p className="text-xs text-slate-600 mt-1 leading-relaxed">
+                      M'alerter dès qu'un scrutin ou une délibération est ouvert(e) aux votes des associés.
+                    </p>
+                  </div>
+                </div>
+                <div className="shrink-0 pt-1">
+                  <div className={`w-11 h-6 flex items-center rounded-full p-1 duration-300 ease-in-out ${notifications.notif_vote_required ? 'bg-primary' : 'bg-slate-300'}`}>
+                    <div className={`bg-white w-4 h-4 rounded-full shadow-md transform duration-300 ease-in-out ${notifications.notif_vote_required ? 'translate-x-5' : 'translate-x-0'}`} />
+                  </div>
+                </div>
+              </div>
+
+              {/* Item 2 : Vote en attente d'arbitrage / clôture */}
+              <div
+                id="toggle-notify-vote-arbitration"
+                onClick={() => handleToggleNotification('notify_vote_arbitration')}
+                className={`flex items-start justify-between gap-3.5 p-3.5 sm:p-4 rounded-xl border transition-all cursor-pointer select-none ${
+                  notifications.notify_vote_arbitration
+                    ? 'border-emerald-300/80 bg-white hover:bg-emerald-50/20 shadow-xs'
+                    : 'border-slate-200 bg-white/70 hover:bg-slate-100/60'
+                }`}
+              >
+                <div className="flex items-start gap-3">
+                  <div className="w-8 h-8 rounded-xl bg-amber-100 text-amber-800 flex items-center justify-center shrink-0 mt-0.5 border border-amber-200 shadow-2xs">
+                    <Scale className="w-4 h-4" />
+                  </div>
+                  <div>
+                    <span className="text-sm font-bold text-slate-900 block leading-snug">
+                      Vote en attente d'arbitrage / clôture
+                    </span>
+                    <p className="text-xs text-slate-600 mt-1 leading-relaxed">
+                      M'alerter lorsqu'un scrutin atteint le quorum ou nécessite un arbitrage final (validation du résultat ou report en AG).
+                    </p>
+                  </div>
+                </div>
+                <div className="shrink-0 pt-1">
+                  <div className={`w-11 h-6 flex items-center rounded-full p-1 duration-300 ease-in-out ${notifications.notify_vote_arbitration ? 'bg-primary' : 'bg-slate-300'}`}>
+                    <div className={`bg-white w-4 h-4 rounded-full shadow-md transform duration-300 ease-in-out ${notifications.notify_vote_arbitration ? 'translate-x-5' : 'translate-x-0'}`} />
+                  </div>
+                </div>
+              </div>
+
+              {/* Item 3 : Mention collective dans le chat (@all) */}
+              <div
+                id="toggle-notify-mention-all"
+                onClick={() => handleToggleNotification('notify_mention_all')}
+                className={`flex items-start justify-between gap-3.5 p-3.5 sm:p-4 rounded-xl border transition-all cursor-pointer select-none ${
+                  notifications.notify_mention_all
+                    ? 'border-emerald-300/80 bg-white hover:bg-emerald-50/20 shadow-xs'
+                    : 'border-slate-200 bg-white/70 hover:bg-slate-100/60'
+                }`}
+              >
+                <div className="flex items-start gap-3">
+                  <div className="w-8 h-8 rounded-xl bg-amber-100 text-amber-800 flex items-center justify-center shrink-0 mt-0.5 border border-amber-200 shadow-2xs">
+                    <Megaphone className="w-4 h-4" />
+                  </div>
+                  <div>
+                    <span className="text-sm font-bold text-slate-900 block leading-snug">
+                      Mention collective dans le chat (@all)
+                    </span>
+                    <p className="text-xs text-slate-600 mt-1 leading-relaxed">
+                      Recevoir une notification et un e-mail prioritaire lorsqu'un message s'adresse à l'ensemble des associés (@all / @tous).
+                    </p>
+                  </div>
+                </div>
+                <div className="shrink-0 pt-1">
+                  <div className={`w-11 h-6 flex items-center rounded-full p-1 duration-300 ease-in-out ${notifications.notify_mention_all ? 'bg-primary' : 'bg-slate-300'}`}>
+                    <div className={`bg-white w-4 h-4 rounded-full shadow-md transform duration-300 ease-in-out ${notifications.notify_mention_all ? 'translate-x-5' : 'translate-x-0'}`} />
+                  </div>
+                </div>
               </div>
             </div>
           </div>
 
-          {/* Toggle 3 : Décision de vote finale */}
-          <div
-            onClick={() => handleToggleNotification('notify_final_decision')}
-            className="flex items-start justify-between gap-4 p-4 rounded-2xl border border-slate-200 hover:border-emerald-300 bg-slate-50/50 hover:bg-emerald-50/20 transition-all cursor-pointer select-none"
-          >
-            <div className="flex items-start gap-3.5">
-              <div className="w-9 h-9 rounded-xl bg-amber-100 text-amber-800 flex items-center justify-center shrink-0 mt-0.5 border border-amber-200">
-                <Scale className="w-5 h-5 text-amber-800" />
+          {/* 3. 📅 Réservations */}
+          <div className="bg-slate-50/70 rounded-2xl border border-slate-200/90 p-5 sm:p-6 space-y-4 hover:border-slate-300 transition-colors shadow-2xs">
+            <div className="flex items-center justify-between gap-3 border-b border-slate-200/70 pb-3">
+              <div className="flex items-center gap-2.5">
+                <div className="w-8 h-8 rounded-xl bg-blue-100 text-blue-800 flex items-center justify-center shrink-0 border border-blue-200 shadow-2xs">
+                  <CalendarDays className="w-4 h-4" />
+                </div>
+                <div>
+                  <h3 className="text-sm font-bold text-slate-900 tracking-tight">
+                    3. 📅 Réservations
+                  </h3>
+                  <p className="text-[11px] text-slate-500">
+                    Calendrier d'occupation des propriétés et passages des associés
+                  </p>
+                </div>
               </div>
-              <div>
-                <span className="text-sm font-bold text-slate-900">
-                  ⚖️ Décision de vote finale
-                </span>
-                <p className="text-xs text-slate-600 mt-1">
-                  M'informer du résultat et de la résolution officielle dès que tous les associés ont voté.
-                </p>
-              </div>
+              <span className="text-[11px] font-semibold px-2.5 py-0.5 rounded-full bg-white text-blue-800 border border-blue-200 shrink-0">
+                Calendrier &amp; Séjours
+              </span>
             </div>
 
-            {/* Custom Toggle Switch */}
-            <div className="shrink-0 pt-1">
+            <div className="space-y-3">
+              {/* Item 1 : Nouveau séjour réservé */}
               <div
-                className={`w-12 h-6 flex items-center rounded-full p-1 duration-300 ease-in-out ${
-                  notifications.notify_final_decision ? 'bg-primary' : 'bg-slate-300'
+                id="toggle-notif-stay-booked"
+                onClick={() => handleToggleNotification('notif_stay_booked')}
+                className={`flex items-start justify-between gap-3.5 p-3.5 sm:p-4 rounded-xl border transition-all cursor-pointer select-none ${
+                  notifications.notif_stay_booked
+                    ? 'border-emerald-300/80 bg-white hover:bg-emerald-50/20 shadow-xs'
+                    : 'border-slate-200 bg-white/70 hover:bg-slate-100/60'
                 }`}
               >
-                <div
-                  className={`bg-white w-4 h-4 rounded-full shadow-md transform duration-300 ease-in-out ${
-                    notifications.notify_final_decision ? 'translate-x-6' : 'translate-x-0'
-                  }`}
-                />
+                <div className="flex items-start gap-3">
+                  <div className="w-8 h-8 rounded-xl bg-blue-100 text-blue-800 flex items-center justify-center shrink-0 mt-0.5 border border-blue-200 shadow-2xs">
+                    <CalendarDays className="w-4 h-4" />
+                  </div>
+                  <div>
+                    <span className="text-sm font-bold text-slate-900 block leading-snug">
+                      Nouveau séjour réservé
+                    </span>
+                    <p className="text-xs text-slate-600 mt-1 leading-relaxed">
+                      M'alerter dès qu'une réservation est ajoutée au calendrier au Presbytère ou à Rosings.
+                    </p>
+                  </div>
+                </div>
+                <div className="shrink-0 pt-1">
+                  <div className={`w-11 h-6 flex items-center rounded-full p-1 duration-300 ease-in-out ${notifications.notif_stay_booked ? 'bg-primary' : 'bg-slate-300'}`}>
+                    <div className={`bg-white w-4 h-4 rounded-full shadow-md transform duration-300 ease-in-out ${notifications.notif_stay_booked ? 'translate-x-5' : 'translate-x-0'}`} />
+                  </div>
+                </div>
+              </div>
+
+              {/* Item 2 : Confirmation de passage avec participants */}
+              <div
+                id="toggle-notif-stay-confirmation"
+                onClick={() => handleToggleNotification('notif_stay_confirmation')}
+                className={`flex items-start justify-between gap-3.5 p-3.5 sm:p-4 rounded-xl border transition-all cursor-pointer select-none ${
+                  notifications.notif_stay_confirmation
+                    ? 'border-emerald-300/80 bg-white hover:bg-emerald-50/20 shadow-xs'
+                    : 'border-slate-200 bg-white/70 hover:bg-slate-100/60'
+                }`}
+              >
+                <div className="flex items-start gap-3">
+                  <div className="w-8 h-8 rounded-xl bg-indigo-100 text-indigo-800 flex items-center justify-center shrink-0 mt-0.5 border border-indigo-200 shadow-2xs">
+                    <Users className="w-4 h-4" />
+                  </div>
+                  <div>
+                    <span className="text-sm font-bold text-slate-900 block leading-snug">
+                      Confirmation de passage avec participants
+                    </span>
+                    <p className="text-xs text-slate-600 mt-1 leading-relaxed">
+                      Recevoir un récapitulatif des dates et de la liste des participants déclarés lors d'un séjour confirmé.
+                    </p>
+                  </div>
+                </div>
+                <div className="shrink-0 pt-1">
+                  <div className={`w-11 h-6 flex items-center rounded-full p-1 duration-300 ease-in-out ${notifications.notif_stay_confirmation ? 'bg-primary' : 'bg-slate-300'}`}>
+                    <div className={`bg-white w-4 h-4 rounded-full shadow-md transform duration-300 ease-in-out ${notifications.notif_stay_confirmation ? 'translate-x-5' : 'translate-x-0'}`} />
+                  </div>
+                </div>
               </div>
             </div>
           </div>
 
-          {/* Toggle 4 : Nouveau séjour réservé */}
-          <div
-            onClick={() => handleToggleNotification('notify_new_stay')}
-            className="flex items-start justify-between gap-4 p-4 rounded-2xl border border-slate-200 hover:border-emerald-300 bg-slate-50/50 hover:bg-emerald-50/20 transition-all cursor-pointer select-none"
-          >
-            <div className="flex items-start gap-3.5">
-              <div className="w-9 h-9 rounded-xl bg-blue-100 text-blue-800 flex items-center justify-center shrink-0 mt-0.5 border border-blue-200">
-                <CalendarDays className="w-5 h-5 text-blue-800" />
+          {/* 4. 🏡 Séjour & Confort Thermique */}
+          <div className="bg-slate-50/70 rounded-2xl border border-slate-200/90 p-5 sm:p-6 space-y-4 hover:border-slate-300 transition-colors shadow-2xs">
+            <div className="flex items-center justify-between gap-3 border-b border-slate-200/70 pb-3">
+              <div className="flex items-center gap-2.5">
+                <div className="w-8 h-8 rounded-xl bg-amber-100 text-amber-800 flex items-center justify-center shrink-0 border border-amber-200 shadow-2xs">
+                  <Thermometer className="w-4 h-4" />
+                </div>
+                <div>
+                  <h3 className="text-sm font-bold text-slate-900 tracking-tight">
+                    4. 🏡 Séjour &amp; Confort Thermique
+                  </h3>
+                  <p className="text-[11px] text-slate-500">
+                    Rappels d'arrivée, automatisation du chauffage ViCare et gestion hors-gel
+                  </p>
+                </div>
               </div>
-              <div>
-                <span className="text-sm font-bold text-slate-900">
-                  📅 Nouveau séjour réservé
-                </span>
-                <p className="text-xs text-slate-600 mt-1">
-                  M'alerter dès qu'une réservation est ajoutée au calendrier au Presbytère ou à Rosings.
-                </p>
-              </div>
+              <span className="text-[11px] font-semibold px-2.5 py-0.5 rounded-full bg-white text-amber-800 border border-amber-200 shrink-0">
+                Énergie &amp; Confort
+              </span>
             </div>
 
-            {/* Custom Toggle Switch */}
-            <div className="shrink-0 pt-1">
+            <div className="space-y-3">
+              {/* Item 1 : Rappel de séjour avant arrivée (48h avant) */}
               <div
-                className={`w-12 h-6 flex items-center rounded-full p-1 duration-300 ease-in-out ${
-                  notifications.notify_new_stay ? 'bg-primary' : 'bg-slate-300'
+                id="toggle-notif-stay-reminder"
+                onClick={() => handleToggleNotification('notif_stay_reminder')}
+                className={`flex items-start justify-between gap-3.5 p-3.5 sm:p-4 rounded-xl border transition-all cursor-pointer select-none ${
+                  notifications.notif_stay_reminder
+                    ? 'border-emerald-300/80 bg-white hover:bg-emerald-50/20 shadow-xs'
+                    : 'border-slate-200 bg-white/70 hover:bg-slate-100/60'
                 }`}
               >
-                <div
-                  className={`bg-white w-4 h-4 rounded-full shadow-md transform duration-300 ease-in-out ${
-                    notifications.notify_new_stay ? 'translate-x-6' : 'translate-x-0'
-                  }`}
-                />
+                <div className="flex items-start gap-3">
+                  <div className="w-8 h-8 rounded-xl bg-amber-100 text-amber-800 flex items-center justify-center shrink-0 mt-0.5 border border-amber-200 shadow-2xs">
+                    <Clock className="w-4 h-4" />
+                  </div>
+                  <div>
+                    <span className="text-sm font-bold text-slate-900 block leading-snug">
+                      Rappel de séjour avant arrivée (48h avant)
+                    </span>
+                    <p className="text-xs text-slate-600 mt-1 leading-relaxed">
+                      Recevoir un rappel automatique 48h avant le début d'un séjour réservé pour anticiper l'arrivée et les besoins.
+                    </p>
+                  </div>
+                </div>
+                <div className="shrink-0 pt-1">
+                  <div className={`w-11 h-6 flex items-center rounded-full p-1 duration-300 ease-in-out ${notifications.notif_stay_reminder ? 'bg-primary' : 'bg-slate-300'}`}>
+                    <div className={`bg-white w-4 h-4 rounded-full shadow-md transform duration-300 ease-in-out ${notifications.notif_stay_reminder ? 'translate-x-5' : 'translate-x-0'}`} />
+                  </div>
+                </div>
               </div>
-            </div>
-          </div>
 
-          {/* Toggle : Mentions dans les discussions */}
-          <div
-            onClick={() => handleToggleNotification('notify_mentions')}
-            className="flex items-start justify-between gap-4 p-4 rounded-2xl border border-slate-200 hover:border-emerald-300 bg-slate-50/50 hover:bg-emerald-50/20 transition-all cursor-pointer select-none"
-          >
-            <div className="flex items-start gap-3.5">
-              <div className="w-9 h-9 rounded-xl bg-sky-100 text-sky-800 flex items-center justify-center shrink-0 mt-0.5 border border-sky-200">
-                <AtSign className="w-5 h-5 text-sky-800" />
-              </div>
-              <div>
-                <span className="text-sm font-bold text-slate-900">
-                  💬 Mentions dans les discussions
-                </span>
-                <p className="text-xs text-slate-600 mt-1">
-                  M'alerter par e-mail lorsqu'un membre me mentionne avec @ dans une discussion.
-                </p>
-              </div>
-            </div>
-
-            {/* Custom Toggle Switch */}
-            <div className="shrink-0 pt-1">
+              {/* Item 2 : Démarrage automatique du chauffage (24h avant l'arrivée) */}
               <div
-                className={`w-12 h-6 flex items-center rounded-full p-1 duration-300 ease-in-out ${
-                  notifications.notify_mentions ? 'bg-primary' : 'bg-slate-300'
+                id="toggle-notif-heating-start"
+                onClick={() => handleToggleNotification('notif_heating_start')}
+                className={`flex items-start justify-between gap-3.5 p-3.5 sm:p-4 rounded-xl border transition-all cursor-pointer select-none ${
+                  notifications.notif_heating_start
+                    ? 'border-emerald-300/80 bg-white hover:bg-emerald-50/20 shadow-xs'
+                    : 'border-slate-200 bg-white/70 hover:bg-slate-100/60'
                 }`}
               >
-                <div
-                  className={`bg-white w-4 h-4 rounded-full shadow-md transform duration-300 ease-in-out ${
-                    notifications.notify_mentions ? 'translate-x-6' : 'translate-x-0'
-                  }`}
-                />
+                <div className="flex items-start gap-3">
+                  <div className="w-8 h-8 rounded-xl bg-orange-100 text-orange-800 flex items-center justify-center shrink-0 mt-0.5 border border-orange-200 shadow-2xs">
+                    <Flame className="w-4 h-4" />
+                  </div>
+                  <div>
+                    <span className="text-sm font-bold text-slate-900 block leading-snug">
+                      Démarrage automatique du chauffage (24h avant l'arrivée)
+                    </span>
+                    <p className="text-xs text-slate-600 mt-1 leading-relaxed">
+                      Être notifié de l'enclenchement automatique du préchauffage 24h avant l'arrivée pour un confort thermique optimal.
+                    </p>
+                  </div>
+                </div>
+                <div className="shrink-0 pt-1">
+                  <div className={`w-11 h-6 flex items-center rounded-full p-1 duration-300 ease-in-out ${notifications.notif_heating_start ? 'bg-primary' : 'bg-slate-300'}`}>
+                    <div className={`bg-white w-4 h-4 rounded-full shadow-md transform duration-300 ease-in-out ${notifications.notif_heating_start ? 'translate-x-5' : 'translate-x-0'}`} />
+                  </div>
+                </div>
               </div>
-            </div>
-          </div>
 
-          {/* Toggle : Mention collective (@all) (Annotation 10) */}
-          <div
-            id="toggle-notify-mention-all"
-            onClick={() => handleToggleNotification('notify_mention_all')}
-            className="flex items-start justify-between gap-4 p-4 rounded-2xl border border-slate-200 hover:border-amber-300 bg-slate-50/50 hover:bg-amber-50/20 transition-all cursor-pointer select-none"
-          >
-            <div className="flex items-start gap-3.5">
-              <div className="w-9 h-9 rounded-xl bg-amber-100 text-amber-800 flex items-center justify-center shrink-0 mt-0.5 border border-amber-200">
-                <Megaphone className="w-5 h-5 text-amber-800" />
-              </div>
-              <div>
-                <span className="text-sm font-bold text-slate-900">
-                  📢 M'alerter lors d'une mention collective (@all)
-                </span>
-                <p className="text-xs text-slate-600 mt-1">
-                  Recevoir une notification et un e-mail prioritaire lorsqu'un message s'adresse à l'ensemble des associés (@all / @tous).
-                </p>
-              </div>
-            </div>
-
-            {/* Custom Toggle Switch */}
-            <div className="shrink-0 pt-1">
+              {/* Item 3 : Arrêt / passage hors-gel du chauffage au départ */}
               <div
-                className={`w-12 h-6 flex items-center rounded-full p-1 duration-300 ease-in-out ${
-                  notifications.notify_mention_all ? 'bg-primary' : 'bg-slate-300'
+                id="toggle-notif-heating-stop"
+                onClick={() => handleToggleNotification('notif_heating_stop')}
+                className={`flex items-start justify-between gap-3.5 p-3.5 sm:p-4 rounded-xl border transition-all cursor-pointer select-none ${
+                  notifications.notif_heating_stop
+                    ? 'border-emerald-300/80 bg-white hover:bg-emerald-50/20 shadow-xs'
+                    : 'border-slate-200 bg-white/70 hover:bg-slate-100/60'
                 }`}
               >
-                <div
-                  className={`bg-white w-4 h-4 rounded-full shadow-md transform duration-300 ease-in-out ${
-                    notifications.notify_mention_all ? 'translate-x-6' : 'translate-x-0'
-                  }`}
-                />
-              </div>
-            </div>
-          </div>
-
-          {/* Toggle 5 : Alertes thermiques & piscine */}
-          <div
-            onClick={() => handleToggleNotification('notif_thermal_changes')}
-            className="flex items-start justify-between gap-4 p-4 rounded-2xl border border-slate-200 hover:border-emerald-300 bg-slate-50/50 hover:bg-emerald-50/20 transition-all cursor-pointer select-none"
-          >
-            <div className="flex items-start gap-3.5">
-              <div className="w-9 h-9 rounded-xl bg-amber-100 text-amber-800 flex items-center justify-center shrink-0 mt-0.5 border border-amber-200">
-                <Thermometer className="w-5 h-5 text-amber-800" />
-              </div>
-              <div>
-                <span className="text-sm font-bold text-slate-900">
-                  🌡️ Alertes thermiques &amp; piscine
-                </span>
-                <p className="text-xs text-slate-600 mt-1">
-                  M'alerter en cas de modification des consignes de chauffage ou de filtration piscine.
-                </p>
-              </div>
-            </div>
-
-            {/* Custom Toggle Switch */}
-            <div className="shrink-0 pt-1">
-              <div
-                className={`w-12 h-6 flex items-center rounded-full p-1 duration-300 ease-in-out ${
-                  notifications.notif_thermal_changes ? 'bg-primary' : 'bg-slate-300'
-                }`}
-              >
-                <div
-                  className={`bg-white w-4 h-4 rounded-full shadow-md transform duration-300 ease-in-out ${
-                    notifications.notif_thermal_changes ? 'translate-x-6' : 'translate-x-0'
-                  }`}
-                />
-              </div>
-            </div>
-          </div>
-
-          {/* Toggle 6 : Notification de création de tâche (Annotation 16) */}
-          <div
-            id="toggle-notify-task-creation"
-            onClick={() => handleToggleNotification('notify_task_creation')}
-            className="flex items-start justify-between gap-4 p-4 rounded-2xl border border-slate-200 hover:border-emerald-300 bg-slate-50/50 hover:bg-emerald-50/20 transition-all cursor-pointer select-none"
-          >
-            <div className="flex items-start gap-3.5">
-              <div className="w-9 h-9 rounded-xl bg-teal-100 text-teal-800 flex items-center justify-center shrink-0 mt-0.5 border border-teal-200">
-                <Bell className="w-5 h-5 text-teal-800" />
-              </div>
-              <div>
-                <span className="text-sm font-bold text-slate-900">
-                  🔔 Notification de création de tâche
-                </span>
-                <p className="text-xs text-slate-600 mt-1">
-                  M'alerter par e-mail lorsqu'une nouvelle tâche est soumise en attente de création (réservé aux coordinateurs).
-                </p>
-              </div>
-            </div>
-
-            {/* Custom Toggle Switch */}
-            <div className="shrink-0 pt-1">
-              <div
-                className={`w-12 h-6 flex items-center rounded-full p-1 duration-300 ease-in-out ${
-                  notifications.notify_task_creation ? 'bg-primary' : 'bg-slate-300'
-                }`}
-              >
-                <div
-                  className={`bg-white w-4 h-4 rounded-full shadow-md transform duration-300 ease-in-out ${
-                    notifications.notify_task_creation ? 'translate-x-6' : 'translate-x-0'
-                  }`}
-                />
-              </div>
-            </div>
-          </div>
-
-          {/* Toggle 7 : Notification de proposition de vote (Annotation 3) */}
-          <div
-            id="toggle-notify-vote-creation"
-            onClick={() => handleToggleNotification('notify_vote_creation')}
-            className="flex items-start justify-between gap-4 p-4 rounded-2xl border border-slate-200 hover:border-emerald-300 bg-slate-50/50 hover:bg-emerald-50/20 transition-all cursor-pointer select-none"
-          >
-            <div className="flex items-start gap-3.5">
-              <div className="w-9 h-9 rounded-xl bg-purple-100 text-purple-800 flex items-center justify-center shrink-0 mt-0.5 border border-purple-200">
-                <Vote className="w-5 h-5 text-purple-800" />
-              </div>
-              <div>
-                <span className="text-sm font-bold text-slate-900">
-                  🗳️ Notification de proposition de vote
-                </span>
-                <p className="text-xs text-slate-600 mt-1">
-                  M'alerter par e-mail dès qu'un projet est soumis en attente d'ouverture de scrutin (réservé à la coordination).
-                </p>
-              </div>
-            </div>
-
-            {/* Custom Toggle Switch */}
-            <div className="shrink-0 pt-1">
-              <div
-                className={`w-12 h-6 flex items-center rounded-full p-1 duration-300 ease-in-out ${
-                  notifications.notify_vote_creation ? 'bg-primary' : 'bg-slate-300'
-                }`}
-              >
-                <div
-                  className={`bg-white w-4 h-4 rounded-full shadow-md transform duration-300 ease-in-out ${
-                    notifications.notify_vote_creation ? 'translate-x-6' : 'translate-x-0'
-                  }`}
-                />
-              </div>
-            </div>
-          </div>
-
-          {/* Toggle 8 : Notification d'arbitrage de scrutin (Annotation 8) */}
-          <div
-            id="toggle-notify-vote-arbitration"
-            onClick={() => handleToggleNotification('notify_vote_arbitration')}
-            className="flex items-start justify-between gap-4 p-4 rounded-2xl border border-slate-200 hover:border-emerald-300 bg-slate-50/50 hover:bg-emerald-50/20 transition-all cursor-pointer select-none"
-          >
-            <div className="flex items-start gap-3.5">
-              <div className="w-9 h-9 rounded-xl bg-amber-100 text-amber-800 flex items-center justify-center shrink-0 mt-0.5 border border-amber-200">
-                <Scale className="w-5 h-5 text-amber-800" />
-              </div>
-              <div>
-                <span className="text-sm font-bold text-slate-900">
-                  ⚖️ Notification d'arbitrage de scrutin
-                </span>
-                <p className="text-xs text-slate-600 mt-1">
-                  M'alerter lorsqu'un scrutin atteint le quorum ou nécessite un arbitrage final (validation du résultat ou report en AG).
-                </p>
-              </div>
-            </div>
-
-            {/* Custom Toggle Switch */}
-            <div className="shrink-0 pt-1">
-              <div
-                className={`w-12 h-6 flex items-center rounded-full p-1 duration-300 ease-in-out ${
-                  notifications.notify_vote_arbitration ? 'bg-primary' : 'bg-slate-300'
-                }`}
-              >
-                <div
-                  className={`bg-white w-4 h-4 rounded-full shadow-md transform duration-300 ease-in-out ${
-                    notifications.notify_vote_arbitration ? 'translate-x-6' : 'translate-x-0'
-                  }`}
-                />
+                <div className="flex items-start gap-3">
+                  <div className="w-8 h-8 rounded-xl bg-blue-100 text-blue-800 flex items-center justify-center shrink-0 mt-0.5 border border-blue-200 shadow-2xs">
+                    <Power className="w-4 h-4" />
+                  </div>
+                  <div>
+                    <span className="text-sm font-bold text-slate-900 block leading-snug">
+                      Arrêt / passage hors-gel du chauffage au départ
+                    </span>
+                    <p className="text-xs text-slate-600 mt-1 leading-relaxed">
+                      Être informé de la mise hors-gel automatique et de l'arrêt des circuits de chauffage à la fin du séjour.
+                    </p>
+                  </div>
+                </div>
+                <div className="shrink-0 pt-1">
+                  <div className={`w-11 h-6 flex items-center rounded-full p-1 duration-300 ease-in-out ${notifications.notif_heating_stop ? 'bg-primary' : 'bg-slate-300'}`}>
+                    <div className={`bg-white w-4 h-4 rounded-full shadow-md transform duration-300 ease-in-out ${notifications.notif_heating_stop ? 'translate-x-5' : 'translate-x-0'}`} />
+                  </div>
+                </div>
               </div>
             </div>
           </div>

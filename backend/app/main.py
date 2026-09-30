@@ -507,6 +507,9 @@ def run_task_migrations():
                         conn.execute(text("ALTER TABLE tasks ADD COLUMN last_completed_at DATETIME"))
                     if "external_links" not in t_columns:
                         conn.execute(text("ALTER TABLE tasks ADD COLUMN external_links TEXT"))
+                    if "charge_points" not in t_columns:
+                        conn.execute(text("ALTER TABLE tasks ADD COLUMN charge_points INTEGER DEFAULT 3"))
+                        conn.execute(text("UPDATE tasks SET charge_points = 3 WHERE charge_points IS NULL"))
                     conn.commit()
             else:
                 conn.execute(text("ALTER TABLE stay_task_assignments ADD COLUMN IF NOT EXISTS status VARCHAR DEFAULT 'A_FAIRE';"))
@@ -515,6 +518,8 @@ def run_task_migrations():
                 conn.execute(text("ALTER TABLE tasks ADD COLUMN IF NOT EXISTS is_recurring BOOLEAN DEFAULT FALSE;"))
                 conn.execute(text("ALTER TABLE tasks ADD COLUMN IF NOT EXISTS last_completed_at TIMESTAMP;"))
                 conn.execute(text("ALTER TABLE tasks ADD COLUMN IF NOT EXISTS external_links TEXT;"))
+                conn.execute(text("ALTER TABLE tasks ADD COLUMN IF NOT EXISTS charge_points INTEGER DEFAULT 3;"))
+                conn.execute(text("UPDATE tasks SET charge_points = 3 WHERE charge_points IS NULL;"))
                 conn.commit()
     except Exception as e:
         logger.warning(f"Notice: run_task_migrations: {e}")
@@ -561,8 +566,23 @@ def run_member_migrations():
                         conn.execute(text("ALTER TABLE members ADD COLUMN is_coordinator BOOLEAN DEFAULT 0"))
                     if "notify_task_creation" not in column_names:
                         conn.execute(text("ALTER TABLE members ADD COLUMN notify_task_creation BOOLEAN DEFAULT 0"))
+                    if "notif_task_completed" not in column_names:
+                        conn.execute(text("ALTER TABLE members ADD COLUMN notif_task_completed BOOLEAN DEFAULT 1"))
+                    if "notif_stay_confirmation" not in column_names:
+                        conn.execute(text("ALTER TABLE members ADD COLUMN notif_stay_confirmation BOOLEAN DEFAULT 1"))
+                    if "notif_stay_reminder" not in column_names:
+                        conn.execute(text("ALTER TABLE members ADD COLUMN notif_stay_reminder BOOLEAN DEFAULT 1"))
+                    if "notif_heating_start" not in column_names:
+                        conn.execute(text("ALTER TABLE members ADD COLUMN notif_heating_start BOOLEAN DEFAULT 1"))
+                    if "notif_heating_stop" not in column_names:
+                        conn.execute(text("ALTER TABLE members ADD COLUMN notif_heating_stop BOOLEAN DEFAULT 1"))
                     conn.execute(text("UPDATE members SET notify_mentions = 1 WHERE notify_mentions IS NULL"))
                     conn.execute(text("UPDATE members SET notify_task_creation = 0 WHERE notify_task_creation IS NULL"))
+                    conn.execute(text("UPDATE members SET notif_task_completed = 1 WHERE notif_task_completed IS NULL"))
+                    conn.execute(text("UPDATE members SET notif_stay_confirmation = 1 WHERE notif_stay_confirmation IS NULL"))
+                    conn.execute(text("UPDATE members SET notif_stay_reminder = 1 WHERE notif_stay_reminder IS NULL"))
+                    conn.execute(text("UPDATE members SET notif_heating_start = 1 WHERE notif_heating_start IS NULL"))
+                    conn.execute(text("UPDATE members SET notif_heating_stop = 1 WHERE notif_heating_stop IS NULL"))
                     # Migration automatique : Henri Jamet et Joséphine Jamet = is_coordinator True, les autres False
                     conn.execute(text("""
                         UPDATE members 
@@ -587,8 +607,18 @@ def run_member_migrations():
                 conn.execute(text("ALTER TABLE members ADD COLUMN IF NOT EXISTS notify_mentions BOOLEAN DEFAULT TRUE;"))
                 conn.execute(text("ALTER TABLE members ADD COLUMN IF NOT EXISTS is_coordinator BOOLEAN DEFAULT FALSE;"))
                 conn.execute(text("ALTER TABLE members ADD COLUMN IF NOT EXISTS notify_task_creation BOOLEAN DEFAULT FALSE;"))
+                conn.execute(text("ALTER TABLE members ADD COLUMN IF NOT EXISTS notif_task_completed BOOLEAN DEFAULT TRUE;"))
+                conn.execute(text("ALTER TABLE members ADD COLUMN IF NOT EXISTS notif_stay_confirmation BOOLEAN DEFAULT TRUE;"))
+                conn.execute(text("ALTER TABLE members ADD COLUMN IF NOT EXISTS notif_stay_reminder BOOLEAN DEFAULT TRUE;"))
+                conn.execute(text("ALTER TABLE members ADD COLUMN IF NOT EXISTS notif_heating_start BOOLEAN DEFAULT TRUE;"))
+                conn.execute(text("ALTER TABLE members ADD COLUMN IF NOT EXISTS notif_heating_stop BOOLEAN DEFAULT TRUE;"))
                 conn.execute(text("UPDATE members SET notify_mentions = TRUE WHERE notify_mentions IS NULL;"))
                 conn.execute(text("UPDATE members SET notify_task_creation = FALSE WHERE notify_task_creation IS NULL;"))
+                conn.execute(text("UPDATE members SET notif_task_completed = TRUE WHERE notif_task_completed IS NULL;"))
+                conn.execute(text("UPDATE members SET notif_stay_confirmation = TRUE WHERE notif_stay_confirmation IS NULL;"))
+                conn.execute(text("UPDATE members SET notif_stay_reminder = TRUE WHERE notif_stay_reminder IS NULL;"))
+                conn.execute(text("UPDATE members SET notif_heating_start = TRUE WHERE notif_heating_start IS NULL;"))
+                conn.execute(text("UPDATE members SET notif_heating_stop = TRUE WHERE notif_heating_stop IS NULL;"))
                 conn.execute(text("""
                     UPDATE members 
                     SET is_coordinator = TRUE 
@@ -1152,9 +1182,15 @@ def get_auth_profile(current_user: User = Depends(get_current_user)):
         "name": current_user.name,
         "email": current_user.email,
         "notif_task_assigned": getattr(current_user, "notif_task_assigned", True),
+        "notif_task_completed": getattr(current_user, "notif_task_completed", True),
         "notif_vote_needed": getattr(current_user, "notif_vote_needed", True),
+        "notif_vote_required": getattr(current_user, "notif_vote_needed", True),
         "notif_vote_closed": getattr(current_user, "notif_vote_closed", True),
         "notif_stay_booked": getattr(current_user, "notif_stay_booked", True),
+        "notif_stay_confirmation": getattr(current_user, "notif_stay_confirmation", True),
+        "notif_stay_reminder": getattr(current_user, "notif_stay_reminder", True),
+        "notif_heating_start": getattr(current_user, "notif_heating_start", True),
+        "notif_heating_stop": getattr(current_user, "notif_heating_stop", True),
         "notif_thermal_changes": getattr(current_user, "notif_thermal_changes", False),
         "notify_mentions": getattr(current_user, "notify_mentions", True),
         "notify_new_task": getattr(current_user, "notif_task_assigned", True),
@@ -1195,8 +1231,13 @@ def update_auth_profile(
     elif data.notify_new_task is not None:
         current_user.notif_task_assigned = data.notify_new_task
 
+    if data.notif_task_completed is not None:
+        current_user.notif_task_completed = data.notif_task_completed
+
     if data.notif_vote_needed is not None:
         current_user.notif_vote_needed = data.notif_vote_needed
+    elif data.notif_vote_required is not None:
+        current_user.notif_vote_needed = data.notif_vote_required
     elif data.notify_pending_vote is not None:
         current_user.notif_vote_needed = data.notify_pending_vote
 
@@ -1209,6 +1250,18 @@ def update_auth_profile(
         current_user.notif_stay_booked = data.notif_stay_booked
     elif data.notify_new_stay is not None:
         current_user.notif_stay_booked = data.notify_new_stay
+
+    if data.notif_stay_confirmation is not None:
+        current_user.notif_stay_confirmation = data.notif_stay_confirmation
+
+    if data.notif_stay_reminder is not None:
+        current_user.notif_stay_reminder = data.notif_stay_reminder
+
+    if data.notif_heating_start is not None:
+        current_user.notif_heating_start = data.notif_heating_start
+
+    if data.notif_heating_stop is not None:
+        current_user.notif_heating_stop = data.notif_heating_stop
 
     if data.notif_thermal_changes is not None:
         current_user.notif_thermal_changes = data.notif_thermal_changes
@@ -1240,9 +1293,15 @@ def update_auth_profile(
         "name": current_user.name,
         "email": current_user.email,
         "notif_task_assigned": getattr(current_user, "notif_task_assigned", True),
+        "notif_task_completed": getattr(current_user, "notif_task_completed", True),
         "notif_vote_needed": getattr(current_user, "notif_vote_needed", True),
+        "notif_vote_required": getattr(current_user, "notif_vote_needed", True),
         "notif_vote_closed": getattr(current_user, "notif_vote_closed", True),
         "notif_stay_booked": getattr(current_user, "notif_stay_booked", True),
+        "notif_stay_confirmation": getattr(current_user, "notif_stay_confirmation", True),
+        "notif_stay_reminder": getattr(current_user, "notif_stay_reminder", True),
+        "notif_heating_start": getattr(current_user, "notif_heating_start", True),
+        "notif_heating_stop": getattr(current_user, "notif_heating_stop", True),
         "notif_thermal_changes": getattr(current_user, "notif_thermal_changes", False),
         "notify_mentions": getattr(current_user, "notify_mentions", True),
         "notify_new_task": getattr(current_user, "notif_task_assigned", True),
@@ -1325,9 +1384,15 @@ def get_member_settings(
         "name": member.name,
         "email": member.email,
         "notif_task_assigned": getattr(member, "notif_task_assigned", True),
+        "notif_task_completed": getattr(member, "notif_task_completed", True),
         "notif_vote_needed": getattr(member, "notif_vote_needed", True),
+        "notif_vote_required": getattr(member, "notif_vote_needed", True),
         "notif_vote_closed": getattr(member, "notif_vote_closed", True),
         "notif_stay_booked": getattr(member, "notif_stay_booked", True),
+        "notif_stay_confirmation": getattr(member, "notif_stay_confirmation", True),
+        "notif_stay_reminder": getattr(member, "notif_stay_reminder", True),
+        "notif_heating_start": getattr(member, "notif_heating_start", True),
+        "notif_heating_stop": getattr(member, "notif_heating_stop", True),
         "notif_thermal_changes": getattr(member, "notif_thermal_changes", False),
         "notify_mentions": getattr(member, "notify_mentions", True),
         "notify_new_task": getattr(member, "notif_task_assigned", True),
@@ -1387,8 +1452,13 @@ def update_member_settings(
     elif data.notify_new_task is not None:
         member.notif_task_assigned = data.notify_new_task
 
+    if data.notif_task_completed is not None:
+        member.notif_task_completed = data.notif_task_completed
+
     if data.notif_vote_needed is not None:
         member.notif_vote_needed = data.notif_vote_needed
+    elif data.notif_vote_required is not None:
+        member.notif_vote_needed = data.notif_vote_required
     elif data.notify_pending_vote is not None:
         member.notif_vote_needed = data.notify_pending_vote
 
@@ -1401,6 +1471,18 @@ def update_member_settings(
         member.notif_stay_booked = data.notif_stay_booked
     elif data.notify_new_stay is not None:
         member.notif_stay_booked = data.notify_new_stay
+
+    if data.notif_stay_confirmation is not None:
+        member.notif_stay_confirmation = data.notif_stay_confirmation
+
+    if data.notif_stay_reminder is not None:
+        member.notif_stay_reminder = data.notif_stay_reminder
+
+    if data.notif_heating_start is not None:
+        member.notif_heating_start = data.notif_heating_start
+
+    if data.notif_heating_stop is not None:
+        member.notif_heating_stop = data.notif_heating_stop
 
     if data.notif_thermal_changes is not None:
         member.notif_thermal_changes = data.notif_thermal_changes
@@ -1428,6 +1510,8 @@ def update_member_settings(
         if ms:
             if data.notify_task_creation is not None:
                 ms.notify_task_creation = data.notify_task_creation
+            if data.notif_task_completed is not None:
+                ms.notif_task_completed = data.notif_task_completed
             if data.notify_vote_creation is not None:
                 ms.notify_vote_creation = data.notify_vote_creation
             if data.notify_vote_arbitration is not None:
@@ -1436,6 +1520,14 @@ def update_member_settings(
                 ms.notify_mention_all = data.notify_mention_all
             if data.notify_mentions is not None:
                 ms.notify_mentions = data.notify_mentions
+            if data.notif_stay_confirmation is not None:
+                ms.notif_stay_confirmation = data.notif_stay_confirmation
+            if data.notif_stay_reminder is not None:
+                ms.notif_stay_reminder = data.notif_stay_reminder
+            if data.notif_heating_start is not None:
+                ms.notif_heating_start = data.notif_heating_start
+            if data.notif_heating_stop is not None:
+                ms.notif_heating_stop = data.notif_heating_stop
     except Exception:
         pass
 
@@ -1448,9 +1540,15 @@ def update_member_settings(
         "name": member.name,
         "email": member.email,
         "notif_task_assigned": getattr(member, "notif_task_assigned", True),
+        "notif_task_completed": getattr(member, "notif_task_completed", True),
         "notif_vote_needed": getattr(member, "notif_vote_needed", True),
+        "notif_vote_required": getattr(member, "notif_vote_needed", True),
         "notif_vote_closed": getattr(member, "notif_vote_closed", True),
         "notif_stay_booked": getattr(member, "notif_stay_booked", True),
+        "notif_stay_confirmation": getattr(member, "notif_stay_confirmation", True),
+        "notif_stay_reminder": getattr(member, "notif_stay_reminder", True),
+        "notif_heating_start": getattr(member, "notif_heating_start", True),
+        "notif_heating_stop": getattr(member, "notif_heating_stop", True),
         "notif_thermal_changes": getattr(member, "notif_thermal_changes", False),
         "notify_mentions": getattr(member, "notify_mentions", True),
         "notify_task_creation": getattr(member, "notify_task_creation", False),

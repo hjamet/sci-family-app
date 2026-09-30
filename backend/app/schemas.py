@@ -90,9 +90,15 @@ class MemberSettingsResponse(BaseModel):
     name: str
     email: Optional[str] = None
     notif_task_assigned: bool = True
+    notif_task_completed: bool = True
     notif_vote_needed: bool = True
+    notif_vote_required: bool = True
     notif_vote_closed: bool = True
     notif_stay_booked: bool = True
+    notif_stay_confirmation: bool = True
+    notif_stay_reminder: bool = True
+    notif_heating_start: bool = True
+    notif_heating_stop: bool = True
     notif_thermal_changes: bool = False
     notify_mentions: bool = True
     notify_task_creation: bool = False
@@ -107,9 +113,15 @@ class MemberSettingsResponse(BaseModel):
 class MemberSettingsUpdate(BaseModel):
     email: Optional[str] = None
     notif_task_assigned: Optional[bool] = None
+    notif_task_completed: Optional[bool] = None
     notif_vote_needed: Optional[bool] = None
+    notif_vote_required: Optional[bool] = None
     notif_vote_closed: Optional[bool] = None
     notif_stay_booked: Optional[bool] = None
+    notif_stay_confirmation: Optional[bool] = None
+    notif_stay_reminder: Optional[bool] = None
+    notif_heating_start: Optional[bool] = None
+    notif_heating_stop: Optional[bool] = None
     notif_thermal_changes: Optional[bool] = None
     notify_mentions: Optional[bool] = None
     notify_task_creation: Optional[bool] = None
@@ -1102,9 +1114,15 @@ class ProfileUpdateRequest(BaseModel):
     email: Optional[str] = None
     name: Optional[str] = None
     notif_task_assigned: Optional[bool] = None
+    notif_task_completed: Optional[bool] = None
     notif_vote_needed: Optional[bool] = None
+    notif_vote_required: Optional[bool] = None
     notif_vote_closed: Optional[bool] = None
     notif_stay_booked: Optional[bool] = None
+    notif_stay_confirmation: Optional[bool] = None
+    notif_stay_reminder: Optional[bool] = None
+    notif_heating_start: Optional[bool] = None
+    notif_heating_stop: Optional[bool] = None
     notif_thermal_changes: Optional[bool] = None
     notify_new_task: Optional[bool] = None
     notify_pending_vote: Optional[bool] = None
@@ -1132,9 +1150,15 @@ class MemberSettingsResponse(BaseModel):
     name: Optional[str] = None
     email: Optional[str] = None
     notif_task_assigned: bool = True
+    notif_task_completed: bool = True
     notif_vote_needed: bool = True
+    notif_vote_required: bool = True
     notif_vote_closed: bool = True
     notif_stay_booked: bool = True
+    notif_stay_confirmation: bool = True
+    notif_stay_reminder: bool = True
+    notif_heating_start: bool = True
+    notif_heating_stop: bool = True
     notif_thermal_changes: bool = False
     notify_mentions: bool = True
     notify_task_creation: bool = False
@@ -1156,9 +1180,15 @@ class MemberSettingsResponse(BaseModel):
 class MemberSettingsUpdate(BaseModel):
     email: Optional[str] = None
     notif_task_assigned: Optional[bool] = None
+    notif_task_completed: Optional[bool] = None
     notif_vote_needed: Optional[bool] = None
+    notif_vote_required: Optional[bool] = None
     notif_vote_closed: Optional[bool] = None
     notif_stay_booked: Optional[bool] = None
+    notif_stay_confirmation: Optional[bool] = None
+    notif_stay_reminder: Optional[bool] = None
+    notif_heating_start: Optional[bool] = None
+    notif_heating_stop: Optional[bool] = None
     notif_thermal_changes: Optional[bool] = None
     notify_mentions: Optional[bool] = None
     notify_task_creation: Optional[bool] = None

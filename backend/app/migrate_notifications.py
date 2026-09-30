@@ -149,6 +149,16 @@ def migrate_sqlite_db(db_path: str = None):
                     )
                 """)
 
+            # 6. Migrate tasks table (charge_points) (Annotation 1)
+            cursor.execute("SELECT name FROM sqlite_master WHERE type='table' AND name='tasks'")
+            if cursor.fetchone():
+                cursor.execute("PRAGMA table_info(tasks)")
+                task_cols = {row[1] for row in cursor.fetchall()}
+                if "charge_points" not in task_cols:
+                    logger.info(f"[MIGRATION SQLite] Adding column charge_points to tasks in {target}.")
+                    cursor.execute("ALTER TABLE tasks ADD COLUMN charge_points INTEGER DEFAULT 3")
+                    cursor.execute("UPDATE tasks SET charge_points = 3 WHERE charge_points IS NULL")
+
             conn.commit()
             logger.info(f"[MIGRATION SQLite] Completed successfully on {target}.")
         except Exception as e:
@@ -245,6 +255,17 @@ def migrate_engine(engine):
                 except Exception:
                     pass
 
+                # tasks.charge_points in SQLite (Annotation 1)
+                try:
+                    t_res = conn.execute(text("PRAGMA table_info(tasks)")).fetchall()
+                    if t_res:
+                        t_cols = {row[1] for row in t_res}
+                        if "charge_points" not in t_cols:
+                            conn.execute(text("ALTER TABLE tasks ADD COLUMN charge_points INTEGER DEFAULT 3;"))
+                            conn.execute(text("UPDATE tasks SET charge_points = 3 WHERE charge_points IS NULL;"))
+                except Exception as t_err:
+                    logger.debug(f"[MIGRATION NOTICE] tasks.charge_points notice: {t_err}")
+
                 conn.commit()
             else:
                 # PostgreSQL (Supabase)
@@ -325,6 +346,13 @@ def migrate_engine(engine):
                     conn.execute(text("ALTER TABLE admin_documents ADD COLUMN IF NOT EXISTS drive_file_id VARCHAR(255);"))
                 except Exception as doc_mig_err:
                     logger.warning(f"[MIGRATION NOTICE] admin_documents drive_file_id notice: {doc_mig_err}")
+
+                # tasks.charge_points in Postgres (Annotation 1)
+                try:
+                    conn.execute(text("ALTER TABLE tasks ADD COLUMN IF NOT EXISTS charge_points INTEGER DEFAULT 3;"))
+                    conn.execute(text("UPDATE tasks SET charge_points = 3 WHERE charge_points IS NULL;"))
+                except Exception as task_mig_err:
+                    logger.warning(f"[MIGRATION NOTICE] tasks charge_points notice: {task_mig_err}")
 
                 # Refresh users view if exists
                 try:

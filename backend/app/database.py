@@ -60,10 +60,45 @@ else:
 SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
 Base = declarative_base()
 
+def init_db(target_engine=None):
+    """
+    Migration automatique et sécurisée du schéma de base de données.
+    Vérifie et applique les migrations structurelles indispensables (ex: charge_points sur tasks).
+    Garantit l'absence d'erreur 500 sur les endpoints /api/tasks et /api/workload/summary.
+    """
+    eng = target_engine or engine
+    from sqlalchemy import text
+    try:
+        with eng.connect() as conn:
+            if eng.dialect.name == "sqlite":
+                check_table = conn.execute(text("SELECT name FROM sqlite_master WHERE type='table' AND name='tasks'")).fetchone()
+                if check_table:
+                    cursor = conn.execute(text("PRAGMA table_info(tasks)"))
+                    existing_cols = {row[1] for row in cursor.fetchall()}
+                    if "charge_points" not in existing_cols:
+                        conn.execute(text("ALTER TABLE tasks ADD COLUMN charge_points INTEGER DEFAULT 3;"))
+                        conn.execute(text("UPDATE tasks SET charge_points = 3 WHERE charge_points IS NULL;"))
+                        conn.commit()
+            else:
+                # PostgreSQL (Supabase)
+                conn.execute(text("ALTER TABLE tasks ADD COLUMN IF NOT EXISTS charge_points INTEGER DEFAULT 3;"))
+                conn.execute(text("UPDATE tasks SET charge_points = 3 WHERE charge_points IS NULL;"))
+                conn.commit()
+    except Exception as exc:
+        import logging
+        logging.getLogger("sci_api").warning(f"Notice auto-migration database.py (charge_points): {exc}")
+
+# Auto-migration au chargement du module
+try:
+    init_db(engine)
+except Exception:
+    pass
+
 def get_db():
     db = SessionLocal()
     try:
         yield db
     finally:
         db.close()
+
 

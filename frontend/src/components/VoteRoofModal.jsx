@@ -12,6 +12,7 @@ import {
   createProject,
   updateProject,
   deleteProject,
+  fetchProjectComments,
   addProjectComment,
   attachDocumentsToProject,
   rejectAndReopenProject,
@@ -262,9 +263,33 @@ function VoteRoofModalInner({
 
   // État local réactif du projet pour mise à jour instantanée sans F5
   const [localProject, setLocalProject] = useState(project || {});
+  const activeProject = localProject || {};
 
-  // Mode Édition du vote (initialisé à true si nouveau projet ou initialEditing)
-  const [isEditing, setIsEditing] = useState(() => Boolean(initialEditing || project?.isNew || !project?.id));
+  const projectStatusUpper = String(activeProject?.status || project?.status || '').toUpperCase();
+  const isProposed = [
+    'PROPOSED',
+    'PENDING_CREATION',
+    'EN_ATTENTE_CREATION',
+    'SOUMIS',
+    'SOUMISE',
+    'PROPOSE',
+    'PROPOSEE'
+  ].includes(projectStatusUpper);
+  const isPendingValidation = [
+    'PENDING_VALIDATION',
+    'EN_ATTENTE_VALIDATION',
+    'PENDING_ARCHIVE',
+    'EN_ATTENTE_ARCHIVAGE',
+    'REPORT_AG',
+    'A_ARBITRER',
+    'ARBITRAGE'
+  ].includes(projectStatusUpper);
+  const isProjectArchived = ['ARCHIVE', 'ARCHIVEE', 'ARCHIVED', 'CLOSED', 'ANNULE', 'ANNULEE'].includes(projectStatusUpper) || Boolean(activeProject.is_archived) || Boolean(project?.is_archived);
+  const isProjectOpen = projectStatusUpper === 'OPEN' || projectStatusUpper === 'EN_VOTE';
+  const isVotingLocked = isProjectArchived || isProposed;
+
+  // Mode Édition du vote (initialisé à true si nouveau projet ou initialEditing, interdit si archivé - Annotation 6)
+  const [isEditing, setIsEditing] = useState(() => Boolean((initialEditing || project?.isNew || !project?.id) && !isProjectArchived));
 
   // Refs de verrouillage optimiste pour éliminer tout rollback transitoire (Annotation 3)
   const isSubmittingVoteRef = useRef(false);
@@ -290,42 +315,18 @@ function VoteRoofModalInner({
       } else {
         setLocalProject(project);
       }
-      if (project.isNew || !project.id || initialEditing) {
+      if ((project.isNew || !project.id || initialEditing) && !isProjectArchived) {
         setIsEditing(true);
       }
     }
-  }, [project, initialEditing, currentUserName]);
+  }, [project, initialEditing, currentUserName, isProjectArchived]);
 
   // Propriétés du projet
-  const activeProject = localProject || {};
   const projectTitle = activeProject.title || (isNewProject ? '' : 'Consultation & Scrutin des Associés');
   const projectDescription = activeProject.description || (isNewProject ? '' : "Aucune description détaillée n'a été renseignée pour ce projet.");
   const projectRef = activeProject.ref || (activeProject.id ? `VOTE-2026-${String(activeProject.id).padStart(2, '0')}` : 'NOUVEAU VOTE');
   const projectReporter = activeProject.submitted_by || activeProject.reporter?.name || (typeof activeProject.reporter === 'string' ? activeProject.reporter : currentUserName);
   const projectSubject = activeProject.category || activeProject.subject || 'Presbytère';
-
-  const projectStatusUpper = String(activeProject?.status || '').toUpperCase();
-  const isProposed = [
-    'PROPOSED',
-    'PENDING_CREATION',
-    'EN_ATTENTE_CREATION',
-    'SOUMIS',
-    'SOUMISE',
-    'PROPOSE',
-    'PROPOSEE'
-  ].includes(projectStatusUpper);
-  const isPendingValidation = [
-    'PENDING_VALIDATION',
-    'EN_ATTENTE_VALIDATION',
-    'PENDING_ARCHIVE',
-    'EN_ATTENTE_ARCHIVAGE',
-    'REPORT_AG',
-    'A_ARBITRER',
-    'ARBITRAGE'
-  ].includes(projectStatusUpper);
-  const isProjectArchived = ['ARCHIVE', 'ARCHIVEE', 'ARCHIVED', 'CLOSED', 'ANNULE', 'ANNULEE'].includes(projectStatusUpper);
-  const isProjectOpen = projectStatusUpper === 'OPEN' || projectStatusUpper === 'EN_VOTE';
-  const isVotingLocked = isProjectArchived || isProposed;
 
   // Badge de statut harmonisé et sobre
   const formatBadgeStatus = (status) => {
@@ -579,6 +580,27 @@ function VoteRoofModalInner({
     return [];
   });
 
+  const loadProjectComments = async () => {
+    try {
+      if (activeProject && activeProject.id) {
+        const commentsData = await fetchProjectComments(activeProject.id);
+        if (Array.isArray(commentsData)) {
+          setMessages(commentsData.map((c, idx) => ({
+            id: c.id || idx + 1,
+            author: c.author_name || c.author || 'Associé',
+            initials: (c.author_name || c.author || 'A').split(' ').map(w => w[0]).join('').slice(0, 2).toUpperCase(),
+            isGerance: (c.author_name || '').toLowerCase().includes('henri'),
+            date: c.created_at ? new Date(c.created_at).toLocaleDateString('fr-FR') : '',
+            content: c.content || '',
+            reactions: c.reactions || []
+          })));
+        }
+      }
+    } catch (err) {
+      console.error("Error fetching project comments in VoteRoofModal:", err);
+    }
+  };
+
   useEffect(() => {
     if (Array.isArray(activeProject.comments)) {
       setMessages(activeProject.comments.map((c, idx) => ({
@@ -592,6 +614,14 @@ function VoteRoofModalInner({
       })));
     }
   }, [activeProject.comments]);
+
+  useEffect(() => {
+    if (activeProject && activeProject.id) {
+      loadProjectComments();
+      const interval = setInterval(loadProjectComments, 4000);
+      return () => clearInterval(interval);
+    }
+  }, [activeProject?.id]);
 
   // Toast de notification
   const [toastMessage, setToastMessage] = useState(null);
@@ -762,6 +792,7 @@ function VoteRoofModalInner({
     const assocName = currentAssociate?.name || currentUserName || 'Henri Jamet';
 
     const votePayload = Array.isArray(voteChoice) ? JSON.stringify(voteChoice) : String(voteChoice);
+    const isReportAg = voteChoice === 'REPORT_AG' || votePayload === 'REPORT_AG' || voteChoice === 'REPORT_PROCHAINE_AG' || votePayload === 'REPORT_PROCHAINE_AG' || (Array.isArray(voteChoice) && voteChoice.some(c => String(c).toUpperCase() === 'REPORT_AG' || String(c).toUpperCase() === 'REPORT_PROCHAINE_AG'));
 
     // Verrouillage optimiste anti-rollback transitoire
     isSubmittingVoteRef.current = true;
@@ -804,11 +835,13 @@ function VoteRoofModalInner({
 
     const optimisticProject = {
       ...activeProject,
-      votes: existingVotes
+      status: isReportAg ? 'REPORT_AG' : activeProject.status,
+      votes: existingVotes,
+      ...(isReportAg ? { add_to_ag_agenda: true } : {})
     };
     setLocalProject(optimisticProject);
 
-    // Propagation synchrone immédiate au parent AVANT le await (Annotation 3)
+    // Propagation synchrone immédiate au parent AVANT le await (Annotations 3 & 4)
     if (typeof onVoteSubmit === 'function') {
       try {
         onVoteSubmit(optimisticProject);
@@ -822,7 +855,8 @@ function VoteRoofModalInner({
       CONTRE: 'Refusé',
       ABSTENTION: 'Abstention',
       BLANC: 'Vote blanc',
-      REPORT_AG: 'Report en AG demandé'
+      REPORT_AG: 'Report en AG demandé',
+      REPORT_PROCHAINE_AG: 'Report en AG demandé'
     };
 
     if (Array.isArray(voteChoice)) {
@@ -843,11 +877,12 @@ function VoteRoofModalInner({
           user_id: assocId
         });
         if (res && typeof res === 'object') {
-          serverUpdatedProject = res;
-          setLocalProject(res);
+          const finalUpdated = isReportAg ? { ...res, status: 'REPORT_AG', add_to_ag_agenda: true } : res;
+          serverUpdatedProject = finalUpdated;
+          setLocalProject(finalUpdated);
           // Propagation au parent avec le résultat serveur
           if (typeof onVoteSubmit === 'function') {
-            onVoteSubmit(res);
+            onVoteSubmit(finalUpdated);
           }
         }
       } catch (err) {
@@ -1196,15 +1231,17 @@ function VoteRoofModalInner({
             {/* Boutons Éditer et Supprimer pour coordinateurs / créateur du vote (scrutin existant uniquement) */}
             {!isNewProject && canEditOrDelete && !isEditing && (
               <div className="flex items-center gap-1.5 mr-2">
-                <button
-                  type="button"
-                  onClick={() => setIsEditing(true)}
-                  className="inline-flex items-center gap-1 px-2.5 py-1.5 rounded-lg bg-white border border-slate-300 text-slate-700 hover:bg-slate-50 text-xs font-semibold shadow-xs transition-colors cursor-pointer"
-                  title="Modifier le titre, la description ou les options de ce vote"
-                >
-                  <span className="material-symbols-outlined text-[15px]">edit</span>
-                  <span>Modifier</span>
-                </button>
+                {!isProjectArchived && (
+                  <button
+                    type="button"
+                    onClick={() => setIsEditing(true)}
+                    className="inline-flex items-center gap-1 px-2.5 py-1.5 rounded-lg bg-white border border-slate-300 text-slate-700 hover:bg-slate-50 text-xs font-semibold shadow-xs transition-colors cursor-pointer"
+                    title="Modifier le titre, la description ou les options de ce vote"
+                  >
+                    <span className="material-symbols-outlined text-[15px]">edit</span>
+                    <span>Modifier</span>
+                  </button>
+                )}
                 <button
                   type="button"
                   disabled={isDeleting}

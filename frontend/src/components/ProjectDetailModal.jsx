@@ -13,8 +13,10 @@ export default function ProjectDetailModal({ project, isOpen, onClose, currentUs
   if (!isOpen || !project) return null;
 
   const isCoordinator = currentUser === 'Henri' || currentUser.includes('Henri');
+  const projectStatusUpper = String(project?.status || '').toUpperCase().trim();
+  const isProjectArchived = ['ARCHIVE', 'ARCHIVEE', 'ARCHIVED', 'CLOSED', 'ANNULE', 'ANNULEE'].includes(projectStatusUpper) || Boolean(project?.is_archived);
 
-  // Editing state for coordinator
+  // Editing state for coordinator (disabled if archived - Annotation 6)
   const [isEditing, setIsEditing] = useState(false);
   const [editCost, setEditCost] = useState(project.estimated_cost ? project.estimated_cost.toString() : '0');
   const [editCategory, setEditCategory] = useState(project.category || 'Non classé');
@@ -268,7 +270,7 @@ export default function ProjectDetailModal({ project, isOpen, onClose, currentUs
                       <ShieldCheck className="h-3.5 w-3.5" />
                       <span>⚡ Modale Approbation Henri</span>
                     </button>
-                    {!isEditing && (
+                    {!isEditing && !isProjectArchived && (
                       <button
                         onClick={() => setIsEditing(true)}
                         className="flex items-center space-x-1 px-3 py-1 bg-white hover:bg-indigo-100 text-indigo-700 font-bold text-xs rounded-xl border border-indigo-200 transition shadow-sm"

@@ -325,12 +325,15 @@ export default function TasksPage({ currentUser = 'Henri Jamet' }) {
       setProjects(prev => {
         const idx = prev.findIndex(p => p.id === updatedProject.id);
         if (idx >= 0) {
-          return prev.map(p => p.id === updatedProject.id ? updatedProject : p);
+          return prev.map(p => p.id === updatedProject.id ? { ...p, ...updatedProject } : p);
         }
         return [updatedProject, ...prev];
       });
       if (isVoteProposed(updatedProject)) {
         setVoteFilter('PROPOSED');
+        setActiveVoteIndex(0);
+      } else if (isVotePendingValidation(updatedProject) || updatedProject?.status === 'REPORT_AG') {
+        setVoteFilter('PENDING_VALIDATION');
         setActiveVoteIndex(0);
       }
     }
