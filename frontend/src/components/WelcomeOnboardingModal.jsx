@@ -1,28 +1,51 @@
 import React, { useState, useEffect, useCallback } from 'react';
-import { acknowledgeOnboarding } from '../api';
+import { acknowledgeOnboarding, fetchCurrentOnboarding } from '../api';
 
 export default function WelcomeOnboardingModal({
   isOpen = false,
   onClose,
   release = null,
   pages = [],
+  version = null,
   onAcknowledged,
 }) {
   const [currentPageIndex, setCurrentPageIndex] = useState(0);
   const [isSubmitting, setIsSubmitting] = useState(false);
+  const [internalRelease, setInternalRelease] = useState(release);
+  const [internalPages, setInternalPages] = useState(pages);
 
-  const totalPages = pages.length || 6;
-  const currentPage = pages[currentPageIndex] || null;
-  const isFirstPage = currentPageIndex === 0;
-  const isLastPage = currentPageIndex === totalPages - 1;
+  useEffect(() => {
+    setInternalRelease(release);
+  }, [release]);
 
-  // Réinitialiser à la première page à chaque ouverture
+  useEffect(() => {
+    setInternalPages(pages);
+  }, [pages]);
+
   useEffect(() => {
     if (isOpen) {
       setCurrentPageIndex(0);
       setIsSubmitting(false);
+
+      const targetVersion = version || release?.version;
+      if ((!pages || pages.length === 0) && targetVersion) {
+        fetchCurrentOnboarding(targetVersion)
+          .then((data) => {
+            if (data?.release) setInternalRelease(data.release);
+            if (data?.pages && data.pages.length > 0) setInternalPages(data.pages);
+          })
+          .catch((err) => console.warn('Erreur chargement pages version:', err));
+      }
     }
-  }, [isOpen]);
+  }, [isOpen, version, release, pages]);
+
+  const activeRelease = internalRelease || release;
+  const activePages = (internalPages && internalPages.length > 0) ? internalPages : pages;
+
+  const totalPages = activePages.length || 6;
+  const currentPage = activePages[currentPageIndex] || null;
+  const isFirstPage = currentPageIndex === 0;
+  const isLastPage = currentPageIndex === totalPages - 1;
 
   const handleNext = () => {
     if (!isLastPage) {
@@ -39,10 +62,10 @@ export default function WelcomeOnboardingModal({
   const handleFinish = async () => {
     setIsSubmitting(true);
     try {
-      const version = release?.version || '1.0.0';
-      await acknowledgeOnboarding(version);
+      const ver = activeRelease?.version || version || '1.0.0';
+      await acknowledgeOnboarding(ver);
       if (onAcknowledged) {
-        onAcknowledged(version);
+        onAcknowledged(ver);
       }
     } catch (err) {
       console.warn('Erreur acquittement onboarding:', err);
@@ -57,10 +80,10 @@ export default function WelcomeOnboardingModal({
   const handleSkip = async () => {
     setIsSubmitting(true);
     try {
-      const version = release?.version || '1.0.0';
-      await acknowledgeOnboarding(version);
+      const ver = activeRelease?.version || version || '1.0.0';
+      await acknowledgeOnboarding(ver);
       if (onAcknowledged) {
-        onAcknowledged(version);
+        onAcknowledged(ver);
       }
     } catch (err) {
       console.warn('Erreur passage onboarding:', err);
@@ -114,10 +137,10 @@ export default function WelcomeOnboardingModal({
             <div className="flex items-center gap-2.5">
               <span className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full text-xs font-bold bg-primary/10 text-primary border border-primary/20 shadow-2xs">
                 <span className="material-symbols-outlined text-[15px]">auto_stories</span>
-                {release?.version ? `Version ${release.version}` : 'Guide Pratique'}
+                {activeRelease?.version ? `Version ${activeRelease.version}` : 'Guide Pratique'}
               </span>
-              <span className="hidden sm:inline-block text-xs font-semibold text-on-surface-variant">
-                SCI Hellenvilliers
+              <span className="hidden sm:inline-block text-xs font-semibold text-on-surface-variant truncate max-w-xs" title={activeRelease?.title}>
+                {activeRelease?.title || 'SCI Hellenvilliers'}
               </span>
             </div>
 

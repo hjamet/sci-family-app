@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useCallback } from 'react';
 import { Routes, Route, Navigate, useNavigate, useLocation } from 'react-router-dom';
 import { useAuth } from './context/AuthContext';
 import Header from './components/Header';
@@ -140,19 +140,53 @@ export default function App() {
     }
   }, [isAuthenticated]);
 
-  const handleOpenOnboarding = async () => {
-    if (!onboardingData || !onboardingData.pages || onboardingData.pages.length === 0) {
-      try {
-        const fresh = await fetchCurrentOnboarding();
-        if (fresh && fresh.release) {
-          setOnboardingData(fresh);
-        }
-      } catch (err) {
-        console.warn('Erreur rafraîchissement guide onboarding:', err);
+  const handleOpenOnboarding = useCallback(async (targetVersion = null, directData = null) => {
+    if (directData && directData.release && directData.pages && directData.pages.length > 0) {
+      setOnboardingData(directData);
+      setIsOnboardingOpen(true);
+      return;
+    }
+    try {
+      const fresh = await fetchCurrentOnboarding(targetVersion);
+      if (fresh && fresh.release) {
+        setOnboardingData(fresh);
       }
+    } catch (err) {
+      console.warn('Erreur chargement version onboarding:', err);
     }
     setIsOnboardingOpen(true);
-  };
+  }, []);
+
+  useEffect(() => {
+    const handleGlobalOpen = (e) => {
+      const version = e?.detail?.version || null;
+      let directData = null;
+      if (e?.detail?.release) {
+        let pages = e.detail.pages;
+        if (!pages && e.detail.release.pages_json) {
+          try {
+            pages = typeof e.detail.release.pages_json === 'string'
+              ? JSON.parse(e.detail.release.pages_json)
+              : e.detail.release.pages_json;
+          } catch {
+            pages = null;
+          }
+        }
+        if (pages && Array.isArray(pages) && pages.length > 0) {
+          directData = {
+            release: e.detail.release,
+            pages,
+            has_seen: true,
+            needs_display: false
+          };
+        }
+      }
+      handleOpenOnboarding(version, directData);
+    };
+
+    window.addEventListener('open-onboarding', handleGlobalOpen);
+    return () => window.removeEventListener('open-onboarding', handleGlobalOpen);
+  }, [handleOpenOnboarding]);
 
   const handleTabChange = (tabId) => {
     const routeMap = {
@@ -322,6 +356,7 @@ export default function App() {
             element={
               <StatistiquesPage
                 currentUser={currentUser}
+                onOpenOnboardingModal={handleOpenOnboarding}
               />
             }
           />

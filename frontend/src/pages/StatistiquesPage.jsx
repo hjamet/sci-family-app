@@ -2,6 +2,7 @@ import React, { useState, useEffect, useMemo } from 'react';
 import StayBalanceWidget from '../components/common/StayBalanceWidget';
 import HouseUsageChart from '../components/HouseUsageChart';
 import WorkloadDashboard from '../components/WorkloadDashboard';
+import VersionHistoryTable from '../components/VersionHistoryTable';
 import ErrorBoundary from '../components/common/ErrorBoundary';
 import { fetchReservations } from '../api';
 
@@ -21,7 +22,7 @@ const PERIOD_OPTIONS = [
   { id: '3_months', label: 'Derniers 3 mois' },
 ];
 
-function StatistiquesPageInner({ currentUser }) {
+function StatistiquesPageInner({ currentUser, onOpenOnboardingModal }) {
   const [period, setPeriod] = useState('all');
   const [allReservations, setAllReservations] = useState([]);
   const [loading, setLoading] = useState(true);
@@ -353,6 +354,14 @@ function StatistiquesPageInner({ currentUser }) {
         description="Le calcul du ratio d'implication des associés a rencontré une exception."
       >
         <WorkloadDashboard currentUser={currentUser} period={period} />
+      </ErrorBoundary>
+
+      {/* Historique des Versions & Notes de Mise à Jour (Patch Notes) */}
+      <ErrorBoundary
+        title="Historique des versions indisponible"
+        description="Le tableau de l'historique des versions a rencontré une exception lors du rendu."
+      >
+        <VersionHistoryTable onOpenOnboardingModal={onOpenOnboardingModal} />
       </ErrorBoundary>
     </div>
   );

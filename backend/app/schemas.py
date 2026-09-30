@@ -1294,3 +1294,16 @@ class OnboardingResponse(BaseModel):
     pages: List[Dict[str, Any]] = []
     has_seen: bool = False
     needs_display: bool = False
+
+
+class OnboardingHistoryItem(BaseModel):
+    id: int
+    version: str
+    title: str
+    is_active: bool
+    created_at: Optional[datetime] = None
+    pages_json: Optional[str] = None
+
+    class Config:
+        from_attributes = True
+

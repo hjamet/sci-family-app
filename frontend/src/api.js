@@ -1803,5 +1803,15 @@ export async function acknowledgeOnboarding(version = null) {
   return res.json();
 }
 
+export async function fetchOnboardingHistory() {
+  const res = await fetch(`${API_BASE}/onboarding/history`, {
+    headers: getAuthHeaders(),
+    silentError: true,
+  });
+  if (!res.ok) throw new Error('Erreur lors de la récupération de l\'historique des versions');
+  return res.json();
+}
+
+
 
 

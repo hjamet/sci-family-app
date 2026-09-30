@@ -52,7 +52,7 @@ from .schemas import (
     BankAccountResponse, BankTransactionResponse, BankSyncResponse, BankStatusResponse,
     ProfileUpdateRequest, ChangePasswordRequest, MemberSettingsResponse, MemberSettingsUpdate,
     VoteSubmissionRequest, ForgotPasswordRequest, NotificationResponse,
-    OnboardingResponse, OnboardingAcknowledgeRequest
+    OnboardingResponse, OnboardingAcknowledgeRequest, OnboardingHistoryItem
 )
 from .onboarding_service import (
     run_onboarding_migrations, seed_initial_onboarding,
@@ -522,6 +522,20 @@ def acknowledge_onboarding(
         "has_seen": True,
         "viewed_at": view.viewed_at.isoformat() if view.viewed_at else None
     }
+
+
+@app.get("/api/onboarding/history", response_model=List[OnboardingHistoryItem], tags=["Onboarding"])
+def get_onboarding_history(db: Session = Depends(get_db)):
+    """
+    Retourne la liste complète des versions enregistrées dans app_releases,
+    triées par date antichronologique (created_at DESC).
+    Chaque entrée contient id, version, title, created_at, is_active et pages_json.
+    """
+    releases = db.query(AppRelease).order_by(AppRelease.created_at.desc()).all()
+    if not releases:
+        rel = seed_initial_onboarding(db)
+        releases = [rel] if rel else []
+    return releases
 
 
 # Security Headers & Anti-DDoS Rate Limiting Middleware
