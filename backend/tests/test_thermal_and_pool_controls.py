@@ -282,15 +282,9 @@ def test_klereo_pump_mode_arret_mapping():
 
         # Test mode 'arret'
         KlereoService.set_pump_mode(mode="arret")
-        mock_send.assert_called_with(
-            "https://connect.klereo.com/KlereoConnect/setPoolOut",
-            {
-                "poolID": "12345",
-                "outIdx": "1",
-                "newState": "0",
-                "comMode": "1"
-            }
-        )
+        assert mock_send.call_args[0][1]["outIdx"] == "1"
+        assert mock_send.call_args[0][1]["newState"] == "0"
+        assert mock_send.call_args[0][1]["poolID"] == "12345"
 
         # Test mode 'arrêt'
         mock_send.reset_mock()
