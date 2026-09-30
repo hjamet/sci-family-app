@@ -531,6 +531,7 @@ def get_onboarding_history(db: Session = Depends(get_db)):
     triées par date antichronologique (created_at DESC).
     Chaque entrée contient id, version, title, created_at, is_active et pages_json.
     """
+    seed_initial_onboarding(db)
     releases = db.query(AppRelease).order_by(AppRelease.created_at.desc()).all()
     if not releases:
         rel = seed_initial_onboarding(db)
@@ -6734,13 +6735,15 @@ def get_heating_settings(db: Session = Depends(get_db)):
     setting = db.query(ThermalSettings).filter(ThermalSettings.equipment_type == "heating").first()
     if not setting:
         return HeatingSettingsResponse(
-            target_temperature=19.0,
+            target_temperature=20.0,
+            frost_temperature=5.0,
             mode="dhwAndHeating",
             updated_by="Système",
             updated_at=datetime.utcnow()
         )
     return HeatingSettingsResponse(
-        target_temperature=setting.target_temperature if setting.target_temperature is not None else 19.0,
+        target_temperature=setting.target_temperature if setting.target_temperature is not None else 20.0,
+        frost_temperature=5.0,
         mode=setting.mode or "dhwAndHeating",
         updated_by=setting.updated_by or "Coordinateur",
         updated_at=setting.updated_at
@@ -6768,7 +6771,7 @@ def update_heating_settings(
     if req.target_temperature is not None:
         setting.target_temperature = req.target_temperature
     elif setting.target_temperature is None:
-        setting.target_temperature = 19.0
+        setting.target_temperature = 20.0
 
     if req.is_heating_active is not None:
         setting.mode = "dhwAndHeating" if req.is_heating_active else "dhw"
@@ -6871,14 +6874,16 @@ def get_pool_settings(db: Session = Depends(get_db)):
     setting = db.query(ThermalSettings).filter(ThermalSettings.equipment_type == "pool").first()
     if not setting:
         return PoolSettingsResponse(
-            target_temperature=14.0,
+            target_temperature=28.0,
+            antifreeze_threshold=3.0,
             filtration_mode="auto",
             mode="standby",
             updated_by="Système",
             updated_at=datetime.utcnow()
         )
     return PoolSettingsResponse(
-        target_temperature=setting.target_temperature if setting.target_temperature is not None else 14.0,
+        target_temperature=setting.target_temperature if setting.target_temperature is not None else 28.0,
+        antifreeze_threshold=3.0,
         filtration_mode=setting.filtration_mode or "auto",
         mode=setting.mode or "standby",
         updated_by=setting.updated_by or "Coordinateur",

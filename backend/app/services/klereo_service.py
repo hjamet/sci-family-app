@@ -335,6 +335,28 @@ class KlereoService:
             consigne_eau = params.get("ConsigneEau")
             frost_protection_target = float(consigne_eau) if consigne_eau is not None else None
 
+            # Sémantique Piscine Marche vs Arrêt & Seuil Antigel Klereo (3.0°C) :
+            # - Seuil antigel usine Klereo : 3.0°C (déclenche la circulation forcée de sauvegarde).
+            # - En Mode MARCHE (Confort actif) : maintien de la consigne baignade (28.0°C).
+            # - En Mode ARRÊT (Veille) : aucune limite basse de chauffe, surveillance sécurité antigel Klereo (3.0°C).
+            antifreeze_threshold: float = 3.0
+            pool_comfort_target: float = 28.0
+
+            is_pac_switch_on = bool(pac_active or (cls._simulated_heating_state is True))
+
+            if pac_active:
+                pac_state_desc = "En chauffe (PAC Inopac 20 kW)"
+                pac_status_label = "Chauffe en cours"
+                pac_status_subtext = "PAC Inopac 20 kW active • Montée en température vers 28.0°C"
+            elif is_pac_switch_on:
+                pac_state_desc = "Au repos (consigne 28.0°C • compresseur éteint)"
+                pac_status_label = "Au repos (consigne 28.0°C)"
+                pac_status_subtext = "Mode Confort actif • Maintien seuil 28.0°C (compresseur PAC au repos)"
+            else:
+                pac_state_desc = "Mise en veille / Arrêt consigne"
+                pac_status_label = "Hors-gel actif (seuil sécurité 3.0°C)"
+                pac_status_subtext = "Chauffage coupé • Surveillance antigel active (circulation de sauvegarde sous 3.0°C)"
+
             # Timestamp de dernière remontée
             now_ts = sys_0.get("Now", int(time.time()))
             last_update_iso = datetime.fromtimestamp(now_ts).isoformat()
@@ -345,14 +367,20 @@ class KlereoService:
                 "ph_value": ph_val,
                 "redox_value": redox_val,
                 "filter_pressure": filter_pressure,
-                "frost_protection_target": frost_protection_target,
-                "target_temperature": frost_protection_target,
+                "frost_protection_target": frost_protection_target if frost_protection_target is not None else antifreeze_threshold,
+                "target_temperature": pool_comfort_target if is_pac_switch_on else frost_protection_target,
+                "antifreeze_threshold": antifreeze_threshold,
+                "frost_protection_threshold": antifreeze_threshold,
+                "pool_comfort_target": pool_comfort_target,
+                "pool_frost_target": antifreeze_threshold,
                 "is_pump_active": filtration_active,
-                "is_heating_active": pac_active,
+                "is_heating_active": is_pac_switch_on,
                 "pac_active": pac_active,
                 "pump_mode": cls._simulated_pump_mode or ("auto" if pool_mode == 2 else ("on" if filtration_active else "off")),
                 "heating_mode": cls._simulated_heating_mode or ("auto" if pool_mode == 2 else ("on" if pac_active else "off")),
-                "pac_state": "En chauffe (PAC Inopac 20 kW)" if pac_active else "Mise en veille / Arrêt consigne",
+                "pac_state": pac_state_desc,
+                "pac_status_label": pac_status_label,
+                "pac_status_subtext": pac_status_subtext,
                 "pac_power": "20 kW",
                 "cover_state": "Verrouillée & tendue",
                 "filtration_state": filt_state,
@@ -462,7 +490,25 @@ class KlereoService:
         cls._simulated_pump_mode = new_mode
 
         if cls.is_read_only_mode():
-            data = cls.get_pool_status(force_refresh=True)
+            try:
+                data = cls.get_pool_status(force_refresh=True)
+            except Exception:
+                data = {
+                    "water_temperature": None,
+                    "air_temperature": None,
+                    "ph_value": None,
+                    "redox_value": None,
+                    "filter_pressure": None,
+                    "frost_protection_target": 3.0,
+                    "target_temperature": 28.0 if cls._simulated_heating_state else None,
+                    "antifreeze_threshold": 3.0,
+                    "frost_protection_threshold": 3.0,
+                    "pool_comfort_target": 28.0,
+                    "pool_frost_target": 3.0,
+                    "is_heating_active": bool(cls._simulated_heating_state),
+                    "pac_active": bool(cls._simulated_heating_state),
+                    "test_mode_read_only": True
+                }
             data["is_pump_active"] = new_active
             data["pump_mode"] = new_mode
             data["filtration_state"] = f"En marche ({new_mode})" if new_active else f"Arrêt ({new_mode})"
@@ -509,11 +555,31 @@ class KlereoService:
         cls._simulated_heating_mode = new_mode
 
         if cls.is_read_only_mode():
-            data = cls.get_pool_status(force_refresh=True)
+            try:
+                data = cls.get_pool_status(force_refresh=True)
+            except Exception:
+                data = {
+                    "water_temperature": None,
+                    "air_temperature": None,
+                    "ph_value": None,
+                    "redox_value": None,
+                    "filter_pressure": None,
+                    "frost_protection_target": 3.0,
+                    "target_temperature": 28.0 if new_active else None,
+                    "antifreeze_threshold": 3.0,
+                    "frost_protection_threshold": 3.0,
+                    "pool_comfort_target": 28.0,
+                    "pool_frost_target": 3.0,
+                    "is_pump_active": bool(cls._simulated_pump_state) if cls._simulated_pump_state is not None else True,
+                    "test_mode_read_only": True
+                }
             data["is_heating_active"] = new_active
             data["pac_active"] = new_active
             data["heating_mode"] = new_mode
+            data["target_temperature"] = 28.0 if new_active else 3.0
             data["pac_state"] = "En chauffe (PAC Inopac 20 kW)" if new_active else "Mise en veille / Arrêt consigne"
+            data["pac_status_label"] = "Chauffe en cours" if new_active else "Hors-gel actif (seuil sécurité 3.0°C)"
+            data["pac_status_subtext"] = "PAC Inopac 20 kW active • Montée vers 28.0°C" if new_active else "Chauffage coupé • Surveillance antigel active (circulation de sauvegarde sous 3.0°C)"
             data["message"] = f"Action enregistrée (mode lecture seule) : Chauffage PAC Inopac 20 kW '{new_mode}'."
             return data
         else:

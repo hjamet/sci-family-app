@@ -707,22 +707,22 @@ class WorkloadSummaryResponse(BaseModel):
 class HeatingStatusResponse(BaseModel):
     room_temperature: Optional[float] = None
     target_temperature: Optional[float] = None
-    comfort_temperature: Optional[float] = None
-    reduced_temperature: Optional[float] = None
-    heating_comfort_temperature: Optional[float] = None
-    heating_reduced_temperature: Optional[float] = None
+    comfort_temperature: Optional[float] = 20.0
+    reduced_temperature: Optional[float] = 5.0
+    heating_comfort_temperature: Optional[float] = 20.0
+    heating_reduced_temperature: Optional[float] = 5.0
     outside_temperature: Optional[float] = None
     supply_temperature: Optional[float] = None
     boiler_temperature: Optional[float] = None
     dhw_temperature: Optional[float] = None
     dhw_configured_temperature: Optional[float] = None
     dhw_target_temperature: Optional[float] = None
-    dhw_comfort_temperature: Optional[float] = 50.0
+    dhw_comfort_temperature: Optional[float] = 52.0
     dhw_reduced_temperature: Optional[float] = 10.0
     is_heating_active: bool = False
     is_heating_burning: bool = False
     heating_status_state: str = "off"
-    heating_status_label: str = "À l'arrêt (Hors-gel 5°C)"
+    heating_status_label: str = "Hors-gel actif (5.0°C)"
     heating_status_subtext: Optional[str] = None
     is_dhw_active: bool = False
     dhw_charging_active: bool = False
@@ -790,14 +790,20 @@ class PiscineStatusResponse(BaseModel):
     ph_value: Optional[float] = None
     redox_value: Optional[float] = None
     filter_pressure: Optional[float] = None
-    frost_protection_target: Optional[float] = None
+    frost_protection_target: Optional[float] = 3.0
     target_temperature: Optional[float] = None
+    antifreeze_threshold: float = 3.0
+    frost_protection_threshold: float = 3.0
+    pool_comfort_target: float = 28.0
+    pool_frost_target: float = 3.0
     is_pump_active: bool = False
     is_heating_active: bool = False
     pac_active: bool = False
     pump_mode: Optional[str] = "auto"
     heating_mode: Optional[str] = "auto"
     pac_state: Optional[str] = None
+    pac_status_label: Optional[str] = "Hors-gel actif (seuil sécurité 3.0°C)"
+    pac_status_subtext: Optional[str] = "Chauffage coupé • Surveillance antigel active (circulation de sauvegarde sous 3.0°C)"
     pac_power: Optional[str] = "20 kW"
     cover_state: Optional[str] = "Verrouillée & tendue"
     filtration_state: Optional[str] = None
@@ -1220,12 +1226,12 @@ class HeatingSettingsRequest(BaseModel):
 
 
 class HeatingSettingsResponse(BaseModel):
-    target_temperature: Optional[float] = 19.0
+    target_temperature: Optional[float] = 20.0
     frost_temperature: Optional[float] = 5.0
     is_heating_active: Optional[bool] = None
     is_dhw_active: Optional[bool] = None
     dhw_target_temperature: Optional[float] = None
-    dhw_comfort_temperature: Optional[float] = 50.0
+    dhw_comfort_temperature: Optional[float] = 52.0
     dhw_reduced_temperature: Optional[float] = 10.0
     mode: Optional[str] = "dhwAndHeating"
     updated_by: Optional[str] = None
@@ -1243,7 +1249,8 @@ class PoolSettingsRequest(BaseModel):
 
 
 class PoolSettingsResponse(BaseModel):
-    target_temperature: Optional[float] = 14.0
+    target_temperature: Optional[float] = 28.0
+    antifreeze_threshold: float = 3.0
     filtration_mode: Optional[str] = "auto"
     mode: Optional[str] = "standby"
     updated_by: Optional[str] = None

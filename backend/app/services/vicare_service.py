@@ -389,20 +389,25 @@ def fetch_live_telemetry() -> Dict[str, Any]:
         # Ne chauffe réellement que si l'interrupteur est ON ET que le brûleur fioul tourne
         is_heating_burning = bool(is_heating_active and burner_active and active_mode in ("dhwAndHeating", "forcedNormal"))
 
+        # Consigne active Chauffage effective (Sémantique Marche vs Arrêt) :
+        # - Mode Marche : consigne de confort (20.0°C)
+        # - Mode Arrêt : consigne de veille économique / hors-gel (5.0°C)
+        target_temp = (comfort_temp or 20.0) if is_heating_active else (reduced_temp or 5.0)
+
         if not is_heating_active:
             heating_status_state = "off"
-            frost_temp_str = f"{reduced_temp:.1f}°C" if reduced_temp is not None else "5.0°C"
+            frost_temp_str = f"{target_temp:.1f}°C"
             heating_status_label = f"Arrêt hors-gel ({frost_temp_str})"
-            heating_status_subtext = f"Consigne hors-gel {frost_temp_str} • Chaudière coupée"
+            heating_status_subtext = f"Consigne hors-gel {frost_temp_str} • Veille économique (chaudière sous tension)"
         elif is_heating_burning:
             heating_status_state = "heating"
             heating_status_label = "Chauffe en cours"
-            heating_status_subtext = f"Brûleur fioul allumé • Montée en température vers {comfort_temp or 20.0:.1f}°C"
+            heating_status_subtext = f"Brûleur fioul allumé • Montée en température vers {target_temp:.1f}°C"
         else:
             heating_status_state = "standby"
             heating_status_label = "Au repos (brûleur éteint)"
             room_str = f" • Ambiance {room_temp:.1f}°C" if room_temp is not None else ""
-            heating_status_subtext = f"Consigne confort active ({comfort_temp or 20.0:.1f}°C){room_str} • Brûleur éteint"
+            heating_status_subtext = f"Confort actif ({target_temp:.1f}°C){room_str} • Brûleur éteint (température maintenue)"
 
         # Détection Mode Autorisé Eau Chaude Sanitaire (is_dhw_active)
         # Sémantique de l'interrupteur principal ECS :
@@ -419,29 +424,30 @@ def fetch_live_telemetry() -> Dict[str, Any]:
         else:
             is_dhw_active = False
 
-        # Détection Chauffe Physique Réelle ECS (is_dhw_heating) - Vérité Terrain Absolue
-        # Invariant physique Viessmann :
-        # Le ballon de 250L ne chauffe QUE SI le brûleur fioul tourne RÉELLEMENT (burner_active == True) !
-        # Si burner_active == False, le ballon ne chauffe ABSOLUMENT PAS (même si la recharge
-        # programmée dhw_charging_active est True dans le calendrier automate).
-        # Sans flamme fioul, la température du ballon reste à celle de la cave (ex: 26.7°C vs consigne 52.0°C).
-        if is_dhw_active and burner_active and (dhw_charging_active or active_mode == "dhw" or (dhw_temp is not None and dhw_configured_temp is not None and dhw_temp < dhw_configured_temp)):
-            is_dhw_heating = True
-        else:
-            is_dhw_heating = False
-
-        # Double consigne ECS ViCare (Confort marche vs Réduit veille 10.0°C)
+        # Double consigne ECS ViCare (Confort marche 52.0°C vs Réduit veille 10.0°C)
         dhw_comfort = ViCareService._dhw_comfort_temperature
         if dhw_configured_temp is not None and dhw_configured_temp > 15.0:
             dhw_comfort = dhw_configured_temp
             ViCareService._dhw_comfort_temperature = dhw_comfort
         dhw_reduced = ViCareService._dhw_reduced_temperature
 
+        # Consigne active ECS effective :
+        # - Mode Marche : consigne confort (52.0°C)
+        # - Mode Arrêt : consigne veille économique (10.0°C)
+        dhw_active_target = dhw_comfort if is_dhw_active else dhw_reduced
+
+        # Détection Chauffe Physique Réelle ECS (is_dhw_heating) - Vérité Terrain Absolue
+        # Le ballon ne chauffe QUE SI le brûleur tourne réellement ET que l'ECS est active
+        if is_dhw_active and burner_active and (dhw_charging_active or active_mode == "dhw" or (dhw_temp is not None and dhw_temp < dhw_active_target)):
+            is_dhw_heating = True
+        else:
+            is_dhw_heating = False
+
         # Qualification sémantique limpide de l'état ECS (Annotations 7 & 9)
         if not is_dhw_active:
             dhw_status_state = "off"
-            dhw_status_label = "À l'arrêt (Veille 10°C)"
-            dhw_status_subtext = "Consigne veille 10.0°C • Chauffe coupée"
+            dhw_status_label = f"À l'arrêt (Veille {dhw_reduced:.0f}°C)"
+            dhw_status_subtext = f"Consigne veille {dhw_reduced:.1f}°C • Ballon sous tension (chauffe coupée)"
         elif is_dhw_heating:
             dhw_status_state = "heating"
             dhw_status_label = "Chauffe en cours"
@@ -450,25 +456,27 @@ def fetch_live_telemetry() -> Dict[str, Any]:
             dhw_status_state = "standby"
             dhw_status_label = "Au repos (brûleur éteint)"
             if dhw_temp is not None and (dhw_comfort - dhw_temp) > 5.0:
-                dhw_status_subtext = f"Ballon au repos ({dhw_temp:.1f}°C mesuré vs consigne {dhw_comfort:.1f}°C) • Brûleur éteint (attente relance programmée)"
+                dhw_status_subtext = f"Confort actif ({dhw_comfort:.1f}°C) • Ballon au repos ({dhw_temp:.1f}°C mesuré) • Brûleur éteint (attente relance programmée)"
             else:
-                dhw_status_subtext = f"Température stabilisée ({dhw_temp:.1f}°C) • Brûleur au repos"
+                dhw_status_subtext = f"Confort actif ({dhw_comfort:.1f}°C) • Température stabilisée ({dhw_temp:.1f}°C) • Brûleur au repos"
 
-        target_temp = current_desired_temp
+        # Si chauffage inactif, la consigne courante désirée effective est la consigne d'arrêt/hors-gel (5.0°C)
+        # Si chauffage actif, la consigne courante désirée effective est la consigne de confort (20.0°C)
+        effective_heating_target = (comfort_temp or current_desired_temp or 20.0) if is_heating_active else (reduced_temp or 5.0)
 
         return {
             "room_temperature": room_temp,
-            "target_temperature": target_temp,
-            "comfort_temperature": comfort_temp,
-            "reduced_temperature": reduced_temp,
-            "heating_comfort_temperature": comfort_temp,
-            "heating_reduced_temperature": reduced_temp,
+            "target_temperature": effective_heating_target,
+            "comfort_temperature": comfort_temp or 20.0,
+            "reduced_temperature": reduced_temp or 5.0,
+            "heating_comfort_temperature": comfort_temp or 20.0,
+            "heating_reduced_temperature": reduced_temp or 5.0,
             "outside_temperature": outside_temp,
             "supply_temperature": supply_temp,
             "boiler_temperature": boiler_temp,
             "dhw_temperature": dhw_temp,
-            "dhw_configured_temperature": dhw_configured_temp,
-            "dhw_target_temperature": dhw_configured_temp,
+            "dhw_configured_temperature": dhw_active_target,
+            "dhw_target_temperature": dhw_active_target,
             "dhw_comfort_temperature": dhw_comfort,
             "dhw_reduced_temperature": dhw_reduced,
             "is_heating_active": is_heating_active,
@@ -513,8 +521,10 @@ def fetch_live_telemetry() -> Dict[str, Any]:
 
 
 class ViCareService:
-    _dhw_comfort_temperature: float = 50.0
+    _dhw_comfort_temperature: float = 52.0
     _dhw_reduced_temperature: float = 10.0
+    _heating_comfort_temperature: float = 20.0
+    _heating_reduced_temperature: float = 5.0
 
     @classmethod
     def get_status(cls, property_id: Optional[int] = None, force_refresh: bool = False) -> Dict[str, Any]:

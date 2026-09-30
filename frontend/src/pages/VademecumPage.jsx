@@ -237,7 +237,7 @@ export default function VademecumPage({ properties, currentUser, reservations = 
   const [heatingFrostTarget, setHeatingFrostTarget] = useState(5.0);
 
   const [isDhwActive, setIsDhwActive] = useState(false);
-  const [dhwTarget, setDhwTarget] = useState(55.0);
+  const [dhwTarget, setDhwTarget] = useState(52.0);
   const [dhwFrostTarget, setDhwFrostTarget] = useState(10.0);
 
   const [poolTarget, setPoolTarget] = useState(28.0);
@@ -1404,6 +1404,28 @@ export default function VademecumPage({ properties, currentUser, reservations = 
                     onIcon="local_fire_department"
                     ariaLabel="Interrupteur principal Chauffage ViCare"
                   />
+                  {/* Bandeau d'état sémantique Marche/Arrêt (Annotation 4) */}
+                  <div className={`p-2.5 rounded-xl border text-xs flex items-start gap-2 shadow-2xs ${
+                    isHeatingActive
+                      ? 'bg-emerald-50/80 dark:bg-emerald-950/30 border-emerald-200 dark:border-emerald-800/60 text-emerald-950 dark:text-emerald-100'
+                      : 'bg-sky-50/80 dark:bg-sky-950/30 border-sky-200 dark:border-sky-800/60 text-sky-950 dark:text-sky-100'
+                  }`}>
+                    <span className="material-symbols-outlined text-[18px] shrink-0 mt-0.5 text-primary">
+                      {isHeatingActive ? 'check_circle' : 'ac_unit'}
+                    </span>
+                    <div className="flex flex-col">
+                      <span className="font-bold text-[11px]">
+                        {isHeatingActive
+                          ? `Marche • Confort actif (maintien ≥ ${heatingComfortTarget.toFixed(1)}°C)`
+                          : `Arrêt • Veille économique & Hors-gel (maintien à ${heatingFrostTarget.toFixed(1)}°C)`}
+                      </span>
+                      <span className="text-[10px] text-on-surface-variant mt-0.5 leading-snug">
+                        {isHeatingActive
+                          ? 'Chaudière sous tension permanente. Le brûleur régule pour maintenir la consigne de confort.'
+                          : 'Chaudière sous tension permanente. Le brûleur ne se déclenche que si la température descend sous la consigne hors-gel.'}
+                      </span>
+                    </div>
+                  </div>
                 </div>
 
                 {/* Consigne et Horaires prévus pour le séjour (Annotation 8 Stitch 2c313f81e4f5499abb218f5b1dc25c68) */}
@@ -1482,13 +1504,26 @@ export default function VademecumPage({ properties, currentUser, reservations = 
                   </span>
 
                   {/* 1. Température en fonctionnement (Confort présence) */}
-                  <div className="p-3.5 bg-white dark:bg-slate-900 rounded-xl border border-border-subtle flex items-center justify-between gap-2 shadow-2xs">
+                  <div className={`p-3.5 bg-white dark:bg-slate-900 rounded-xl border flex items-center justify-between gap-2 shadow-2xs transition-colors ${
+                    isHeatingActive ? 'border-emerald-300 dark:border-emerald-800/80 ring-1 ring-emerald-400/30' : 'border-border-subtle'
+                  }`}>
                     <div className="flex items-center gap-2.5 min-w-0 pr-1">
                       <div className="w-8 h-8 rounded-lg bg-emerald-50 dark:bg-emerald-950/50 text-emerald-700 dark:text-emerald-300 flex items-center justify-center shrink-0">
                         <span className="material-symbols-outlined text-[20px]">local_fire_department</span>
                       </div>
                       <div className="flex flex-col min-w-0">
-                        <span className="text-xs font-bold text-on-surface leading-tight">En fonctionnement</span>
+                        <div className="flex items-center gap-1.5 flex-wrap">
+                          <span className="text-xs font-bold text-on-surface leading-tight">En fonctionnement</span>
+                          {isHeatingActive ? (
+                            <span className="inline-flex items-center gap-0.5 px-2 py-0.5 rounded-full text-[10px] font-bold bg-emerald-100 text-emerald-800 dark:bg-emerald-950 dark:text-emerald-300 border border-emerald-300">
+                              🟢 Consigne active
+                            </span>
+                          ) : (
+                            <span className="inline-flex items-center gap-0.5 px-1.5 py-0.5 rounded-full text-[10px] font-medium bg-slate-100 text-slate-600 dark:bg-slate-800 dark:text-slate-400">
+                              En réserve
+                            </span>
+                          )}
+                        </div>
                         <span className="text-[10px] text-on-surface-variant">Confort présence ({isHeatingActive ? 'actif' : 'prévu'})</span>
                       </div>
                     </div>
@@ -1516,13 +1551,26 @@ export default function VademecumPage({ properties, currentUser, reservations = 
                   </div>
 
                   {/* 2. Température à l'arrêt (Hors-gel / Maintien) */}
-                  <div className="p-3.5 bg-white dark:bg-slate-900 rounded-xl border border-border-subtle flex items-center justify-between gap-2 shadow-2xs">
+                  <div className={`p-3.5 bg-white dark:bg-slate-900 rounded-xl border flex items-center justify-between gap-2 shadow-2xs transition-colors ${
+                    !isHeatingActive ? 'border-sky-300 dark:border-sky-800/80 ring-1 ring-sky-400/30' : 'border-border-subtle'
+                  }`}>
                     <div className="flex items-center gap-2.5 min-w-0 pr-1">
                       <div className="w-8 h-8 rounded-lg bg-sky-50 dark:bg-sky-950/50 text-sky-700 dark:text-sky-300 flex items-center justify-center shrink-0">
                         <span className="material-symbols-outlined text-[20px]">ac_unit</span>
                       </div>
                       <div className="flex flex-col min-w-0">
-                        <span className="text-xs font-bold text-on-surface leading-tight">À l'arrêt</span>
+                        <div className="flex items-center gap-1.5 flex-wrap">
+                          <span className="text-xs font-bold text-on-surface leading-tight">À l'arrêt</span>
+                          {!isHeatingActive ? (
+                            <span className="inline-flex items-center gap-0.5 px-2 py-0.5 rounded-full text-[10px] font-bold bg-sky-100 text-sky-800 dark:bg-sky-950 dark:text-sky-300 border border-sky-300">
+                              ❄️ Consigne active
+                            </span>
+                          ) : (
+                            <span className="inline-flex items-center gap-0.5 px-1.5 py-0.5 rounded-full text-[10px] font-medium bg-slate-100 text-slate-600 dark:bg-slate-800 dark:text-slate-400">
+                              En veille
+                            </span>
+                          )}
+                        </div>
                         <span className="text-[10px] text-on-surface-variant">Hors-gel & maintien bâtiment</span>
                       </div>
                     </div>
@@ -1640,20 +1688,30 @@ export default function VademecumPage({ properties, currentUser, reservations = 
                     onIcon="local_fire_department"
                     ariaLabel="Interrupteur principal Eau Chaude Sanitaire"
                   />
-                </div>
-
-                {/* Information explicite si le ballon est au repos avec température mesurée basse vs consigne (Annotation 2) */}
-                {isDhwActive && !heatingStatus?.is_dhw_heating && heatingStatus?.dhw_temperature != null && ((dhwTarget || 50.0) - heatingStatus.dhw_temperature > 5.0) && (
-                  <div className="p-3 bg-sky-50/90 dark:bg-sky-950/40 rounded-xl border border-sky-200 dark:border-sky-800/60 flex items-start gap-2.5 text-xs shadow-2xs">
-                    <span className="material-symbols-outlined text-sky-600 text-[18px] shrink-0 mt-0.5">info</span>
-                    <div className="flex flex-col text-sky-950 dark:text-sky-100 leading-tight">
-                      <span className="font-bold">Ballon au repos ({heatingStatus.dhw_temperature.toFixed(1)}°C mesuré vs consigne confort {dhwTarget.toFixed(1)}°C)</span>
-                      <span className="text-[11px] text-sky-800 dark:text-sky-300 mt-1 leading-normal">
-                        Le brûleur fioul est éteint. Le chauffe-eau est autorisé mais n'est pas en chauffe continue (refroidissement naturel en attente de la relance programmée du séjour).
+                  {/* Bandeau d'état sémantique Marche/Arrêt (Annotation 4) */}
+                  <div className={`p-2.5 rounded-xl border text-xs flex items-start gap-2 shadow-2xs ${
+                    isDhwActive
+                      ? 'bg-emerald-50/80 dark:bg-emerald-950/30 border-emerald-200 dark:border-emerald-800/60 text-emerald-950 dark:text-emerald-100'
+                      : 'bg-sky-50/80 dark:bg-sky-950/30 border-sky-200 dark:border-sky-800/60 text-sky-950 dark:text-sky-100'
+                  }`}>
+                    <span className="material-symbols-outlined text-[18px] shrink-0 mt-0.5 text-primary">
+                      {isDhwActive ? 'check_circle' : 'water_heater'}
+                    </span>
+                    <div className="flex flex-col">
+                      <span className="font-bold text-[11px]">
+                        {isDhwActive
+                          ? `Marche • Confort actif (maintien ≥ ${dhwTarget.toFixed(1)}°C)`
+                          : `Arrêt • Veille économique (maintien à ${dhwFrostTarget.toFixed(1)}°C)`}
+                      </span>
+                      <span className="text-[10px] text-on-surface-variant mt-0.5 leading-snug">
+                        {isDhwActive
+                          ? 'Chauffe-eau sous tension permanente. Le brûleur se déclenche pour maintenir le ballon à température de consigne.'
+                          : 'Chauffe-eau sous tension permanente. Aucune chauffe active en veille, seuil de protection cuve maintenu.'}
                       </span>
                     </div>
                   </div>
-                )}
+                </div>
+
 
                 {/* Consigne et Horaires prévus pour le séjour (Annotation 8 Stitch 2c313f81e4f5499abb218f5b1dc25c68) */}
                 {currentPageIndex > 0 && currentStay && (
@@ -1713,13 +1771,26 @@ export default function VademecumPage({ properties, currentUser, reservations = 
                   </span>
 
                   {/* 1. Température en fonctionnement (Chauffe confort) */}
-                  <div className="p-3.5 bg-white dark:bg-slate-900 rounded-xl border border-border-subtle flex items-center justify-between gap-2 shadow-2xs">
+                  <div className={`p-3.5 bg-white dark:bg-slate-900 rounded-xl border flex items-center justify-between gap-2 shadow-2xs transition-colors ${
+                    isDhwActive ? 'border-emerald-300 dark:border-emerald-800/80 ring-1 ring-emerald-400/30' : 'border-border-subtle'
+                  }`}>
                     <div className="flex items-center gap-2.5 min-w-0 pr-1">
                       <div className="w-8 h-8 rounded-lg bg-emerald-50 dark:bg-emerald-950/50 text-emerald-700 dark:text-emerald-300 flex items-center justify-center shrink-0">
                         <span className="material-symbols-outlined text-[20px]">local_fire_department</span>
                       </div>
                       <div className="flex flex-col min-w-0">
-                        <span className="text-xs font-bold text-on-surface leading-tight">En fonctionnement</span>
+                        <div className="flex items-center gap-1.5 flex-wrap">
+                          <span className="text-xs font-bold text-on-surface leading-tight">En fonctionnement</span>
+                          {isDhwActive ? (
+                            <span className="inline-flex items-center gap-0.5 px-2 py-0.5 rounded-full text-[10px] font-bold bg-emerald-100 text-emerald-800 dark:bg-emerald-950 dark:text-emerald-300 border border-emerald-300">
+                              🟢 Consigne active
+                            </span>
+                          ) : (
+                            <span className="inline-flex items-center gap-0.5 px-1.5 py-0.5 rounded-full text-[10px] font-medium bg-slate-100 text-slate-600 dark:bg-slate-800 dark:text-slate-400">
+                              En réserve
+                            </span>
+                          )}
+                        </div>
                         <span className="text-[10px] text-on-surface-variant">
                           Chauffe confort ({isDhwActive ? (heatingStatus?.is_dhw_heating ? 'en chauffe' : 'au repos') : 'prévu'})
                         </span>
@@ -1749,13 +1820,26 @@ export default function VademecumPage({ properties, currentUser, reservations = 
                   </div>
 
                   {/* 2. Température à l'arrêt (Seuil de veille Vitotronic & Protection cuve) */}
-                  <div className="p-3.5 bg-white dark:bg-slate-900 rounded-xl border border-border-subtle flex items-center justify-between gap-2 shadow-2xs">
+                  <div className={`p-3.5 bg-white dark:bg-slate-900 rounded-xl border flex items-center justify-between gap-2 shadow-2xs transition-colors ${
+                    !isDhwActive ? 'border-sky-300 dark:border-sky-800/80 ring-1 ring-sky-400/30' : 'border-border-subtle'
+                  }`}>
                     <div className="flex items-center gap-2.5 min-w-0 pr-1">
                       <div className="w-8 h-8 rounded-lg bg-sky-50 dark:bg-sky-950/50 text-sky-700 dark:text-sky-300 flex items-center justify-center shrink-0">
                         <span className="material-symbols-outlined text-[20px]">ac_unit</span>
                       </div>
                       <div className="flex flex-col min-w-0">
-                        <span className="text-xs font-bold text-on-surface leading-tight">À l'arrêt</span>
+                        <div className="flex items-center gap-1.5 flex-wrap">
+                          <span className="text-xs font-bold text-on-surface leading-tight">À l'arrêt</span>
+                          {!isDhwActive ? (
+                            <span className="inline-flex items-center gap-0.5 px-2 py-0.5 rounded-full text-[10px] font-bold bg-sky-100 text-sky-800 dark:bg-sky-950 dark:text-sky-300 border border-sky-300">
+                              ❄️ Consigne active
+                            </span>
+                          ) : (
+                            <span className="inline-flex items-center gap-0.5 px-1.5 py-0.5 rounded-full text-[10px] font-medium bg-slate-100 text-slate-600 dark:bg-slate-800 dark:text-slate-400">
+                              En veille
+                            </span>
+                          )}
+                        </div>
                         <span className="text-[10px] text-on-surface-variant">Seuil de veille Vitotronic (extinction chauffe &amp; protection cuve)</span>
                       </div>
                     </div>
@@ -1883,6 +1967,28 @@ export default function VademecumPage({ properties, currentUser, reservations = 
                     onIcon="local_fire_department"
                     ariaLabel="Interrupteur Chauffage Piscine PAC Inopac"
                   />
+                  {/* Bandeau d'état sémantique PAC (Annotation 4) */}
+                  <div className={`p-2.5 rounded-xl border text-xs flex items-start gap-2 shadow-2xs ${
+                    isPoolHeatingActive
+                      ? 'bg-emerald-50/80 dark:bg-emerald-950/30 border-emerald-200 dark:border-emerald-800/60 text-emerald-950 dark:text-emerald-100'
+                      : 'bg-sky-50/80 dark:bg-sky-950/30 border-sky-200 dark:border-sky-800/60 text-sky-950 dark:text-sky-100'
+                  }`}>
+                    <span className="material-symbols-outlined text-[18px] shrink-0 mt-0.5 text-primary">
+                      {isPoolHeatingActive ? 'check_circle' : 'ac_unit'}
+                    </span>
+                    <div className="flex flex-col">
+                      <span className="font-bold text-[11px]">
+                        {isPoolHeatingActive
+                          ? `Marche • Confort baignade (régulation vers ${poolTarget.toFixed(1)}°C)`
+                          : 'Arrêt • Veille économique (aucune consigne basse • sauvegarde antigel 3.0°C)'}
+                      </span>
+                      <span className="text-[10px] text-on-surface-variant mt-0.5 leading-snug">
+                        {isPoolHeatingActive
+                          ? 'La pompe à chaleur régule activement dès que la pompe de filtration est en marche.'
+                          : 'Compresseur PAC au repos. Sauvegarde antigel physique Klereo active en continu (seuil 3.0°C).'}
+                      </span>
+                    </div>
+                  </div>
                 </div>
               </div>
 
@@ -1933,19 +2039,33 @@ export default function VademecumPage({ properties, currentUser, reservations = 
                 </div>
               )}
 
-              {/* Réglage de la consigne en fonctionnement (sans consigne à l'arrêt) (Annotation 3) */}
+              {/* Réglages des consignes Piscine (Annotation 3 & 4) */}
               <div className="flex flex-col gap-2.5">
                 <span className="text-[11px] font-bold text-on-surface-variant uppercase tracking-wider block">
-                  Réglage de la Consigne
+                  Réglages des Consignes
                 </span>
 
-                <div className="p-3.5 bg-white dark:bg-slate-900 rounded-xl border border-border-subtle flex items-center justify-between gap-2 shadow-2xs">
+                {/* 1. Température en fonctionnement (Baignade) */}
+                <div className={`p-3.5 bg-white dark:bg-slate-900 rounded-xl border flex items-center justify-between gap-2 shadow-2xs transition-colors ${
+                  isPoolHeatingActive ? 'border-emerald-300 dark:border-emerald-800/80 ring-1 ring-emerald-400/30' : 'border-border-subtle'
+                }`}>
                   <div className="flex items-center gap-2.5 min-w-0 pr-1">
                     <div className="w-8 h-8 rounded-lg bg-emerald-50 dark:bg-emerald-950/50 text-emerald-700 dark:text-emerald-300 flex items-center justify-center shrink-0">
                       <span className="material-symbols-outlined text-[20px]">pool</span>
                     </div>
                     <div className="flex flex-col min-w-0">
-                      <span className="text-xs font-bold text-on-surface leading-tight">Température en fonctionnement</span>
+                      <div className="flex items-center gap-1.5 flex-wrap">
+                        <span className="text-xs font-bold text-on-surface leading-tight">En fonctionnement</span>
+                        {isPoolHeatingActive ? (
+                          <span className="inline-flex items-center gap-0.5 px-2 py-0.5 rounded-full text-[10px] font-bold bg-emerald-100 text-emerald-800 dark:bg-emerald-950 dark:text-emerald-300 border border-emerald-300">
+                            🟢 Consigne active
+                          </span>
+                        ) : (
+                          <span className="inline-flex items-center gap-0.5 px-1.5 py-0.5 rounded-full text-[10px] font-medium bg-slate-100 text-slate-600 dark:bg-slate-800 dark:text-slate-400">
+                            En réserve
+                          </span>
+                        )}
+                      </div>
                       <span className="text-[10px] text-on-surface-variant">Consigne de baignade ({isPoolHeatingActive ? 'actif' : 'prévu'})</span>
                     </div>
                   </div>
@@ -1969,6 +2089,39 @@ export default function VademecumPage({ properties, currentUser, reservations = 
                     >
                       <span className="material-symbols-outlined text-[15px]">add</span>
                     </button>
+                  </div>
+                </div>
+
+                {/* 2. Protection Antigel Klereo (3.0°C) à l'arrêt */}
+                <div className={`p-3.5 bg-white dark:bg-slate-900 rounded-xl border flex items-center justify-between gap-2 shadow-2xs transition-colors ${
+                  !isPoolHeatingActive ? 'border-sky-300 dark:border-sky-800/80 ring-1 ring-sky-400/30' : 'border-border-subtle'
+                }`}>
+                  <div className="flex items-center gap-2.5 min-w-0 pr-1">
+                    <div className="w-8 h-8 rounded-lg bg-sky-50 dark:bg-sky-950/50 text-sky-700 dark:text-sky-300 flex items-center justify-center shrink-0">
+                      <span className="material-symbols-outlined text-[20px]">ac_unit</span>
+                    </div>
+                    <div className="flex flex-col min-w-0">
+                      <div className="flex items-center gap-1.5 flex-wrap">
+                        <span className="text-xs font-bold text-on-surface leading-tight">À l'arrêt</span>
+                        {!isPoolHeatingActive ? (
+                          <span className="inline-flex items-center gap-0.5 px-2 py-0.5 rounded-full text-[10px] font-bold bg-sky-100 text-sky-800 dark:bg-sky-950 dark:text-sky-300 border border-sky-300">
+                            ❄️ Seuil de sauvegarde actif
+                          </span>
+                        ) : (
+                          <span className="inline-flex items-center gap-0.5 px-1.5 py-0.5 rounded-full text-[10px] font-medium bg-slate-100 text-slate-600 dark:bg-slate-800 dark:text-slate-400">
+                            Sécurité permanente
+                          </span>
+                        )}
+                      </div>
+                      <span className="text-[10px] text-on-surface-variant">Protection Antigel Klereo (seuil usine de sauvegarde)</span>
+                    </div>
+                  </div>
+                  <div className="flex items-center gap-1.5 shrink-0 bg-canvas-slate px-3 py-1.5 rounded-full border border-border-subtle" title="Consigne verrouillée en lecture seule (seuil usine Klereo)">
+                    <span className="material-symbols-outlined text-outline text-[14px]">lock</span>
+                    <span className="font-headline-md text-sm sm:text-base text-sky-800 dark:text-sky-300 font-bold tabular-nums text-center">
+                      {(piscineStatus?.antifreeze_threshold != null ? piscineStatus.antifreeze_threshold : 3.0).toFixed(1)}
+                      <span className="text-xs text-outline font-normal">°C</span>
+                    </span>
                   </div>
                 </div>
               </div>

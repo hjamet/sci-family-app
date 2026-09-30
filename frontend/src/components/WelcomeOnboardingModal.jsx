@@ -157,7 +157,7 @@ export default function WelcomeOnboardingModal({
             </button>
           </div>
 
-          {/* Stepper Progress Bar */}
+          {/* Stepper Progress Bar unique et fluide */}
           <div className="space-y-2">
             <div className="flex items-center justify-between text-xs font-bold text-on-surface-variant">
               <span className="flex items-center gap-1.5 text-primary">
@@ -169,36 +169,12 @@ export default function WelcomeOnboardingModal({
               <span className="text-slate-500 font-medium">{progressPercent}%</span>
             </div>
 
-            {/* Barre de progression fine et moderne */}
-            <div className="w-full bg-slate-200/80 rounded-full h-1.5 overflow-hidden">
+            {/* Barre de progression unique, moderne et fluide */}
+            <div className="w-full bg-slate-200/80 rounded-full h-2 overflow-hidden">
               <div
-                className="bg-primary h-1.5 rounded-full transition-all duration-300 ease-out"
+                className="bg-primary h-2 rounded-full transition-all duration-300 ease-out"
                 style={{ width: `${progressPercent}%` }}
               />
-            </div>
-
-            {/* Mini-puces d'étapes cliquables */}
-            <div className="flex items-center gap-1.5 pt-1">
-              {pages.map((p, idx) => {
-                const isActive = idx === currentPageIndex;
-                const isPassed = idx < currentPageIndex;
-                return (
-                  <button
-                    key={p.id || idx}
-                    type="button"
-                    onClick={() => setCurrentPageIndex(idx)}
-                    className={`flex-1 h-1.5 rounded-full transition-all duration-200 cursor-pointer ${
-                      isActive
-                        ? 'bg-primary ring-2 ring-primary/30'
-                        : isPassed
-                        ? 'bg-emerald-600/70 hover:bg-emerald-600'
-                        : 'bg-slate-200 hover:bg-slate-300'
-                    }`}
-                    title={`Aller à la page ${idx + 1} : ${p.title}`}
-                    aria-label={`Étape ${idx + 1}`}
-                  />
-                );
-              })}
             </div>
           </div>
         </div>

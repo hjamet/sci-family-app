@@ -298,7 +298,7 @@ export default function HeatingPage({ currentUser }) {
                     ? 'Chauffe en cours'
                     : status?.is_heating_active
                       ? 'Au repos (brûleur éteint)'
-                      : `Arrêt hors-gel (${status?.reduced_temperature != null ? status.reduced_temperature.toFixed(1) : '5.0'}°C)`}
+                      : `Arrêt hors-gel (${status?.reduced_temperature != null ? status.reduced_temperature.toFixed(1) : (status?.heating_reduced_temperature != null ? status.heating_reduced_temperature.toFixed(1) : '5.0')}°C)`}
                 </span>
               </div>
               <div className="flex items-center gap-1 px-2.5 py-1 rounded-full bg-canvas-slate border border-border-subtle shrink-0">
@@ -314,12 +314,22 @@ export default function HeatingPage({ currentUser }) {
               <div className="flex flex-col min-w-0 pr-1">
                 <span className="font-label-md text-label-md text-on-surface font-semibold leading-tight">Consigne active</span>
                 <span className="font-label-sm text-xs text-on-surface-variant mt-0.5 whitespace-nowrap">
-                  {status?.is_heating_active ? 'Fonctionnement confort' : 'Maintien hors-gel / arrêt'}
+                  {status?.is_heating_active ? 'Confort actif (maintien ≥ 20.0°C)' : 'Veille économique / Hors-gel actif'}
                 </span>
               </div>
               <div className="flex items-center gap-1.5 shrink-0 bg-white p-1 rounded-full border border-border-subtle shadow-xs">
                 <span className="font-headline-md text-[18px] text-primary font-bold tabular-nums px-3 text-center">
-                  {targetTemp != null ? targetTemp.toFixed(1) : sliderTemp.toFixed(1)}
+                  {status?.is_heating_active
+                    ? (status?.comfort_temperature != null
+                        ? status.comfort_temperature.toFixed(1)
+                        : (status?.heating_comfort_temperature != null
+                            ? status.heating_comfort_temperature.toFixed(1)
+                            : (targetTemp != null && targetTemp > 10.0 ? targetTemp.toFixed(1) : sliderTemp.toFixed(1))))
+                    : (status?.reduced_temperature != null
+                        ? status.reduced_temperature.toFixed(1)
+                        : (status?.heating_reduced_temperature != null
+                            ? status.heating_reduced_temperature.toFixed(1)
+                            : '5.0'))}
                   <span className="text-xs text-outline font-normal">°C</span>
                 </span>
               </div>
@@ -390,7 +400,7 @@ export default function HeatingPage({ currentUser }) {
                     : (status?.dhw_status_label || (
                         status?.is_dhw_active
                           ? 'Au repos (brûleur éteint)'
-                          : `À l'arrêt (Consigne ${status?.dhw_reduced_temperature != null ? status.dhw_reduced_temperature.toFixed(1) : '10.0'}°C)`
+                          : `À l'arrêt (Veille ${status?.dhw_reduced_temperature != null ? status.dhw_reduced_temperature.toFixed(1) : '10.0'}°C)`
                       ))}
                 </span>
               </div>
@@ -403,15 +413,15 @@ export default function HeatingPage({ currentUser }) {
             </div>
 
             {/* Encart explicatif si température mesurée basse vs consigne confort (Annotation 2) */}
-            {status?.is_dhw_active && !status?.is_dhw_heating && dhwTemp != null && ((status?.dhw_configured_temperature || status?.dhw_comfort_temperature || 50.0) - dhwTemp > 5.0) && (
+            {status?.is_dhw_active && !status?.is_dhw_heating && dhwTemp != null && ((status?.dhw_comfort_temperature || status?.dhw_configured_temperature || 52.0) - dhwTemp > 5.0) && (
               <div className="p-3 bg-sky-50/90 dark:bg-sky-950/40 rounded-xl border border-sky-200 dark:border-sky-800/60 flex items-start gap-2.5 text-xs shadow-2xs">
                 <span className="material-symbols-outlined text-sky-600 text-[18px] shrink-0 mt-0.5">info</span>
                 <div className="flex flex-col text-sky-950 dark:text-sky-100 leading-tight">
                   <span className="font-bold">
-                    Ballon au repos ({dhwTemp.toFixed(1)}°C mesuré vs consigne {(status?.dhw_configured_temperature || status?.dhw_comfort_temperature || 50.0).toFixed(1)}°C)
+                    Ballon au repos ({dhwTemp.toFixed(1)}°C mesuré vs consigne {(status?.dhw_comfort_temperature || status?.dhw_configured_temperature || 52.0).toFixed(1)}°C)
                   </span>
                   <span className="text-[11px] text-sky-800 dark:text-sky-300 mt-1 leading-normal">
-                    Le brûleur fioul est éteint. Le chauffe-eau est autorisé mais n'est pas en chauffe continue (refroidissement naturel en attente de la relance programmée du séjour).
+                    Le brûleur fioul est éteint. Le chauffe-eau est sous tension et en mode confort (maintien ≥ 52.0°C). Refroidissement naturel en attente de la relance programmée du séjour.
                   </span>
                 </div>
               </div>
@@ -422,15 +432,19 @@ export default function HeatingPage({ currentUser }) {
                 <span className="font-label-md text-label-md text-on-surface font-semibold leading-tight">Consigne ECS</span>
                 <span className="font-label-sm text-xs text-on-surface-variant mt-0.5 whitespace-nowrap">
                   {status?.is_dhw_active
-                    ? (status?.is_dhw_heating ? 'Chauffe active vers la cible' : 'Autorisé • Attente relance programmée')
-                    : 'Consigne minimale veille'}
+                    ? (status?.is_dhw_heating ? 'Chauffe active vers la cible' : 'Confort actif (maintien ≥ 52.0°C)')
+                    : 'Veille économique / Hors-gel actif'}
                 </span>
               </div>
               <div className="flex items-center gap-1.5 shrink-0 bg-white p-1 rounded-full border border-border-subtle shadow-xs">
                 <span className="font-headline-md text-[18px] text-primary font-bold tabular-nums px-3 text-center">
-                  {status?.dhw_configured_temperature != null
-                    ? status.dhw_configured_temperature.toFixed(1)
-                    : (status?.dhw_target_temperature != null ? status.dhw_target_temperature.toFixed(1) : '--')}
+                  {status?.is_dhw_active
+                    ? (status?.dhw_comfort_temperature != null
+                        ? status.dhw_comfort_temperature.toFixed(1)
+                        : (status?.dhw_configured_temperature != null && status.dhw_configured_temperature > 20.0
+                            ? status.dhw_configured_temperature.toFixed(1)
+                            : '52.0'))
+                    : (status?.dhw_reduced_temperature != null ? status.dhw_reduced_temperature.toFixed(1) : '10.0')}
                   <span className="text-xs text-outline font-normal">°C</span>
                 </span>
               </div>
@@ -590,7 +604,9 @@ export default function HeatingPage({ currentUser }) {
                   </span>
                 </div>
                 <span className="font-label-sm text-xs text-on-surface-variant mt-0.5 whitespace-nowrap">
-                  Hivernage : consigne minimale {poolStatus?.frost_protection_target != null ? `${poolStatus.frost_protection_target.toFixed(1)}°C` : '--°C'} (non transmissible)
+                  {poolStatus?.is_heating_active
+                    ? 'Confort actif : maintien baignade ≥ 28.0°C'
+                    : 'Arrêt : aucune limite basse • Sécurité antigel 3.0°C'}
                 </span>
               </div>
 
@@ -605,7 +621,12 @@ export default function HeatingPage({ currentUser }) {
                   <Lock className="h-3.5 w-3.5" />
                 </button>
                 <span className="font-headline-md text-[18px] text-slate-700 font-bold tabular-nums w-12 text-center">
-                  {poolStatus?.frost_protection_target != null ? poolStatus.frost_protection_target.toFixed(1) : '--'}<span className="text-xs text-outline font-normal">°C</span>
+                  {poolStatus?.is_heating_active
+                    ? (poolStatus?.target_temperature != null && poolStatus.target_temperature >= 15.0
+                        ? poolStatus.target_temperature.toFixed(1)
+                        : (poolStatus?.pool_comfort_target != null ? poolStatus.pool_comfort_target.toFixed(1) : '28.0'))
+                    : (poolStatus?.antifreeze_threshold != null ? poolStatus.antifreeze_threshold.toFixed(1) : '3.0')}
+                  <span className="text-xs text-outline font-normal">°C</span>
                 </span>
                 <button
                   type="button"
