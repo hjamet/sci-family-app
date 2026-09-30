@@ -9,7 +9,7 @@ import secrets
 import string
 import re
 import unicodedata
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from typing import List, Optional, Any, Dict
 from fastapi import FastAPI, Depends, HTTPException, Query, UploadFile, File, Form, status, Request, BackgroundTasks, Body
 from fastapi.middleware.cors import CORSMiddleware
@@ -6904,18 +6904,23 @@ def update_heating_settings(
             logger.warning(f"[ANTI-LEGIONELLE] Cycle non déclenché : {leg_err}")
 
     # Vérifier si un cycle anti-légionelle précédent doit être terminé (>30 min)
-    leg_check = db.query(ThermalSettings).filter(ThermalSettings.equipment_type == "dhw_legionella").first()
-    if leg_check and leg_check.updated_at:
-        elapsed = (datetime.utcnow() - leg_check.updated_at).total_seconds()
-        if elapsed >= 1800:  # 30 minutes
-            try:
-                comfort_temp = dhw_setting.target_temperature if dhw_setting and dhw_setting.target_temperature else 52.0
-                ViCareService.set_temperature(comfort_temp, program="dhw")
-                db.delete(leg_check)
-                db.commit()
-                logger.info(f"[ANTI-LEGIONELLE] Retour consigne confort ECS → {comfort_temp}°C")
-            except Exception as restore_err:
-                logger.warning(f"[ANTI-LEGIONELLE] Erreur retour confort : {restore_err}")
+    try:
+        leg_check = db.query(ThermalSettings).filter(ThermalSettings.equipment_type == "dhw_legionella").first()
+        if leg_check and leg_check.updated_at:
+            now_utc = datetime.now(timezone.utc)
+            check_time = leg_check.updated_at if leg_check.updated_at.tzinfo else leg_check.updated_at.replace(tzinfo=timezone.utc)
+            elapsed = (now_utc - check_time).total_seconds()
+            if elapsed >= 1800:  # 30 minutes
+                try:
+                    comfort_temp = dhw_setting.target_temperature if dhw_setting and dhw_setting.target_temperature else 52.0
+                    ViCareService.set_temperature(comfort_temp, program="dhw")
+                    db.delete(leg_check)
+                    db.commit()
+                    logger.info(f"[ANTI-LEGIONELLE] Retour consigne confort ECS → {comfort_temp}°C")
+                except Exception as restore_err:
+                    logger.warning(f"[ANTI-LEGIONELLE] Erreur retour confort : {restore_err}")
+    except Exception as leg_check_err:
+        logger.warning(f"[ANTI-LEGIONELLE] Erreur vérification cycle : {leg_check_err}")
     # 2. Build human-readable details
     temp_str = f"{setting.target_temperature:.1f}°C" if setting.target_temperature is not None else "19.0°C"
     mode_str = setting.mode or "dhwAndHeating"
