@@ -167,9 +167,9 @@ export function getTaskColorCategory(task) {
 }
 
 /**
- * Retourne le label canonique strict, le statut normalisé et le style de badge (Annotation 4) :
- * - PROPOSED : "En attente de validation" (Badge orange/ambre)
- * - PENDING_VALIDATION : "En attente d'archivage" (Badge vert émeraude)
+ * Retourne le label canonique strict, le statut normalisé et le style de badge (Annotation 4 & 18) :
+ * - PROPOSED : "En attente de création" (Badge orange/ambre)
+ * - PENDING_VALIDATION : "En attente de validation" (Badge vert émeraude)
  * - EN_COURS / TODO : "En cours" (Badge bleu)
  * - DONE / ARCHIVEE : "Archivée" (Badge gris)
  */
@@ -177,7 +177,7 @@ export function getTaskStatusMeta(task) {
   if (!task) {
     return {
       status: 'PROPOSED',
-      label: 'En attente de validation',
+      label: 'En attente de création',
       color: 'orange',
       badgeClass: 'bg-amber-100 text-amber-900 dark:bg-amber-900/60 dark:text-amber-200 border-amber-300',
       icon: 'pending'
@@ -203,22 +203,22 @@ export function getTaskStatusMeta(task) {
     };
   }
 
-  // 2. Tâche effectuée par le membre, attend la confirmation finale et l'archivage par le coordinateur
+  // 2. Tâche effectuée par le membre, attend la confirmation finale et validation par le coordinateur (Annotation 18)
   if (isTaskPendingValidation(task)) {
     return {
       status: 'PENDING_VALIDATION',
-      label: "En attente d'archivage",
+      label: "En attente de validation",
       color: 'green',
       badgeClass: 'bg-emerald-100 text-emerald-800 dark:bg-emerald-900/60 dark:text-emerald-200 border-emerald-300',
       icon: 'verified'
     };
   }
 
-  // 3. Tâche proposée, non assignée, attend que le coordinateur valide et complète
+  // 3. Tâche proposée, attend que le coordinateur valide la création (Annotation 18)
   if (isTaskProposed(task)) {
     return {
       status: 'PROPOSED',
-      label: 'En attente de validation',
+      label: 'En attente de création',
       color: 'orange',
       badgeClass: 'bg-amber-100 text-amber-900 dark:bg-amber-900/60 dark:text-amber-200 border-amber-300',
       icon: 'pending'

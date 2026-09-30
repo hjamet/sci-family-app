@@ -15,8 +15,8 @@ import {
   addTaskComment,
   reactToTaskComment,
   uploadTaskDocuments,
-  fetchDocumentCategories,
   deleteDocument,
+  invalidateCache,
 } from '../api';
 import {
   isTaskPendingValidation,
@@ -31,18 +31,17 @@ import CustomSelect from './CustomSelect';
 import DocumentViewerModal from './DocumentViewerModal';
 import UploadDocumentModal from './UploadDocumentModal';
 import SelectExistingDocumentModal from './SelectExistingDocumentModal';
-import CategoryManageModal from './CategoryManageModal';
 import FamilyChat from './common/FamilyChat';
 import ExternalLinksSection from './common/ExternalLinksSection';
 
 const SUBJECTS = [
-  'Rosing',
   'Presbytère',
-  'Petites cabanes',
+  'Rosings',
   'Piscine',
+  'Jardin',
+  'Petites cabanes',
   'Hangar à meuble',
   'Garage',
-  'Jardin',
   'SCI',
 ];
 
@@ -128,6 +127,7 @@ export default function TaskDetailModal({
   onClose,
   currentUser = 'Henri Jamet',
   onTaskUpdated,
+  onTaskDeleted,
   initialMode = 'view',
   isEditing = false,
   isBugReport = false,
@@ -139,12 +139,14 @@ export default function TaskDetailModal({
   const [task, setTask] = useState(initialTask || {});
   const [mode, setMode] = useState(isNewTask ? 'edit' : (initialMode || 'view')); // 'view' | 'edit'
 
-  // Gestion Zero-Leak des documents temporaires
+  // Gestion Zero-Leak des documents temporaires et contrôle d'invalidation / suppression
   const isSavedRef = useRef(false);
+  const isDeletedRef = useRef(false);
   const tempDocIdsRef = useRef(tempUploadedDocIds || initialTask?.tempUploadedDocIds || []);
 
   useEffect(() => {
     isSavedRef.current = false;
+    isDeletedRef.current = false;
     tempDocIdsRef.current = Array.isArray(tempUploadedDocIds) && tempUploadedDocIds.length > 0
       ? tempUploadedDocIds
       : (initialTask?.tempUploadedDocIds || []);
@@ -164,7 +166,36 @@ export default function TaskDetailModal({
     }
   };
 
+  // Annotation 9: Détection des modifications non enregistrées pour confirmation explicite
+  const hasUnsavedChanges = () => {
+    if (mode !== 'edit') return false;
+    const origTitle = (task?.title || '').trim();
+    const origDesc = (task?.description || '').trim();
+    const origSub = (task?.subject || (isVoteInitiative ? 'Presbytère' : 'Presbytère')).trim();
+    const origComp = (task?.complexity || (isVoteInitiative ? 'Élevée' : 'Modérée')).trim();
+    const origMembers = Array.isArray(task?.assigned_members)
+      ? [...task.assigned_members].sort().join(',')
+      : (task?.assignee || '');
+    const currentMembers = Array.isArray(editMembers)
+      ? [...editMembers].sort().join(',')
+      : '';
+
+    if (editTitle.trim() !== origTitle) return true;
+    if (editDescription.trim() !== origDesc) return true;
+    if (editSubject.trim() !== origSub) return true;
+    if (!isVoteInitiative && editComplexity.trim() !== origComp) return true;
+    if (!isVoteInitiative && currentMembers !== origMembers) return true;
+    if (editChecklist.length !== parseChecklistItems(task?.checklist).length) return true;
+    if (editDocuments.length !== parseTaskDocuments(task?.documents || task?.completion_docs).length) return true;
+    if (editExternalLinks.length !== (Array.isArray(task?.external_links) ? task.external_links.length : 0)) return true;
+    return false;
+  };
+
   const handleSafeClose = async () => {
+    if (hasUnsavedChanges()) {
+      const confirmDiscard = window.confirm("Des modifications sont en cours et non enregistrées. Voulez-vous vraiment quitter sans enregistrer ?");
+      if (!confirmDiscard) return;
+    }
     await purgeTempDocuments();
     onClose();
   };
@@ -241,7 +272,7 @@ export default function TaskDetailModal({
   // Edit Mode Form State
   const [editTitle, setEditTitle] = useState('');
   const [editDescription, setEditDescription] = useState('');
-  const [editSubject, setEditSubject] = useState('Rosing');
+  const [editSubject, setEditSubject] = useState('Presbytère');
   const [editComplexity, setEditComplexity] = useState('Modérée');
   const [editMembers, setEditMembers] = useState([]);
   const [editChecklist, setEditChecklist] = useState([]);
@@ -255,25 +286,17 @@ export default function TaskDetailModal({
   const [editAutoAssignByWorkload, setEditAutoAssignByWorkload] = useState(false);
   const [savingEdit, setSavingEdit] = useState(false);
 
-  // Catégories dynamiques et édition (Annotation 1)
-  const [categoriesList, setCategoriesList] = useState([]);
-  const [isEditCategoryModalOpen, setIsEditCategoryModalOpen] = useState(false);
-
-  // Options dynamiques pour le sélecteur de sujet/catégorie (Annotation 1)
-  const categoryOptions = React.useMemo(() => {
-    const list = Array.isArray(categoriesList) && categoriesList.length > 0
-      ? categoriesList.map((cat) => ({
-          value: cat.name,
-          label: `${cat.emoji || '📁'} ${cat.name}`,
-        }))
-      : [];
-    for (const sub of SUBJECTS) {
-      if (!list.some((item) => item.value.toLowerCase() === sub.toLowerCase())) {
-        list.push({ value: sub, label: `📍 ${sub}` });
-      }
-    }
-    return list;
-  }, [categoriesList]);
+  // Catégories strictement fixes : Lieux fixes en premier puis SCI (Annotation 15)
+  const categoryOptions = React.useMemo(() => [
+    { value: 'Presbytère', label: '🏡 Presbytère' },
+    { value: 'Rosings', label: '🏠 Rosings' },
+    { value: 'Piscine', label: '🏊 Piscine' },
+    { value: 'Jardin', label: '🌳 Jardin & Espaces Verts' },
+    { value: 'Petites cabanes', label: '🛖 Petites cabanes' },
+    { value: 'Hangar à meuble', label: '📦 Hangar à meuble' },
+    { value: 'Garage', label: '🚗 Garage' },
+    { value: 'SCI', label: '🏛️ SCI & Administratif' },
+  ], []);
 
   // Document Upload & Drag-and-drop State (Universal Upload Modal)
   const [isUploadDocModalOpen, setIsUploadDocModalOpen] = useState(false);
@@ -495,30 +518,13 @@ export default function TaskDetailModal({
   const isProposed = isTaskProposed(task);
   const isOpenTask = isTaskOpen(task);
 
-  // Load latest task details, categories and comments when opened
-  useEffect(() => {
-    async function loadCats() {
-      try {
-        const cats = await fetchDocumentCategories();
-        if (Array.isArray(cats) && cats.length > 0) {
-          setCategoriesList(cats);
-        }
-      } catch (err) {
-        console.warn('Erreur chargement catégories:', err);
-      }
-    }
-    if (isOpen) {
-      loadCats();
-    }
-  }, [isOpen]);
-
   useEffect(() => {
     if (!isOpen) return;
     const isNew = !initialTask || !initialTask.id || isEditing || initialMode === 'edit';
     const taskObj = initialTask && initialTask.id ? initialTask : {
       title: initialTask?.title || '',
       description: initialTask?.description || '',
-      subject: initialTask?.subject || (isVoteInitiative ? 'Presbytère' : 'Rosing'),
+      subject: initialTask?.subject || 'Presbytère',
       complexity: initialTask?.complexity || (isVoteInitiative ? 'Élevée' : 'Modérée'),
       assigned_members: initialTask?.assigned_members || (isVoteInitiative ? [currentUserName || 'Henri Jamet'] : []),
       status: initialTask?.status || (isVoteInitiative ? 'EN_VOTE' : 'PROPOSED'),
@@ -544,11 +550,13 @@ export default function TaskDetailModal({
     async function loadData() {
       try {
         if (!isNew && initialTask?.id) {
+          if (isDeletedRef.current) return;
           const [updatedTask, taskComments] = await Promise.all([
-            fetchTaskById(initialTask.id).catch(() => initialTask),
+            fetchTaskById(initialTask.id).catch(() => null),
             fetchTaskComments(initialTask.id).catch(() => []),
           ]);
-          if (isMounted) {
+          if (isDeletedRef.current || !isMounted) return;
+          if (updatedTask) {
             setTask(updatedTask);
             syncEditFields(updatedTask, false);
             if (Array.isArray(taskComments) && taskComments.length > 0) {
@@ -573,7 +581,7 @@ export default function TaskDetailModal({
     if (!t) return;
     setEditTitle(t.title || '');
     setEditDescription(t.description || '');
-    setEditSubject(t.subject || (isVoteInitiative ? 'Presbytère' : 'Rosing'));
+    setEditSubject(t.subject || 'Presbytère');
     setEditComplexity(t.complexity || (isVoteInitiative ? 'Élevée' : 'Modérée'));
     setEditMembers(isVoteInitiative ? [currentUserName || 'Henri Jamet'] : (Array.isArray(t.assigned_members) ? t.assigned_members : (t.assignee ? [t.assignee] : [])));
     setEditChecklist(isNew ? [] : parseChecklistItems(t.checklist));
@@ -707,22 +715,41 @@ export default function TaskDetailModal({
     }
   };
 
-  // Delete Task (Annotation 18 : Réservé aux coordinateurs ou à la personne ayant proposé la tâche)
+  // Delete Task (Annotation 18 & 19 : Réservé aux coordinateurs ou à la personne ayant proposé la tâche)
   const handleDeleteTask = async () => {
     if (!canDeleteTask) {
       alert("Seuls les coordinateurs ou la personne ayant proposé cette tâche peuvent la supprimer.");
       return;
     }
     if (!window.confirm("Êtes-vous certain de vouloir supprimer cette tâche ?")) return;
-    try {
-      if (task?.id) {
-        await deleteTask(task.id);
-      }
-      if (onTaskUpdated) onTaskUpdated();
+
+    const taskIdToDelete = task?.id;
+    if (!taskIdToDelete) {
       onClose();
+      return;
+    }
+
+    isDeletedRef.current = true;
+
+    // Purge SWR immédiate
+    invalidateCache('/api/tasks');
+    invalidateCache('tasks');
+    invalidateCache(`tasks/${taskIdToDelete}`);
+
+    // Retrait immédiat du state React TasksPage via callback (Annotation 19)
+    if (onTaskDeleted) {
+      onTaskDeleted(taskIdToDelete);
+    } else if (onTaskUpdated) {
+      onTaskUpdated({ id: taskIdToDelete, deleted: true });
+    }
+
+    // Fermeture instantanée de la modal
+    onClose();
+
+    try {
+      await deleteTask(taskIdToDelete);
     } catch (err) {
-      console.error('Erreur suppression tâche:', err);
-      alert(err.message || 'Erreur lors de la suppression de la tâche.');
+      console.error('Erreur suppression tâche backend:', err);
     }
   };
 
@@ -815,17 +842,28 @@ export default function TaskDetailModal({
     }
   };
 
-  // Arbitrage Proposition Coordinateur (Accepter / Refuser)
+  // Arbitrage Proposition Coordinateur (Accepter / Refuser) - Annotation 17
   const handleAcceptModalTask = async () => {
+    // Annotation 17 : Assignation obligatoire à l'acceptation
+    const currentMembers = Array.isArray(task?.assigned_members) && task.assigned_members.length > 0
+      ? task.assigned_members
+      : (task?.assignee ? [task.assignee] : (Array.isArray(editMembers) && editMembers.length > 0 ? editMembers : []));
+
+    if (!currentMembers || currentMembers.length === 0) {
+      alert("Impossible d'accepter la tâche : aucun membre n'est assigné. Veuillez désigner au moins un responsable avant d'accepter la mission.");
+      setMode('edit');
+      return;
+    }
+
     try {
       let refreshed = null;
       if (task?.id) {
-        const accepted = await acceptTask(task.id);
-        refreshed = (accepted && accepted.id) ? accepted : await fetchTaskById(task.id).catch(() => ({ ...task, status: 'EN_COURS' }));
+        const accepted = await acceptTask(task.id, { assigned_members: currentMembers });
+        refreshed = (accepted && accepted.id) ? accepted : await fetchTaskById(task.id).catch(() => ({ ...task, status: 'EN_COURS', assigned_members: currentMembers }));
         setTask(refreshed);
         syncEditFields(refreshed);
       } else {
-        refreshed = { ...task, status: 'EN_COURS' };
+        refreshed = { ...task, status: 'EN_COURS', assigned_members: currentMembers };
         setTask(refreshed);
       }
       if (onTaskUpdated) onTaskUpdated(refreshed);
@@ -1013,9 +1051,16 @@ export default function TaskDetailModal({
       aria-labelledby="modal-task-title"
       aria-modal="true"
       role="dialog"
+      onClick={(e) => {
+        // Annotation 9 : Désactiver la fermeture au clic en dehors (backdrop click désactivé)
+        e.stopPropagation();
+      }}
       className="fixed inset-0 z-50 bg-inverse-surface/60 backdrop-blur-sm flex items-center justify-center p-3 sm:p-6 overflow-y-auto"
     >
-      <div className="w-full max-w-6xl my-auto bg-surface-container-lowest rounded-2xl sm:rounded-3xl shadow-2xl flex flex-col overflow-hidden max-h-[92vh] border border-border-subtle animate-in fade-in zoom-in-95 duration-200">
+      <div
+        onClick={(e) => e.stopPropagation()}
+        className="w-full max-w-6xl my-auto bg-surface-container-lowest rounded-2xl sm:rounded-3xl shadow-2xl flex flex-col overflow-hidden max-h-[92vh] border border-border-subtle animate-in fade-in zoom-in-95 duration-200"
+      >
         
         {/* ========================================== */}
         {/* 1. MODAL HEADER                           */}
@@ -1565,7 +1610,7 @@ export default function TaskDetailModal({
                 </div>
 
                 {/* Section 1 : Gouvernance & Gestion technique (Pour Henri & Joséphine ou Initiative au vote) */}
-                {(isCoordinator || isVoteInitiative) && (
+                {(isCoordinator || isVoteInitiative || isNewTask) && (
                   <section className="bg-white border-2 border-emerald-600/30 rounded-2xl p-4 sm:p-5 shadow-xs flex flex-col gap-4">
                     <div className="flex flex-wrap items-center justify-between gap-2 border-b border-slate-100 pb-3">
                       <div className="flex items-center gap-2">
@@ -1579,26 +1624,13 @@ export default function TaskDetailModal({
                     <div className={`grid gap-4 ${isVoteInitiative ? 'grid-cols-1' : 'grid-cols-1 sm:grid-cols-2'}`}>
                       <div className="flex flex-col gap-1">
                         <label className="font-label-md text-xs font-semibold text-on-surface">Sujet / Emplacement</label>
-                        <div className="flex items-center gap-2">
-                          <div className="flex-1">
-                            <CustomSelect
-                              id="select-task-category"
-                              value={editSubject}
-                              onChange={(e) => setEditSubject(e.target.value)}
-                              options={categoryOptions}
-                              className="h-10 text-xs sm:text-sm"
-                            />
-                          </div>
-                          <button
-                            type="button"
-                            id="btn-edit-task-category"
-                            onClick={() => setIsEditCategoryModalOpen(true)}
-                            className="h-10 w-10 rounded-DEFAULT border-2 border-border-subtle bg-surface-container-lowest text-on-surface-variant hover:text-primary hover:border-primary flex items-center justify-center transition-all cursor-pointer shrink-0 shadow-xs"
-                            title="Modifier ou supprimer la catégorie sélectionnée"
-                          >
-                            <span className="material-symbols-outlined text-[18px]">edit</span>
-                          </button>
-                        </div>
+                        <CustomSelect
+                          id="select-task-category"
+                          value={editSubject}
+                          onChange={(e) => setEditSubject(e.target.value)}
+                          options={categoryOptions}
+                          className="h-10 text-xs sm:text-sm"
+                        />
                       </div>
 
                       {/* Annotation 8 : Masquer degré de complexité en mode vote */}
@@ -1615,8 +1647,8 @@ export default function TaskDetailModal({
                       )}
                     </div>
 
-                    {/* Annotation 8 : Suppression de l'indicateur de porteur en mode vote, conservation des membres attribués en mode tâche */}
-                    {!isVoteInitiative && (
+                    {/* Annotation 8 & 17 : Membres attribués en mode tâche (gérés par les coordinateurs) */}
+                    {!isVoteInitiative && isCoordinator && (
                       <div className="space-y-1.5">
                         <label className="font-label-md text-xs font-semibold text-on-surface">
                           Membres attribués
@@ -2224,22 +2256,6 @@ export default function TaskDetailModal({
         targetTaskId={task?.id}
         alreadyAttachedDocIds={parseTaskDocuments(task?.documents || task?.completion_docs)}
         onAttachSuccess={handleAttachExistingDocs}
-      />
-
-      {/* Modale d'édition / suppression de catégorie existante (Annotation 1 - DRY) */}
-      <CategoryManageModal
-        isOpen={isEditCategoryModalOpen}
-        onClose={() => setIsEditCategoryModalOpen(false)}
-        category={categoriesList.find((c) => c.name === editSubject) || categoriesList[0]}
-        onUpdated={(updated) => {
-          setCategoriesList((prev) => prev.map((c) => (c.id === updated.id ? updated : c)));
-          setEditSubject(updated.name);
-        }}
-        onDeleted={(id) => {
-          const remaining = categoriesList.filter((c) => c.id !== id);
-          setCategoriesList(remaining);
-          setEditSubject(remaining.length > 0 ? remaining[0].name : 'Rosing');
-        }}
       />
 
     </div>

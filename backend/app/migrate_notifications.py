@@ -96,7 +96,23 @@ def migrate_sqlite_db(db_path: str = None):
                 )
             """)
 
-            # 4. Also migrate member_settings table if present
+            # 4. Create notifications table if missing
+            cursor.execute("""
+                CREATE TABLE IF NOT EXISTS notifications (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    member_id INTEGER REFERENCES members(id) ON DELETE CASCADE,
+                    title VARCHAR(255) NOT NULL,
+                    description TEXT,
+                    type VARCHAR(50) DEFAULT 'info',
+                    link_path VARCHAR(255),
+                    link_id VARCHAR(100),
+                    email_entry TEXT,
+                    is_read BOOLEAN DEFAULT 0,
+                    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+                )
+            """)
+
+            # 5. Also migrate member_settings table if present
             cursor.execute("SELECT name FROM sqlite_master WHERE type='table' AND name='member_settings'")
             if cursor.fetchone():
                 cursor.execute("PRAGMA table_info(member_settings)")
@@ -107,6 +123,9 @@ def migrate_sqlite_db(db_path: str = None):
                 if "notify_mentions" not in ms_cols:
                     cursor.execute("ALTER TABLE member_settings ADD COLUMN notify_mentions BOOLEAN DEFAULT TRUE")
                 cursor.execute("UPDATE member_settings SET notify_mentions = 1 WHERE notify_mentions IS NULL")
+                if "notify_task_creation" not in ms_cols:
+                    cursor.execute("ALTER TABLE member_settings ADD COLUMN notify_task_creation BOOLEAN DEFAULT FALSE")
+                cursor.execute("UPDATE member_settings SET notify_task_creation = 0 WHERE notify_task_creation IS NULL")
                 # Activate for coordinator and assistant
                 cursor.execute("""
                     UPDATE member_settings SET notify_thermal_changes = 1
@@ -175,6 +194,22 @@ def migrate_engine(engine):
                         updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
                     );
                 """))
+
+                # notifications table in SQLite
+                conn.execute(text("""
+                    CREATE TABLE IF NOT EXISTS notifications (
+                        id INTEGER PRIMARY KEY AUTOINCREMENT,
+                        member_id INTEGER REFERENCES members(id) ON DELETE CASCADE,
+                        title VARCHAR(255) NOT NULL,
+                        description TEXT,
+                        type VARCHAR(50) DEFAULT 'info',
+                        link_path VARCHAR(255),
+                        link_id VARCHAR(100),
+                        email_entry TEXT,
+                        is_read BOOLEAN DEFAULT 0,
+                        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+                    );
+                """))
                 conn.commit()
             else:
                 # PostgreSQL (Supabase)
@@ -214,10 +249,28 @@ def migrate_engine(engine):
                     );
                 """))
 
-                # member_settings notify_mentions
+                # notifications table in Postgres
+                conn.execute(text("""
+                    CREATE TABLE IF NOT EXISTS notifications (
+                        id SERIAL PRIMARY KEY,
+                        member_id INTEGER REFERENCES members(id) ON DELETE CASCADE,
+                        title VARCHAR(255) NOT NULL,
+                        description TEXT,
+                        type VARCHAR(50) DEFAULT 'info',
+                        link_path VARCHAR(255),
+                        link_id VARCHAR(100),
+                        email_entry TEXT,
+                        is_read BOOLEAN DEFAULT FALSE,
+                        created_at TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP
+                    );
+                """))
+
+                # member_settings notify_mentions & notify_task_creation
                 try:
                     conn.execute(text("ALTER TABLE member_settings ADD COLUMN IF NOT EXISTS notify_mentions BOOLEAN DEFAULT TRUE;"))
                     conn.execute(text("UPDATE member_settings SET notify_mentions = TRUE WHERE notify_mentions IS NULL;"))
+                    conn.execute(text("ALTER TABLE member_settings ADD COLUMN IF NOT EXISTS notify_task_creation BOOLEAN DEFAULT FALSE;"))
+                    conn.execute(text("UPDATE member_settings SET notify_task_creation = FALSE WHERE notify_task_creation IS NULL;"))
                 except Exception as ms_mig_err:
                     logger.debug(f"[MIGRATION NOTICE] member_settings notice: {ms_mig_err}")
 

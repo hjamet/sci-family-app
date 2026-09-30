@@ -228,12 +228,13 @@ export default function VademecumPage({ properties, currentUser, reservations = 
   const [heatingStatus, setHeatingStatus] = useState(() => getCachedData('heating_status') || null);
   const [heatingError, setHeatingError] = useState(null);
   const [piscineStatus, setPiscineStatus] = useState(() => getCachedData('pool_status') || null);
+  const [piscineError, setPiscineError] = useState(null);
   const [telemetryLoading, setTelemetryLoading] = useState(() => !getCachedData('heating_status') && !getCachedData('pool_status'));
 
   // Thermal controls state (Refonte Switches XXL Marche/Arrêt & Double Consigne)
   const [isHeatingActive, setIsHeatingActive] = useState(false);
   const [heatingComfortTarget, setHeatingComfortTarget] = useState(20.0);
-  const [heatingFrostTarget, setHeatingFrostTarget] = useState(10.0);
+  const [heatingFrostTarget, setHeatingFrostTarget] = useState(5.0);
 
   const [isDhwActive, setIsDhwActive] = useState(false);
   const [dhwTarget, setDhwTarget] = useState(55.0);
@@ -332,15 +333,14 @@ export default function VademecumPage({ properties, currentUser, reservations = 
         setHeatingError('⚠️ Liaison ViCare indisponible : impossible d\'interroger la chaudière');
       }
 
-      // Piscine Telemetry
-      if (poolRes) {
+      // Piscine Telemetry & Fail-Fast
+      if (poolRes && !poolRes.error) {
         setPiscineStatus(poolRes);
+        setPiscineError(null);
         if (poolRes.target_temperature != null && poolRes.target_temperature >= 15.0) {
           setPoolTarget(poolRes.target_temperature);
         } else if (poolRes.frost_protection_target != null && poolRes.frost_protection_target >= 15.0) {
           setPoolTarget(poolRes.frost_protection_target);
-        } else {
-          setPoolTarget(28.0);
         }
 
         const pumpActive = poolRes.filtration_state
@@ -352,6 +352,12 @@ export default function VademecumPage({ properties, currentUser, reservations = 
           ? poolRes.pac_state.toLowerCase().includes('chauffe') || poolRes.pac_state.toLowerCase().includes('marche') || poolRes.pac_state.toLowerCase().includes('actif')
           : false;
         setIsPoolHeatingActive(pacActive);
+      } else {
+        setPiscineStatus(null);
+        const errMsg = poolResResult.status === 'rejected'
+          ? (poolResResult.reason?.message || 'Liaison Klereo Connect indisponible')
+          : (poolRes?.error || 'Liaison Klereo Connect indisponible');
+        setPiscineError(`⚠️ Liaison Klereo Connect indisponible : ${errMsg}`);
       }
 
       // Tasks (Annotation 7 : Déduplication et purge des tâches inventées)
@@ -1757,6 +1763,14 @@ export default function VademecumPage({ properties, currentUser, reservations = 
                 </div>
               </div>
 
+              {/* Fail-Fast Piscine Alert */}
+              {piscineError && (
+                <div className="p-3 bg-rose-50 border border-rose-300 text-rose-900 rounded-xl text-xs font-semibold flex items-center gap-2 animate-in fade-in duration-200">
+                  <span className="material-symbols-outlined text-rose-600 text-[18px] shrink-0">error</span>
+                  <span>{piscineError}</span>
+                </div>
+              )}
+
               {/* Double Switch Marche / Arrêt Piscine (Annotation 4) */}
               <div className="space-y-3">
                 {/* 1. Switch Pompe de filtration */}
@@ -1767,6 +1781,7 @@ export default function VademecumPage({ properties, currentUser, reservations = 
                   <ThermalMasterSwitch
                     isActive={isPoolPumpActive}
                     onChange={handleTogglePoolPump}
+                    disabled={Boolean(piscineError)}
                     offLabel="Arrêt"
                     onLabel="Marche"
                     offIcon="power_settings_new"
@@ -1783,6 +1798,7 @@ export default function VademecumPage({ properties, currentUser, reservations = 
                   <ThermalMasterSwitch
                     isActive={isPoolHeatingActive}
                     onChange={handleTogglePoolHeating}
+                    disabled={Boolean(piscineError)}
                     offLabel="Arrêt"
                     onLabel="Marche"
                     offIcon="power_settings_new"

@@ -66,6 +66,7 @@ class MemberUpdate(BaseModel):
     notif_stay_booked: Optional[bool] = None
     notif_thermal_changes: Optional[bool] = None
     notify_mentions: Optional[bool] = None
+    notify_task_creation: Optional[bool] = False
 
 class MemberResponse(MemberBase):
     id: int
@@ -88,6 +89,7 @@ class MemberSettingsResponse(BaseModel):
     notif_stay_booked: bool = True
     notif_thermal_changes: bool = False
     notify_mentions: bool = True
+    notify_task_creation: bool = False
 
     class Config:
         from_attributes = True
@@ -100,6 +102,7 @@ class MemberSettingsUpdate(BaseModel):
     notif_stay_booked: Optional[bool] = None
     notif_thermal_changes: Optional[bool] = None
     notify_mentions: Optional[bool] = None
+    notify_task_creation: Optional[bool] = None
 
 class ChangePasswordRequest(BaseModel):
     old_password: str
@@ -122,6 +125,7 @@ class TokenResponse(BaseModel):
     notif_stay_booked: Optional[bool] = None
     notif_thermal_changes: Optional[bool] = None
     notify_mentions: Optional[bool] = None
+    notify_task_creation: Optional[bool] = None
 
 # Property Schemas
 class PropertyBase(BaseModel):
@@ -752,6 +756,7 @@ class PiscineStatusResponse(BaseModel):
     redox_value: Optional[float] = None
     filter_pressure: Optional[float] = None
     frost_protection_target: Optional[float] = None
+    target_temperature: Optional[float] = None
     is_pump_active: bool = False
     is_heating_active: bool = False
     pac_active: bool = False
@@ -1074,6 +1079,7 @@ class ProfileUpdateRequest(BaseModel):
     notify_new_stay: Optional[bool] = None
     notify_thermal_changes: Optional[bool] = None
     notify_mentions: Optional[bool] = None
+    notify_task_creation: Optional[bool] = None
 
 
 class ChangePasswordRequest(BaseModel):
@@ -1095,6 +1101,7 @@ class MemberSettingsResponse(BaseModel):
     notif_stay_booked: bool = True
     notif_thermal_changes: bool = False
     notify_mentions: bool = True
+    notify_task_creation: bool = False
     # Aliases for legacy compatibility
     notify_new_task: bool = True
     notify_pending_vote: bool = True
@@ -1114,6 +1121,7 @@ class MemberSettingsUpdate(BaseModel):
     notif_stay_booked: Optional[bool] = None
     notif_thermal_changes: Optional[bool] = None
     notify_mentions: Optional[bool] = None
+    notify_task_creation: Optional[bool] = None
     notify_new_task: Optional[bool] = None
     notify_pending_vote: Optional[bool] = None
     notify_final_decision: Optional[bool] = None
@@ -1136,7 +1144,7 @@ class HeatingSettingsRequest(BaseModel):
 
 class HeatingSettingsResponse(BaseModel):
     target_temperature: Optional[float] = 19.0
-    frost_temperature: Optional[float] = 10.0
+    frost_temperature: Optional[float] = 5.0
     is_heating_active: Optional[bool] = None
     is_dhw_active: Optional[bool] = None
     dhw_target_temperature: Optional[float] = None
@@ -1172,6 +1180,23 @@ class VoteSubmissionRequest(BaseModel):
     user_name: str
     vote: str
     comment: Optional[str] = None
+
+
+class NotificationResponse(BaseModel):
+    id: int
+    member_id: Optional[int] = None
+    title: str
+    description: Optional[str] = None
+    type: str = "info"
+    link_path: Optional[str] = None
+    link_id: Optional[str] = None
+    email_entry: Optional[Dict[str, Any]] = None
+    is_read: bool = False
+    created_at: Optional[datetime] = None
+
+    class Config:
+        from_attributes = True
+
 
 
 

@@ -195,3 +195,103 @@ def test_tasks_annotations_v16_archived_chat_and_sync():
     finally:
         client.delete(f"/api/tasks/{task_id}")
 
+
+def test_annotation_16_coordinator_task_creation_email():
+    """Vérifie que la création d'une tâche PROPOSED notifie les coordinateurs si notify_task_creation est True."""
+    from app.security import create_access_token
+    from app.models import Member
+
+    db = SessionLocal()
+    task_id = None
+    try:
+        # Activer notify_task_creation uniquement pour Henri (et désactiver pour les autres coordinateurs)
+        coords = db.query(Member).filter(Member.is_coordinator == True).all()
+        for c in coords:
+            c.notify_task_creation = False
+        henri = db.query(Member).filter(Member.id == 1).first()
+        if henri:
+            henri.notify_task_creation = True
+        db.commit()
+
+        # Création d'une tâche par un associé en statut PROPOSED
+        payload = {
+            "title": "Mission Test Alerte Coordinateur Annotation 16",
+            "description": "Test envoi email lors de proposition de mission",
+            "subject": "Presbytère",
+            "category": "Travaux",
+            "priority": "Haute",
+            "status": "PROPOSED",
+            "created_by": "Eugénie"
+        }
+        res = client.post("/api/tasks", json=payload)
+        assert res.status_code == 201
+        data = res.json()
+        task_id = data["id"]
+        assert data["status"] == "PROPOSED"
+        # Vérifier que le payload de retour contient un email_dispatched pour la proposition
+        assert "_email_dispatched" in data or "email_dispatched" in data
+        dispatched = data.get("_email_dispatched") or data.get("email_dispatched")
+        assert dispatched["trigger_action"] == "task_creation_pending"
+        assert "Mission Test Alerte Coordinateur Annotation 16" in dispatched["subject"]
+
+        # Désactiver notify_task_creation pour tous les coordinateurs et vérifier qu'aucun email n'est envoyé
+        for c in coords:
+            c.notify_task_creation = False
+        db.commit()
+
+        res2 = client.post("/api/tasks", json={
+            "title": "Mission Test Sans Alerte Coordinateur",
+            "status": "PROPOSED",
+            "created_by": "Marguerite"
+        })
+        assert res2.status_code == 201
+        data2 = res2.json()
+        task_id2 = data2["id"]
+        try:
+            assert data2.get("_email_dispatched") is None
+        finally:
+            client.delete(f"/api/tasks/{task_id2}")
+    finally:
+        if task_id:
+            client.delete(f"/api/tasks/{task_id}")
+        db.close()
+
+
+def test_annotation_17_mandatory_assignment_on_accept():
+    """Vérifie qu'il est impossible d'accepter une tâche sans assigner au moins un membre (Annotation 17)."""
+    from app.security import create_access_token
+
+    token = create_access_token({"sub": "Henri", "user_id": 1})
+    headers = {"Authorization": f"Bearer {token}"}
+
+    # 1. Créer une tâche sans assigné en attente de création (PROPOSED)
+    res = client.post("/api/tasks", json={
+        "title": "Mission Test Assignation Obligatoire",
+        "description": "Doit refuser l'acceptation sans assignation",
+        "subject": "Rosings",
+        "status": "PROPOSED",
+        "created_by": "Hortense",
+        "assigned_members": []
+    })
+    assert res.status_code == 201
+    task_id = res.json()["id"]
+
+    try:
+        # 2. Tentative d'acceptation par le coordinateur sans assigné -> Doit échouer avec HTTP 400
+        accept_res = client.post(f"/api/tasks/{task_id}/accept", json={}, headers=headers)
+        assert accept_res.status_code == 400
+        assert "Assignation obligatoire" in accept_res.json()["detail"]
+
+        # 3. Acceptation en fournissant assigned_members dans le corps -> Doit réussir avec HTTP 200
+        accept_with_assignee = client.post(
+            f"/api/tasks/{task_id}/accept",
+            json={"assigned_members": ["Henri Jamet"]},
+            headers=headers
+        )
+        assert accept_with_assignee.status_code == 200
+        updated = accept_with_assignee.json()
+        assert updated["status"] in ["TODO", "EN_COURS"]
+        assert "Henri Jamet" in updated["assigned_members"]
+    finally:
+        client.delete(f"/api/tasks/{task_id}")
+

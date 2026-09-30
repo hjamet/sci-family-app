@@ -27,7 +27,7 @@ function formatYMD(d) {
   return `${y}-${m}-${day}`;
 }
 
-function getDatesFromISOWeek(weekNumber, year = 2026) {
+function getDatesFromISOWeek(weekNumber, year = new Date().getFullYear()) {
   const jan4 = new Date(year, 0, 4);
   const jan4Day = jan4.getDay() || 7;
   const monday = new Date(year, 0, 4 - (jan4Day - 1) + (weekNumber - 1) * 7);
@@ -128,9 +128,12 @@ export function extractParticipants(reservation) {
 
 export default function CalendarPage({ properties, currentUser = 'Henri Jamet' }) {
   const navigate = useNavigate();
-  const [selectedYear, setSelectedYear] = useState(2026);
+  const [selectedYear, setSelectedYear] = useState(() => new Date().getFullYear());
   const [viewMode, setViewMode] = useState('agenda'); // 'agenda' | 'month' | 'year'
-  const [currentDate, setCurrentDate] = useState(() => new Date(2026, 7, 1)); // Août 2026 par défaut
+  const [currentDate, setCurrentDate] = useState(() => {
+    const now = new Date();
+    return new Date(now.getFullYear(), now.getMonth(), 1);
+  });
   const [dragStart, setDragStart] = useState(null);
   const [dragEnd, setDragEnd] = useState(null);
   const [isSelecting, setIsSelecting] = useState(false);
@@ -208,13 +211,32 @@ export default function CalendarPage({ properties, currentUser = 'Henri Jamet' }
     });
   };
 
+  const handlePrevYear = () => {
+    setSelectedYear((prev) => {
+      const baseYear = prev ?? currentDate.getFullYear();
+      const nextYear = baseYear - 1;
+      setCurrentDate((prevDate) => new Date(nextYear, prevDate.getMonth(), 1));
+      return nextYear;
+    });
+  };
+
+  const handleNextYear = () => {
+    setSelectedYear((prev) => {
+      const baseYear = prev ?? currentDate.getFullYear();
+      const nextYear = baseYear + 1;
+      setCurrentDate((prevDate) => new Date(nextYear, prevDate.getMonth(), 1));
+      return nextYear;
+    });
+  };
+
   const handleResetFilters = () => {
+    const now = new Date();
     setFilterRosing(true);
     setFilterPresbytere(true);
     setMemberFilter('all');
     setIsMemberDropdownOpen(false);
-    setSelectedYear(2026);
-    setCurrentDate(new Date(2026, 7, 1));
+    setSelectedYear(now.getFullYear());
+    setCurrentDate(new Date(now.getFullYear(), now.getMonth(), 1));
   };
 
   const handleOpenBooking = (startDateStr, endDateStr) => {
@@ -329,7 +351,10 @@ export default function CalendarPage({ properties, currentUser = 'Henri Jamet' }
   const bookedWeeksMap = {};
   displayStays.forEach((stay) => {
     if (stay.week_number) {
-      bookedWeeksMap[stay.week_number] = stay;
+      if (!bookedWeeksMap[stay.week_number]) {
+        bookedWeeksMap[stay.week_number] = [];
+      }
+      bookedWeeksMap[stay.week_number].push(stay);
     }
   });
 
@@ -413,7 +438,7 @@ export default function CalendarPage({ properties, currentUser = 'Henri Jamet' }
               Calendrier des Séjours
             </h1>
             <p className="font-body-md text-sm sm:text-base text-on-surface-variant dark:text-amber-200/80 leading-relaxed">
-              Réservations des associés, occupation des demeures et calendrier 2026-2027.
+              Réservations des associés, occupation des demeures et calendrier {selectedYear || currentDate.getFullYear()}.
             </p>
           </div>
 
@@ -508,37 +533,46 @@ export default function CalendarPage({ properties, currentUser = 'Henri Jamet' }
 
           {/* Filtres Multiples Alignés Stitch */}
           <div className="flex flex-wrap items-center gap-3">
-            {/* Années : Bouton 'Toutes' + Saisie libre d'année */}
-            <div className="flex items-center gap-1.5 bg-canvas-slate p-1 rounded-xl border border-border-subtle">
+            {/* Années : Navigation d'année (exactement comme pour les mois) + Option 'Toutes' */}
+            <div className="flex items-center gap-1.5">
               <button
                 type="button"
                 id="btn-all-years"
                 onClick={() => setSelectedYear(null)}
-                className={`px-2.5 py-1 text-[13px] font-label-sm font-semibold rounded-lg transition-all shadow-xs cursor-pointer ${
+                className={`px-3 py-2 text-[13px] font-label-sm font-semibold rounded-xl transition-all shadow-xs cursor-pointer ${
                   !selectedYear
-                    ? 'bg-forest-deep text-white'
-                    : 'bg-white text-on-surface hover:bg-slate-100'
+                    ? 'bg-forest-deep text-white shadow-sm'
+                    : 'bg-canvas-slate hover:bg-slate-200 text-on-surface-variant'
                 }`}
-                title="Voir toutes les années"
+                title="Voir toutes les années confondues"
               >
                 Toutes
               </button>
-              <div className="flex items-center gap-1 pr-1.5 pl-1">
-                <span className="material-symbols-outlined text-[16px] text-on-surface-variant">calendar_today</span>
-                <input
-                  type="number"
-                  id="year-input"
-                  min="2020"
-                  max="2035"
-                  placeholder="2026"
-                  value={selectedYear || ''}
-                  onChange={(e) => {
-                    const val = e.target.value ? parseInt(e.target.value, 10) : null;
-                    setSelectedYear(val);
-                  }}
-                  className="w-14 bg-transparent text-[13px] font-label-md font-semibold text-on-surface focus:outline-none text-center"
-                  title="Saisir une année (ex. 2026)"
-                />
+
+              <div className="flex items-center gap-1 bg-canvas-slate p-1 rounded-xl border border-border-subtle">
+                <button
+                  type="button"
+                  id="btn-prev-year"
+                  onClick={handlePrevYear}
+                  className="p-1.5 sm:p-2 rounded-lg hover:bg-slate-200 text-on-surface-variant transition-colors cursor-pointer"
+                  title="Année précédente"
+                  aria-label="Année précédente"
+                >
+                  <span className="material-symbols-outlined text-[20px]">chevron_left</span>
+                </button>
+                <span className="font-label-md text-xs sm:text-sm px-3 py-1.5 rounded-lg bg-sage-soft text-forest-deep font-bold min-w-[70px] text-center select-none">
+                  {selectedYear || currentDate.getFullYear()}
+                </span>
+                <button
+                  type="button"
+                  id="btn-next-year"
+                  onClick={handleNextYear}
+                  className="p-1.5 sm:p-2 rounded-lg hover:bg-slate-200 text-on-surface-variant transition-colors cursor-pointer"
+                  title="Année suivante"
+                  aria-label="Année suivante"
+                >
+                  <span className="material-symbols-outlined text-[20px]">chevron_right</span>
+                </button>
               </div>
             </div>
 
@@ -1006,87 +1040,160 @@ export default function CalendarPage({ properties, currentUser = 'Henri Jamet' }
             <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 pb-6 border-b border-border-subtle">
               <div>
                 <h2 className="font-headline-md text-lg sm:text-headline-md text-forest-deep font-bold">
-                  Vue Annuelle : 52 Semaines ({selectedYear || '2026'})
+                  Vue Annuelle : 52 Semaines ({selectedYear || currentDate.getFullYear()})
                 </h2>
                 <p className="font-body-md text-xs sm:text-sm text-on-surface-variant mt-1">
                   Vision panoramique de la répartition des séjours et des périodes d'affluence familiale.
                 </p>
               </div>
-              <div className="flex items-center gap-2">
-                <span className="px-3 py-1 rounded-full bg-sage-soft text-forest-deep font-semibold text-xs">
-                  {bookedWeeksCount} semaines réservées
-                </span>
-                <span className="px-3 py-1 rounded-full bg-canvas-slate text-on-surface-variant font-medium text-xs">
-                  {freeWeeksCount} semaines libres
-                </span>
+
+              <div className="flex flex-wrap items-center gap-3">
+                {/* Navigation Année identique au design des mois */}
+                <div className="flex items-center gap-2">
+                  <button
+                    type="button"
+                    onClick={handlePrevYear}
+                    className="p-2 rounded-xl bg-canvas-slate hover:bg-slate-200 text-on-surface-variant transition-colors cursor-pointer"
+                    title="Année précédente"
+                    aria-label="Année précédente"
+                  >
+                    <span className="material-symbols-outlined text-[20px]">chevron_left</span>
+                  </button>
+                  <span className="font-label-md text-xs sm:text-sm px-4 py-1.5 rounded-xl bg-sage-soft text-forest-deep font-bold min-w-[80px] text-center select-none">
+                    {selectedYear || currentDate.getFullYear()}
+                  </span>
+                  <button
+                    type="button"
+                    onClick={handleNextYear}
+                    className="p-2 rounded-xl bg-canvas-slate hover:bg-slate-200 text-on-surface-variant transition-colors cursor-pointer"
+                    title="Année suivante"
+                    aria-label="Année suivante"
+                  >
+                    <span className="material-symbols-outlined text-[20px]">chevron_right</span>
+                  </button>
+                </div>
+
+                <div className="flex items-center gap-2">
+                  <span className="px-3 py-1 rounded-full bg-sage-soft text-forest-deep font-semibold text-xs">
+                    {bookedWeeksCount} semaines réservées
+                  </span>
+                  <span className="px-3 py-1 rounded-full bg-canvas-slate text-on-surface-variant font-medium text-xs">
+                    {freeWeeksCount} semaines libres
+                  </span>
+                </div>
               </div>
             </div>
 
             {/* 52-Week Grid responsive (4 trimestres en desktop) */}
-            <div className="grid grid-cols-2 sm:grid-cols-4 md:grid-cols-6 lg:grid-cols-13 gap-2 mt-6">
+            <div className="grid grid-cols-2 sm:grid-cols-4 md:grid-cols-6 lg:grid-cols-13 gap-2 mt-6 select-none">
               {Array.from({ length: 52 }, (_, i) => i + 1).map((w) => {
-                const stay = bookedWeeksMap[w];
-                const isBooked = !!stay;
-                const isPlenary = isBooked && (stay?.isPlenary || stay?.status === 'Rassemblement Plénier');
-                const { startDate: weekStartDate, endDate: weekEndDate } = getDatesFromISOWeek(w, selectedYear || 2026);
-                
-                // Coloration thématique fidèle Stitch
-                let cellClass = 'bg-canvas-slate text-on-surface-variant border-border-subtle hover:bg-white';
-                let labelText = 'Libre';
-                let labelClass = 'text-outline-variant';
-
-                if (isPlenary) {
-                  cellClass = 'bg-emerald-100 text-forest-deep border-forest-deep shadow-sm font-extrabold';
-                  labelText = '★ Plénier';
-                  labelClass = 'text-forest-deep font-extrabold';
-                } else if (isBooked) {
-                  const firstName = stay?.user_name?.split(' ')[0] || 'Réservé';
-                  if (stay?.user_name?.toLowerCase().includes('hortense')) {
-                    cellClass = 'bg-amber-50 text-amber-900 border-amber-600/30 font-semibold';
-                    labelText = 'Hortense';
-                    labelClass = 'text-amber-900 font-bold';
-                  } else if (stay?.user_name?.toLowerCase().includes('frédéric') || stay?.user_name?.toLowerCase().includes('parents')) {
-                    cellClass = 'bg-sage-soft text-forest-deep border-emerald-700/30 font-semibold';
-                    labelText = 'Parents';
-                    labelClass = 'text-forest-deep font-bold';
-                  } else if (stay?.user_name?.toLowerCase().includes('henri')) {
-                    cellClass = 'bg-teal-50 text-teal-800 border-teal-600/30 font-semibold';
-                    labelText = 'Henri';
-                    labelClass = 'text-teal-800 font-bold';
-                  } else {
-                    cellClass = 'bg-sage-soft text-forest-deep border-primary/30 font-semibold';
-                    labelText = firstName;
-                    labelClass = 'text-forest-deep font-semibold';
-                  }
-                }
+                const weekStays = bookedWeeksMap[w] || [];
+                const hasStays = weekStays.length > 0;
+                const activeYear = selectedYear || currentDate.getFullYear();
+                const { startDate: weekStartDate, endDate: weekEndDate } = getDatesFromISOWeek(w, activeYear);
 
                 return (
                   <div
                     key={w}
-                    onClick={() => {
-                      if (stay) {
-                        setEditingReservation(stay.rawReservation || stay);
-                        setIsBookingOpen(true);
-                      } else {
-                        handleOpenBooking(weekStartDate, weekEndDate);
-                      }
-                    }}
-                    title={
-                      stay
-                        ? `Semaine ${w} (${weekStartDate} au ${weekEndDate}) : ${stay.user_name} (${stay.property_name}) — Cliquer pour voir ou modifier`
-                        : `Semaine ${w} (${weekStartDate} au ${weekEndDate}) : Libre — Cliquer pour réserver ce créneau`
-                    }
-                    className={`p-2.5 rounded-xl text-center border transition-all cursor-pointer hover:shadow-md hover:scale-[1.02] ${cellClass}`}
+                    onClick={() => handleOpenBooking(weekStartDate, weekEndDate)}
+                    title={`Semaine S${w < 10 ? `0${w}` : w} (${weekStartDate} au ${weekEndDate}) — Cliquer sur le fond pour réserver un nouveau séjour`}
+                    className={`group relative p-2 rounded-xl text-center border transition-all duration-150 cursor-pointer flex flex-col justify-between min-h-[96px] ${
+                      hasStays
+                        ? 'bg-slate-50/90 hover:bg-emerald-50/40 border-stone-200 dark:border-stone-700/80 shadow-xs hover:shadow-md'
+                        : 'bg-canvas-slate/70 hover:bg-white border-border-subtle hover:border-emerald-600/40 hover:shadow-xs'
+                    }`}
                   >
-                    <span className="text-[11px] font-bold uppercase tracking-wider block">
-                      S{w < 10 ? `0${w}` : w}
-                    </span>
-                    <p className={`text-[11px] mt-1 truncate ${labelClass}`}>
-                      {labelText}
-                    </p>
-                    <span className="text-[9px] opacity-60 block mt-0.5 truncate">
-                      {weekStartDate.slice(5)} → {weekEndDate.slice(5)}
-                    </span>
+                    {/* En-tête de la cellule : Numéro de semaine + icône d'ajout sur le fond */}
+                    <div className="flex items-center justify-between gap-1 w-full pointer-events-none">
+                      <span className="text-[11px] font-bold uppercase tracking-wider text-on-surface-variant">
+                        S{w < 10 ? `0${w}` : w}
+                      </span>
+                      <span
+                        className="material-symbols-outlined text-[13px] opacity-0 group-hover:opacity-100 transition-opacity text-primary"
+                        title="Créer un séjour sur cette semaine"
+                      >
+                        add_circle
+                      </span>
+                    </div>
+
+                    {/* Zone centrale : badges de membres réservataires OU indicateur libre */}
+                    <div className="my-auto py-1 space-y-1 w-full">
+                      {!hasStays ? (
+                        <span className="text-[11px] font-medium text-outline-variant block py-1 pointer-events-none">
+                          Libre
+                        </span>
+                      ) : (
+                        weekStays.map((stay) => {
+                          const isPlenary = stay?.isPlenary || stay?.status === 'Rassemblement Plénier';
+                          const memberName = stay?.user_name || 'Réservé';
+                          const firstName = memberName.split(' ')[0] || 'Associé';
+
+                          let labelText = firstName;
+                          let badgeBg = 'bg-primary text-white hover:ring-primary/50';
+
+                          if (isPlenary) {
+                            labelText = '★ Plénier';
+                            badgeBg = 'bg-forest-deep text-white hover:ring-forest-deep/60';
+                          } else {
+                            const normName = memberName.toLowerCase();
+                            if (normName.includes('henri')) {
+                              labelText = 'Henri';
+                              badgeBg = 'bg-teal-700 text-white hover:ring-teal-500/60';
+                            } else if (normName.includes('frédéric') || normName.includes('frederic') || normName.includes('parent') || normName.includes('élisabeth') || normName.includes('elisabeth')) {
+                              labelText = normName.includes('parent') ? 'Parents' : firstName;
+                              badgeBg = 'bg-emerald-800 text-white hover:ring-emerald-600/60';
+                            } else if (normName.includes('hortense')) {
+                              labelText = 'Hortense';
+                              badgeBg = 'bg-amber-700 text-white hover:ring-amber-500/60';
+                            } else if (normName.includes('joséphine') || normName.includes('josephine')) {
+                              labelText = 'Joséphine';
+                              badgeBg = 'bg-sky-700 text-white hover:ring-sky-500/60';
+                            } else if (normName.includes('marguerite')) {
+                              labelText = 'Marguerite';
+                              badgeBg = 'bg-rose-700 text-white hover:ring-rose-500/60';
+                            } else if (normName.includes('eugénie') || normName.includes('eugenie')) {
+                              labelText = 'Eugénie';
+                              badgeBg = 'bg-purple-700 text-white hover:ring-purple-500/60';
+                            }
+                          }
+
+                          return (
+                            <div
+                              key={stay.id}
+                              role="button"
+                              tabIndex={0}
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                setEditingReservation(stay.rawReservation || stay);
+                                setIsBookingOpen(true);
+                              }}
+                              onKeyDown={(e) => {
+                                if (e.key === 'Enter' || e.key === ' ') {
+                                  e.preventDefault();
+                                  e.stopPropagation();
+                                  setEditingReservation(stay.rawReservation || stay);
+                                  setIsBookingOpen(true);
+                                }
+                              }}
+                              className={`group/badge relative px-1.5 py-0.5 rounded-lg text-[11px] font-bold leading-snug truncate shadow-2xs transition-transform duration-150 hover:scale-105 hover:shadow-md cursor-pointer select-none flex items-center justify-center gap-1 hover:ring-2 hover:ring-offset-1 ${badgeBg}`}
+                              title={`${stay.user_name} (${stay.property_name || 'Domaine'}) — Cliquer pour consulter ou modifier ce séjour`}
+                            >
+                              <span className="truncate">{labelText}</span>
+                              <span className="material-symbols-outlined text-[12px] opacity-70 group-hover/badge:opacity-100 transition-opacity shrink-0">
+                                visibility
+                              </span>
+                            </div>
+                          );
+                        })
+                      )}
+                    </div>
+
+                    {/* Bas de la cellule : Dates de la semaine */}
+                    <div className="w-full pt-1 border-t border-black/5 dark:border-white/5 pointer-events-none">
+                      <span className="text-[9px] text-stone-400 dark:text-stone-500 block truncate">
+                        {weekStartDate.slice(5)} → {weekEndDate.slice(5)}
+                      </span>
+                    </div>
                   </div>
                 );
               })}

@@ -5,6 +5,7 @@ Re-exports canonical email service implementation from app.services.email_servic
 from .services.email_service import (
     send_email,
     send_task_assigned_email,
+    send_task_creation_pending_email,
     send_vote_required_email,
     send_vote_closed_email,
     send_stay_booked_email,
@@ -33,6 +34,7 @@ from .services.email_service import (
 __all__ = [
     "send_email",
     "send_task_assigned_email",
+    "send_task_creation_pending_email",
     "send_vote_required_email",
     "send_vote_closed_email",
     "send_stay_booked_email",

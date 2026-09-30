@@ -240,15 +240,30 @@ def fetch_live_telemetry() -> Dict[str, Any]:
                 val = boiler_device.getDomesticHotWaterConfiguredTemperature()
                 if val is not None:
                     dhw_configured_temp = float(val)
-            except Exception:
+            except Exception as e:
+                logger.warning(f"[VICARE] getDomesticHotWaterConfiguredTemperature error: {e}")
                 dhw_configured_temp = None
 
         dhw_active = False
-        if hasattr(boiler_device, "getDomesticHotWaterActive"):
+        if hasattr(boiler_device, "getDomesticHotWaterChargingActive"):
             try:
-                dhw_active = bool(boiler_device.getDomesticHotWaterActive())
+                dhw_active = bool(boiler_device.getDomesticHotWaterChargingActive())
             except Exception:
-                dhw_active = False
+                pass
+        if not dhw_active and hasattr(boiler_device, "getDomesticHotWaterActiveMode"):
+            try:
+                dhw_mode_val = boiler_device.getDomesticHotWaterActiveMode()
+                if dhw_mode_val and dhw_mode_val != "off":
+                    dhw_active = True
+            except Exception:
+                pass
+        if not dhw_active and hasattr(boiler_device, "getDomesticHotWaterActive"):
+            try:
+                raw_dhw_act = boiler_device.getDomesticHotWaterActive()
+                if raw_dhw_act and raw_dhw_act != "error":
+                    dhw_active = bool(raw_dhw_act)
+            except Exception:
+                pass
 
         room_temp = None
         if circuit and hasattr(circuit, "getRoomTemperature"):
@@ -300,8 +315,9 @@ def fetch_live_telemetry() -> Dict[str, Any]:
                 c_val = circuit.getDesiredTemperatureForProgram("comfort")
                 if c_val is not None:
                     comfort_temp = float(c_val)
-            except Exception:
-                comfort_temp = 20.0
+            except Exception as e:
+                logger.warning(f"[VICARE] Lecture confort programmée impossible: {e}")
+                comfort_temp = None
 
         reduced_temp = None
         if circuit and hasattr(circuit, "getDesiredTemperatureForProgram"):
@@ -309,26 +325,38 @@ def fetch_live_telemetry() -> Dict[str, Any]:
                 r_val = circuit.getDesiredTemperatureForProgram("reduced")
                 if r_val is not None:
                     reduced_temp = float(r_val)
-            except Exception:
-                reduced_temp = 5.0
+            except Exception as e:
+                logger.warning(f"[VICARE] Lecture réduit programmée impossible: {e}")
+                reduced_temp = None
 
-        # Consigne courante désirée ViCare
+        # Consigne courante désirée ViCare - FAIL-FAST radical
         current_desired_temp = None
-        if circuit and hasattr(circuit, "getDesiredTemperature"):
+        if circuit and hasattr(circuit, "getCurrentDesiredTemperature"):
             try:
-                cd_val = circuit.getDesiredTemperature()
+                cd_val = circuit.getCurrentDesiredTemperature()
                 if cd_val is not None:
                     current_desired_temp = float(cd_val)
-            except Exception:
-                current_desired_temp = None
+            except Exception as e:
+                logger.error(f"[VICARE] Erreur Fail-Fast getCurrentDesiredTemperature: {e}")
+                raise HTTPException(
+                    status_code=status.HTTP_502_BAD_GATEWAY,
+                    detail={"error": f"Erreur lecture consigne chaudière ViCare: {e}", "type": type(e).__name__}
+                )
+        elif circuit:
+            err_msg = "Le circuit chaudière ViCare ne possède pas la méthode getCurrentDesiredTemperature."
+            logger.error(f"[VICARE] {err_msg}")
+            raise HTTPException(
+                status_code=status.HTTP_502_BAD_GATEWAY,
+                detail={"error": err_msg, "type": "AttributeError"}
+            )
 
         if current_desired_temp is None:
-            if active_program == "reduced":
-                current_desired_temp = reduced_temp
-            elif active_program in ("comfort", "normal"):
-                current_desired_temp = comfort_temp
-            else:
-                current_desired_temp = comfort_temp if active_mode in ("dhwAndHeating", "forcedNormal") else reduced_temp
+            err_msg = "Consigne de température chaudière introuvable depuis l'API ViCare."
+            logger.error(f"[VICARE] {err_msg}")
+            raise HTTPException(
+                status_code=status.HTTP_502_BAD_GATEWAY,
+                detail={"error": err_msg, "type": "ValueError"}
+            )
 
         # Burner telemetry
         burner_active = False
@@ -349,17 +377,17 @@ def fetch_live_telemetry() -> Dict[str, Any]:
         # Détection réelle Chauffage actif (is_heating_active)
         # Sémantique Marche/Arrêt :
         # - Chauffage 'à l'arrêt' (is_heating_active = False) si active_program == "reduced" ou si la consigne courante désirée est <= 10.0°C.
-        # - Chauffage 'en marche' (is_heating_active = True) uniquement si active_program in ("comfort", "normal") et la consigne est >= 15.0°C.
+        # - Chauffage 'en marche' (is_heating_active = True) uniquement si la consigne est >= 15.0°C et mode chauffe actif.
         if active_program == "reduced" or (current_desired_temp is not None and current_desired_temp <= 10.0):
             is_heating_active = False
-        elif active_program in ("comfort", "normal") and (current_desired_temp is not None and current_desired_temp >= 15.0):
+        elif (current_desired_temp is not None and current_desired_temp >= 15.0) and active_mode in ("dhwAndHeating", "forcedNormal"):
             is_heating_active = True
         else:
             is_heating_active = False
 
         # Détection réelle Eau Chaude Sanitaire active (is_dhw_active)
-        # L'ECS est en marche si mode ECS/Hiver ET status 'on' ET consigne > 10°C (10°C = arrêt/hors-gel du ballon)
-        if active_mode in ("dhw", "dhwAndHeating", "forcedNormal") and dhw_active and (dhw_configured_temp is None or dhw_configured_temp > 10.0):
+        # L'ECS est en marche si mode ECS/Hiver ET status 'on' (ou consigne > 10°C, car 10°C = arrêt/hors-gel du ballon)
+        if active_mode in ("dhw", "dhwAndHeating", "forcedNormal") and (dhw_configured_temp is None or dhw_configured_temp > 10.0) and (dhw_active or active_mode == "dhw"):
             is_dhw_active = True
         else:
             is_dhw_active = False
@@ -371,7 +399,7 @@ def fetch_live_telemetry() -> Dict[str, Any]:
             ViCareService._dhw_comfort_temperature = dhw_comfort
         dhw_reduced = ViCareService._dhw_reduced_temperature
 
-        target_temp = current_desired_temp if current_desired_temp is not None else (comfort_temp if is_heating_active else reduced_temp)
+        target_temp = current_desired_temp
 
         return {
             "room_temperature": room_temp,

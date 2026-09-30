@@ -265,13 +265,18 @@ function BookingModalContent({
       .trim()
       .toLowerCase();
 
+  const isCoordinator =
+    normalizeStr(loggedInUserName).includes('henri') ||
+    normalizeStr(loggedInUserName).includes('josephine') ||
+    (typeof currentUser === 'object' && (currentUser?.role === 'Gérant' || currentUser?.role === 'Coordinatrice' || currentUser?.role === 'Coordinateur' || currentUser?.is_admin || currentUser?.isAdmin));
+
   const isOwner = !isEditMode || (
     initialReservation?.user_name &&
     (normalizeStr(loggedInUserName) === normalizeStr(initialReservation.user_name) ||
      normalizeStr(loggedInUserName).includes(normalizeStr(initialReservation.user_name)) ||
      normalizeStr(initialReservation.user_name).includes(normalizeStr(loggedInUserName)))
   );
-  const isReadOnly = isEditMode && !isOwner;
+  const isReadOnly = isEditMode && !isOwner && !isCoordinator;
   const authorName = initialReservation?.user_name || 'un autre associé';
 
   const todayStr = formatYMD(new Date());

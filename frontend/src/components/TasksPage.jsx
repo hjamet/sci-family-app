@@ -11,6 +11,8 @@ import {
   deleteProject,
   getCachedData,
   invalidateApiCache,
+  invalidateCache,
+  mutate,
 } from '../api';
 import TaskDetailModal from './TaskDetailModal';
 import VoteRoofModal from './VoteRoofModal';
@@ -134,7 +136,7 @@ export default function TasksPage({ currentUser = 'Henri Jamet' }) {
   const isVoteArchived = (p) => {
     if (!p) return false;
     const st = String(p.status || '').toUpperCase().trim();
-    return ['ARCHIVE', 'ARCHIVEE', 'CLOS', 'TERMINE', 'ADOPTE', 'APPROUVE', 'REJETE', 'REFUSE'].includes(st);
+    return ['ARCHIVE', 'ARCHIVEE', 'ARCHIVED', 'CLOS', 'CLOSED', 'TERMINE', 'ADOPTE', 'APPROUVE', 'REJETE', 'REFUSE'].includes(st);
   };
 
   const isVoteProposed = (p) => {
@@ -272,8 +274,24 @@ export default function TasksPage({ currentUser = 'Henri Jamet' }) {
     await loadTasks({ forceRefresh: true });
   };
 
+  const handleTaskDeleted = (deletedTaskId) => {
+    if (!deletedTaskId) return;
+    setTasks((prev) => prev.filter((t) => t.id !== deletedTaskId));
+    if (inspectingTask?.id === deletedTaskId) {
+      setInspectingTask(null);
+      setIsTaskModalOpen(false);
+    }
+    invalidateCache('/api/tasks');
+    invalidateCache('tasks');
+    invalidateCache(`tasks/${deletedTaskId}`);
+  };
+
   const handleTaskUpdated = async (updatedTask) => {
     if (updatedTask && updatedTask.id) {
+      if (updatedTask.deleted) {
+        handleTaskDeleted(updatedTask.id);
+        return;
+      }
       setTasks((prev) => {
         const exists = prev.some((t) => t.id === updatedTask.id || (updatedTask.ref && t.ref === updatedTask.ref));
         if (exists) {
@@ -297,6 +315,9 @@ export default function TasksPage({ currentUser = 'Henri Jamet' }) {
         return [updatedProject, ...prev];
       });
     }
+    invalidateCache('/api/projects');
+    invalidateCache('/api/projects/pending');
+    mutate('projects');
     await loadTasks({ forceRefresh: true });
   };
 
@@ -305,7 +326,9 @@ export default function TasksPage({ currentUser = 'Henri Jamet' }) {
     setActiveVoteIndex(0);
     setIsRoofVoteModalOpen(false);
     setSelectedVoteForModal(null);
-    invalidateApiCache('projects');
+    invalidateCache('/api/projects');
+    invalidateCache('/api/projects/pending');
+    mutate('projects');
     loadTasks({ forceRefresh: true });
   };
 
@@ -316,7 +339,9 @@ export default function TasksPage({ currentUser = 'Henri Jamet' }) {
     setActiveVoteIndex(0);
     setIsRoofVoteModalOpen(false);
     setSelectedVoteForModal(null);
-    invalidateApiCache('projects');
+    invalidateCache('/api/projects');
+    invalidateCache('/api/projects/pending');
+    mutate('projects');
     loadTasks({ forceRefresh: true });
   };
 
@@ -357,12 +382,22 @@ export default function TasksPage({ currentUser = 'Henri Jamet' }) {
     if (!vote?.id) return;
     const ok = window.confirm(`Êtes-vous sûr de vouloir supprimer définitivement le scrutin « ${vote.title} » ? Cette action est irréversible.`);
     if (!ok) return;
+
+    // Annotation 1, 2, 3 & 12 : Retrait immédiat de l'état React pour éliminer tout double-clic et flash 404
+    setProjects(prev => prev.filter(p => p.id !== vote.id));
+    invalidateCache('/api/projects');
+    invalidateCache('/api/projects/pending');
+    mutate('projects');
+
     try {
       await deleteProject(vote.id);
-      setProjects(prev => prev.filter(p => p.id !== vote.id));
+      invalidateCache('/api/projects');
+      invalidateCache('/api/projects/pending');
+      mutate('projects');
       await loadTasks({ forceRefresh: true });
     } catch (err) {
       alert(`Erreur lors de la suppression du scrutin : ${err.message}`);
+      await loadTasks({ forceRefresh: true });
     }
   };
 
@@ -462,7 +497,7 @@ export default function TasksPage({ currentUser = 'Henri Jamet' }) {
             type="button"
           >
             <span className="material-symbols-outlined text-[18px]">verified</span>
-            <span>Arbitrer la validation</span>
+            <span>Arbitrer l'archivage</span>
           </button>
         );
       }
@@ -543,9 +578,20 @@ export default function TasksPage({ currentUser = 'Henri Jamet' }) {
   };
 
   const handleAcceptTask = async (taskToAccept) => {
+    // Annotation 17 : Assignation obligatoire à l'acceptation
+    const currentMembers = Array.isArray(taskToAccept?.assigned_members) && taskToAccept.assigned_members.length > 0
+      ? taskToAccept.assigned_members
+      : (taskToAccept?.assignee ? [taskToAccept.assignee] : []);
+
+    if (currentMembers.length === 0) {
+      alert("Impossible d'accepter la tâche : aucun membre n'est assigné. Veuillez ouvrir la tâche et désigner au moins un responsable avant de l'accepter.");
+      handleOpenInspectTask(taskToAccept);
+      return;
+    }
+
     try {
       setTasks(prev => prev.map(t => (t.id === taskToAccept.id || t.ref === taskToAccept.ref) ? { ...t, status: 'EN_COURS' } : t));
-      await acceptTask(taskToAccept.id);
+      await acceptTask(taskToAccept.id, { assigned_members: currentMembers });
       await loadTasks({ forceRefresh: true });
     } catch (err) {
       console.error('Erreur acceptation tâche:', err);
@@ -1613,6 +1659,7 @@ export default function TasksPage({ currentUser = 'Henri Jamet' }) {
           }}
           currentUser={currentUser}
           onTaskUpdated={handleTaskUpdated}
+          onTaskDeleted={handleTaskDeleted}
         />
       )}
 

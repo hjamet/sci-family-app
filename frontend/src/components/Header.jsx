@@ -1,5 +1,5 @@
 import React, { useState, useRef, useEffect } from 'react';
-import { fetchTasks, fetchProjects, fetchPiscineStatus, fetchReservations } from '../api';
+import NotificationBell from './NotificationBell';
 
 // Logo SVG épuré et architectural : Monogramme 'H' surmonté du toit de la bâtisse familiale
 function HouseHLogo({ className = "w-10 h-10" }) {
@@ -56,200 +56,21 @@ export default function Header({
   onOpenVoteModal,
   onOpenTaskModal,
   onOpenBookingModal,
+  onViewEmail,
 }) {
   const [isUserMenuOpen, setIsUserMenuOpen] = useState(false);
-  const [isNotifOpen, setIsNotifOpen] = useState(false);
   const [isMobileMenuOpen, setIsMobileMenuOpen] = useState(false);
   const dropdownRef = useRef(null);
-  const notifRef = useRef(null);
   const mobileMenuRef = useRef(null);
 
   const displayName = typeof currentUser === 'object'
     ? (currentUser?.prenom ? `${currentUser.prenom} ${currentUser.nom || 'Jamet'}` : 'Henri Jamet')
     : (currentUser || 'Henri Jamet');
 
-  const resolveUserId = (user) => {
-    if (!user) return 'default';
-    if (typeof user === 'object') {
-      return user.id ?? (user.prenom ? user.prenom.toLowerCase() : 'user');
-    }
-    return String(user).toLowerCase().replace(/\s+/g, '_');
-  };
-
-  const getStorageKey = (user) => {
-    const uid = resolveUserId(user);
-    return `sci_read_notifications_${uid}`;
-  };
-
-  const [notifications, setNotifications] = useState([]);
-
-  const [readNotifIds, setReadNotifIds] = useState(() => {
-    try {
-      const key = getStorageKey(currentUser);
-      const saved = localStorage.getItem(key);
-      if (saved) return JSON.parse(saved);
-      const legacy = localStorage.getItem('sci_read_notifications');
-      return legacy ? JSON.parse(legacy) : [];
-    } catch {
-      return [];
-    }
-  });
-
-  useEffect(() => {
-    try {
-      const key = getStorageKey(currentUser);
-      const saved = localStorage.getItem(key);
-      if (saved) {
-        setReadNotifIds(JSON.parse(saved));
-      } else {
-        const legacy = localStorage.getItem('sci_read_notifications');
-        if (legacy) setReadNotifIds(JSON.parse(legacy));
-      }
-    } catch (err) {
-      console.warn('Erreur synchronisation notifications lues:', err);
-    }
-  }, [currentUser]);
-
-  const persistReadIds = (newIds) => {
-    setReadNotifIds(newIds);
-    try {
-      const key = getStorageKey(currentUser);
-      localStorage.setItem(key, JSON.stringify(newIds));
-    } catch (err) {
-      console.warn('Erreur persistance readNotifIds:', err);
-    }
-  };
-
-  useEffect(() => {
-    let isMounted = true;
-    async function loadDynamicNotifications() {
-      try {
-        // Étape 1 : Données ultra-rapides Supabase SQL (projets, tâches, séjours)
-        const [projRes, taskRes, resRes] = await Promise.allSettled([
-          fetchProjects(),
-          fetchTasks(),
-          fetchReservations(),
-        ]);
-
-        const dynamicNotifs = [];
-
-        // 2. Projets en vote ouvert
-        if (projRes.status === 'fulfilled' && Array.isArray(projRes.value)) {
-          projRes.value
-            .filter((p) => p.status === 'voting' || p.status === 'open' || p.is_voting)
-            .forEach((p) => {
-              dynamicNotifs.push({
-                id: `proj-vote-${p.id}`,
-                title: `Vote ouvert : ${p.title}`,
-                description: p.description ? p.description.slice(0, 75) + '...' : 'Votre avis d\'associé est requis.',
-                type: 'vote',
-                projectId: p.id,
-                project: p,
-                path: '/taches',
-                tabId: 'taches',
-                time: 'Vote actif',
-                icon: 'how_to_vote',
-              });
-            });
-        }
-
-        // 3. Tâches urgentes ou assignées
-        if (taskRes.status === 'fulfilled' && Array.isArray(taskRes.value)) {
-          const userFirst = typeof currentUser === 'string' ? currentUser.split(' ')[0] : (currentUser?.prenom || 'Henri');
-          taskRes.value
-            .filter((t) => {
-              if (t.status === 'DONE' || t.status === 'VALIDE') return false;
-              const assigned = Array.isArray(t.assigned_members) ? t.assigned_members.join(' ') : String(t.responsible || '');
-              return assigned.toLowerCase().includes(userFirst.toLowerCase()) || t.priority === 'URGENT';
-            })
-            .slice(0, 3)
-            .forEach((t) => {
-              dynamicNotifs.push({
-                id: `task-assign-${t.id}`,
-                title: `${t.priority === 'URGENT' ? '🚨 ' : ''}${t.title}`,
-                description: t.description ? t.description.slice(0, 75) + '...' : 'Tâche en attente d\'action.',
-                type: 'task',
-                taskId: t.id,
-                task: t,
-                path: '/taches',
-                tabId: 'taches',
-                time: t.priority === 'URGENT' ? 'Urgent' : 'En cours',
-                icon: 'assignment_ind',
-              });
-            });
-        }
-
-        // 4. Séjours et réservations imminents
-        if (resRes.status === 'fulfilled' && Array.isArray(resRes.value)) {
-          const userFirst = typeof currentUser === 'string' ? currentUser.split(' ')[0] : (currentUser?.prenom || 'Henri');
-          const todayStr = new Date().toISOString().split('T')[0];
-          resRes.value
-            .filter((r) => {
-              if (r.status === 'Refusée' || r.status === 'Annulée') return false;
-              const isUpcoming = (r.end_date && r.end_date >= todayStr) || (r.start_date && r.start_date >= todayStr);
-              if (!isUpcoming) return false;
-              const rUser = (r.user_name || '').toLowerCase();
-              return rUser.includes(userFirst.toLowerCase());
-            })
-            .slice(0, 2)
-            .forEach((r) => {
-              dynamicNotifs.push({
-                id: `stay-booking-${r.id}`,
-                title: `Séjour : ${r.house === 'rosing' ? 'Rosing' : 'Presbytère'}`,
-                description: `Du ${r.start_date} au ${r.end_date} (${r.status || 'Confirmé'}).`,
-                type: 'sejour',
-                path: '/calendrier',
-                tabId: 'calendrier',
-                time: 'Séjour',
-                icon: 'cottage',
-                reservation: r,
-              });
-            });
-        }
-
-        if (isMounted) {
-          setNotifications(dynamicNotifs);
-        }
-
-        // Étape 2 : Alertes piscine réelles interrogées en tâche de fond différée
-        fetchPiscineStatus()
-          .then((poolData) => {
-            if (isMounted && poolData?.alerts?.length > 0) {
-              const poolNotifs = poolData.alerts.map((alertText, idx) => ({
-                id: `pool-alert-${idx}`,
-                title: 'Alerte Équipement Piscine',
-                description: alertText,
-                type: 'alert',
-                path: '/sejour',
-                tabId: 'sejour',
-                time: 'Télémétrie',
-                icon: 'pool',
-              }));
-              setNotifications((prev) => {
-                const nonPool = prev.filter((n) => !n.id.startsWith('pool-alert-'));
-                return [...poolNotifs, ...nonPool];
-              });
-            }
-          })
-          .catch(() => {});
-      } catch (err) {
-        console.warn('Erreur chargement notifications dynamiques:', err);
-      }
-    }
-
-    loadDynamicNotifications();
-    return () => {
-      isMounted = false;
-    };
-  }, [typeof currentUser === 'object' ? (currentUser?.id || currentUser?.prenom || 'Henri') : (currentUser || 'Henri')]);
-
   useEffect(() => {
     function handleClickOutside(event) {
       if (dropdownRef.current && !dropdownRef.current.contains(event.target)) {
         setIsUserMenuOpen(false);
-      }
-      if (notifRef.current && !notifRef.current.contains(event.target)) {
-        setIsNotifOpen(false);
       }
       if (mobileMenuRef.current && !mobileMenuRef.current.contains(event.target)) {
         setIsMobileMenuOpen(false);
@@ -258,7 +79,6 @@ export default function Header({
 
     function handleKeyDown(event) {
       if (event.key === 'Escape') {
-        setIsNotifOpen(false);
         setIsUserMenuOpen(false);
         setIsMobileMenuOpen(false);
       }
@@ -271,57 +91,6 @@ export default function Header({
       document.removeEventListener('keydown', handleKeyDown);
     };
   }, []);
-
-  const unreadNotifications = notifications.filter((n) => !readNotifIds.includes(n.id));
-  const unreadCount = unreadNotifications.length;
-
-  const markAllAsRead = (e) => {
-    if (e) e.stopPropagation();
-    const allIds = notifications.map((n) => n.id);
-    const updated = Array.from(new Set([...readNotifIds, ...allIds]));
-    persistReadIds(updated);
-  };
-
-  const handleNotificationClick = (notif) => {
-    // 1. Ajouter l'ID de la notification à readNotificationIds et persister
-    if (!readNotifIds.includes(notif.id)) {
-      const updated = [...readNotifIds, notif.id];
-      persistReadIds(updated);
-    }
-
-    // 2. Fermer le popover de notifications
-    setIsNotifOpen(false);
-
-    // 3. Ouvrir immédiatement la modale associée sans recharger ni changer de page
-    if (notif.type === 'vote') {
-      if (onOpenVoteModal) {
-        onOpenVoteModal(notif.projectId || notif.project?.id || notif.id, notif.project);
-        return;
-      }
-    }
-
-    if (notif.type === 'task') {
-      if (onOpenTaskModal) {
-        onOpenTaskModal(notif.taskId || notif.task?.id || notif.id, notif.task);
-        return;
-      }
-    }
-
-    if (notif.type === 'sejour' || notif.type === 'booking') {
-      if (onOpenBookingModal) {
-        onOpenBookingModal();
-        return;
-      }
-    }
-
-    // Fallback navigation si alerte ou aucun gestionnaire de modale
-    if (setActiveTab && notif.tabId) {
-      setActiveTab(notif.tabId);
-    }
-    if (onNavigate && notif.path) {
-      onNavigate(notif.path, notif.tabId);
-    }
-  };
 
   const handleTabClick = (item) => {
     if (setActiveTab) {
@@ -394,106 +163,16 @@ export default function Header({
             </span>
           </div>
 
-          {/* 1. Bouton [🔔 Notifications] avec popover élégant */}
-          <div className="relative" ref={notifRef}>
-            <button
-              type="button"
-              onClick={() => {
-                setIsNotifOpen((prev) => !prev);
-                setIsUserMenuOpen(false);
-              }}
-              className={`w-9 h-9 rounded-full flex items-center justify-center transition-all relative cursor-pointer ${
-                isNotifOpen
-                  ? 'bg-sage-soft text-primary ring-2 ring-primary/40 shadow-xs font-bold'
-                  : 'bg-canvas-slate hover:bg-sage-soft/70 text-on-surface-variant hover:text-primary border border-border-subtle shadow-xs'
-              }`}
-              title="Notifications & Alertes"
-              aria-label="Notifications & Alertes"
-            >
-              <span className="material-symbols-outlined text-[20px]">notifications</span>
-              {unreadCount > 0 && (
-                <span className="absolute -top-1 -right-1 min-w-[17px] h-[17px] px-1 bg-amber-600 text-white text-[10px] font-bold rounded-full flex items-center justify-center shadow-xs animate-pulse ring-2 ring-white">
-                  {unreadCount}
-                </span>
-              )}
-            </button>
-
-            {/* Menu Déroulant Popover Notifications */}
-            {isNotifOpen && (
-              <div className="absolute right-0 top-full mt-2 w-80 bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-2xl shadow-2xl z-50 p-3 animate-in fade-in zoom-in-95 duration-150">
-                {/* En-tête */}
-                <div className="flex items-center justify-between pb-2 mb-2 border-b border-slate-100 dark:border-slate-800">
-                  <div className="flex items-center gap-1.5">
-                    <span className="material-symbols-outlined text-[18px] text-primary">notifications</span>
-                    <span className="font-bold text-xs text-slate-900 dark:text-slate-100">Notifications</span>
-                    {unreadCount > 0 && (
-                      <span className="px-1.5 py-0.2 rounded-full bg-amber-100 dark:bg-amber-950 text-amber-800 dark:text-amber-300 text-[10px] font-bold">
-                        {unreadCount}
-                      </span>
-                    )}
-                  </div>
-                  {unreadCount > 0 && (
-                    <button
-                      type="button"
-                      onClick={markAllAsRead}
-                      className="text-[11px] font-semibold text-primary hover:text-primary-container dark:text-emerald-400 hover:underline cursor-pointer"
-                    >
-                      Tout marquer comme lu
-                    </button>
-                  )}
-                </div>
-
-                {/* Liste des notifications non lues (disparaissent dès qu'elles sont lues) */}
-                <div className="flex flex-col gap-1.5 max-h-72 overflow-y-auto pr-1">
-                  {unreadNotifications.length === 0 ? (
-                    <div className="flex flex-col items-center justify-center py-6 px-4 text-center">
-                      <div className="w-10 h-10 rounded-full bg-emerald-50 dark:bg-emerald-950/60 text-primary flex items-center justify-center mb-2 shadow-2xs">
-                        <span className="material-symbols-outlined text-[20px]">done_all</span>
-                      </div>
-                      <p className="text-xs font-bold text-slate-800 dark:text-slate-200">
-                        Aucune notification en attente
-                      </p>
-                      <p className="text-[11px] text-slate-500 dark:text-slate-400 mt-0.5">
-                        Toutes vos notifications et votes ont été traités.
-                      </p>
-                    </div>
-                  ) : (
-                    unreadNotifications.map((notif) => (
-                      <div
-                        key={notif.id}
-                        onClick={() => handleNotificationClick(notif)}
-                        className="p-2.5 rounded-xl transition-all cursor-pointer flex items-start gap-2.5 bg-emerald-50/70 dark:bg-emerald-950/30 hover:bg-emerald-100/70 dark:hover:bg-emerald-900/40 border border-emerald-200/60 dark:border-emerald-800/40 shadow-2xs group"
-                      >
-                        <div
-                          className={`w-7 h-7 rounded-lg flex items-center justify-center shrink-0 mt-0.5 transition-transform group-hover:scale-105 ${
-                            notif.type === 'alert'
-                              ? 'bg-amber-100 text-amber-700 dark:bg-amber-900/60 dark:text-amber-300'
-                              : notif.type === 'vote'
-                              ? 'bg-purple-100 text-purple-700 dark:bg-purple-900/60 dark:text-purple-300'
-                              : 'bg-emerald-100 text-emerald-700 dark:bg-emerald-900/60 dark:text-emerald-300'
-                          }`}
-                        >
-                          <span className="material-symbols-outlined text-[16px]">{notif.icon || 'notifications'}</span>
-                        </div>
-                        <div className="flex-1 min-w-0">
-                          <div className="flex items-center justify-between gap-1">
-                            <p className="text-xs truncate font-bold text-slate-900 dark:text-slate-100 group-hover:text-primary transition-colors">
-                              {notif.title}
-                            </p>
-                            <span className="text-[10px] text-slate-400 shrink-0">{notif.time}</span>
-                          </div>
-                          <p className="text-[11px] text-slate-500 dark:text-slate-400 line-clamp-2 mt-0.5 leading-snug">
-                            {notif.description}
-                          </p>
-                        </div>
-                        <span className="w-2 h-2 rounded-full bg-amber-500 shrink-0 mt-2"></span>
-                      </div>
-                    ))
-                  )}
-                </div>
-              </div>
-            )}
-          </div>
+          {/* 1. Bouton [🔔 Notifications] avec NotificationBell factorisé (Annotation 13) */}
+          <NotificationBell
+            currentUser={currentUser}
+            onViewEmail={onViewEmail}
+            onOpenVoteModal={onOpenVoteModal}
+            onOpenTaskModal={onOpenTaskModal}
+            onOpenBookingModal={onOpenBookingModal}
+            onNavigate={onNavigate}
+            setActiveTab={setActiveTab}
+          />
 
           {/* 2. Bouton [⚙️ Paramètres] */}
           <button

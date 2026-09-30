@@ -346,6 +346,7 @@ class KlereoService:
                 "redox_value": redox_val,
                 "filter_pressure": filter_pressure,
                 "frost_protection_target": frost_protection_target,
+                "target_temperature": frost_protection_target,
                 "is_pump_active": filtration_active,
                 "is_heating_active": pac_active,
                 "pac_active": pac_active,
@@ -424,53 +425,12 @@ class KlereoService:
         return cls.get_status(force_refresh=force_refresh)
 
     @classmethod
-    def _build_fallback_status(cls) -> Dict[str, Any]:
-        """Génère un statut cohérent en mode test / lecture seule si l'API externe est inaccessible."""
-        pump_active = bool(cls._simulated_pump_state) if cls._simulated_pump_state is not None else False
-        pac_active = bool(cls._simulated_heating_state) if cls._simulated_heating_state is not None else False
-        p_mode = cls._simulated_pump_mode or ("on" if pump_active else "off")
-        h_mode = cls._simulated_heating_mode or ("on" if pac_active else "off")
-        return {
-            "water_temperature": 28.0,
-            "air_temperature": 22.0,
-            "ph_value": 7.4,
-            "redox_value": 720.0,
-            "filter_pressure": 0.8,
-            "frost_protection_target": 10.0,
-            "is_pump_active": pump_active,
-            "is_heating_active": pac_active,
-            "pac_active": pac_active,
-            "pump_mode": p_mode,
-            "heating_mode": h_mode,
-            "pac_state": "En chauffe (PAC Inopac 20 kW)" if pac_active else "Mise en veille / Arrêt consigne",
-            "pac_power": "20 kW",
-            "cover_state": "Verrouillée & tendue",
-            "filtration_state": f"En marche ({p_mode})" if pump_active else f"Arrêt ({p_mode})",
-            "filtration_cycle": "Cycle standard",
-            "hivernage_status": "Régulation active",
-            "sensor_location": "Sonde Kompact skimmer",
-            "winter_warning": "Chauffage du bassin déconseillé & formellement proscrit en octobre-mars.",
-            "frederic_jamet_agreement": "Prise en charge contrat DECLERCQ à 100% jusqu’au 31/12/2026.",
-            "agreement_status": "Actif (100% pris en charge par Frédéric Jamet)",
-            "contract_provider": "DECLERCQ PISCINES",
-            "radio_link_ok": True,
-            "radio_status": "Liaison radio K-Link active",
-            "radio_alert": None,
-            "radio_error": False,
-            "test_mode_read_only": cls.is_read_only_mode(),
-            "message": "Mode test / lecture seule actif : commande enregistrée.",
-            "pool_nickname": "Ma piscine",
-            "system_id": 91360,
-            "last_update": datetime.utcnow().isoformat(),
-            "alerts": []
-        }
-
-    @classmethod
     def set_pump_mode(cls, mode: Optional[str] = None, active: Optional[bool] = None) -> Dict[str, Any]:
         """
         Contrôle de la pompe de filtration Klereo (Marche / Arrêt / Auto).
         En mode test/lecture seule (KLEREO_TEST_MODE_READ_ONLY = True),
-        consigne l'action de commande et renvoie le statut mis à jour sans crasher ni bloquer.
+        consigne l'action de commande et renvoie le statut réel mis à jour sans fallback factice.
+        Fail-Fast : Si l'API Klereo est indisponible, l'erreur est levée et propagée.
         """
         if active is not None:
             new_active = bool(active)
@@ -502,11 +462,7 @@ class KlereoService:
         cls._simulated_pump_mode = new_mode
 
         if cls.is_read_only_mode():
-            try:
-                data = cls.get_pool_status(force_refresh=True)
-            except Exception as e:
-                logger.warning(f"[KLEREO] Télémétrie live non disponible ({e}), repli statut local.")
-                data = cls._build_fallback_status()
+            data = cls.get_pool_status(force_refresh=True)
             data["is_pump_active"] = new_active
             data["pump_mode"] = new_mode
             data["filtration_state"] = f"En marche ({new_mode})" if new_active else f"Arrêt ({new_mode})"
@@ -520,7 +476,8 @@ class KlereoService:
         """
         Contrôle du chauffage de la piscine PAC Inopac 20 kW (Marche / Arrêt / Auto).
         En mode test/lecture seule (KLEREO_TEST_MODE_READ_ONLY = True),
-        consigne l'action de commande et renvoie le statut mis à jour sans crasher ni bloquer.
+        consigne l'action de commande et renvoie le statut réel mis à jour sans fallback factice.
+        Fail-Fast : Si l'API Klereo est indisponible, l'erreur est levée et propagée.
         """
         if active is not None:
             new_active = bool(active)
@@ -552,11 +509,7 @@ class KlereoService:
         cls._simulated_heating_mode = new_mode
 
         if cls.is_read_only_mode():
-            try:
-                data = cls.get_pool_status(force_refresh=True)
-            except Exception as e:
-                logger.warning(f"[KLEREO] Télémétrie live non disponible ({e}), repli statut local.")
-                data = cls._build_fallback_status()
+            data = cls.get_pool_status(force_refresh=True)
             data["is_heating_active"] = new_active
             data["pac_active"] = new_active
             data["heating_mode"] = new_mode

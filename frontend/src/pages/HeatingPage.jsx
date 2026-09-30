@@ -16,6 +16,7 @@ export default function HeatingPage({ currentUser }) {
   const [poolStatus, setPoolStatus] = useState(() => getCachedData('pool_status') || null);
   const [loading, setLoading] = useState(() => !getCachedData('heating_status'));
   const [errorMsg, setErrorMsg] = useState(null);
+  const [poolErrorMsg, setPoolErrorMsg] = useState(null);
   const [updating, setUpdating] = useState(false);
 
   // Determine RBAC permissions strictly for Coordinator
@@ -35,6 +36,7 @@ export default function HeatingPage({ currentUser }) {
     try {
       if (!status) setLoading(true);
       setErrorMsg(null);
+      setPoolErrorMsg(null);
       const [heatResult, poolResult] = await Promise.allSettled([
         fetchHeatingStatus(),
         fetchPiscineStatus(),
@@ -54,8 +56,14 @@ export default function HeatingPage({ currentUser }) {
         }
       }
 
-      if (poolResult.status === 'fulfilled' && poolResult.value) {
+      if (poolResult.status === 'fulfilled' && poolResult.value && !poolResult.value.error) {
         setPoolStatus(poolResult.value);
+        setPoolErrorMsg(null);
+      } else {
+        const poolErr = poolResult.status === 'rejected' ? poolResult.reason : poolResult.value?.error;
+        console.warn('Notice piscine Klereo:', poolErr);
+        setPoolStatus(null);
+        setPoolErrorMsg(poolErr?.message || String(poolErr) || 'Impossible de contacter le boîtier Klereo Connect');
       }
     } catch (err) {
       console.error('Error fetching heating status:', err);
@@ -284,7 +292,7 @@ export default function HeatingPage({ currentUser }) {
               <div className="flex items-center gap-1 px-2.5 py-1 rounded-full bg-canvas-slate border border-border-subtle shrink-0">
                 <span className="font-label-sm text-xs text-outline">Ambiance :</span>
                 <span className="font-headline-sm text-xs text-on-surface font-bold tabular-nums">
-                  {currentTemp != null ? `${currentTemp.toFixed(1)}°C` : '19.2°C'}
+                  {currentTemp != null ? `${currentTemp.toFixed(1)}°C` : '--°C'}
                 </span>
               </div>
             </div>
@@ -314,7 +322,7 @@ export default function HeatingPage({ currentUser }) {
                     Sonde extérieure
                   </span>
                   <span className="font-label-md text-xs font-semibold text-on-surface pl-4 mt-0.5">
-                    {outdoorTemp != null ? `${outdoorTemp.toFixed(1)}°C` : '12.8°C'} (Normandie)
+                    {outdoorTemp != null ? `${outdoorTemp.toFixed(1)}°C` : '--°C'} (Normandie)
                   </span>
                 </div>
                 <span className="text-[11px] font-semibold text-primary bg-sage-soft px-2 py-0.5 rounded-md">Régulation auto</span>
@@ -327,7 +335,7 @@ export default function HeatingPage({ currentUser }) {
                     Départ eau chaudière
                   </span>
                   <span className="font-label-md text-xs font-semibold text-on-surface pl-4 mt-0.5">
-                    {supplyTemp != null ? `${supplyTemp.toFixed(1)}°C` : '42.0°C'}
+                    {supplyTemp != null ? `${supplyTemp.toFixed(1)}°C` : '--°C'}
                   </span>
                 </div>
                 <span className="text-[11px] font-medium text-on-surface-variant">Circuit fonte</span>
@@ -363,7 +371,7 @@ export default function HeatingPage({ currentUser }) {
               <div className="flex items-center gap-1 px-2.5 py-1 rounded-full bg-canvas-slate border border-border-subtle shrink-0">
                 <span className="font-label-sm text-xs text-outline">Stockage :</span>
                 <span className="font-headline-sm text-xs text-on-surface font-bold tabular-nums">
-                  {dhwTemp != null ? `${dhwTemp.toFixed(1)}°C` : '52.0°C'}
+                  {dhwTemp != null ? `${dhwTemp.toFixed(1)}°C` : '--°C'}
                 </span>
               </div>
             </div>
@@ -379,7 +387,7 @@ export default function HeatingPage({ currentUser }) {
                 <span className="font-headline-md text-[18px] text-primary font-bold tabular-nums px-3 text-center">
                   {status?.dhw_configured_temperature != null
                     ? status.dhw_configured_temperature.toFixed(1)
-                    : (status?.dhw_target_temperature != null ? status.dhw_target_temperature.toFixed(1) : '10.0')}
+                    : (status?.dhw_target_temperature != null ? status.dhw_target_temperature.toFixed(1) : '--')}
                   <span className="text-xs text-outline font-normal">°C</span>
                 </span>
               </div>
@@ -456,6 +464,18 @@ export default function HeatingPage({ currentUser }) {
               </div>
             </div>
 
+            {/* Fail-Fast Klereo Alert */}
+            {poolErrorMsg && (
+              <div className="p-3.5 rounded-xl bg-rose-50 border-2 border-rose-500 text-rose-950 shadow-xs space-y-1.5 animate-in fade-in duration-200">
+                <div className="flex items-start gap-2">
+                  <AlertTriangle className="h-4 w-4 text-rose-600 shrink-0 mt-0.5" />
+                  <div className="font-bold text-xs leading-snug">
+                    {poolErrorMsg}
+                  </div>
+                </div>
+              </div>
+            )}
+
             {/* BANDEAU D'ALERTE RUPTURE RADIO K-LINK 868 MHz (uniquement si confirmée par l'API) */}
             {poolStatus?.radio_error && poolStatus?.radio_alert && (
               <div className="p-3.5 rounded-xl bg-amber-50 border-2 border-amber-500 text-amber-950 shadow-xs space-y-1.5 animate-in fade-in duration-200">
@@ -494,7 +514,7 @@ export default function HeatingPage({ currentUser }) {
                   </span>
                 </div>
                 <span className="font-label-sm text-xs text-on-surface-variant mt-0.5 whitespace-nowrap">
-                  Hivernage : consigne minimale {poolStatus?.frost_protection_target != null ? `${poolStatus.frost_protection_target.toFixed(1)}°C` : '10.0°C'} (non transmissible)
+                  Hivernage : consigne minimale {poolStatus?.frost_protection_target != null ? `${poolStatus.frost_protection_target.toFixed(1)}°C` : '--°C'} (non transmissible)
                 </span>
               </div>
 

@@ -24,6 +24,7 @@ class Member(Base):
     notif_stay_booked = Column(Boolean, default=True, nullable=False, server_default="1")
     notif_thermal_changes = Column(Boolean, default=False, nullable=False, server_default="0")
     notify_mentions = Column(Boolean, default=True, nullable=False, server_default="1")
+    notify_task_creation = Column(Boolean, default=False, nullable=False, server_default="0")
 
     tasks = relationship("Task", back_populates="assignee", foreign_keys="Task.assignee_id")
     task_comments = relationship("TaskComment", back_populates="author", foreign_keys="TaskComment.author_id")
@@ -413,6 +414,7 @@ class MemberSettings(Base):
     notify_new_stay = Column(Boolean, default=True)
     notify_thermal_changes = Column(Boolean, default=False)
     notify_mentions = Column(Boolean, default=True)
+    notify_task_creation = Column(Boolean, default=False)
     updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
 
     member = relationship("Member", backref="settings")
@@ -428,6 +430,24 @@ class ThermalSettings(Base):
     filtration_mode = Column(String(50), nullable=True)
     updated_by = Column(String(100), nullable=True)
     updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+
+
+class Notification(Base):
+    __tablename__ = "notifications"
+
+    id = Column(Integer, primary_key=True, index=True)
+    member_id = Column(Integer, ForeignKey("members.id", ondelete="CASCADE"), nullable=True)  # None = diffusion globale
+    title = Column(String(255), nullable=False)
+    description = Column(Text, nullable=True)
+    type = Column(String(50), default="info")  # 'vote', 'task', 'sejour', 'thermal', 'mention', 'alert'
+    link_path = Column(String(255), nullable=True)  # '/taches', '/calendrier', '/sejour'
+    link_id = Column(String(100), nullable=True)  # ID du projet, tâche ou réservation
+    email_entry = Column(Text, nullable=True)  # JSON de l'e-mail simulé ou dispatché
+    is_read = Column(Boolean, default=False, nullable=False, server_default="0")
+    created_at = Column(DateTime, default=datetime.utcnow)
+
+    member = relationship("Member", backref="notifications")
+
 
 
 

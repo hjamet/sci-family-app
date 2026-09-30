@@ -480,6 +480,103 @@ def send_task_assigned_email(
     return res
 
 
+def send_task_creation_pending_email(
+    to_email: Union[str, List[str]],
+    task_title: str,
+    created_by: str,
+    domain: str = "SCI Familiale",
+    location: str = "Domaine d'Hellenvilliers",
+    priority: str = "Normale",
+    complexity: str = "Modérée",
+    task_id: Optional[Union[int, str]] = None,
+    coordinator_name: Optional[str] = None,
+    description: Optional[str] = None
+) -> dict:
+    """
+    Template: TÂCHE EN ATTENTE DE CRÉATION (Annotation 16)
+    Notifies a coordinator that a new task proposal has been submitted and is pending creation/arbitration.
+    """
+    priority_colors = {
+        "critique": ("#fee2e2", "#991b1b", "#dc2626"),
+        "haute": ("#ffedd5", "#9a3412", "#ea580c"),
+        "normale": ("#dbeafe", "#1e40af", "#2563eb"),
+        "basse": ("#f3f4f6", "#374151", "#4b5563"),
+        "planifié": ("#e0e7ff", "#3730a3", "#4f46e5")
+    }
+    p_key = (priority or "normale").strip().lower()
+    bg_p, text_p, border_p = priority_colors.get(p_key, ("#dbeafe", "#1e40af", "#2563eb"))
+
+    greeting = f"Bonjour {coordinator_name}," if coordinator_name else "Bonjour,"
+    action_url = f"{APP_BASE_URL}/#tasks"
+
+    content_html = f"""
+    <p>{greeting}</p>
+    <p>Une nouvelle tâche a été soumise par <strong>{created_by or 'un associé'}</strong> et est actuellement <strong>en attente de création</strong> et d'arbitrage par la coordination :</p>
+    
+    <div style="background-color: #fefce8; border: 1px solid #fef08a; border-left: 4px solid #ca8a04; border-radius: 6px; padding: 18px; margin: 20px 0;">
+        <div style="font-size: 17px; font-weight: bold; color: #854d0e; margin-bottom: 12px;">
+            ⏳ {task_title}
+        </div>
+        <table role="presentation" border="0" cellpadding="0" cellspacing="0" width="100%" style="font-size: 14px; line-height: 1.8;">
+            <tr>
+                <td style="color: #6b7280; width: 140px;">👤 Proposée par :</td>
+                <td style="font-weight: 600; color: #1f2937;">{created_by or 'Non spécifié'}</td>
+            </tr>
+            <tr>
+                <td style="color: #6b7280;">🏛️ Domaine / Réf :</td>
+                <td style="font-weight: 600; color: #1f2937;">{domain or 'SCI Familiale'}</td>
+            </tr>
+            <tr>
+                <td style="color: #6b7280;">📍 Lieu :</td>
+                <td style="font-weight: 600; color: #1f2937;">{location or 'Hellenvilliers'}</td>
+            </tr>
+            <tr>
+                <td style="color: #6b7280;">⚡ Priorité :</td>
+                <td>
+                    <span style="display: inline-block; background-color: {bg_p}; color: {text_p}; border: 1px solid {border_p}; padding: 2px 10px; border-radius: 9999px; font-size: 12px; font-weight: bold; text-transform: uppercase;">
+                        {priority}
+                    </span>
+                </td>
+            </tr>
+            <tr>
+                <td style="color: #6b7280;">⏱️ Complexité :</td>
+                <td style="font-weight: 600; color: #1f2937;">{complexity or 'Modérée'}</td>
+            </tr>
+        </table>
+        {f'<div style="margin-top: 14px; padding-top: 12px; border-top: 1px dashed #e2e8f0; color: #4b5563; font-size: 13.5px;"><strong>Description :</strong> {description}</div>' if description else ''}
+    </div>
+
+    <p style="color: #4b5563; font-size: 14px;">
+        En tant que coordinateur, vous pouvez examiner la proposition, lui assigner un membre responsable et approuver sa mise en œuvre :
+    </p>
+    """
+
+    subject = f"[SCI Hellenvilliers] ⏳ Nouvelle tâche en attente de création : {task_title}"
+    preheader = f"Une nouvelle proposition de mission a été soumise : {task_title} ({priority})"
+    html_body = render_email_layout(
+        title="Nouvelle Tâche en Attente de Création",
+        preheader=preheader,
+        content_html=content_html,
+        action_url=action_url,
+        action_label="Examiner et approuver la tâche"
+    )
+
+    names = [coordinator_name] if coordinator_name else []
+    email_entry = record_dispatched_email(
+        trigger_action="task_creation_pending",
+        subject=subject,
+        recipients=to_email,
+        html_content=html_body,
+        recipients_names=names,
+        status="simulated" if is_email_disabled() else "sent"
+    )
+
+    res = send_email(to_email=to_email, subject=subject, html_content=html_body)
+    if isinstance(res, dict):
+        res["_email_dispatched"] = email_entry
+    return res
+
+
 def send_vote_required_email(
     to_email: Union[str, List[str]],
     vote_title: str,

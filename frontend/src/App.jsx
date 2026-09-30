@@ -16,7 +16,6 @@ import BookingModal from './components/BookingModal';
 import VoteRoofModal from './components/VoteRoofModal';
 import TaskDetailModal from './components/TaskDetailModal';
 import BugReportButton from './components/BugReportButton';
-import EmailDispatchedToast from './components/EmailDispatchedToast';
 import EmailPreviewModal from './components/EmailPreviewModal';
 import { fetchProperties, fetchProjects, fetchTaskById, castProjectVote, getCachedData } from './api';
 import GlobalErrorAlert from './components/GlobalErrorAlert';
@@ -188,6 +187,7 @@ export default function App() {
         onOpenVoteModal={handleOpenVoteModal}
         onOpenTaskModal={handleOpenTaskModal}
         onOpenBookingModal={() => setIsBookingOpen(true)}
+        onViewEmail={(email) => setPreviewEmail(email)}
       />
 
       {/* Main Container */}
@@ -351,9 +351,6 @@ export default function App() {
         currentUser={currentUser}
         onOpenBugReport={handleOpenBugReport}
       />
-
-      {/* Toast de notification des e-mails simulés / dispatchés */}
-      <EmailDispatchedToast onViewEmail={(email) => setPreviewEmail(email)} />
 
       {/* Modale d'aperçu du rendu HTML de l'e-mail */}
       <EmailPreviewModal

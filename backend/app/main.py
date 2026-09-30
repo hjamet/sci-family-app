@@ -24,7 +24,8 @@ from .models import (
     Property, User, Member, Issue, Comment, IssueComment, Reservation, Project,
     ProjectVote, ProjectComment, AdminDocument, DocumentCategory, MemberAvailability,
     VademecumItem, MaintenanceTask, StayTaskAssignment, Task, TaskComment, Log,
-    BankAccount, BankTransaction, BankAuthSession, MemberSettings, ThermalSettings
+    BankAccount, BankTransaction, BankAuthSession, MemberSettings, ThermalSettings,
+    Notification
 )
 from .schemas import (
     LoginRequest, PropertyResponse, UserResponse, MemberResponse, TokenResponse,
@@ -50,7 +51,7 @@ from .schemas import (
     BankAuthStartRequest, BankAuthStartResponse, BankAuthCallbackRequest,
     BankAccountResponse, BankTransactionResponse, BankSyncResponse, BankStatusResponse,
     ProfileUpdateRequest, ChangePasswordRequest, MemberSettingsResponse, MemberSettingsUpdate,
-    VoteSubmissionRequest, ForgotPasswordRequest
+    VoteSubmissionRequest, ForgotPasswordRequest, NotificationResponse
 )
 from .seed import seed_database
 from .services.workload_balancer import calculate_workload_distribution, resolve_auto_assignment_by_workload
@@ -64,6 +65,7 @@ from .security import (
 from .services.email_service import (
     send_email,
     send_task_assigned_email,
+    send_task_creation_pending_email,
     send_vote_required_email,
     send_vote_closed_email,
     send_stay_booked_email,
@@ -72,6 +74,7 @@ from .services.email_service import (
     send_mention_notification,
     notify_coordinator_new_issue,
     notify_all_members_project_vote,
+    record_dispatched_email,
     RECENT_DISPATCHED_EMAILS,
     APP_BASE_URL
 )
@@ -120,6 +123,196 @@ app.add_middleware(
 def get_recent_emails():
     """Retourne la liste des récents e-mails dispatchés ou simulés (max 20)."""
     return RECENT_DISPATCHED_EMAILS
+
+
+# ==============================================================================
+# UNIFIED NOTIFICATIONS SERVICE & API (Annotation 13)
+# ==============================================================================
+
+def create_internal_notification(
+    db: Session,
+    title: str,
+    description: str,
+    notif_type: str = "info",
+    member_id: Optional[int] = None,
+    link_path: Optional[str] = None,
+    link_id: Optional[str] = None,
+    email_entry: Optional[dict] = None
+) -> Optional[Notification]:
+    """
+    Règle unifiée de notification (Annotation 13) :
+    Tout événement générant un email DOIT obligatoirement publier une notification interne
+    dans la cloche en haut à droite (NotificationBell / table notifications).
+    """
+    try:
+        raw_email_str = json.dumps(email_entry) if email_entry else None
+        notif = Notification(
+            member_id=member_id,
+            title=title,
+            description=description,
+            type=notif_type,
+            link_path=link_path,
+            link_id=str(link_id) if link_id is not None else None,
+            email_entry=raw_email_str,
+            is_read=False,
+            created_at=datetime.utcnow()
+        )
+        db.add(notif)
+        db.commit()
+        db.refresh(notif)
+        return notif
+    except Exception as e:
+        logger.error(f"[NOTIFICATION ERROR] Échec création notification interne: {e}")
+        try:
+            db.rollback()
+        except Exception:
+            pass
+        return None
+
+
+def format_notification_response(notif: Notification) -> dict:
+    """Formate une notification avec son objet e-mail complet dé-sérialisé pour le frontend."""
+    email_data = None
+    if getattr(notif, "email_entry", None):
+        try:
+            email_data = json.loads(notif.email_entry) if isinstance(notif.email_entry, str) else notif.email_entry
+        except Exception:
+            email_data = None
+
+    return {
+        "id": notif.id,
+        "member_id": notif.member_id,
+        "title": notif.title,
+        "description": notif.description,
+        "type": notif.type or "info",
+        "link_path": notif.link_path,
+        "link_id": notif.link_id,
+        "email_entry": email_data,
+        "email": email_data,  # Alias direct pour consultation modale EmailPreviewModal
+        "is_read": bool(notif.is_read),
+        "created_at": notif.created_at.isoformat() if notif.created_at else None
+    }
+
+
+# --- Auth & Users Dependencies ---
+
+def get_current_user(request: Request, db: Session = Depends(get_db)) -> User:
+    """Dependency to retrieve the currently authenticated User from JWT token."""
+    auth_header = request.headers.get("Authorization")
+    token = None
+    if auth_header and auth_header.startswith("Bearer "):
+        token = auth_header.split(" ")[1]
+    elif "token" in request.query_params:
+        token = request.query_params.get("token")
+
+    if not token:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="[Auth Error] Jeton d'authentification manquant."
+        )
+
+    payload = decode_access_token(token)
+    if not payload or "sub" not in payload:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="[Auth Error] Jeton d'authentification invalide ou expiré."
+        )
+
+    user_id = payload.get("user_id")
+    prenom = payload.get("sub")
+    user = None
+    if user_id:
+        user = db.query(User).filter(User.id == user_id).first()
+    if not user and prenom:
+        user = db.query(User).filter(func.lower(User.prenom) == prenom.strip().lower()).first()
+        if not user:
+            input_norm = normalize_prenom(prenom)
+            for u in db.query(User).all():
+                u_norm = normalize_prenom(u.prenom)
+                if u_norm == input_norm or (input_norm in ["elisabeth", "maman"] and u_norm in ["elisabeth", "maman"]):
+                    user = u
+                    break
+
+    if not user:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="[Auth Error] Utilisateur non trouvé pour ce jeton."
+        )
+
+    return user
+
+
+def get_optional_current_user(request: Request, db: Session = Depends(get_db)) -> Optional[User]:
+    """Optional user dependency that returns None if authentication header is absent or invalid."""
+    try:
+        return get_current_user(request, db)
+    except HTTPException:
+        return None
+
+
+@app.get("/api/notifications", tags=["Notifications"])
+def list_notifications(
+    current_user: Optional[User] = Depends(get_optional_current_user),
+    db: Session = Depends(get_db)
+):
+    """
+    Retourne la liste des notifications internes pour la cloche :
+    - Diffusion globale (member_id IS NULL)
+    - Diffusion ciblée pour l'utilisateur connecté (member_id == current_user.id)
+    """
+    try:
+        query = db.query(Notification)
+        if current_user:
+            query = query.filter(or_(Notification.member_id.is_(None), Notification.member_id == current_user.id))
+        else:
+            query = query.filter(Notification.member_id.is_(None))
+        
+        notifs = query.order_by(Notification.created_at.desc()).limit(60).all()
+        return [format_notification_response(n) for n in notifs]
+    except Exception as e:
+        logger.error(f"[NOTIFICATION API ERROR] Erreur listing notifications: {e}")
+        return []
+
+
+@app.post("/api/notifications/{notif_id}/read", tags=["Notifications"])
+@app.patch("/api/notifications/{notif_id}/read", tags=["Notifications"])
+def mark_single_notification_read(notif_id: int, db: Session = Depends(get_db)):
+    """Marque une notification individuelle comme lue."""
+    notif = db.query(Notification).filter(Notification.id == notif_id).first()
+    if not notif:
+        raise HTTPException(status_code=404, detail="Notification non trouvée")
+    notif.is_read = True
+    db.commit()
+    return {"status": "ok", "id": notif_id, "is_read": True}
+
+
+@app.post("/api/notifications/read-all", tags=["Notifications"])
+@app.patch("/api/notifications/read-all", tags=["Notifications"])
+def mark_all_notifications_as_read(
+    current_user: Optional[User] = Depends(get_optional_current_user),
+    db: Session = Depends(get_db)
+):
+    """Marque toutes les notifications non lues comme lues pour l'utilisateur."""
+    query = db.query(Notification).filter(Notification.is_read == False)
+    if current_user:
+        query = query.filter(or_(Notification.member_id.is_(None), Notification.member_id == current_user.id))
+    else:
+        query = query.filter(Notification.member_id.is_(None))
+    
+    query.update({Notification.is_read: True}, synchronize_session=False)
+    db.commit()
+    return {"status": "ok", "message": "Toutes les notifications ont été marquées comme lues"}
+
+
+@app.delete("/api/notifications/{notif_id}", status_code=status.HTTP_204_NO_CONTENT, tags=["Notifications"])
+def delete_single_notification(notif_id: int, db: Session = Depends(get_db)):
+    """Supprime une notification de la liste."""
+    notif = db.query(Notification).filter(Notification.id == notif_id).first()
+    if notif:
+        db.delete(notif)
+        db.commit()
+    return Response(status_code=status.HTTP_204_NO_CONTENT)
+
 
 # Security Headers & Anti-DDoS Rate Limiting Middleware
 @app.middleware("http")
@@ -276,7 +469,10 @@ def run_member_migrations():
                         conn.execute(text("ALTER TABLE members ADD COLUMN notify_mentions BOOLEAN DEFAULT 1"))
                     if "is_coordinator" not in column_names:
                         conn.execute(text("ALTER TABLE members ADD COLUMN is_coordinator BOOLEAN DEFAULT 0"))
+                    if "notify_task_creation" not in column_names:
+                        conn.execute(text("ALTER TABLE members ADD COLUMN notify_task_creation BOOLEAN DEFAULT 0"))
                     conn.execute(text("UPDATE members SET notify_mentions = 1 WHERE notify_mentions IS NULL"))
+                    conn.execute(text("UPDATE members SET notify_task_creation = 0 WHERE notify_task_creation IS NULL"))
                     # Migration automatique : Henri Jamet et Joséphine Jamet = is_coordinator True, les autres False
                     conn.execute(text("""
                         UPDATE members 
@@ -300,7 +496,9 @@ def run_member_migrations():
             else:
                 conn.execute(text("ALTER TABLE members ADD COLUMN IF NOT EXISTS notify_mentions BOOLEAN DEFAULT TRUE;"))
                 conn.execute(text("ALTER TABLE members ADD COLUMN IF NOT EXISTS is_coordinator BOOLEAN DEFAULT FALSE;"))
+                conn.execute(text("ALTER TABLE members ADD COLUMN IF NOT EXISTS notify_task_creation BOOLEAN DEFAULT FALSE;"))
                 conn.execute(text("UPDATE members SET notify_mentions = TRUE WHERE notify_mentions IS NULL;"))
+                conn.execute(text("UPDATE members SET notify_task_creation = FALSE WHERE notify_task_creation IS NULL;"))
                 conn.execute(text("""
                     UPDATE members 
                     SET is_coordinator = TRUE 
@@ -531,58 +729,6 @@ def format_project_response(project: Project) -> dict:
 
 # --- Auth & Users ---
 
-def get_current_user(request: Request, db: Session = Depends(get_db)) -> User:
-    """Dependency to retrieve the currently authenticated User from JWT token."""
-    auth_header = request.headers.get("Authorization")
-    token = None
-    if auth_header and auth_header.startswith("Bearer "):
-        token = auth_header.split(" ")[1]
-    elif "token" in request.query_params:
-        token = request.query_params.get("token")
-
-    if not token:
-        raise HTTPException(
-            status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="[Auth Error] Jeton d'authentification manquant."
-        )
-
-    payload = decode_access_token(token)
-    if not payload or "sub" not in payload:
-        raise HTTPException(
-            status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="[Auth Error] Jeton d'authentification invalide ou expiré."
-        )
-
-    user_id = payload.get("user_id")
-    prenom = payload.get("sub")
-    user = None
-    if user_id:
-        user = db.query(User).filter(User.id == user_id).first()
-    if not user and prenom:
-        user = db.query(User).filter(func.lower(User.prenom) == prenom.strip().lower()).first()
-        if not user:
-            input_norm = normalize_prenom(prenom)
-            for u in db.query(User).all():
-                u_norm = normalize_prenom(u.prenom)
-                if u_norm == input_norm or (input_norm in ["elisabeth", "maman"] and u_norm in ["elisabeth", "maman"]):
-                    user = u
-                    break
-
-    if not user:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail="[Auth Error] Utilisateur non trouvé pour ce jeton."
-        )
-
-    return user
-
-
-def get_optional_current_user(request: Request, db: Session = Depends(get_db)) -> Optional[User]:
-    """Optional user dependency that returns None if authentication header is absent or invalid."""
-    try:
-        return get_current_user(request, db)
-    except HTTPException:
-        return None
 
 
 
@@ -696,6 +842,7 @@ def login(req: LoginRequest, request: Request, db: Session = Depends(get_db)):
         "notif_stay_booked": getattr(user, "notif_stay_booked", True),
         "notif_thermal_changes": getattr(user, "notif_thermal_changes", False),
         "notify_mentions": getattr(user, "notify_mentions", True),
+        "notify_task_creation": getattr(user, "notify_task_creation", False),
     }
 
 @app.post("/api/auth/forgot-password")
@@ -829,6 +976,7 @@ def get_auth_profile(current_user: User = Depends(get_current_user)):
         "notify_final_decision": getattr(current_user, "notif_vote_closed", True),
         "notify_new_stay": getattr(current_user, "notif_stay_booked", True),
         "notify_thermal_changes": getattr(current_user, "notif_thermal_changes", False),
+        "notify_task_creation": getattr(current_user, "notify_task_creation", False),
     }
 
 @app.patch("/api/auth/profile", response_model=MemberSettingsResponse)
@@ -980,6 +1128,7 @@ def get_member_settings(
         "notify_final_decision": getattr(member, "notif_vote_closed", True),
         "notify_new_stay": getattr(member, "notif_stay_booked", True),
         "notify_thermal_changes": getattr(member, "notif_thermal_changes", False),
+        "notify_task_creation": getattr(member, "notify_task_creation", False),
     }
 
 @app.get("/api/members/me/settings", response_model=MemberSettingsResponse)
@@ -1050,6 +1199,9 @@ def update_member_settings(
     if data.notify_mentions is not None:
         member.notify_mentions = data.notify_mentions
 
+    if data.notify_task_creation is not None:
+        member.notify_task_creation = data.notify_task_creation
+
     db.commit()
     db.refresh(member)
     return {
@@ -1064,6 +1216,7 @@ def update_member_settings(
         "notif_stay_booked": getattr(member, "notif_stay_booked", True),
         "notif_thermal_changes": getattr(member, "notif_thermal_changes", False),
         "notify_mentions": getattr(member, "notify_mentions", True),
+        "notify_task_creation": getattr(member, "notify_task_creation", False),
         "notify_new_task": getattr(member, "notif_task_assigned", True),
         "notify_pending_vote": getattr(member, "notif_vote_needed", True),
         "notify_final_decision": getattr(member, "notif_vote_closed", True),
@@ -1658,6 +1811,17 @@ def create_reservation(res: ReservationCreate, response: Response, db: Session =
     except Exception as e:
         logger.error(f"[EMAIL ERROR] Failed to send stay booked notification: {e}")
 
+    # Notification interne globale pour la cloche (Annotation 13)
+    create_internal_notification(
+        db=db,
+        title=f"Nouveau séjour réservé : {booker_name}",
+        description=f"Séjour au {db_res.property_name or prop_name or 'Domaine d\'Hellenvilliers'} du {db_res.start_date} au {db_res.end_date}.",
+        notif_type="booking",
+        link_path="/calendrier",
+        link_id=db_res.id,
+        email_entry=dispatched_email
+    )
+
     if dispatched_email:
         setattr(db_res, "_email_dispatched", dispatched_email)
         setattr(db_res, "email_dispatched", dispatched_email)
@@ -1913,6 +2077,17 @@ def create_project(proj: ProjectCreate, db: Session = Depends(get_db)):
         except Exception as e:
             logger.error(f"[EMAIL ERROR] Failed to send project vote notification on creation: {e}")
 
+        # Notification interne globale pour la cloche (Annotation 13)
+        create_internal_notification(
+            db=db,
+            title=f"Nouveau scrutin ouvert : {db_proj.title}",
+            description=f"Le scrutin « {db_proj.title} » est ouvert au vote de tous les associés.",
+            notif_type="vote",
+            link_path="/taches",
+            link_id=db_proj.id,
+            email_entry=dispatched_email
+        )
+
     proj_res_data = format_project_response(db_proj)
     if dispatched_email:
         proj_res_data["_email_dispatched"] = dispatched_email
@@ -1990,25 +2165,119 @@ def approve_project_by_coordinator(
     db.commit()
     db.refresh(db_proj)
 
-    # Email notification trigger: notify members with notif_vote_needed=True when project enters voting
-    if db_proj.status == "EN_VOTE" and old_status != "EN_VOTE":
+    # Email & notification trigger: notify members when project enters voting (OPEN / EN_VOTE) or is archived
+    dispatched_email = None
+    if db_proj.status in ["EN_VOTE", "OPEN"] and old_status not in ["EN_VOTE", "OPEN"]:
+        notif_msg = f"Le scrutin « {db_proj.title} » a été validé par la coordination et est désormais ouvert au vote de tous les associés."
+        sys_comment = ProjectComment(
+            project_id=project_id,
+            author_name="Coordination SCI",
+            content=notif_msg
+        )
+        db.add(sys_comment)
+        try:
+            db.commit()
+            db.refresh(db_proj)
+        except Exception:
+            db.rollback()
+
         try:
             member_users = db.query(Member).filter(Member.email.isnot(None)).all()
             member_emails = [u.email for u in member_users if getattr(u, 'notif_vote_needed', True) and u.email]
             if member_emails:
-                send_vote_required_email(
+                send_res = send_vote_required_email(
                     to_email=member_emails,
                     vote_title=db_proj.title,
-                    submitted_by=db_proj.submitted_by or "Associé SCI",
-                    description=db_proj.description or "",
+                    submitted_by=db_proj.submitted_by or "Coordination SCI",
+                    description=f"{notif_msg}\n\n{db_proj.description or ''}",
                     estimated_cost=float(db_proj.estimated_cost or 0.0),
                     project_id=db_proj.id
                 )
+                if isinstance(send_res, dict) and "_email_dispatched" in send_res:
+                    dispatched_email = send_res["_email_dispatched"]
         except Exception as e:
             logger.error(f"[EMAIL ERROR] Failed to send project vote notification from approve: {e}")
             print(f"[EMAIL ERROR] Failed to send project vote notification from approve: {e}")
 
-    return format_project_response(db_proj)
+        # Notification interne globale pour la cloche (Annotation 11 & 13)
+        create_internal_notification(
+            db=db,
+            title=f"Scrutin ouvert : {db_proj.title}",
+            description=f"Le scrutin « {db_proj.title} » a été validé par la coordination et est ouvert au vote de tous les associés.",
+            notif_type="vote",
+            link_path="/taches",
+            link_id=db_proj.id,
+            email_entry=dispatched_email
+        )
+
+    elif db_proj.status in ["ARCHIVED", "ARCHIVE", "ARCHIVEE", "CLOSED"] and old_status not in ["ARCHIVED", "ARCHIVE", "ARCHIVEE", "CLOSED"]:
+        notif_msg = f"Le scrutin « {db_proj.title} » a été validé et archivé définitivement par la coordination."
+        sys_comment = ProjectComment(
+            project_id=project_id,
+            author_name="Coordination SCI",
+            content=notif_msg
+        )
+        db.add(sys_comment)
+        try:
+            db.commit()
+            db.refresh(db_proj)
+        except Exception:
+            db.rollback()
+
+        decision = "ARCHIVÉ"
+        votes_summary = "Résultats validés"
+        try:
+            member_users = db.query(Member).filter(Member.email.isnot(None)).all()
+            closed_recipients = [
+                m.email for m in member_users
+                if getattr(m, 'notif_vote_closed', True) and m.email
+            ]
+            if closed_recipients:
+                all_project_votes = db.query(ProjectVote).filter(ProjectVote.project_id == db_proj.id).all()
+                total_v = len(all_project_votes)
+                pour_cnt = sum(1 for v in all_project_votes if v.vote and str(v.vote).upper() in ["POUR", "OUI", "APPROUVER"])
+                contre_cnt = sum(1 for v in all_project_votes if v.vote and str(v.vote).upper() in ["CONTRE", "NON", "REJETER"])
+                abs_cnt = sum(1 for v in all_project_votes if v.vote and str(v.vote).upper() in ["ABSTENTION", "BLANC"])
+
+                if pour_cnt > contre_cnt:
+                    decision = "ADOPTÉ À LA MAJORITÉ"
+                elif contre_cnt > pour_cnt:
+                    decision = "REJETÉ"
+                else:
+                    decision = "ARCHIVÉ / ÉGALITÉ"
+
+                votes_summary = f"{pour_cnt} Pour, {contre_cnt} Contre, {abs_cnt} Abstention"
+
+                send_res = send_vote_closed_email(
+                    to_email=closed_recipients,
+                    vote_title=db_proj.title,
+                    decision=decision,
+                    votes_summary=votes_summary,
+                    total_votes=total_v,
+                    project_id=db_proj.id,
+                    estimated_cost=float(db_proj.estimated_cost or 0.0)
+                )
+                if isinstance(send_res, dict) and "_email_dispatched" in send_res:
+                    dispatched_email = send_res["_email_dispatched"]
+        except Exception as e:
+            logger.error(f"[EMAIL ERROR] Failed to send vote closed notification on approve archive: {e}")
+
+        # Notification interne globale pour la cloche (Annotation 12 & 13)
+        create_internal_notification(
+            db=db,
+            title=f"Scrutin archivé : {db_proj.title}",
+            description=f"Le scrutin « {db_proj.title} » a été validé et archivé par la coordination. Résultat : {decision} ({votes_summary}).",
+            notif_type="vote",
+            link_path="/taches",
+            link_id=db_proj.id,
+            email_entry=dispatched_email
+        )
+
+    proj_res = format_project_response(db_proj)
+    if dispatched_email:
+        proj_res["_email_dispatched"] = dispatched_email
+        proj_res["email_dispatched"] = dispatched_email
+    return proj_res
 
 @app.patch("/api/projects/{project_id}/review")
 def review_project(project_id: int, review: ProjectReview, db: Session = Depends(get_db)):
@@ -2226,25 +2495,120 @@ def review_project(project_id: int, review: ProjectReview, db: Session = Depends
         logger.error(f"[PROJECT REVIEW ERROR] Echec commit review: {exc}")
         raise HTTPException(status_code=400, detail=f"Erreur lors de la mise à jour du projet: {str(exc)}")
 
-    # Email notification trigger: notify members with notif_vote_needed=True when project enters voting
+    dispatched_email = None
+    # Email & notification trigger: passage en mode En cours (OPEN / EN_VOTE)
     if db_proj.status in ["EN_VOTE", "OPEN"] and (old_status not in ["EN_VOTE", "OPEN"] or review.decision_mode == "SOUMETTRE_AU_VOTE"):
+        notif_msg = f"Le scrutin « {db_proj.title} » a été validé par la coordination et est désormais ouvert au vote de tous les associés."
+        sys_comment = ProjectComment(
+            project_id=project_id,
+            author_name="Coordination SCI",
+            content=notif_msg
+        )
+        db.add(sys_comment)
+        try:
+            db.commit()
+            db.refresh(db_proj)
+        except Exception:
+            db.rollback()
+
         try:
             member_users = db.query(Member).filter(Member.email.isnot(None)).all()
             member_emails = [u.email for u in member_users if getattr(u, 'notif_vote_needed', True) and u.email]
             if member_emails:
-                send_vote_required_email(
+                send_res = send_vote_required_email(
                     to_email=member_emails,
                     vote_title=db_proj.title,
-                    submitted_by=db_proj.submitted_by or "Associé SCI",
-                    description=db_proj.description or "",
+                    submitted_by=db_proj.submitted_by or "Coordination SCI",
+                    description=f"{notif_msg}\n\n{db_proj.description or ''}",
                     estimated_cost=float(db_proj.estimated_cost or 0.0),
                     project_id=db_proj.id
                 )
+                if isinstance(send_res, dict) and "_email_dispatched" in send_res:
+                    dispatched_email = send_res["_email_dispatched"]
         except Exception as e:
             logger.error(f"[EMAIL ERROR] Failed to send project vote notification from review: {e}")
             print(f"[EMAIL ERROR] Failed to send project vote notification from review: {e}")
 
-    return format_project_response(db_proj)
+        # Notification interne globale pour la cloche (Annotation 11 & 13)
+        create_internal_notification(
+            db=db,
+            title=f"Scrutin ouvert : {db_proj.title}",
+            description=f"Le scrutin « {db_proj.title} » a été validé par la coordination et est ouvert au vote de tous les associés.",
+            notif_type="vote",
+            link_path="/taches",
+            link_id=db_proj.id,
+            email_entry=dispatched_email
+        )
+
+    # Email & notification trigger: passage en mode Archivé (ARCHIVED / ARCHIVE / ARCHIVEE / CLOSED)
+    elif db_proj.status in ["ARCHIVED", "ARCHIVE", "ARCHIVEE", "CLOSED"] and old_status not in ["ARCHIVED", "ARCHIVE", "ARCHIVEE", "CLOSED"]:
+        notif_msg = f"Le scrutin « {db_proj.title} » a été validé et archivé définitivement par la coordination."
+        sys_comment = ProjectComment(
+            project_id=project_id,
+            author_name="Coordination SCI",
+            content=notif_msg
+        )
+        db.add(sys_comment)
+        try:
+            db.commit()
+            db.refresh(db_proj)
+        except Exception:
+            db.rollback()
+
+        decision = "ARCHIVÉ"
+        votes_summary = "Résultats validés"
+        try:
+            member_users = db.query(Member).filter(Member.email.isnot(None)).all()
+            closed_recipients = [
+                m.email for m in member_users
+                if getattr(m, 'notif_vote_closed', True) and m.email
+            ]
+            if closed_recipients:
+                all_project_votes = db.query(ProjectVote).filter(ProjectVote.project_id == db_proj.id).all()
+                total_v = len(all_project_votes)
+                pour_cnt = sum(1 for v in all_project_votes if v.vote and str(v.vote).upper() in ["POUR", "OUI", "APPROUVER"])
+                contre_cnt = sum(1 for v in all_project_votes if v.vote and str(v.vote).upper() in ["CONTRE", "NON", "REJETER"])
+                abs_cnt = sum(1 for v in all_project_votes if v.vote and str(v.vote).upper() in ["ABSTENTION", "BLANC"])
+
+                if pour_cnt > contre_cnt:
+                    decision = "ADOPTÉ À LA MAJORITÉ"
+                elif contre_cnt > pour_cnt:
+                    decision = "REJETÉ"
+                else:
+                    decision = "ARCHIVÉ / ÉGALITÉ"
+
+                votes_summary = f"{pour_cnt} Pour, {contre_cnt} Contre, {abs_cnt} Abstention"
+
+                send_res = send_vote_closed_email(
+                    to_email=closed_recipients,
+                    vote_title=db_proj.title,
+                    decision=decision,
+                    votes_summary=votes_summary,
+                    total_votes=total_v,
+                    project_id=db_proj.id,
+                    estimated_cost=float(db_proj.estimated_cost or 0.0)
+                )
+                if isinstance(send_res, dict) and "_email_dispatched" in send_res:
+                    dispatched_email = send_res["_email_dispatched"]
+        except Exception as e:
+            logger.error(f"[EMAIL ERROR] Failed to send vote closed notification on archive: {e}")
+
+        # Notification interne globale pour la cloche (Annotation 12 & 13)
+        create_internal_notification(
+            db=db,
+            title=f"Scrutin archivé : {db_proj.title}",
+            description=f"Le scrutin « {db_proj.title} » a été validé et archivé par la coordination. Résultat : {decision} ({votes_summary}).",
+            notif_type="vote",
+            link_path="/taches",
+            link_id=db_proj.id,
+            email_entry=dispatched_email
+        )
+
+    proj_res = format_project_response(db_proj)
+    if dispatched_email:
+        proj_res["_email_dispatched"] = dispatched_email
+        proj_res["email_dispatched"] = dispatched_email
+    return proj_res
 
 
 @app.put("/api/projects/{project_id}")
@@ -2302,7 +2666,7 @@ def process_vote_submission(
         ).first()
 
     proj_status = (db_proj.status or "").strip().upper()
-    if proj_status == "PROPOSED":
+    if proj_status in ["PROPOSED", "PENDING_CREATION", "EN_ATTENTE_CREATION"]:
         raise HTTPException(
             status_code=400,
             detail="Ce scrutin est en attente de validation de création par les coordinateurs. Les votes ne sont pas encore ouverts."
@@ -2529,6 +2893,17 @@ def process_vote_submission(
         except Exception as e:
             logger.error(f"[EMAIL ERROR] Failed to send vote closed notification: {e}")
 
+        # Notification interne globale pour la cloche (Annotation 13)
+        create_internal_notification(
+            db=db,
+            title=f"Scrutin en attente d'arbitrage : {db_proj.title}",
+            description=f"Le quorum (7/7) a été atteint sur « {db_proj.title} ». Statut : {decision}.",
+            notif_type="vote",
+            link_path="/taches",
+            link_id=db_proj.id,
+            email_entry=dispatched_email
+        )
+
     elif not quorum_reached and db_proj.status == "PENDING_VALIDATION":
         # Annotation 10 : Si le total des votants repasse sous 7 (suite à un retrait), réverser automatiquement le statut à OPEN !
         db_proj.status = "OPEN"
@@ -2655,11 +3030,12 @@ def reject_and_reopen_project(project_id: int, db: Session = Depends(get_db)):
     db.add(sys_comment)
 
     # 4. Envoi email de notification (avec try/except silencieux)
+    dispatched_email = None
     try:
         member_users = db.query(Member).filter(Member.email.isnot(None)).all()
         member_emails = [u.email for u in member_users if getattr(u, 'notif_vote_needed', True) and u.email]
         if member_emails:
-            send_vote_required_email(
+            send_res = send_vote_required_email(
                 to_email=member_emails,
                 vote_title=db_proj.title,
                 submitted_by="Coordination SCI",
@@ -2667,12 +3043,18 @@ def reject_and_reopen_project(project_id: int, db: Session = Depends(get_db)):
                 estimated_cost=float(db_proj.estimated_cost or 0.0),
                 project_id=db_proj.id
             )
+            if isinstance(send_res, dict) and "_email_dispatched" in send_res:
+                dispatched_email = send_res["_email_dispatched"]
     except Exception as e:
         logger.error(f"[EMAIL ERROR] Failed to send vote reset notification: {e}")
 
     db.commit()
     db.refresh(db_proj)
-    return format_project_response(db_proj)
+    proj_res = format_project_response(db_proj)
+    if dispatched_email:
+        proj_res["_email_dispatched"] = dispatched_email
+        proj_res["email_dispatched"] = dispatched_email
+    return proj_res
 
 @app.delete("/api/projects/{project_id}", status_code=status.HTTP_204_NO_CONTENT)
 def delete_project(project_id: int, db: Session = Depends(get_db)):
@@ -3305,8 +3687,70 @@ def create_task(
             )
             if isinstance(send_res, dict) and "_email_dispatched" in send_res:
                 dispatched_email = send_res["_email_dispatched"]
+
+        if assignee:
+            create_internal_notification(
+                db=db,
+                member_id=assignee.id,
+                title=f"Nouvelle tâche assignée : {db_task.title}",
+                description=f"Une mission vous a été attribuée : {db_task.title}.",
+                notif_type="task",
+                link_path="/taches",
+                link_id=db_task.id,
+                email_entry=dispatched_email
+            )
     except Exception as e:
         logger.error(f"[EMAIL ERROR] Failed to send task assignment notification: {e}")
+
+    # Email Trigger 2: Notify coordinators on new task proposal if notify_task_creation is True (Annotation 16)
+    if db_task.status == "PROPOSED":
+        try:
+            coordinators = db.query(Member).filter(
+                or_(
+                    Member.is_coordinator == True,
+                    func.lower(Member.prenom).in_(["henri", "joséphine", "josephine"])
+                ),
+                Member.email.isnot(None)
+            ).all()
+
+            # Garantit un objet e-mail virtuel prêt à afficher dans la cloche
+            coord_email_template = None
+            for coord in coordinators:
+                # Annotation 16: Conditionné strictement par notify_task_creation (False par défaut)
+                if not getattr(coord, "notify_task_creation", False):
+                    continue
+
+                send_coord_res = send_task_creation_pending_email(
+                    to_email=coord.email,
+                    task_title=db_task.title,
+                    created_by=created_by or "Un associé",
+                    domain=db_task.subject or db_task.category or "SCI Familiale",
+                    location=db_task.category or "Domaine d'Hellenvilliers",
+                    priority=db_task.priority or "Normale",
+                    complexity=db_task.complexity or "Modérée",
+                    task_id=db_task.id,
+                    coordinator_name=coord.prenom,
+                    description=db_task.description
+                )
+                if isinstance(send_coord_res, dict) and "_email_dispatched" in send_coord_res:
+                    coord_email_template = send_coord_res["_email_dispatched"]
+
+            if coord_email_template:
+                dispatched_email = coord_email_template
+
+            for coord in coordinators:
+                create_internal_notification(
+                    db=db,
+                    member_id=coord.id,
+                    title=f"Nouvelle tâche en attente : {db_task.title}",
+                    description=f"Soumise par {created_by or 'un associé'} et en attente d'arbitrage par la coordination.",
+                    notif_type="task",
+                    link_path="/taches",
+                    link_id=db_task.id,
+                    email_entry=coord_email_template
+                )
+        except Exception as coord_err:
+            logger.error(f"[EMAIL ERROR] Failed to send coordinator task proposal notification: {coord_err}")
 
     task_res_data = format_task_response(db_task, include_comments=True)
     if dispatched_email:
@@ -3612,6 +4056,35 @@ def accept_task_proposal(
             detail="Action réservée aux coordinateurs (is_coordinator requis)."
         )
     task = resolve_task_by_id_or_ref(task_id, db)
+
+    # 1. Mise à jour préalable des assignés si fournis dans le payload
+    if payload:
+        if payload.get("assignee_id"):
+            task.assignee_id = payload.get("assignee_id")
+        if payload.get("assigned_members") is not None:
+            raw_members = payload.get("assigned_members")
+            task.assigned_members = json.dumps(raw_members) if isinstance(raw_members, list) else str(raw_members)
+
+    # 2. Vérification obligatoire de l'assignation (Annotation 17)
+    has_assignee = False
+    if task.assignee_id:
+        has_assignee = True
+    elif task.assigned_members:
+        try:
+            parsed = json.loads(task.assigned_members) if isinstance(task.assigned_members, str) else task.assigned_members
+            if isinstance(parsed, list) and len([m for m in parsed if m and str(m).strip()]) > 0:
+                has_assignee = True
+            elif isinstance(parsed, str) and parsed.strip() and parsed.strip() not in ("[]", ""):
+                has_assignee = True
+        except Exception:
+            if str(task.assigned_members).strip() not in ("[]", ""):
+                has_assignee = True
+
+    if not has_assignee:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Assignation obligatoire : vous devez assigner au moins un associé à la tâche avant de pouvoir accepter sa création."
+        )
 
     # Bascule le statut de la tâche de PROPOSED à TODO (ou EN_COURS)
     target_status = "TODO"
@@ -5410,9 +5883,16 @@ def set_pool_pump_mode(req: PoolPumpModeRequest, db: Session = Depends(get_db)):
         mode_val = result.get("pump_mode") or req.mode or ("on" if active_val else "off")
         db.add(Log(
             action="POOL_PUMP_MODE_UPDATE",
-            user_name="Système",
+            user_name=req.author_name or "Système",
             details=f"Pompe filtration piscine réglée sur : {mode_val} (active={active_val})"
         ))
+        setting = db.query(ThermalSettings).filter(ThermalSettings.equipment_type == "pool").first()
+        if not setting:
+            setting = ThermalSettings(equipment_type="pool")
+            db.add(setting)
+        setting.filtration_mode = "marche" if active_val else "arret"
+        setting.updated_by = req.author_name or "Système"
+        setting.updated_at = datetime.utcnow()
         db.commit()
     except Exception as e:
         logger.warning(f"[POOL] Log DB pompe non bloquant: {e}")
@@ -5434,9 +5914,16 @@ def set_pool_heating_mode(req: PoolHeatingModeRequest, db: Session = Depends(get
         mode_val = result.get("heating_mode") or req.mode or ("on" if active_val else "off")
         db.add(Log(
             action="POOL_HEATING_MODE_UPDATE",
-            user_name="Système",
+            user_name=req.author_name or "Système",
             details=f"Chauffage PAC piscine réglé sur : {mode_val} (active={active_val})"
         ))
+        setting = db.query(ThermalSettings).filter(ThermalSettings.equipment_type == "pool").first()
+        if not setting:
+            setting = ThermalSettings(equipment_type="pool")
+            db.add(setting)
+        setting.mode = "confort" if active_val else "standby"
+        setting.updated_by = req.author_name or "Système"
+        setting.updated_at = datetime.utcnow()
         db.commit()
     except Exception as e:
         logger.warning(f"[POOL] Log DB PAC non bloquant: {e}")
@@ -5563,20 +6050,33 @@ def update_heating_settings(
     ).all()
     target_emails = [m.email for m in subscribed_members if m.email]
 
+    dispatched_thermal_email = None
     if target_emails:
         try:
-            send_thermal_change_email(
+            send_res = send_thermal_change_email(
                 target_emails=target_emails,
                 author_name=author,
                 equipment_type="Chauffage & Eau Chaude ViCare (Presbytère)",
                 details=details
             )
+            if isinstance(send_res, dict) and "_email_dispatched" in send_res:
+                dispatched_thermal_email = send_res["_email_dispatched"]
         except Exception as email_err:
             logger.error(f"[HEATING SETTINGS] Erreur lors de l'envoi d'e-mail: {email_err}")
 
+    # Notification interne globale pour la cloche (Annotation 13)
+    create_internal_notification(
+        db=db,
+        title="Consignes thermiques modifiées : Presbytère",
+        description=f"{details} (par {author})",
+        notif_type="thermal",
+        link_path="/energie",
+        email_entry=dispatched_thermal_email
+    )
+
     return HeatingSettingsResponse(
         target_temperature=setting.target_temperature,
-        frost_temperature=frost_setting.target_temperature if frost_setting else 10.0,
+        frost_temperature=frost_setting.target_temperature if frost_setting else 5.0,
         is_heating_active=setting.mode != "dhw" and setting.mode != "standby",
         is_dhw_active=(dhw_setting.mode == "on") if dhw_setting else None,
         dhw_target_temperature=dhw_setting.target_temperature if dhw_setting else None,
@@ -5669,16 +6169,29 @@ def update_pool_settings(
     ).all()
     target_emails = [m.email for m in subscribed_members if m.email]
 
+    dispatched_pool_email = None
     if target_emails:
         try:
-            send_thermal_change_email(
+            send_res = send_thermal_change_email(
                 target_emails=target_emails,
                 author_name=author,
                 equipment_type="Piscine Klereo (Villa Rosing)",
                 details=details
             )
+            if isinstance(send_res, dict) and "_email_dispatched" in send_res:
+                dispatched_pool_email = send_res["_email_dispatched"]
         except Exception as email_err:
             logger.error(f"[POOL SETTINGS] Erreur lors de l'envoi d'e-mail: {email_err}")
+
+    # Notification interne globale pour la cloche (Annotation 13)
+    create_internal_notification(
+        db=db,
+        title="Consignes piscine modifiées : Klereo",
+        description=f"{details} (par {author})",
+        notif_type="thermal",
+        link_path="/sejour",
+        email_entry=dispatched_pool_email
+    )
 
     return PoolSettingsResponse(
         target_temperature=setting.target_temperature,
@@ -5689,48 +6202,6 @@ def update_pool_settings(
         message=f"Réglages piscine enregistrés ({filt_str}) et notification transmise aux associés abonnés.",
         status="ok"
     )
-
-
-@app.post("/api/pool/pump/mode", tags=["Pool"])
-def set_pool_pump_mode(
-    req: PoolPumpModeRequest,
-    db: Session = Depends(get_db),
-    current_user: Optional[User] = Depends(get_optional_current_user)
-):
-    """Bascule Marche/Arrêt de la pompe de filtration piscine."""
-    author = req.author_name or (current_user.name if current_user else "Henri Jamet (Coordinateur)")
-    is_active = req.is_active if req.is_active is not None else (str(req.mode).lower() in ["marche", "auto", "on", "1", "true"])
-    setting = db.query(ThermalSettings).filter(ThermalSettings.equipment_type == "pool").first()
-    if not setting:
-        setting = ThermalSettings(equipment_type="pool")
-        db.add(setting)
-    setting.filtration_mode = "marche" if is_active else "arret"
-    setting.updated_by = author
-    setting.updated_at = datetime.utcnow()
-    db.commit()
-    db.refresh(setting)
-    return {"status": "ok", "is_active": is_active, "filtration_mode": setting.filtration_mode}
-
-
-@app.post("/api/pool/heating/mode", tags=["Pool"])
-def set_pool_heating_mode(
-    req: PoolHeatingModeRequest,
-    db: Session = Depends(get_db),
-    current_user: Optional[User] = Depends(get_optional_current_user)
-):
-    """Bascule Marche/Arrêt du chauffage de la piscine (PAC Inopac 20 kW)."""
-    author = req.author_name or (current_user.name if current_user else "Henri Jamet (Coordinateur)")
-    is_active = req.is_active if req.is_active is not None else (str(req.mode).lower() in ["marche", "confort", "on", "1", "true"])
-    setting = db.query(ThermalSettings).filter(ThermalSettings.equipment_type == "pool").first()
-    if not setting:
-        setting = ThermalSettings(equipment_type="pool")
-        db.add(setting)
-    setting.mode = "confort" if is_active else "standby"
-    setting.updated_by = author
-    setting.updated_at = datetime.utcnow()
-    db.commit()
-    db.refresh(setting)
-    return {"status": "ok", "is_active": is_active, "mode": setting.mode}
 
 
 # --- Open Banking DSP2 (Enable Banking & Swan France) Endpoints ---

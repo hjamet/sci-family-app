@@ -218,16 +218,28 @@ export function invalidateApiCache(prefixOrKey = '') {
     return;
   }
 
+  // Normalisation pour matcher aussi bien '/api/projects', 'projects', 'projects/pending', etc.
+  const normalizedKey = String(prefixOrKey).replace(/^\/api\//, '').replace(/^\//, '');
+  const matchTargets = [prefixOrKey, normalizedKey];
+  if (normalizedKey.includes('/')) {
+    matchTargets.push(normalizedKey.split('/')[0]);
+  }
+
+  const matchesKey = (k) => {
+    if (!k) return false;
+    return matchTargets.some(target => k === target || k.startsWith(target) || k.includes(target) || target.includes(k));
+  };
+
   // Nettoyage inFlight
   for (const k of inFlightRequests.keys()) {
-    if (k.startsWith(prefixOrKey) || k.includes(prefixOrKey)) {
+    if (matchesKey(k)) {
       inFlightRequests.delete(k);
     }
   }
 
   // Nettoyage memoryCache
   for (const k of memoryCache.keys()) {
-    if (k.startsWith(prefixOrKey) || k.includes(prefixOrKey)) {
+    if (matchesKey(k)) {
       memoryCache.delete(k);
     }
   }
@@ -235,11 +247,23 @@ export function invalidateApiCache(prefixOrKey = '') {
   // Nettoyage sessionStorage
   if (typeof window !== 'undefined' && window.sessionStorage) {
     try {
-      const keys = Object.keys(sessionStorage).filter(k => 
-        k.startsWith(`${SESSION_PREFIX}${prefixOrKey}`) || k.includes(prefixOrKey)
-      );
+      const keys = Object.keys(sessionStorage).filter(k => {
+        const stripped = k.startsWith(SESSION_PREFIX) ? k.slice(SESSION_PREFIX.length) : k;
+        return matchesKey(stripped) || matchTargets.some(target => k.includes(target));
+      });
       keys.forEach(k => sessionStorage.removeItem(k));
     } catch (_) {}
+  }
+}
+
+// Alias canoniques SWR
+export const invalidateCache = invalidateApiCache;
+
+export function mutate(key, data) {
+  if (data !== undefined) {
+    setCachedData(key, data);
+  } else {
+    invalidateApiCache(key);
   }
 }
 
@@ -509,6 +533,8 @@ export async function createProject(data) {
     throw new Error(err.detail || 'Erreur lors de la création du projet');
   }
   invalidateApiCache('projects');
+  invalidateApiCache('/api/projects');
+  invalidateApiCache('/api/projects/pending');
   return res.json();
 }
 
@@ -523,6 +549,8 @@ export async function updateProject(projectId, data) {
     throw new Error(err.detail || 'Erreur lors de la mise à jour du projet');
   }
   invalidateApiCache('projects');
+  invalidateApiCache('/api/projects');
+  invalidateApiCache('/api/projects/pending');
   return res.json();
 }
 
@@ -544,6 +572,8 @@ export async function updateProjectCost(projectId, estimatedCost, coordinatorNot
     throw new Error(err.detail || 'Erreur lors de la mise à jour du coût estimé');
   }
   invalidateApiCache('projects');
+  invalidateApiCache('/api/projects');
+  invalidateApiCache('/api/projects/pending');
   return res.json();
 }
 
@@ -573,6 +603,8 @@ export async function approveProjectByCoordinator(projectId, approvalData) {
     throw new Error(err.detail || 'Erreur lors de l\'approbation du projet par le coordinateur');
   }
   invalidateApiCache('projects');
+  invalidateApiCache('/api/projects');
+  invalidateApiCache('/api/projects/pending');
   return res.json();
 }
 
@@ -587,6 +619,8 @@ export async function castProjectVote(projectId, data) {
     throw new Error(err.detail || 'Erreur lors de l\'enregistrement du vote');
   }
   invalidateApiCache('projects');
+  invalidateApiCache('/api/projects');
+  invalidateApiCache('/api/projects/pending');
   return res.json();
 }
 
@@ -609,6 +643,8 @@ export async function addProjectComment(projectId, data) {
     throw new Error(err.detail || 'Erreur lors de l\'ajout du commentaire au projet');
   }
   invalidateApiCache('projects');
+  invalidateApiCache('/api/projects');
+  invalidateApiCache('/api/projects/pending');
   return res.json();
 }
 
@@ -622,6 +658,8 @@ export async function rejectAndReopenProject(projectId) {
     throw new Error(err.detail || 'Erreur lors de la réouverture du scrutin');
   }
   invalidateApiCache('projects');
+  invalidateApiCache('/api/projects');
+  invalidateApiCache('/api/projects/pending');
   return res.json();
 }
 
@@ -635,6 +673,8 @@ export async function deleteProject(projectId) {
     throw new Error(err.detail || 'Erreur lors de la suppression du projet');
   }
   invalidateApiCache('projects');
+  invalidateApiCache('/api/projects');
+  invalidateApiCache('/api/projects/pending');
   return true;
 }
 
@@ -1200,16 +1240,20 @@ export async function invalidateTask(taskId, explanation = '') {
   return res.json();
 }
 
-export async function acceptTask(taskId) {
+export async function acceptTask(taskId, data = {}) {
+  const hasBody = data && Object.keys(data).length > 0;
   const res = await fetch(`${API_BASE}/tasks/${taskId}/accept`, {
     method: 'POST',
-    headers: getAuthHeaders(),
+    headers: hasBody ? getAuthJsonHeaders() : getAuthHeaders(),
+    body: hasBody ? JSON.stringify(data) : undefined,
   });
   if (!res.ok) {
     const err = await res.json().catch(() => ({}));
     throw new Error(err.detail || 'Erreur lors de l\'acceptation de la tâche');
   }
   invalidateApiCache('tasks');
+  invalidateApiCache('/api/tasks');
+  invalidateApiCache(`tasks/${taskId}`);
   return res.json();
 }
 
@@ -1224,6 +1268,8 @@ export async function rejectTask(taskId, reason = '') {
     throw new Error(err.detail || 'Erreur lors du refus de la tâche');
   }
   invalidateApiCache('tasks');
+  invalidateApiCache('/api/tasks');
+  invalidateApiCache(`tasks/${taskId}`);
   return res.json();
 }
 
@@ -1234,6 +1280,8 @@ export async function deleteTask(taskId) {
   });
   if (!res.ok) throw new Error('Erreur lors de la suppression de la tâche');
   invalidateApiCache('tasks');
+  invalidateApiCache('/api/tasks');
+  invalidateApiCache(`tasks/${taskId}`);
   return true;
 }
 
@@ -1656,5 +1704,45 @@ export async function fetchRecentDispatchedEmails() {
   if (!res.ok) throw new Error('Erreur lors de la récupération des e-mails récents');
   return res.json();
 }
+
+// ==============================================================================
+// GOUVERNANCE DES NOTIFICATIONS INTERNES (Annotation 13)
+// ==============================================================================
+
+export async function fetchNotifications() {
+  const res = await fetch(`${API_BASE}/notifications`, {
+    headers: getAuthHeaders(),
+  });
+  if (!res.ok) throw new Error('Erreur lors de la récupération des notifications');
+  return res.json();
+}
+
+export async function markNotificationAsRead(notifId) {
+  const res = await fetch(`${API_BASE}/notifications/${notifId}/read`, {
+    method: 'POST',
+    headers: getAuthHeaders(),
+  });
+  if (!res.ok) throw new Error('Erreur lors du marquage de la notification');
+  return res.json();
+}
+
+export async function markAllNotificationsAsRead() {
+  const res = await fetch(`${API_BASE}/notifications/read-all`, {
+    method: 'POST',
+    headers: getAuthHeaders(),
+  });
+  if (!res.ok) throw new Error('Erreur lors du marquage des notifications');
+  return res.json();
+}
+
+export async function deleteNotification(notifId) {
+  const res = await fetch(`${API_BASE}/notifications/${notifId}`, {
+    method: 'DELETE',
+    headers: getAuthHeaders(),
+  });
+  if (!res.ok && res.status !== 204) throw new Error('Erreur lors de la suppression de la notification');
+  return true;
+}
+
 
 

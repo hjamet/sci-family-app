@@ -102,7 +102,8 @@ export default function SettingsPage({ currentUser }) {
     notify_final_decision: true,
     notify_new_stay: true,
     notify_mentions: true,
-    notif_thermal_changes: false
+    notif_thermal_changes: false,
+    notify_task_creation: false
   });
   const [notificationsLoading, setNotificationsLoading] = useState(false);
 
@@ -162,13 +163,19 @@ export default function SettingsPage({ currentUser }) {
                   ? settings.notify_thermal_changes
                   : (userProfile?.notif_thermal_changes ?? false))
           );
+          const taskCreationPref = Boolean(
+            settings.notify_task_creation != null
+              ? settings.notify_task_creation
+              : (userProfile?.notify_task_creation ?? false)
+          );
           setNotifications({
             notify_new_task: settings.notify_new_task !== false,
             notify_pending_vote: settings.notify_pending_vote !== false,
             notify_final_decision: settings.notify_final_decision !== false,
             notify_new_stay: settings.notify_new_stay !== false,
             notify_mentions: settings.notify_mentions !== false,
-            notif_thermal_changes: thermalPref
+            notif_thermal_changes: thermalPref,
+            notify_task_creation: taskCreationPref
           });
         }
       } catch (err) {
@@ -267,7 +274,8 @@ export default function SettingsPage({ currentUser }) {
       notify_new_stay: status,
       notify_mentions: status,
       notif_thermal_changes: status,
-      notify_thermal_changes: status
+      notify_thermal_changes: status,
+      notify_task_creation: status
     });
   };
 
@@ -769,6 +777,42 @@ export default function SettingsPage({ currentUser }) {
                 <div
                   className={`bg-white w-4 h-4 rounded-full shadow-md transform duration-300 ease-in-out ${
                     notifications.notif_thermal_changes ? 'translate-x-6' : 'translate-x-0'
+                  }`}
+                />
+              </div>
+            </div>
+          </div>
+
+          {/* Toggle 6 : Notification de création de tâche (Annotation 16) */}
+          <div
+            id="toggle-notify-task-creation"
+            onClick={() => handleToggleNotification('notify_task_creation')}
+            className="flex items-start justify-between gap-4 p-4 rounded-2xl border border-slate-200 hover:border-emerald-300 bg-slate-50/50 hover:bg-emerald-50/20 transition-all cursor-pointer select-none"
+          >
+            <div className="flex items-start gap-3.5">
+              <div className="w-9 h-9 rounded-xl bg-teal-100 text-teal-800 flex items-center justify-center shrink-0 mt-0.5 border border-teal-200">
+                <Bell className="w-5 h-5 text-teal-800" />
+              </div>
+              <div>
+                <span className="text-sm font-bold text-slate-900">
+                  🔔 Notification de création de tâche
+                </span>
+                <p className="text-xs text-slate-600 mt-1">
+                  M'alerter par e-mail lorsqu'une nouvelle tâche est soumise en attente de création (réservé aux coordinateurs).
+                </p>
+              </div>
+            </div>
+
+            {/* Custom Toggle Switch */}
+            <div className="shrink-0 pt-1">
+              <div
+                className={`w-12 h-6 flex items-center rounded-full p-1 duration-300 ease-in-out ${
+                  notifications.notify_task_creation ? 'bg-primary' : 'bg-slate-300'
+                }`}
+              >
+                <div
+                  className={`bg-white w-4 h-4 rounded-full shadow-md transform duration-300 ease-in-out ${
+                    notifications.notify_task_creation ? 'translate-x-6' : 'translate-x-0'
                   }`}
                 />
               </div>

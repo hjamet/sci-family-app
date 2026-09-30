@@ -512,3 +512,89 @@ def test_reject_and_reopen_project():
             db.commit()
 
 
+def test_vote_locked_on_pending_creation():
+    """Annotation 4 : Blocage strict des votes sur les statuts d'attente de création
+    (PROPOSED, PENDING_CREATION, EN_ATTENTE_CREATION) -> HTTP 400."""
+    with SessionLocal() as db:
+        p = Project(
+            property_id=1,
+            title="Projet Test En Attente Création",
+            description="Initiative en attente",
+            submitted_by="Henri",
+            status="PENDING_CREATION"
+        )
+        db.add(p)
+        db.commit()
+        db.refresh(p)
+        proj_id = p.id
+
+    try:
+        r = client.post(
+            f"/api/projects/{proj_id}/vote",
+            json={"user_name": "Henri", "vote": "POUR"}
+        )
+        assert r.status_code == 400
+        assert "Ce scrutin est en attente de validation de création" in r.json().get("detail", "")
+    finally:
+        with SessionLocal() as db:
+            db.query(ProjectVote).filter(ProjectVote.project_id == proj_id).delete()
+            db.query(Project).filter(Project.id == proj_id).delete()
+            db.commit()
+
+
+def test_coordination_validation_open_and_archive_notifications():
+    """Annotations 5, 11, 12 :
+    - Le passage d'un vote en mode "En cours" (OPEN) envoie notification et commentaire système.
+    - La validation pour archivage (ARCHIVED) fige les votes, passe en archivé et envoie l'email de résultats."""
+    # 1. Création projet PROPOSED
+    p = client.post("/api/projects", json={
+        "property_id": 1,
+        "title": "Projet Cycle Coordination Validations",
+        "description": "Test des notifications de passage OPEN et ARCHIVED",
+        "submitted_by": "Henri"
+    })
+    assert p.status_code == 201
+    proj_id = p.json()["id"]
+
+    try:
+        # 2. Passage à OPEN (Validation coordinateur pour ouverture)
+        r_open = client.patch(
+            f"/api/projects/{proj_id}/review",
+            json={"status": "OPEN"}
+        )
+        assert r_open.status_code == 200
+        assert r_open.json()["status"] == "OPEN"
+
+        # Vérifier commentaire système "validé par la coordination"
+        r_comments = client.get(f"/api/projects/{proj_id}/comments")
+        assert any("validé par la coordination" in c["content"] for c in r_comments.json())
+
+        # 3. Vote d'associés
+        client.post(f"/api/projects/{proj_id}/vote", json={"user_name": "Henri", "vote": "POUR"})
+        client.post(f"/api/projects/{proj_id}/vote", json={"user_name": "Charles", "vote": "POUR"})
+
+        # 4. Passage à ARCHIVED (Accepter l'archivage)
+        r_archive = client.patch(
+            f"/api/projects/{proj_id}/review",
+            json={"status": "ARCHIVED"}
+        )
+        assert r_archive.status_code == 200
+        assert r_archive.json()["status"] == "ARCHIVED"
+
+        # Vérifier commentaire système d'archivage
+        r_comments2 = client.get(f"/api/projects/{proj_id}/comments")
+        assert any("archivé définitivement" in c["content"] for c in r_comments2.json())
+
+        # 5. Vote bloqué désormais car archivé
+        r_vote_arch = client.post(f"/api/projects/{proj_id}/vote", json={"user_name": "Marguerite", "vote": "POUR"})
+        assert r_vote_arch.status_code == 400
+
+    finally:
+        with SessionLocal() as db:
+            db.query(ProjectVote).filter(ProjectVote.project_id == proj_id).delete()
+            db.query(ProjectComment).filter(ProjectComment.project_id == proj_id).delete()
+            db.query(Project).filter(Project.id == proj_id).delete()
+            db.commit()
+
+
+

@@ -43,10 +43,10 @@ export default function TaskCard({
 }) {
   if (!task) return null;
 
-  // Labels canoniques stricts du cycle de vie (Annotation 4) :
-  // - PROPOSED ➔ « En attente de validation » (Orange ambre)
+  // Labels canoniques stricts du cycle de vie (Annotation 4 & 18) :
+  // - PROPOSED ➔ « En attente de création » (Orange ambre)
   // - TODO / EN_COURS ➔ « En cours » (Bleu)
-  // - PENDING_VALIDATION ➔ « En attente d'archivage » (Vert émeraude)
+  // - PENDING_VALIDATION ➔ « En attente de validation » (Vert émeraude)
   // - DONE ➔ « Archivée » (Gris sobre)
   const statusMeta = getTaskStatusMeta(task);
   const isProposed = statusMeta.status === 'PROPOSED';
@@ -173,16 +173,16 @@ export default function TaskCard({
       <div>
         {/* Badges row */}
         <div className="flex flex-wrap items-center gap-space-xs mb-3">
-          {/* Badge Trichromatique Principal avec Labels Canoniques Stricts (Annotation 4) */}
+          {/* Badge Trichromatique Principal avec Labels Canoniques Stricts (Annotation 4 & 18) */}
           {statusMeta.status === 'PROPOSED' ? (
             <span className="px-2.5 py-0.5 rounded-full text-xs font-bold bg-amber-100 text-amber-900 dark:bg-amber-900/60 dark:text-amber-200 border border-amber-300 flex items-center gap-1">
               <span className="material-symbols-outlined text-[15px]">pending</span>
-              En attente de validation
+              En attente de création
             </span>
           ) : statusMeta.status === 'PENDING_VALIDATION' ? (
             <span className="px-2.5 py-0.5 rounded-full text-xs font-bold bg-emerald-100 text-emerald-800 dark:bg-emerald-900/60 dark:text-emerald-200 border border-emerald-300 flex items-center gap-1">
               <span className="material-symbols-outlined text-[15px]">verified</span>
-              En attente d'archivage
+              En attente de validation
             </span>
           ) : statusMeta.status === 'DONE' ? (
             <span className="px-2.5 py-0.5 rounded-full text-xs font-bold bg-slate-100 text-slate-700 dark:bg-slate-800 dark:text-slate-300 border border-slate-300 flex items-center gap-1">
@@ -373,9 +373,9 @@ export default function TaskCard({
             </span>
             <span className="text-[12px] text-on-surface-variant leading-tight">
               {isProposed
-                ? 'En attente de validation'
+                ? 'En attente de création'
                 : isValidationTask
-                ? "En attente d'archivage"
+                ? 'En attente de validation'
                 : isDone
                 ? 'Archivée'
                 : task.role_label || (isUnassigned ? 'En attente de désignation' : 'Responsable de mission')}

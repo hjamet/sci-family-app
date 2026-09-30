@@ -6,14 +6,29 @@ import SelectExistingDocumentModal from './SelectExistingDocumentModal';
 import ExternalLinksSection from './common/ExternalLinksSection';
 import FamilyChat from './common/FamilyChat';
 import WhatsAppPollView, { STATUTORY_ASSOCIATES, parseVotesArray, hasVotedForOption } from './common/WhatsAppPollView';
+import CustomSelect from './CustomSelect';
 import {
   castProjectVote,
   createProject,
   updateProject,
   deleteProject,
   attachDocumentsToProject,
-  rejectAndReopenProject
+  rejectAndReopenProject,
+  invalidateCache,
+  mutate
 } from '../api';
+
+// Lieux fixes statutaires en premier puis SCI (Annotations 10, 14, 15)
+export const FIXED_PLACES_CATEGORIES = [
+  { value: 'Presbytère', label: '📍 Presbytère' },
+  { value: 'Rosings', label: '📍 Rosings' },
+  { value: 'Piscine', label: '📍 Piscine' },
+  { value: 'Jardin', label: '📍 Jardin' },
+  { value: 'Petites cabanes', label: '📍 Petites cabanes' },
+  { value: 'Hangar à meuble', label: '📍 Hangar à meuble' },
+  { value: 'Garage', label: '📍 Garage' },
+  { value: 'SCI', label: '🏢 SCI' },
+];
 
 // Error Boundary de protection intégrée pour empêcher tout écran blanc
 class VoteErrorBoundary extends React.Component {
@@ -289,10 +304,20 @@ function VoteRoofModalInner({
   const projectSubject = activeProject.category || activeProject.subject || 'Presbytère';
 
   const projectStatusUpper = String(activeProject?.status || '').toUpperCase();
-  const isProposed = projectStatusUpper === 'PROPOSED';
+  const isProposed = [
+    'PROPOSED',
+    'PENDING_CREATION',
+    'EN_ATTENTE_CREATION',
+    'SOUMIS',
+    'SOUMISE',
+    'PROPOSE',
+    'PROPOSEE'
+  ].includes(projectStatusUpper);
   const isPendingValidation = [
     'PENDING_VALIDATION',
     'EN_ATTENTE_VALIDATION',
+    'PENDING_ARCHIVE',
+    'EN_ATTENTE_ARCHIVAGE',
     'REPORT_AG',
     'A_ARBITRER',
     'ARBITRAGE'
@@ -305,9 +330,8 @@ function VoteRoofModalInner({
   const formatBadgeStatus = (status) => {
     const s = String(status || '').toUpperCase();
     if (s === 'OPEN' || s === 'EN_VOTE') return 'Scrutin ouvert';
-    if (s === 'PROPOSED') return 'Initiative proposée';
-    if (s === 'PENDING_VALIDATION' || s === 'EN_ATTENTE_VALIDATION') return 'En attente de validation';
-    if (s === 'SOUMIS') return 'En délibération';
+    if (['PROPOSED', 'PENDING_CREATION', 'EN_ATTENTE_CREATION', 'SOUMIS', 'SOUMISE', 'PROPOSE', 'PROPOSEE'].includes(s)) return 'En attente de validation';
+    if (['PENDING_VALIDATION', 'EN_ATTENTE_VALIDATION', 'PENDING_ARCHIVE', 'EN_ATTENTE_ARCHIVAGE'].includes(s)) return 'En attente d\'archivage';
     if (s === 'APPROUVE') return 'Adopté';
     if (s === 'REFUSE') return 'Rejeté';
     if (s === 'REPORT_AG') return 'Reporté en AG';
@@ -394,10 +418,87 @@ function VoteRoofModalInner({
       if (Array.isArray(activeProject.documents)) activeProject.documents.forEach(addDoc);
       if (Array.isArray(activeProject.files)) activeProject.files.forEach(addDoc);
       if (Array.isArray(activeProject.document_urls)) activeProject.document_urls.forEach(addDoc);
-      if (activeProject.devis_url) addDoc({ url: activeProject.devis_url, title: `Devis Prestataire - ${activeProject.title || 'Projet'}.pdf` });
       setEditDocuments(list);
     }
   }, [isOpen, activeProject?.id, activeProject?.isNew]);
+
+  // Snapshot initial du formulaire pour détection stricte des modifications (Annotation 9)
+  const initialFormSnapshotRef = useRef(null);
+
+  useEffect(() => {
+    if (isEditing) {
+      if (!initialFormSnapshotRef.current) {
+        initialFormSnapshotRef.current = {
+          title: editTitle || '',
+          description: editDescription || '',
+          category: editCategory || 'Presbytère',
+          options: JSON.stringify(editOptions || []),
+          allow_multiple_choices: Boolean(editAllowMultipleChoices),
+          docsCount: (editDocuments || []).length,
+          linksCount: (editExternalLinks || []).length,
+        };
+      }
+    } else {
+      initialFormSnapshotRef.current = null;
+    }
+  }, [isEditing]);
+
+  const hasFormChanges = useMemo(() => {
+    if (!isEditing) return false;
+    const base = initialFormSnapshotRef.current;
+    if (!base) {
+      if (isNewProject) {
+        return Boolean(editTitle.trim() || editDescription.trim() || editDocuments.length > 0 || editExternalLinks.length > 0);
+      }
+      return false;
+    }
+    if (editTitle.trim() !== (base.title || '').trim()) return true;
+    if (editDescription.trim() !== (base.description || '').trim()) return true;
+    if (editCategory.trim() !== (base.category || '').trim()) return true;
+    if (JSON.stringify(editOptions) !== base.options) return true;
+    if (Boolean(editAllowMultipleChoices) !== Boolean(base.allow_multiple_choices)) return true;
+    if (editDocuments.length !== base.docsCount) return true;
+    if (editExternalLinks.length !== base.linksCount) return true;
+    return false;
+  }, [
+    isEditing,
+    isNewProject,
+    editTitle,
+    editDescription,
+    editCategory,
+    editOptions,
+    editAllowMultipleChoices,
+    editDocuments.length,
+    editExternalLinks.length
+  ]);
+
+  const handleSafeClose = () => {
+    if (isEditing && hasFormChanges) {
+      const confirmLeave = window.confirm("Des modifications ont été apportées au scrutin sans être enregistrées. Voulez-vous vraiment quitter ?");
+      if (!confirmLeave) return;
+    }
+    initialFormSnapshotRef.current = null;
+    onClose();
+  };
+
+  const handleCancelEdit = () => {
+    if (hasFormChanges) {
+      const confirmCancel = window.confirm("Des modifications sont en cours. Voulez-vous vraiment annuler sans enregistrer ?");
+      if (!confirmCancel) return;
+    }
+    initialFormSnapshotRef.current = null;
+    if (isNewProject) {
+      onClose();
+    } else {
+      setEditTitle(activeProject.title || '');
+      setEditDescription(activeProject.description || '');
+      const rawCat = activeProject.category || activeProject.subject || 'Presbytère';
+      const matchedCat = FIXED_PLACES_CATEGORIES.find(c => c.value.toLowerCase() === rawCat.toLowerCase());
+      setEditCategory(matchedCat ? matchedCat.value : 'Presbytère');
+      setEditAllowMultipleChoices(Boolean(activeProject.allow_multiple_choices));
+      setIsEditing(false);
+    }
+  };
 
   // Liste nominative des 7 associés avec leurs votes réels synchronisés
   const [associatesVotes, setAssociatesVotes] = useState(() => {
@@ -556,7 +657,7 @@ function VoteRoofModalInner({
     if (isOpen) {
       document.body.style.overflow = 'hidden';
       const handleKeyDown = (e) => {
-        if (e.key === 'Escape') onClose();
+        if (e.key === 'Escape') handleSafeClose();
       };
       window.addEventListener('keydown', handleKeyDown);
       return () => {
@@ -566,7 +667,7 @@ function VoteRoofModalInner({
     } else {
       document.body.style.overflow = 'unset';
     }
-  }, [isOpen, onClose]);
+  }, [isOpen, hasFormChanges, isEditing]);
 
   // Visionneuse universelle intégrée (Annotation 6)
   const [viewerDoc, setViewerDoc] = useState(null);
@@ -767,8 +868,11 @@ function VoteRoofModalInner({
     setIsSubmittingArbitration(true);
     try {
       const updated = await updateProject(activeProject.id, { status: 'OPEN' });
+      invalidateCache('/api/projects');
+      invalidateCache('/api/projects/pending');
+      mutate('projects');
       setLocalProject(updated);
-      setToastMessage('Le scrutin est désormais ouvert au vote !');
+      setToastMessage('Le scrutin a été validé et ouvert au vote !');
       setTimeout(() => setToastMessage(null), 3000);
       if (typeof onVoteSubmit === 'function') onVoteSubmit(updated);
     } catch (err) {
@@ -785,6 +889,9 @@ function VoteRoofModalInner({
     setIsSubmittingArbitration(true);
     try {
       const updated = await updateProject(activeProject.id, { status: 'REFUSE' });
+      invalidateCache('/api/projects');
+      invalidateCache('/api/projects/pending');
+      mutate('projects');
       setLocalProject(updated);
       setToastMessage("L'initiative a été rejetée.");
       setTimeout(() => setToastMessage(null), 3000);
@@ -799,12 +906,15 @@ function VoteRoofModalInner({
   // Validation et archivage de la délibération (PENDING_VALIDATION -> ARCHIVED)
   const handleArchiveVote = async () => {
     if (!activeProject?.id || isSubmittingArbitration) return;
-    if (!window.confirm("Confirmer la validation et l'archivage définitif de cette délibération ?")) return;
+    if (!window.confirm("Confirmer l'acceptation de l'archivage et la clôture définitive de ce scrutin ?")) return;
     setIsSubmittingArbitration(true);
     try {
       const updated = await updateProject(activeProject.id, { status: 'ARCHIVED' });
+      invalidateCache('/api/projects');
+      invalidateCache('/api/projects/pending');
+      mutate('projects');
       setLocalProject(updated);
-      setToastMessage('Délibération validée et archivée avec succès !');
+      setToastMessage('Scrutin archivé et résultats définitifs envoyés par email !');
       setTimeout(() => setToastMessage(null), 3000);
       if (typeof onVoteSubmit === 'function') onVoteSubmit(updated);
     } catch (err) {
@@ -823,6 +933,9 @@ function VoteRoofModalInner({
     setIsSubmittingArbitration(true);
     try {
       const updated = await rejectAndReopenProject(activeProject.id);
+      invalidateCache('/api/projects');
+      invalidateCache('/api/projects/pending');
+      mutate('projects');
       setLocalProject(updated);
       setAssociatesVotes(DEFAULT_ASSOCIATES.map(assoc => ({ ...assoc, vote: 'EN_ATTENTE', date: null })));
       setToastMessage('Le scrutin a été rouvert et les votes ont été réinitialisés.');
@@ -837,25 +950,28 @@ function VoteRoofModalInner({
     }
   };
 
-  // Suppression du vote
+  // Suppression du vote (Annotation 1, 2, 3 & 12 : retrait immédiat du state pour éviter les 404 sur double-clic)
   const handleDeleteVote = async () => {
     if (!activeProject?.id || isDeleting) return;
     const ok = window.confirm(`Êtes-vous sûr de vouloir supprimer définitivement le scrutin « ${projectTitle} » ? Cette action est irréversible.`);
     if (!ok) return;
 
     setIsDeleting(true);
+    const targetId = activeProject.id;
+    invalidateCache('/api/projects');
+    invalidateCache('/api/projects/pending');
+    mutate('projects');
+    if (typeof onVoteDeleted === 'function') {
+      onVoteDeleted(targetId);
+    } else if (typeof onVoteSubmit === 'function') {
+      onVoteSubmit({ deleted: true, projectId: targetId });
+    }
+    onClose();
+
     try {
-      await deleteProject(activeProject.id);
-      setToastMessage('Le scrutin a été supprimé avec succès.');
-      if (typeof onVoteDeleted === 'function') {
-        onVoteDeleted(activeProject.id);
-      } else if (typeof onVoteSubmit === 'function') {
-        onVoteSubmit({ deleted: true, projectId: activeProject.id });
-      }
-      onClose();
+      await deleteProject(targetId);
     } catch (err) {
-      alert(`Erreur lors de la suppression du vote : ${err.message}`);
-      setIsDeleting(false);
+      console.warn('API deleteProject fallback:', err.message);
     }
   };
 
@@ -890,8 +1006,12 @@ function VoteRoofModalInner({
           external_links: editExternalLinks
         };
         const created = await createProject(newPayload);
+        invalidateCache('/api/projects');
+        invalidateCache('/api/projects/pending');
+        mutate('projects');
         setLocalProject(created);
         setIsEditing(false);
+        initialFormSnapshotRef.current = null;
         setToastMessage('Initiative proposée avec succès !');
         if (typeof onProjectCreated === 'function') {
           onProjectCreated(created);
@@ -910,8 +1030,12 @@ function VoteRoofModalInner({
           external_links: editExternalLinks
         };
         const updated = await updateProject(activeProject.id, payload);
+        invalidateCache('/api/projects');
+        invalidateCache('/api/projects/pending');
+        mutate('projects');
         setLocalProject(updated);
         setIsEditing(false);
+        initialFormSnapshotRef.current = null;
         setToastMessage('Scrutin mis à jour avec succès !');
         setTimeout(() => setToastMessage(null), 3000);
         if (typeof onVoteSubmit === 'function') {
@@ -1003,7 +1127,7 @@ function VoteRoofModalInner({
     <div 
       className="fixed inset-0 z-50 bg-slate-900/70 backdrop-blur-sm flex items-center justify-center p-3 sm:p-space-md animate-in fade-in duration-200"
       onClick={(e) => {
-        if (e.target === e.currentTarget) onClose();
+        // Annotation 9 : Clic sur backdrop désactivé pour empêcher la fermeture accidentelle
       }}
     >
       <div 
@@ -1055,9 +1179,9 @@ function VoteRoofModalInner({
               </div>
             )}
 
-            {/* Action Quitter / Fermer */}
+            {/* Action Quitter / Fermer (sécurisé avec confirmation si formulaire modifié - Annotation 9) */}
             <button 
-              onClick={onClose}
+              onClick={handleSafeClose}
               aria-label="Fermer la fenêtre" 
               className="w-9 h-9 rounded-full flex items-center justify-center text-on-surface-variant hover:bg-surface-container-highest hover:text-on-surface transition-colors focus:outline-none cursor-pointer" 
               type="button"
@@ -1087,13 +1211,7 @@ function VoteRoofModalInner({
                   </div>
                   <button
                     type="button"
-                    onClick={() => {
-                      if (isNewProject) {
-                        onClose();
-                      } else {
-                        setIsEditing(false);
-                      }
-                    }}
+                    onClick={handleCancelEdit}
                     className="text-xs text-slate-500 hover:text-slate-700 font-semibold cursor-pointer"
                   >
                     Annuler
@@ -1141,17 +1259,18 @@ function VoteRoofModalInner({
                   />
                 </div>
 
-                {/* Domaine / Sujet */}
+                {/* Domaine / Sujet (Annotations 10, 14, 15: Sélecteur fixe lieu/catégorie sans bouton éditer) */}
                 <div className="flex flex-col gap-1.5">
-                  <label className="text-xs font-bold text-slate-700 dark:text-slate-300">
-                    Domaine / Sujet
+                  <label htmlFor="select-vote-place-category" className="text-xs font-bold text-slate-700 dark:text-slate-300">
+                    Lieu / Catégorie du scrutin *
                   </label>
-                  <input
-                    type="text"
+                  <CustomSelect
+                    id="select-vote-place-category"
+                    name="vote-place-category"
                     value={editCategory}
                     onChange={(e) => setEditCategory(e.target.value)}
-                    placeholder="Ex: Presbytère, Bâti & Travaux"
-                    className="w-full px-3.5 py-2 text-xs sm:text-sm rounded-xl border border-slate-300 dark:border-slate-700 bg-white dark:bg-slate-800 focus:ring-2 focus:ring-emerald-500 font-medium"
+                    options={FIXED_PLACES_CATEGORIES}
+                    placeholder="Sélectionner le lieu ou la SCI..."
                   />
                 </div>
 
@@ -1371,13 +1490,7 @@ function VoteRoofModalInner({
                 <div className="flex items-center justify-end gap-2.5 pt-3 border-t border-slate-200 dark:border-slate-800">
                   <button
                     type="button"
-                    onClick={() => {
-                      if (isNewProject) {
-                        onClose();
-                      } else {
-                        setIsEditing(false);
-                      }
-                    }}
+                    onClick={handleCancelEdit}
                     className="px-4 py-2 rounded-xl bg-slate-200 hover:bg-slate-300 text-slate-700 text-xs font-bold cursor-pointer transition-colors"
                   >
                     Annuler
@@ -1691,7 +1804,7 @@ function VoteRoofModalInner({
                             className="px-4 py-2 bg-emerald-600 hover:bg-emerald-700 text-white rounded-xl font-bold text-xs sm:text-sm flex items-center gap-2 transition-all shadow-xs cursor-pointer disabled:opacity-50"
                           >
                             <span className="material-symbols-outlined text-[18px]">archive</span>
-                            <span>Valider et archiver</span>
+                            <span>Accepter l'archivage</span>
                           </button>
                           <button
                             type="button"
@@ -1700,7 +1813,7 @@ function VoteRoofModalInner({
                             className="px-4 py-2 bg-rose-600 hover:bg-rose-700 text-white rounded-xl font-bold text-xs sm:text-sm flex items-center gap-2 transition-all shadow-xs cursor-pointer disabled:opacity-50"
                           >
                             <span className="material-symbols-outlined text-[18px]">restart_alt</span>
-                            <span>Refuser et rouvrir le scrutin</span>
+                            <span>Refuser l'archivage</span>
                           </button>
                         </div>
                       </div>
