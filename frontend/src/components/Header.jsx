@@ -127,8 +127,8 @@ export default function Header({
           className="flex items-center gap-3 shrink-0 cursor-pointer select-none group"
         >
           <HouseHLogo className="w-10 h-10" />
-          <div className="flex flex-col">
-            <span className="font-headline-sm text-headline-sm text-primary leading-tight tracking-tight">
+          <div className="hidden sm:flex flex-col">
+            <span className="hidden sm:block font-headline-sm text-headline-sm text-primary leading-tight tracking-tight">
               Domaine d'Hellenvilliers
             </span>
           </div>
