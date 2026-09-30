@@ -720,6 +720,10 @@ class HeatingStatusResponse(BaseModel):
     dhw_comfort_temperature: Optional[float] = 50.0
     dhw_reduced_temperature: Optional[float] = 10.0
     is_heating_active: bool = False
+    is_heating_burning: bool = False
+    heating_status_state: str = "off"
+    heating_status_label: str = "À l'arrêt (Hors-gel 5°C)"
+    heating_status_subtext: Optional[str] = None
     is_dhw_active: bool = False
     dhw_charging_active: bool = False
     is_dhw_heating: bool = False
@@ -1263,17 +1267,30 @@ class NotificationResponse(BaseModel):
     type: str = "info"
     link_path: Optional[str] = None
     link_id: Optional[str] = None
+    task_id: Optional[str] = None
+    project_id: Optional[str] = None
     email_entry: Optional[Dict[str, Any]] = None
+    email: Optional[Dict[str, Any]] = None
     is_read: bool = False
+    created_at: Optional[datetime] = None
+
+class OnboardingReleaseInfo(BaseModel):
+    id: int
+    version: str
+    title: str
+    is_active: bool
     created_at: Optional[datetime] = None
 
     class Config:
         from_attributes = True
 
 
+class OnboardingAcknowledgeRequest(BaseModel):
+    version: Optional[str] = None
 
 
-
-
-
-
+class OnboardingResponse(BaseModel):
+    release: Optional[OnboardingReleaseInfo] = None
+    pages: List[Dict[str, Any]] = []
+    has_seen: bool = False
+    needs_display: bool = False

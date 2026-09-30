@@ -57,6 +57,7 @@ export default function Header({
   onOpenTaskModal,
   onOpenBookingModal,
   onViewEmail,
+  onOpenOnboardingModal,
 }) {
   const [isUserMenuOpen, setIsUserMenuOpen] = useState(false);
   const [isMobileMenuOpen, setIsMobileMenuOpen] = useState(false);
@@ -166,6 +167,24 @@ export default function Header({
             </span>
           </div>
 
+          {/* Bouton [💡 Guide du site] */}
+          {onOpenOnboardingModal && (
+            <button
+              type="button"
+              onClick={() => {
+                onOpenOnboardingModal();
+                setIsUserMenuOpen(false);
+                setIsNotifOpen(false);
+              }}
+              className="flex items-center gap-1.5 px-3 py-1.5 rounded-full bg-sage-soft/90 hover:bg-sage-soft text-primary border border-sage-border/90 shadow-2xs font-bold text-xs transition-all cursor-pointer hover:scale-105 active:scale-95"
+              title="Guide du site & Nouveautés"
+              aria-label="Guide du site & Nouveautés"
+            >
+              <span className="material-symbols-outlined text-[17px] text-amber-600">lightbulb</span>
+              <span className="hidden md:inline">Guide du site</span>
+            </button>
+          )}
+
           {/* 1. Bouton [🔔 Notifications] avec NotificationBell factorisé (Annotation 13) */}
           <NotificationBell
             currentUser={currentUser}
@@ -260,6 +279,22 @@ export default function Header({
                   ))}
                 </div>
 
+                {onOpenOnboardingModal && (
+                  <div className="border-b border-slate-100 py-1">
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setIsUserMenuOpen(false);
+                        onOpenOnboardingModal();
+                      }}
+                      className="w-full px-4 py-2 text-left text-xs font-semibold text-on-surface hover:bg-sage-soft flex items-center gap-2 cursor-pointer"
+                    >
+                      <span className="material-symbols-outlined text-[17px] text-amber-600">lightbulb</span>
+                      Guide du site & Nouveautés
+                    </button>
+                  </div>
+                )}
+
                 <div className="pt-1">
                   <button
                     type="button"
@@ -317,6 +352,22 @@ export default function Header({
                 </button>
               );
             })}
+            {/* Bouton Guide du site dans le menu mobile */}
+            {onOpenOnboardingModal && (
+              <button
+                type="button"
+                onClick={() => {
+                  setIsMobileMenuOpen(false);
+                  onOpenOnboardingModal();
+                }}
+                className="p-3 rounded-xl text-left font-label-md text-xs font-semibold flex items-center gap-2 transition-all cursor-pointer text-primary bg-sage-soft/70 hover:bg-sage-soft border border-sage-border/60"
+              >
+                <span className="material-symbols-outlined text-[18px] text-amber-600">
+                  lightbulb
+                </span>
+                <span className="truncate font-bold">Guide du site & Nouveautés</span>
+              </button>
+            )}
             {/* Bouton Notifications dans le menu mobile */}
             <button
               type="button"

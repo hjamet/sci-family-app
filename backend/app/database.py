@@ -88,6 +88,13 @@ def init_db(target_engine=None):
         import logging
         logging.getLogger("sci_api").warning(f"Notice auto-migration database.py (charge_points): {exc}")
 
+    try:
+        from .onboarding_service import run_onboarding_migrations
+        run_onboarding_migrations(eng)
+    except Exception as exc:
+        import logging
+        logging.getLogger("sci_api").warning(f"Notice auto-migration database.py (onboarding): {exc}")
+
 # Auto-migration au chargement du module
 try:
     init_db(engine)

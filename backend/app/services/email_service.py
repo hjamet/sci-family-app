@@ -411,7 +411,8 @@ def send_task_assigned_email(
     task_id: Optional[Union[int, str]] = None,
     assignee_name: Optional[str] = None,
     deadline: Optional[str] = None,
-    description: Optional[str] = None
+    description: Optional[str] = None,
+    actually_send: bool = True
 ) -> dict:
     """
     Template 1: TÂCHE ASSIGNÉE
@@ -492,10 +493,14 @@ def send_task_assigned_email(
         recipients=to_email,
         html_content=html_body,
         recipients_names=names,
-        status="simulated" if (is_email_disabled() or is_test_mode()) else "sent"
+        status="sent" if (actually_send and not is_email_disabled() and not is_test_mode()) else "simulated"
     )
 
-    res = send_email(to_email=to_email, subject=subject, html_content=html_body)
+    if actually_send and not is_email_disabled() and not is_test_mode():
+        res = send_email(to_email=to_email, subject=subject, html_content=html_body)
+    else:
+        res = {"status": "simulated", "id": email_entry["id"]}
+
     if isinstance(res, dict):
         res["_email_dispatched"] = email_entry
     return res
@@ -511,10 +516,11 @@ def send_task_creation_pending_email(
     complexity: str = "Modérée",
     task_id: Optional[Union[int, str]] = None,
     coordinator_name: Optional[str] = None,
-    description: Optional[str] = None
+    description: Optional[str] = None,
+    actually_send: bool = True
 ) -> dict:
     """
-    Template: TÂCHE EN ATTENTE DE CRÉATION (Annotation 16)
+    Template: TÂCHE EN ATTENTE DE CRÉATION (Annotation 16 & Annotation 2)
     Notifies a coordinator that a new task proposal has been submitted and is pending creation/arbitration.
     """
     priority_colors = {
@@ -589,10 +595,14 @@ def send_task_creation_pending_email(
         recipients=to_email,
         html_content=html_body,
         recipients_names=names,
-        status="simulated" if (is_email_disabled() or is_test_mode()) else "sent"
+        status="sent" if (actually_send and not is_email_disabled() and not is_test_mode()) else "simulated"
     )
 
-    res = send_email(to_email=to_email, subject=subject, html_content=html_body)
+    if actually_send and not is_email_disabled() and not is_test_mode():
+        res = send_email(to_email=to_email, subject=subject, html_content=html_body)
+    else:
+        res = {"status": "simulated", "id": email_entry["id"]}
+
     if isinstance(res, dict):
         res["_email_dispatched"] = email_entry
     return res
@@ -1254,12 +1264,12 @@ def send_mention_notification(
     member_prenom = getattr(mentioned_member, "prenom", "") or member_name
     to_email = getattr(mentioned_member, "email", None)
 
-    # 1. Garde-fou Anti-auto-mention
+    # 1. Garde-fou Anti-auto-mention (s'applique uniquement aux mentions directes individuelles, JAMAIS à @all)
     author_clean = (author_name or "").strip().lower()
     name_clean = member_name.strip().lower()
     prenom_clean = member_prenom.strip().lower()
 
-    if author_clean and (
+    if not is_collective and author_clean and (
         author_clean == name_clean
         or author_clean == prenom_clean
         or (len(author_clean) >= 3 and (author_clean in name_clean or name_clean in author_clean))
@@ -1268,11 +1278,11 @@ def send_mention_notification(
         logger.info(f"[MENTION] Anti-auto-mention ignorée : '{author_name}' s'est mentionné(e) lui-même ({member_name}). Aucun email.")
         return False
 
-    # 2. Préférence de notification du membre (directe ou collective @all)
+    # 2. Préférence d'envoi d'e-mail physique du membre (directe ou collective @all)
     pref_enabled = getattr(mentioned_member, "notify_mention_all", True) if is_collective else getattr(mentioned_member, "notify_mentions", True)
     if not pref_enabled:
-        logger.info(f"[MENTION] Notification désactivée pour {member_name} (is_collective={is_collective}). Aucun email.")
-        return False
+        logger.info(f"[MENTION] Envoi e-mail physique désactivé par préférence pour {member_name} (is_collective={is_collective}). L'e-mail reste simulé pour la cloche.")
+        actually_send = False
 
     # 3. Construction du message HTML selon la charte de la SCI Hellenvilliers
     import html as html_lib
@@ -1330,6 +1340,9 @@ def send_mention_notification(
     setattr(send_mention_notification, "last_dispatched_email", email_entry)
 
     # 5. Vérification de l'adresse e-mail & coupe-circuit pour envoi réel
+    if not pref_enabled:
+        return False
+
     if not actually_send or not to_email or "@" not in str(to_email) or is_email_disabled():
         return True
 

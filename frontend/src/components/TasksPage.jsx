@@ -1,7 +1,8 @@
 import React, { useState, useEffect, useMemo } from 'react';
-import { useNavigate } from 'react-router-dom';
+import { useNavigate, useLocation, useSearchParams } from 'react-router-dom';
 import {
   fetchTasks,
+  fetchTaskById,
   createTask,
   fetchProjects,
   validateTask,
@@ -78,6 +79,38 @@ export default function TasksPage({ currentUser = 'Henri Jamet' }) {
   const [isRoofVoteModalOpen, setIsRoofVoteModalOpen] = useState(false);
   const [selectedVoteForModal, setSelectedVoteForModal] = useState(null);
   const [isVoteModalInitialEditing, setIsVoteModalInitialEditing] = useState(false);
+
+  // Ouverture automatique de modale si URL contient task_id ou project_id (Annotation 6)
+  const location = useLocation();
+  const [searchParams] = useSearchParams();
+
+  useEffect(() => {
+    const qTaskId = searchParams.get('task_id') || searchParams.get('id');
+    const qProjectId = searchParams.get('project_id');
+
+    if (qTaskId) {
+      const foundTask = tasks.find((t) => String(t.id) === String(qTaskId) || String(t.ref) === String(qTaskId));
+      if (foundTask) {
+        setInspectingTask(foundTask);
+        setIsTaskModalOpen(true);
+      } else {
+        fetchTaskById(qTaskId)
+          .then((t) => {
+            if (t) {
+              setInspectingTask(t);
+              setIsTaskModalOpen(true);
+            }
+          })
+          .catch((err) => console.warn('Erreur chargement tâche URL:', err));
+      }
+    } else if (qProjectId) {
+      const foundProject = projects.find((p) => String(p.id) === String(qProjectId));
+      if (foundProject) {
+        setSelectedVoteForModal(foundProject);
+        setIsRoofVoteModalOpen(true);
+      }
+    }
+  }, [location.search, tasks, projects]);
 
   const handleOpenCreateTask = () => {
     setInspectingTask({
@@ -611,28 +644,44 @@ export default function TasksPage({ currentUser = 'Henri Jamet' }) {
   };
 
   const handleAcceptTask = async (taskToAccept) => {
-    // Annotation 17 : Assignation obligatoire à l'acceptation
-    const currentMembers = Array.isArray(taskToAccept?.assigned_members) && taskToAccept.assigned_members.length > 0
+    const isAutoAssign = Boolean(
+      taskToAccept?.auto_assign_by_workload ||
+      taskToAccept?.is_auto_assign ||
+      taskToAccept?.assignment_mode === 'auto'
+    );
+
+    let currentMembers = Array.isArray(taskToAccept?.assigned_members) && taskToAccept.assigned_members.length > 0
       ? taskToAccept.assigned_members
       : (taskToAccept?.assignee ? [taskToAccept.assignee] : []);
 
-    if (currentMembers.length === 0) {
+    // Annotation 4 : Si la tâche est en auto-attribution, ne pas bloquer !
+    if (currentMembers.length === 0 && !isAutoAssign) {
       alert("Impossible d'accepter la tâche : aucun membre n'est assigné. Veuillez ouvrir la tâche et désigner au moins un responsable avant de l'accepter.");
       handleOpenInspectTask(taskToAccept);
       return;
     }
 
     try {
-      setTasks(prev => prev.map(t => (t.id === taskToAccept.id || t.ref === taskToAccept.ref) ? { ...t, status: 'EN_COURS', assigned_members: currentMembers } : t));
+      const payload = {
+        status: 'EN_COURS',
+        auto_assign_by_workload: isAutoAssign
+      };
+      if (currentMembers.length > 0) {
+        payload.assigned_members = currentMembers;
+      }
+      setTasks(prev => prev.map(t => (t.id === taskToAccept.id || t.ref === taskToAccept.ref) ? { ...t, status: 'EN_COURS' } : t));
       // Bascule automatique et immédiate sur l'onglet "En cours" (Annotation 14)
       setWorkflowFilter('OPEN');
       invalidateApiCache('tasks');
       invalidateApiCache('/api/tasks');
-      invalidateApiCache(`tasks/${taskToAccept.id}`);
-      await acceptTask(taskToAccept.id, { assigned_members: currentMembers, status: 'EN_COURS' });
+      if (taskToAccept?.id) invalidateApiCache(`tasks/${taskToAccept.id}`);
+      const res = await acceptTask(taskToAccept.id, payload);
+      if (res && res.assigned_members) {
+        setTasks(prev => prev.map(t => (t.id === taskToAccept.id || t.ref === taskToAccept.ref) ? { ...t, ...res, status: 'EN_COURS' } : t));
+      }
       invalidateApiCache('tasks');
       invalidateApiCache('/api/tasks');
-      invalidateApiCache(`tasks/${taskToAccept.id}`);
+      if (taskToAccept?.id) invalidateApiCache(`tasks/${taskToAccept.id}`);
       await loadTasks({ forceRefresh: true });
     } catch (err) {
       console.error('Erreur acceptation tâche:', err);

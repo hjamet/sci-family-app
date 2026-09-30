@@ -1240,6 +1240,24 @@ export async function invalidateTask(taskId, explanation = '') {
   return res.json();
 }
 
+export async function fetchTaskRecommendations(params = {}) {
+  const query = new URLSearchParams();
+  if (params.subject) query.append('subject', params.subject);
+  if (params.category) query.append('category', params.category);
+  if (params.complexity) query.append('complexity', params.complexity);
+  if (params.taskId || params.task_id) query.append('task_id', params.taskId || params.task_id);
+  const qs = query.toString();
+  const url = `${API_BASE}/tasks/recommendations${qs ? `?${qs}` : ''}`;
+  const res = await fetch(url, {
+    headers: getAuthHeaders(),
+  });
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({}));
+    throw new Error(err.detail || 'Erreur lors du calcul des recommandations');
+  }
+  return res.json();
+}
+
 export async function acceptTask(taskId, data = {}) {
   const hasBody = data && Object.keys(data).length > 0;
   const res = await fetch(`${API_BASE}/tasks/${taskId}/accept`, {
@@ -1723,8 +1741,9 @@ export async function fetchRecentDispatchedEmails() {
 // GOUVERNANCE DES NOTIFICATIONS INTERNES (Annotation 13)
 // ==============================================================================
 
-export async function fetchNotifications() {
-  const res = await fetch(`${API_BASE}/notifications`, {
+export async function fetchNotifications(memberId) {
+  const url = memberId ? `${API_BASE}/notifications?member_id=${encodeURIComponent(memberId)}` : `${API_BASE}/notifications`;
+  const res = await fetch(url, {
     headers: getAuthHeaders(),
   });
   if (!res.ok) throw new Error('Erreur lors de la récupération des notifications');
@@ -1740,8 +1759,9 @@ export async function markNotificationAsRead(notifId) {
   return res.json();
 }
 
-export async function markAllNotificationsAsRead() {
-  const res = await fetch(`${API_BASE}/notifications/read-all`, {
+export async function markAllNotificationsAsRead(memberId) {
+  const url = memberId ? `${API_BASE}/notifications/read-all?member_id=${encodeURIComponent(memberId)}` : `${API_BASE}/notifications/read-all`;
+  const res = await fetch(url, {
     method: 'POST',
     headers: getAuthHeaders(),
   });
@@ -1756,6 +1776,31 @@ export async function deleteNotification(notifId) {
   });
   if (!res.ok && res.status !== 204) throw new Error('Erreur lors de la suppression de la notification');
   return true;
+}
+
+// ==============================================================================
+// ONBOARDING & PATCH NOTES ÉVOLUTIFS
+// ==============================================================================
+
+export async function fetchCurrentOnboarding(version = null) {
+  const url = version ? `${API_BASE}/onboarding/current?version=${encodeURIComponent(version)}` : `${API_BASE}/onboarding/current`;
+  const res = await fetch(url, {
+    headers: getAuthHeaders(),
+    silentError: true,
+  });
+  if (!res.ok) throw new Error('Erreur lors de la récupération du guide d\'onboarding');
+  return res.json();
+}
+
+export async function acknowledgeOnboarding(version = null) {
+  const res = await fetch(`${API_BASE}/onboarding/acknowledge`, {
+    method: 'POST',
+    headers: getAuthJsonHeaders(),
+    body: JSON.stringify(version ? { version } : {}),
+    silentError: true,
+  });
+  if (!res.ok) throw new Error('Erreur lors de l\'enregistrement de la validation du guide');
+  return res.json();
 }
 
 

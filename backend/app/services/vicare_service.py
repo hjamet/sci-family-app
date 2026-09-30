@@ -385,6 +385,25 @@ def fetch_live_telemetry() -> Dict[str, Any]:
         else:
             is_heating_active = False
 
+        # Détection Chauffe Physique Réelle Chauffage (is_heating_burning)
+        # Ne chauffe réellement que si l'interrupteur est ON ET que le brûleur fioul tourne
+        is_heating_burning = bool(is_heating_active and burner_active and active_mode in ("dhwAndHeating", "forcedNormal"))
+
+        if not is_heating_active:
+            heating_status_state = "off"
+            frost_temp_str = f"{reduced_temp:.1f}°C" if reduced_temp is not None else "5.0°C"
+            heating_status_label = f"Arrêt hors-gel ({frost_temp_str})"
+            heating_status_subtext = f"Consigne hors-gel {frost_temp_str} • Chaudière coupée"
+        elif is_heating_burning:
+            heating_status_state = "heating"
+            heating_status_label = "Chauffe en cours"
+            heating_status_subtext = f"Brûleur fioul allumé • Montée en température vers {comfort_temp or 20.0:.1f}°C"
+        else:
+            heating_status_state = "standby"
+            heating_status_label = "Au repos (brûleur éteint)"
+            room_str = f" • Ambiance {room_temp:.1f}°C" if room_temp is not None else ""
+            heating_status_subtext = f"Consigne confort active ({comfort_temp or 20.0:.1f}°C){room_str} • Brûleur éteint"
+
         # Détection Mode Autorisé Eau Chaude Sanitaire (is_dhw_active)
         # Sémantique de l'interrupteur principal ECS :
         # - L'ECS est 'en marche' (is_dhw_active = True) si la chaudière est configurée en mode ECS/Hiver
@@ -400,13 +419,13 @@ def fetch_live_telemetry() -> Dict[str, Any]:
         else:
             is_dhw_active = False
 
-        # Détection Chauffe Physique Réelle ECS (is_dhw_heating)
+        # Détection Chauffe Physique Réelle ECS (is_dhw_heating) - Vérité Terrain Absolue
         # Invariant physique Viessmann :
-        # Le ballon de 250L ne chauffe QUE SI la recharge est enclenchée (dhw_charging_active = True)
-        # OU si le brûleur fioul produit activement des calories (burner_active = True en mode ECS).
-        # Si le brûleur est éteint (burner_active = False) et que dhw_charging_active est False,
-        # le ballon est au repos / en refroidissement naturel (ex: 26.7°C vs consigne 53.0°C hors plage horaire).
-        if is_dhw_active and (dhw_charging_active or (burner_active and active_mode == "dhw")):
+        # Le ballon de 250L ne chauffe QUE SI le brûleur fioul tourne RÉELLEMENT (burner_active == True) !
+        # Si burner_active == False, le ballon ne chauffe ABSOLUMENT PAS (même si la recharge
+        # programmée dhw_charging_active est True dans le calendrier automate).
+        # Sans flamme fioul, la température du ballon reste à celle de la cave (ex: 26.7°C vs consigne 52.0°C).
+        if is_dhw_active and burner_active and (dhw_charging_active or active_mode == "dhw" or (dhw_temp is not None and dhw_configured_temp is not None and dhw_temp < dhw_configured_temp)):
             is_dhw_heating = True
         else:
             is_dhw_heating = False
@@ -418,7 +437,7 @@ def fetch_live_telemetry() -> Dict[str, Any]:
             ViCareService._dhw_comfort_temperature = dhw_comfort
         dhw_reduced = ViCareService._dhw_reduced_temperature
 
-        # Qualification sémantique limpide de l'état ECS (Annotation 2)
+        # Qualification sémantique limpide de l'état ECS (Annotations 7 & 9)
         if not is_dhw_active:
             dhw_status_state = "off"
             dhw_status_label = "À l'arrêt (Veille 10°C)"
@@ -426,12 +445,12 @@ def fetch_live_telemetry() -> Dict[str, Any]:
         elif is_dhw_heating:
             dhw_status_state = "heating"
             dhw_status_label = "Chauffe en cours"
-            dhw_status_subtext = f"Brûleur fioul actif • Montée en température vers {dhw_comfort:.1f}°C"
+            dhw_status_subtext = f"Brûleur fioul allumé • Montée en température vers {dhw_comfort:.1f}°C"
         else:
             dhw_status_state = "standby"
-            dhw_status_label = "Au repos / Refroidissement naturel"
+            dhw_status_label = "Au repos (brûleur éteint)"
             if dhw_temp is not None and (dhw_comfort - dhw_temp) > 5.0:
-                dhw_status_subtext = f"Ballon au repos ({dhw_temp:.1f}°C mesuré vs consigne {dhw_comfort:.1f}°C) • Brûleur éteint hors plage horaire"
+                dhw_status_subtext = f"Ballon au repos ({dhw_temp:.1f}°C mesuré vs consigne {dhw_comfort:.1f}°C) • Brûleur éteint (attente relance programmée)"
             else:
                 dhw_status_subtext = f"Température stabilisée ({dhw_temp:.1f}°C) • Brûleur au repos"
 
@@ -453,6 +472,10 @@ def fetch_live_telemetry() -> Dict[str, Any]:
             "dhw_comfort_temperature": dhw_comfort,
             "dhw_reduced_temperature": dhw_reduced,
             "is_heating_active": is_heating_active,
+            "is_heating_burning": is_heating_burning,
+            "heating_status_state": heating_status_state,
+            "heating_status_label": heating_status_label,
+            "heating_status_subtext": heating_status_subtext,
             "is_dhw_active": is_dhw_active,
             "dhw_charging_active": dhw_charging_active,
             "is_dhw_heating": is_dhw_heating,
@@ -537,10 +560,22 @@ class ViCareService:
         if "dhw_status_label" not in data:
             data["dhw_status_label"] = (
                 "Chauffe en cours" if data.get("is_dhw_heating")
-                else ("Au repos / Refroidissement naturel" if data.get("is_dhw_active") else "À l'arrêt (Veille 10°C)")
+                else ("Au repos (brûleur éteint)" if data.get("is_dhw_active") else "À l'arrêt (Veille 10°C)")
             )
         if "dhw_status_subtext" not in data:
             data["dhw_status_subtext"] = None
+
+        if "is_heating_burning" not in data:
+            data["is_heating_burning"] = bool(data.get("is_heating_active") and data.get("burner_active"))
+        if "heating_status_state" not in data:
+            data["heating_status_state"] = "heating" if data.get("is_heating_burning") else ("standby" if data.get("is_heating_active") else "off")
+        if "heating_status_label" not in data:
+            data["heating_status_label"] = (
+                "Chauffe en cours" if data.get("is_heating_burning")
+                else ("Au repos (brûleur éteint)" if data.get("is_heating_active") else "Arrêt hors-gel (5.0°C)")
+            )
+        if "heating_status_subtext" not in data:
+            data["heating_status_subtext"] = None
 
         read_only = is_read_only_mode()
         msg = (

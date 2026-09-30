@@ -25,7 +25,7 @@ from .models import (
     ProjectVote, ProjectComment, AdminDocument, DocumentCategory, MemberAvailability,
     VademecumItem, MaintenanceTask, StayTaskAssignment, Task, TaskComment, Log,
     BankAccount, BankTransaction, BankAuthSession, MemberSettings, ThermalSettings,
-    Notification
+    Notification, AppRelease, MemberReleaseView
 )
 from .schemas import (
     LoginRequest, PropertyResponse, UserResponse, MemberResponse, TokenResponse,
@@ -51,10 +51,21 @@ from .schemas import (
     BankAuthStartRequest, BankAuthStartResponse, BankAuthCallbackRequest,
     BankAccountResponse, BankTransactionResponse, BankSyncResponse, BankStatusResponse,
     ProfileUpdateRequest, ChangePasswordRequest, MemberSettingsResponse, MemberSettingsUpdate,
-    VoteSubmissionRequest, ForgotPasswordRequest, NotificationResponse
+    VoteSubmissionRequest, ForgotPasswordRequest, NotificationResponse,
+    OnboardingResponse, OnboardingAcknowledgeRequest
+)
+from .onboarding_service import (
+    run_onboarding_migrations, seed_initial_onboarding,
+    get_current_release, has_member_seen_release, mark_release_viewed
 )
 from .seed import seed_database
-from .services.workload_balancer import calculate_workload_distribution, resolve_auto_assignment_by_workload, get_task_charge_points, TASK_CHARGE_WEIGHTS
+from .services.workload_balancer import (
+    calculate_workload_distribution,
+    resolve_auto_assignment_by_workload,
+    get_task_recommendations,
+    get_task_charge_points,
+    TASK_CHARGE_WEIGHTS
+)
 from .services.vicare_service import ViCareService
 from .services.klereo_service import KlereoService
 from .services.banking import enable_banking_service
@@ -105,6 +116,13 @@ if not is_vercel or force_init:
             seed_database(db)
     except Exception as e:
         logger.warning(f"Notice: seed_database could not complete on startup: {e}")
+
+try:
+    run_onboarding_migrations(engine)
+    with next(get_db()) as db:
+        seed_initial_onboarding(db)
+except Exception as e:
+    logger.warning(f"Notice: onboarding migration/seed could not complete on startup: {e}")
 
 app = FastAPI(
     title="SCI Familiale Management API",
@@ -266,8 +284,37 @@ def format_notification_response(notif: Notification) -> dict:
             email_data["to"] = email_data["recipients"]
         if "recipients" not in email_data and "to" in email_data:
             email_data["recipients"] = email_data["to"]
-        if "is_simulated" not in email_data:
-            email_data["is_simulated"] = (email_data.get("status") == "simulated")
+    # Déduction et normalisation de task_id et project_id pour ouverture modale directe (Annotation 6)
+    task_id = None
+    project_id = None
+
+    if notif.type == "task":
+        task_id = notif.link_id
+    elif notif.type in ["vote", "project"]:
+        project_id = notif.link_id
+
+    if notif.link_path:
+        if "task_id=" in notif.link_path:
+            try:
+                task_id = notif.link_path.split("task_id=")[1].split("&")[0]
+            except Exception:
+                pass
+        elif "project_id=" in notif.link_path:
+            try:
+                project_id = notif.link_path.split("project_id=")[1].split("&")[0]
+            except Exception:
+                pass
+        elif "id=" in notif.link_path and not project_id:
+            try:
+                task_id = notif.link_path.split("id=")[1].split("&")[0]
+            except Exception:
+                pass
+
+    if notif.type == "mention" and not task_id and not project_id and notif.link_id:
+        if notif.link_path and "/admin" in notif.link_path:
+            pass
+        else:
+            task_id = notif.link_id
 
     return {
         "id": notif.id,
@@ -277,6 +324,8 @@ def format_notification_response(notif: Notification) -> dict:
         "type": notif.type or "info",
         "link_path": notif.link_path,
         "link_id": notif.link_id,
+        "task_id": str(task_id) if task_id is not None else None,
+        "project_id": str(project_id) if project_id is not None else None,
         "email_entry": email_data,
         "email": email_data,  # Alias direct pour consultation modale EmailPreviewModal
         "is_read": bool(notif.is_read),
@@ -342,18 +391,20 @@ def get_optional_current_user(request: Request, db: Session = Depends(get_db)) -
 
 @app.get("/api/notifications", tags=["Notifications"])
 def list_notifications(
+    member_id: Optional[int] = Query(None, description="ID du membre associé pour filtrer les notifications ciblées"),
     current_user: Optional[User] = Depends(get_optional_current_user),
     db: Session = Depends(get_db)
 ):
     """
     Retourne la liste des notifications internes pour la cloche :
     - Diffusion globale (member_id IS NULL)
-    - Diffusion ciblée pour l'utilisateur connecté (member_id == current_user.id)
+    - Diffusion ciblée pour l'utilisateur connecté ou le member_id fourni
     """
     try:
         query = db.query(Notification)
-        if current_user:
-            query = query.filter(or_(Notification.member_id.is_(None), Notification.member_id == current_user.id))
+        target_member_id = member_id or (current_user.id if current_user else None)
+        if target_member_id:
+            query = query.filter(or_(Notification.member_id.is_(None), Notification.member_id == target_member_id))
         else:
             query = query.filter(Notification.member_id.is_(None))
         
@@ -379,13 +430,15 @@ def mark_single_notification_read(notif_id: int, db: Session = Depends(get_db)):
 @app.post("/api/notifications/read-all", tags=["Notifications"])
 @app.patch("/api/notifications/read-all", tags=["Notifications"])
 def mark_all_notifications_as_read(
+    member_id: Optional[int] = Query(None, description="ID du membre associé"),
     current_user: Optional[User] = Depends(get_optional_current_user),
     db: Session = Depends(get_db)
 ):
     """Marque toutes les notifications non lues comme lues pour l'utilisateur."""
     query = db.query(Notification).filter(Notification.is_read == False)
-    if current_user:
-        query = query.filter(or_(Notification.member_id.is_(None), Notification.member_id == current_user.id))
+    target_member_id = member_id or (current_user.id if current_user else None)
+    if target_member_id:
+        query = query.filter(or_(Notification.member_id.is_(None), Notification.member_id == target_member_id))
     else:
         query = query.filter(Notification.member_id.is_(None))
     
@@ -402,6 +455,73 @@ def delete_single_notification(notif_id: int, db: Session = Depends(get_db)):
         db.delete(notif)
         db.commit()
     return Response(status_code=status.HTTP_204_NO_CONTENT)
+
+
+# ==============================================================================
+# ONBOARDING & PATCH NOTES ÉVOLUTIFS
+# ==============================================================================
+
+@app.get("/api/onboarding/current", response_model=OnboardingResponse, tags=["Onboarding"])
+def get_current_onboarding(
+    version: Optional[str] = Query(None, description="Version spécifique à inspecter"),
+    current_user: Optional[User] = Depends(get_optional_current_user),
+    db: Session = Depends(get_db)
+):
+    """
+    Retourne la release active (ou demandée), le JSON des 6 pages,
+    et indique si l'utilisateur connecté l'a déjà vue et si elle doit s'afficher.
+    """
+    rel = get_current_release(db, version=version)
+    if not rel:
+        rel = seed_initial_onboarding(db)
+
+    pages = []
+    if rel and rel.pages_json:
+        try:
+            pages = json.loads(rel.pages_json)
+        except Exception as err:
+            logger.warning(f"Erreur parsing pages_json release {rel.version}: {err}")
+            pages = []
+
+    has_seen = False
+    needs_display = False
+    if current_user and rel:
+        has_seen = has_member_seen_release(db, current_user.id, rel.version)
+        needs_display = bool(not has_seen and rel.is_active)
+
+    return {
+        "release": rel,
+        "pages": pages,
+        "has_seen": has_seen,
+        "needs_display": needs_display
+    }
+
+
+@app.post("/api/onboarding/acknowledge", tags=["Onboarding"])
+def acknowledge_onboarding(
+    payload: Optional[OnboardingAcknowledgeRequest] = Body(None),
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db)
+):
+    """
+    Enregistre l'acquittement de la release active (ou d'une version spécifique)
+    par l'utilisateur connecté pour ne plus lui réafficher jusqu'à la prochaine mise à jour.
+    """
+    target_version = payload.version if payload and payload.version else None
+    if not target_version:
+        rel = get_current_release(db)
+        if not rel:
+            rel = seed_initial_onboarding(db)
+        target_version = rel.version
+
+    view = mark_release_viewed(db, current_user.id, target_version)
+    return {
+        "status": "ok",
+        "member_id": current_user.id,
+        "version": target_version,
+        "has_seen": True,
+        "viewed_at": view.viewed_at.isoformat() if view.viewed_at else None
+    }
 
 
 # Security Headers & Anti-DDoS Rate Limiting Middleware
@@ -753,10 +873,10 @@ def dispatch_chat_mentions(
     author_clean = (author_name or "").strip().lower()
 
     for member in target_members:
-        # Anti-auto-mention
+        # Anti-auto-mention : s'applique UNIQUEMENT aux mentions individuelles directes, JAMAIS à @all (Annotation 3 : « après tout, je suis dans all ! »)
         m_name = (member.name or "").strip().lower()
         m_prenom = (member.prenom or "").strip().lower()
-        if author_clean and (
+        if not is_all and author_clean and (
             author_clean == m_name
             or author_clean == m_prenom
             or (len(author_clean) >= 3 and (author_clean in m_name or m_name in author_clean))
@@ -2065,9 +2185,9 @@ def dispatch_stay_confirmation(db_res: Reservation, db: Session, prop_name: Opti
             email_entry=dispatched_email
         )
 
-        # Notifications internes ciblées pour CHAQUE participant assigné au séjour (Annotation 1)
+        # Notifications internes ciblées pour CHAQUE participant assigné au séjour (Annotation 1 : systématique dans la cloche)
         for m in all_members:
-            if is_participant(m) and getattr(m, 'notif_stay_booked', True):
+            if is_participant(m):
                 create_internal_notification(
                     db=db,
                     member_id=m.id,
@@ -2474,8 +2594,8 @@ def create_project(proj: ProjectCreate, db: Session = Depends(get_db)):
             title=f"Nouveau scrutin ouvert : {db_proj.title}",
             description=f"Le scrutin « {db_proj.title} » est ouvert au vote de tous les associés.",
             notif_type="vote",
-            link_path="/taches",
-            link_id=db_proj.id,
+            link_path=f"/taches?project_id={db_proj.id}",
+            link_id=str(db_proj.id),
             email_entry=dispatched_email
         )
     elif db_proj.status == "PROPOSED":
@@ -2484,20 +2604,27 @@ def create_project(proj: ProjectCreate, db: Session = Depends(get_db)):
                 or_(
                     Member.is_coordinator == True,
                     func.lower(Member.prenom).in_(["henri", "joséphine", "josephine"])
-                ),
-                Member.email.isnot(None)
+                )
             ).all()
 
+            subscribed_vote = db.query(Member).filter(
+                Member.notify_vote_creation == True
+            ).all()
+
+            target_vote_members = {m.id: m for m in (coordinators + subscribed_vote)}.values()
+
             coord_email_template = None
-            for coord in coordinators:
+            for coord in target_vote_members:
+                m_email = coord.email or f"{coord.prenom.lower()}@sci-familiale.fr"
+                actually_send_mail = bool(getattr(coord, "notify_vote_creation", False) and coord.email)
                 send_coord_res = send_vote_creation_pending_email(
-                    to_email=coord.email,
+                    to_email=m_email,
                     vote_title=db_proj.title,
                     submitted_by=db_proj.submitted_by or "Associé SCI",
                     coordinator_name=coord.prenom,
                     description=db_proj.description or "",
                     project_id=db_proj.id,
-                    actually_send=bool(getattr(coord, "notify_vote_creation", False))
+                    actually_send=actually_send_mail
                 )
                 if isinstance(send_coord_res, dict) and "_email_dispatched" in send_coord_res:
                     coord_email_template = send_coord_res["_email_dispatched"]
@@ -2505,15 +2632,15 @@ def create_project(proj: ProjectCreate, db: Session = Depends(get_db)):
             if coord_email_template:
                 dispatched_email = coord_email_template
 
-            for coord in coordinators:
+            for coord in target_vote_members:
                 create_internal_notification(
                     db=db,
                     member_id=coord.id,
                     title=f"Scrutin proposé : {db_proj.title}",
                     description=f"Le scrutin « {db_proj.title} » a été soumis et attend votre arbitrage pour ouverture.",
                     notif_type="vote",
-                    link_path="/taches",
-                    link_id=db_proj.id,
+                    link_path=f"/taches?project_id={db_proj.id}",
+                    link_id=str(db_proj.id),
                     email_entry=coord_email_template
                 )
         except Exception as e:
@@ -2636,8 +2763,8 @@ def approve_project_by_coordinator(
             title=f"Scrutin ouvert : {db_proj.title}",
             description=f"Le scrutin « {db_proj.title} » a été validé par la coordination et est ouvert au vote de tous les associés.",
             notif_type="vote",
-            link_path="/taches",
-            link_id=db_proj.id,
+            link_path=f"/taches?project_id={db_proj.id}",
+            link_id=str(db_proj.id),
             email_entry=dispatched_email
         )
 
@@ -2699,8 +2826,8 @@ def approve_project_by_coordinator(
             title=f"Scrutin archivé : {db_proj.title}",
             description=f"Le scrutin « {db_proj.title} » a été validé et archivé par la coordination. Résultat : {decision} ({votes_summary}).",
             notif_type="vote",
-            link_path="/taches",
-            link_id=db_proj.id,
+            link_path=f"/taches?project_id={db_proj.id}",
+            link_id=str(db_proj.id),
             email_entry=dispatched_email
         )
 
@@ -3356,8 +3483,8 @@ def process_vote_submission(
                     title=f"Arbitrage requis : {db_proj.title}",
                     description=f"Le scrutin « {db_proj.title} » est en attente d'arbitrage par la coordination ({decision}).",
                     notif_type="vote",
-                    link_path="/taches",
-                    link_id=db_proj.id,
+                    link_path=f"/taches?project_id={db_proj.id}",
+                    link_id=str(db_proj.id),
                     email_entry=coord_email_template
                 )
         except Exception as coord_err:
@@ -3369,8 +3496,8 @@ def process_vote_submission(
             title=f"Scrutin en attente d'arbitrage : {db_proj.title}",
             description=f"Le quorum (7/7) a été atteint sur « {db_proj.title} ». Statut : {decision}.",
             notif_type="vote",
-            link_path="/taches",
-            link_id=db_proj.id,
+            link_path=f"/taches?project_id={db_proj.id}",
+            link_id=str(db_proj.id),
             email_entry=dispatched_email or coord_email_template
         )
 
@@ -3445,7 +3572,7 @@ def add_project_comment(
             author_name=author_name,
             context_title=db_proj.title,
             target_url=f"{APP_BASE_URL}/taches?project_id={db_proj.id}",
-            link_path="/taches",
+            link_path=f"/taches?project_id={db_proj.id}",
             link_id=db_proj.id,
             background_tasks=background_tasks
         )
@@ -4049,7 +4176,10 @@ def create_task(
             all_members = db.query(Member).all()
             all_reservations = db.query(Reservation).all()
             all_tasks = db.query(Task).all()
-            selected_member = resolve_auto_assignment_by_workload(all_members, all_reservations, all_tasks)
+            selected_member = resolve_auto_assignment_by_workload(
+                all_members, all_reservations, all_tasks,
+                subject=subject, category=category, complexity=complexity
+            )
             if selected_member:
                 assigned_members = [selected_member]
         except Exception as auto_err:
@@ -4140,24 +4270,31 @@ def create_task(
     db.commit()
     db.refresh(db_task)
 
-    # Email Trigger 1: Notify assignee if notif_task_assigned is True
+    # Email & In-App Notification Trigger 1: Notify all assigned members (Annotation 1)
     dispatched_email = None
     try:
-        assignee = None
+        assignees = []
         if db_task.assignee_id:
-            assignee = db.query(Member).filter(Member.id == db_task.assignee_id).first()
-        elif db_task.assigned_members:
+            m = db.query(Member).filter(Member.id == db_task.assignee_id).first()
+            if m and m not in assignees:
+                assignees.append(m)
+        if db_task.assigned_members:
             try:
-                assigned_list = json.loads(db_task.assigned_members)
-                if assigned_list and isinstance(assigned_list, list):
-                    first_name = str(assigned_list[0]).strip().split()[0].lower()
-                    assignee = db.query(Member).filter(func.lower(Member.prenom) == first_name).first()
+                assigned_list = json.loads(db_task.assigned_members) if isinstance(db_task.assigned_members, str) else list(db_task.assigned_members)
+                if isinstance(assigned_list, list):
+                    for name_item in assigned_list:
+                        first_name = str(name_item).strip().split()[0].lower()
+                        m = db.query(Member).filter(func.lower(Member.prenom) == first_name).first()
+                        if m and m not in assignees:
+                            assignees.append(m)
             except Exception:
                 pass
 
-        if assignee and assignee.email and getattr(assignee, 'notif_task_assigned', True):
+        for assignee in assignees:
+            m_email = assignee.email or f"{assignee.prenom.lower()}@sci-familiale.fr"
+            should_send_mail = bool(getattr(assignee, 'notif_task_assigned', True) and assignee.email)
             send_res = send_task_assigned_email(
-                to_email=assignee.email,
+                to_email=m_email,
                 task_title=db_task.title,
                 domain=db_task.subject or db_task.category or "SCI Familiale",
                 location=db_task.category or "Domaine d'Hellenvilliers",
@@ -4165,38 +4302,52 @@ def create_task(
                 charge=db_task.complexity or "Modérée",
                 task_id=db_task.id,
                 assignee_name=assignee.prenom,
-                description=db_task.description
+                description=db_task.description,
+                actually_send=should_send_mail
             )
-            if isinstance(send_res, dict) and "_email_dispatched" in send_res:
-                dispatched_email = send_res["_email_dispatched"]
+            m_dispatched = send_res.get("_email_dispatched") if isinstance(send_res, dict) else None
+            if not dispatched_email and m_dispatched:
+                dispatched_email = m_dispatched
 
-        if assignee:
+            # Notification interne SYSTÉMATIQUE dans la cloche pour chaque assigné (Annotation 1)
             create_internal_notification(
                 db=db,
                 member_id=assignee.id,
                 title=f"Nouvelle tâche assignée : {db_task.title}",
                 description=f"Une mission vous a été attribuée : {db_task.title}.",
                 notif_type="task",
-                link_path="/taches",
-                link_id=db_task.id,
-                email_entry=dispatched_email
+                link_path=f"/taches?task_id={db_task.id}",
+                link_id=str(db_task.id),
+                email_entry=m_dispatched
             )
     except Exception as e:
         logger.error(f"[EMAIL ERROR] Failed to send task assignment notification: {e}")
 
-    # Email Trigger 2: Notify subscribed members on new task proposal if notify_task_creation is True (Annotation 5 & 16)
+    # Email & In-App Notification Trigger 2: Notify coordinators & subscribed members on new task proposal (Annotation 2 & Annotation 1)
     if db_task.status == "PROPOSED":
         try:
-            subscribed_members = db.query(Member).filter(
-                Member.notify_task_creation == True,
-                Member.email.isnot(None)
+            # 1. Coordinateurs opérationnels obligatoires (Henri & Joséphine / is_coordinator)
+            coordinators = db.query(Member).filter(
+                or_(
+                    Member.is_coordinator == True,
+                    func.lower(Member.prenom).in_(["henri", "joséphine", "josephine"])
+                )
             ).all()
 
-            # Garantit un objet e-mail virtuel prêt à afficher dans la cloche
-            coord_email_template = None
-            for member in subscribed_members:
+            # 2. Membres ayant activé l'option e-mail de proposition de tâche
+            subscribed_members = db.query(Member).filter(
+                Member.notify_task_creation == True
+            ).all()
+
+            # 3. Union dédupliquée : TOUS reçoivent la notification in-app dans la cloche
+            target_members_dict = {m.id: m for m in (coordinators + subscribed_members)}
+
+            for member in target_members_dict.values():
+                m_email = member.email or f"{member.prenom.lower()}@sci-familiale.fr"
+                actually_send_mail = bool(getattr(member, "notify_task_creation", False) and member.email)
+
                 send_coord_res = send_task_creation_pending_email(
-                    to_email=member.email,
+                    to_email=m_email,
                     task_title=db_task.title,
                     created_by=created_by or "Un associé",
                     domain=db_task.subject or db_task.category or "SCI Familiale",
@@ -4205,33 +4356,78 @@ def create_task(
                     complexity=db_task.complexity or "Modérée",
                     task_id=db_task.id,
                     coordinator_name=member.prenom,
-                    description=db_task.description
+                    description=db_task.description,
+                    actually_send=actually_send_mail
                 )
-                if isinstance(send_coord_res, dict) and "_email_dispatched" in send_coord_res:
-                    coord_email_template = send_coord_res["_email_dispatched"]
+                m_dispatched = send_coord_res.get("_email_dispatched") if isinstance(send_coord_res, dict) else None
+                if not dispatched_email and m_dispatched:
+                    dispatched_email = m_dispatched
 
-            if coord_email_template:
-                dispatched_email = coord_email_template
-
-            for member in subscribed_members:
+                # Notification interne obligatoire dans la cloche (Annotation 2)
                 create_internal_notification(
                     db=db,
                     member_id=member.id,
-                    title=f"Nouvelle tâche en attente : {db_task.title}",
-                    description=f"Soumise par {created_by or 'un associé'} et en attente d'arbitrage par la coordination.",
+                    title=f"Proposition de tâche : {db_task.title}",
+                    description=f"« {db_task.title} » soumise par {created_by or 'un associé'} et en attente d'arbitrage par la coordination.",
                     notif_type="task",
-                    link_path="/taches",
-                    link_id=db_task.id,
-                    email_entry=coord_email_template
+                    link_path=f"/taches?task_id={db_task.id}",
+                    link_id=str(db_task.id),
+                    email_entry=m_dispatched
                 )
         except Exception as coord_err:
-            logger.error(f"[EMAIL ERROR] Failed to send task proposal notification to subscribed members: {coord_err}")
+            logger.error(f"[EMAIL ERROR] Failed to send task proposal notification to coordinators and subscribed members: {coord_err}")
 
     task_res_data = format_task_response(db_task, include_comments=True)
     if dispatched_email:
         task_res_data["_email_dispatched"] = dispatched_email
         task_res_data["email_dispatched"] = dispatched_email
     return task_res_data
+
+
+@app.get("/api/tasks/recommendations")
+def get_task_recommendations_endpoint(
+    subject: Optional[str] = Query(None),
+    category: Optional[str] = Query(None),
+    complexity: Optional[str] = Query(None),
+    task_id: Optional[str] = Query(None),
+    db: Session = Depends(get_db)
+):
+    """
+    Annotation 5 :
+    Retourne le Top 3 des membres les plus recommandés pour une tâche
+    selon le sujet/domaine/lieu et les scores de charge actuels.
+    """
+    target_subject = subject or category
+    target_complexity = complexity
+    if task_id:
+        try:
+            existing = resolve_task_by_id_or_ref(task_id, db)
+            if existing:
+                if not target_subject:
+                    target_subject = existing.subject or existing.category
+                if not target_complexity:
+                    target_complexity = existing.complexity
+        except Exception:
+            pass
+
+    all_members = db.query(Member).all()
+    all_reservations = db.query(Reservation).all()
+    all_tasks = db.query(Task).all()
+
+    recommendations = get_task_recommendations(
+        members=all_members,
+        reservations=all_reservations,
+        tasks=all_tasks,
+        subject=target_subject,
+        category=target_subject,
+        complexity=target_complexity,
+        limit=3
+    )
+
+    return {
+        "subject": target_subject or "SCI",
+        "recommendations": recommendations
+    }
 
 
 @app.get("/api/tasks/{task_id}")
@@ -4250,6 +4446,7 @@ def update_task(
 ):
     task = resolve_task_by_id_or_ref(task_id, db)
     old_assignee_id = task.assignee_id
+    old_status = task.status
 
     is_coord = bool(getattr(current_user, "is_coordinator", False)) if current_user else False
     is_creator = False
@@ -4319,7 +4516,10 @@ def update_task(
                     all_members = db.query(Member).all()
                     all_reservations = db.query(Reservation).all()
                     all_tasks = db.query(Task).all()
-                    selected_member = resolve_auto_assignment_by_workload(all_members, all_reservations, all_tasks)
+                    selected_member = resolve_auto_assignment_by_workload(
+                        all_members, all_reservations, all_tasks,
+                        subject=task.subject, category=task.category, complexity=task.complexity
+                    )
                     if selected_member:
                         task.assigned_members = json.dumps([selected_member])
                 except Exception as auto_err:
@@ -4413,14 +4613,16 @@ def update_task(
     db.commit()
     db.refresh(task)
 
-    # Email Trigger 1 (Reassignment): If newly assigned to a member, notify if notif_task_assigned is True
+    # Email & In-App Notification Trigger 1 (Reassignment): Notify assignee in-app and email (Annotation 1)
     dispatched_email = None
     if "assignee_id" in payload and payload["assignee_id"] and payload["assignee_id"] != old_assignee_id:
         try:
             assignee = db.query(Member).filter(Member.id == payload["assignee_id"]).first()
-            if assignee and assignee.email and getattr(assignee, 'notif_task_assigned', True):
+            if assignee:
+                m_email = assignee.email or f"{assignee.prenom.lower()}@sci-familiale.fr"
+                should_send_mail = bool(getattr(assignee, 'notif_task_assigned', True) and assignee.email)
                 send_res = send_task_assigned_email(
-                    to_email=assignee.email,
+                    to_email=m_email,
                     task_title=task.title,
                     domain=task.subject or task.category or "SCI Familiale",
                     location=task.category or "Domaine d'Hellenvilliers",
@@ -4428,12 +4630,39 @@ def update_task(
                     charge=task.complexity or "Modérée",
                     task_id=task.id,
                     assignee_name=assignee.prenom,
-                    description=task.description
+                    description=task.description,
+                    actually_send=should_send_mail
                 )
-                if isinstance(send_res, dict) and "_email_dispatched" in send_res:
-                    dispatched_email = send_res["_email_dispatched"]
+                m_dispatched = send_res.get("_email_dispatched") if isinstance(send_res, dict) else None
+                if not dispatched_email and m_dispatched:
+                    dispatched_email = m_dispatched
+
+                create_internal_notification(
+                    db=db,
+                    member_id=assignee.id,
+                    title=f"Nouvelle tâche assignée : {task.title}",
+                    description=f"Une mission vous a été attribuée : {task.title}.",
+                    notif_type="task",
+                    link_path=f"/taches?task_id={task.id}",
+                    link_id=str(task.id),
+                    email_entry=m_dispatched
+                )
         except Exception as e:
             logger.error(f"[EMAIL ERROR] Failed to send task assignment notification on update: {e}")
+
+    # Email & In-App Notification Trigger 2 (Task Completion): Notify on completion (Annotation 1)
+    if task.status in ["TERMINEE", "COMPLETED", "ARCHIVEE"] and old_status not in ["TERMINEE", "COMPLETED", "ARCHIVEE"]:
+        try:
+            create_internal_notification(
+                db=db,
+                title=f"Tâche terminée : {task.title}",
+                description=f"La tâche « {task.title} » a été marquée comme terminée.",
+                notif_type="task",
+                link_path=f"/taches?task_id={task.id}",
+                link_id=str(task.id)
+            )
+        except Exception as comp_err:
+            logger.error(f"[NOTIF ERROR] Failed to send task completion notification: {comp_err}")
 
     task_res_data = format_task_response(task, include_comments=True)
     if dispatched_email:
@@ -4462,6 +4691,19 @@ def close_task(task_id: str, req: TaskCloseRequest, db: Session = Depends(get_db
     task.updated_at = datetime.utcnow()
     db.commit()
     db.refresh(task)
+
+    try:
+        create_internal_notification(
+            db=db,
+            title=f"Tâche archivée : {task.title}",
+            description=f"La tâche « {task.title} » a été clôturée et archivée.",
+            notif_type="task",
+            link_path=f"/taches?task_id={task.id}",
+            link_id=str(task.id)
+        )
+    except Exception as notif_err:
+        logger.error(f"[NOTIF ERROR] Échec notification close_task: {notif_err}")
+
     return format_task_response(task, include_comments=True)
 
 
@@ -4485,6 +4727,19 @@ def validate_task_unified(
     task.updated_at = datetime.utcnow()
     db.commit()
     db.refresh(task)
+
+    try:
+        create_internal_notification(
+            db=db,
+            title=f"Tâche validée : {task.title}",
+            description=f"La tâche « {task.title} » a été validée par la coordination ({current_user.prenom}).",
+            notif_type="task",
+            link_path=f"/taches?task_id={task.id}",
+            link_id=str(task.id)
+        )
+    except Exception as notif_err:
+        logger.error(f"[NOTIF ERROR] Échec notification validate_task: {notif_err}")
+
     return format_task_response(task, include_comments=True)
 
 
@@ -4538,15 +4793,17 @@ def accept_task_proposal(
         )
     task = resolve_task_by_id_or_ref(task_id, db)
 
-    # 1. Mise à jour préalable des assignés si fournis dans le payload
+    # 1. Mise à jour préalable des assignés et options si fournis dans le payload
     if payload:
         if payload.get("assignee_id"):
             task.assignee_id = payload.get("assignee_id")
         if payload.get("assigned_members") is not None:
             raw_members = payload.get("assigned_members")
             task.assigned_members = json.dumps(raw_members) if isinstance(raw_members, list) else str(raw_members)
+        if "auto_assign_by_workload" in payload and payload["auto_assign_by_workload"] is not None:
+            task.auto_assign_by_workload = bool(payload["auto_assign_by_workload"])
 
-    # 2. Vérification obligatoire de l'assignation (Annotation 17)
+    # 2. Vérification obligatoire de l'assignation ou exécution de l'attribution automatique (Annotation 4)
     has_assignee = False
     if task.assignee_id:
         has_assignee = True
@@ -4561,14 +4818,46 @@ def accept_task_proposal(
             if str(task.assigned_members).strip() not in ("[]", ""):
                 has_assignee = True
 
+    is_auto_assign = bool(
+        getattr(task, "auto_assign_by_workload", False) or
+        (payload and (
+            payload.get("auto_assign_by_workload") or
+            payload.get("is_auto_assign") or
+            payload.get("assignment_mode") == "auto"
+        ))
+    )
+
+    if not has_assignee and is_auto_assign:
+        # Exécuter l'attribution automatique immédiatement (Annotation 4)
+        task.auto_assign_by_workload = True
+        try:
+            all_members = db.query(Member).all()
+            all_reservations = db.query(Reservation).all()
+            all_tasks = db.query(Task).all()
+            selected_member = resolve_auto_assignment_by_workload(
+                all_members, all_reservations, all_tasks,
+                subject=task.subject or task.category,
+                category=task.category or task.subject,
+                complexity=task.complexity
+            )
+            if selected_member:
+                task.assigned_members = json.dumps([selected_member])
+                for m in all_members:
+                    if m.name == selected_member or (m.prenom and m.prenom.lower() in selected_member.lower()):
+                        task.assignee_id = m.id
+                        break
+                has_assignee = True
+        except Exception as auto_err:
+            logger.warning(f"Erreur lors de l'auto-attribution à l'approbation: {auto_err}")
+
     if not has_assignee:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
-            detail="Assignation obligatoire : vous devez assigner au moins un associé à la tâche avant de pouvoir accepter sa création."
+            detail="Assignation obligatoire : impossible d'accepter la tâche car aucun membre n'est assigné. Veuillez désigner au moins un responsable avant d'accepter la mission."
         )
 
-    # Bascule le statut de la tâche de PROPOSED à TODO (ou EN_COURS)
-    target_status = "TODO"
+    # Bascule le statut de la tâche de PROPOSED à EN_COURS (ou statut explicite demandé)
+    target_status = "EN_COURS"
     if payload and (payload.get("status") or payload.get("target_status")):
         target_status = payload.get("status") or payload.get("target_status")
     task.status = target_status
@@ -4690,7 +4979,7 @@ def create_task_comment(
             author_name=author_name,
             context_title=task.title,
             target_url=f"{APP_BASE_URL}/taches?id={task.id}",
-            link_path="/taches",
+            link_path=f"/taches?task_id={task.id}",
             link_id=task.id,
             background_tasks=background_tasks
         )

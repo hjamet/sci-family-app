@@ -89,8 +89,9 @@ export default function NotificationBell({
       setLoading(true);
       // 1. Récupération des notifications persistées en base
       let backendNotifs = [];
+      const currentMemberId = typeof currentUser === 'object' ? currentUser?.id : null;
       try {
-        const res = await fetchNotifications();
+        const res = await fetchNotifications(currentMemberId);
         if (Array.isArray(res)) {
           backendNotifs = res;
         }
@@ -335,7 +336,8 @@ function getNotificationEmail(notif, currentUser) {
   const handleMarkAllAsRead = async (e) => {
     if (e) e.stopPropagation();
     try {
-      await markAllNotificationsAsRead();
+      const currentMemberId = typeof currentUser === 'object' ? currentUser?.id : null;
+      await markAllNotificationsAsRead(currentMemberId);
     } catch (err) {
       console.warn('Erreur markAllNotificationsAsRead API:', err);
     }
@@ -360,7 +362,65 @@ function getNotificationEmail(notif, currentUser) {
     // 2. Fermer le popover
     setIsOpen(false);
 
-    // 3. Ouvrir directement la modale associée
+    // Extraction robuste des identifiants cibles (Annotation 6)
+    let targetTaskId = notif.task_id || notif.taskId || null;
+    let targetProjectId = notif.project_id || notif.projectId || null;
+
+    if (!targetTaskId && !targetProjectId && notif.link_path) {
+      try {
+        if (notif.link_path.includes('task_id=')) {
+          targetTaskId = new URLSearchParams(notif.link_path.split('?')[1]).get('task_id');
+        } else if (notif.link_path.includes('project_id=')) {
+          targetProjectId = new URLSearchParams(notif.link_path.split('?')[1]).get('project_id');
+        } else if (notif.link_path.includes('id=')) {
+          const rawId = new URLSearchParams(notif.link_path.split('?')[1]).get('id');
+          if (notif.type === 'vote' || notif.type === 'project') {
+            targetProjectId = rawId;
+          } else {
+            targetTaskId = rawId;
+          }
+        }
+      } catch (e) {
+        console.warn('Erreur parsing link_path notification:', e);
+      }
+    }
+
+    if (!targetTaskId && !targetProjectId && notif.link_id) {
+      if (notif.type === 'task') {
+        targetTaskId = notif.link_id;
+      } else if (notif.type === 'vote' || notif.type === 'project') {
+        targetProjectId = notif.link_id;
+      } else if (notif.type === 'mention') {
+        targetTaskId = notif.link_id;
+      }
+    }
+
+    // 3. Ouvrir directement la modale de tâche si targetTaskId
+    if (targetTaskId) {
+      if (onOpenTaskModal) {
+        onOpenTaskModal(targetTaskId, notif.task);
+      }
+      if (onNavigate) {
+        onNavigate(`/taches?task_id=${targetTaskId}`, 'taches');
+      } else if (setActiveTab) {
+        setActiveTab('taches');
+      }
+      return;
+    }
+
+    // 4. Ouvrir directement la modale de vote/projet si targetProjectId
+    if (targetProjectId) {
+      if (onOpenVoteModal) {
+        onOpenVoteModal(targetProjectId, notif.project);
+      }
+      if (onNavigate) {
+        onNavigate(`/taches?project_id=${targetProjectId}`, 'taches');
+      } else if (setActiveTab) {
+        setActiveTab('taches');
+      }
+      return;
+    }
+
     if (notif.type === 'vote' || notif.type === 'project') {
       if (onOpenVoteModal) {
         onOpenVoteModal(notif.link_id || notif.projectId || notif.id, notif.project);
@@ -382,16 +442,16 @@ function getNotificationEmail(notif, currentUser) {
       }
     }
 
-    // 4. Si notification e-mail pure avec modal d'aperçu
+    // 5. Si notification e-mail pure avec modal d'aperçu
     const emailData = getNotificationEmail(notif, currentUser);
     if (emailData && onViewEmail && notif.type === 'email') {
       onViewEmail(emailData);
       return;
     }
 
-    // 5. Navigation de repli
+    // 6. Navigation de repli
     if (setActiveTab && (notif.tabId || notif.link_path)) {
-      const tab = notif.tabId || notif.link_path.replace('/', '');
+      const tab = notif.tabId || notif.link_path.replace('/', '').split('?')[0];
       setActiveTab(tab);
     }
     if (onNavigate && (notif.link_path || notif.path)) {
@@ -401,6 +461,11 @@ function getNotificationEmail(notif, currentUser) {
 
   const renderNotifIcon = (type) => {
     switch (type) {
+      case 'mention':
+        return {
+          icon: 'alternate_email',
+          bg: 'bg-indigo-100 text-indigo-700 dark:bg-indigo-900/60 dark:text-indigo-300'
+        };
       case 'vote':
       case 'project':
         return {

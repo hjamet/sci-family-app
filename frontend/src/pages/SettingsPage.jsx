@@ -633,9 +633,12 @@ export default function SettingsPage({ currentUser }) {
           </div>
         </div>
 
-        <p className="text-xs text-slate-600 mb-6">
-          Définissez la fréquence et la nature des e-mails automatiques envoyés à votre adresse. Par défaut, l'ensemble des alertes prioritaires est activé pour assurer une coordination fluide du patrimoine.
-        </p>
+        <div className="text-xs text-slate-600 mb-6 bg-slate-50 border border-slate-200/80 rounded-xl p-3.5 flex items-start gap-2.5">
+          <Info className="w-4 h-4 text-emerald-700 shrink-0 mt-0.5" />
+          <div>
+            <span className="font-semibold text-slate-800">Découplage E-mails &amp; Cloche in-app :</span> Ces commutateurs régissent exclusivement l'envoi de courriels physiques dans votre boîte de messagerie personnelle. Quel que soit l'état de ces réglages, 100% des événements prioritaires sont systématiquement enregistrés dans la cloche de notification en haut à droite pour une visibilité permanente au sein de la SCI.
+          </div>
+        </div>
 
         {/* ======================================================== */}
         {/* 4 CARTES THÉMATIQUES DE NOTIFICATIONS (ANNOTATION 3)    */}

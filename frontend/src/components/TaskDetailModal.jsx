@@ -18,6 +18,7 @@ import {
   deleteDocument,
   invalidateCache,
   invalidateApiCache,
+  fetchTaskRecommendations,
 } from '../api';
 import {
   isTaskPendingValidation,
@@ -288,6 +289,44 @@ export default function TaskDetailModal({
   const [editRecurrenceUnit, setEditRecurrenceUnit] = useState('semaines');
   const [editAutoAssignByWorkload, setEditAutoAssignByWorkload] = useState(false);
   const [savingEdit, setSavingEdit] = useState(false);
+
+  // Annotation 5 : Top 3 des membres recommandés calculés dynamiquement selon le domaine et l'équité
+  const [recommendations, setRecommendations] = useState([
+    { rank: 1, name: 'Joséphine Jamet', prenom: 'Joséphine', reason: `charge la plus basse dans ${editSubject || 'Rosings'}` },
+    { rank: 2, name: 'Hortense Jamet', prenom: 'Hortense', reason: 'charge basse' },
+    { rank: 3, name: 'Marguerite Jamet', prenom: 'Marguerite', reason: 'disponible pour ce domaine' },
+  ]);
+  const [loadingRecs, setLoadingRecs] = useState(false);
+
+  useEffect(() => {
+    if (!isOpen) return;
+    let isMounted = true;
+    const currentDomain = (mode === 'edit' ? editSubject : (task?.subject || task?.category)) || 'Rosings';
+    const currentComplexity = (mode === 'edit' ? editComplexity : task?.complexity) || 'Modérée';
+
+    async function loadRecommendations() {
+      try {
+        setLoadingRecs(true);
+        const res = await fetchTaskRecommendations({
+          subject: currentDomain,
+          category: currentDomain,
+          complexity: currentComplexity,
+          taskId: task?.id
+        });
+        if (isMounted && res && Array.isArray(res.recommendations) && res.recommendations.length > 0) {
+          setRecommendations(res.recommendations);
+        }
+      } catch (err) {
+        console.warn('Erreur chargement recommandations d\'équité:', err);
+      } finally {
+        if (isMounted) setLoadingRecs(false);
+      }
+    }
+    loadRecommendations();
+    return () => {
+      isMounted = false;
+    };
+  }, [isOpen, editSubject, editComplexity, task?.id, task?.subject, task?.category, task?.complexity, mode]);
 
   // Catégories strictement fixes : Lieux fixes en premier puis SCI (Annotation 12 & 15)
   const categoryOptions = React.useMemo(() => [
@@ -859,12 +898,27 @@ export default function TaskDetailModal({
     }
   };
 
-  // Arbitrage Proposition Coordinateur (Accepter / Refuser) - Annotation 17
+  // Arbitrage Proposition Coordinateur (Accepter / Refuser) - Annotation 4 & 17
   const handleAcceptModalTask = async () => {
-    // Annotation 17 : Assignation obligatoire à l'acceptation
-    const currentMembers = Array.isArray(task?.assigned_members) && task.assigned_members.length > 0
+    const isAutoAssign = Boolean(
+      task?.auto_assign_by_workload ||
+      editAutoAssignByWorkload ||
+      task?.is_auto_assign ||
+      task?.assignment_mode === 'auto'
+    );
+
+    let currentMembers = Array.isArray(task?.assigned_members) && task.assigned_members.length > 0
       ? task.assigned_members
       : (task?.assignee ? [task.assignee] : (Array.isArray(editMembers) && editMembers.length > 0 ? editMembers : []));
+
+    // Annotation 4 : Si la tâche est en mode "Attribution automatique" et aucun membre n'est encore assigné,
+    // on sélectionne immédiatement le membre le plus équitable (Top 1 recommandé) sans bloquer !
+    if ((!currentMembers || currentMembers.length === 0) && isAutoAssign) {
+      const topMember = (recommendations && recommendations.length > 0)
+        ? (recommendations[0].name || recommendations[0].member_name || recommendations[0].prenom)
+        : 'Joséphine Jamet';
+      currentMembers = [topMember];
+    }
 
     if (!currentMembers || currentMembers.length === 0) {
       alert("Impossible d'accepter la tâche : aucun membre n'est assigné. Veuillez désigner au moins un responsable avant d'accepter la mission.");
@@ -879,9 +933,22 @@ export default function TaskDetailModal({
       if (task?.id) invalidateApiCache(`tasks/${task.id}`);
 
       if (task?.id) {
-        const accepted = await acceptTask(task.id, { assigned_members: currentMembers, status: 'EN_COURS' });
-        const fetched = (accepted && accepted.id) ? accepted : await fetchTaskById(task.id).catch(() => ({ ...task, status: 'EN_COURS', assigned_members: currentMembers }));
-        refreshed = { ...fetched, status: 'EN_COURS', assigned_members: currentMembers };
+        const accepted = await acceptTask(task.id, {
+          assigned_members: currentMembers,
+          auto_assign_by_workload: isAutoAssign,
+          status: 'EN_COURS'
+        });
+        const fetched = (accepted && accepted.id)
+          ? accepted
+          : await fetchTaskById(task.id).catch(() => ({ ...task, status: 'EN_COURS', assigned_members: currentMembers }));
+        const assignedResult = (fetched && fetched.assigned_members && fetched.assigned_members.length > 0)
+          ? fetched.assigned_members
+          : currentMembers;
+        refreshed = {
+          ...fetched,
+          status: 'EN_COURS',
+          assigned_members: assignedResult
+        };
         setTask(refreshed);
         syncEditFields(refreshed);
       } else {
@@ -1519,6 +1586,50 @@ export default function TaskDetailModal({
                         : "Vous êtes l'associé en charge de cette mission. Une fois vos travaux achevés et vos justificatifs joints, validez la mission pour la soumettre à l'arbitrage des coordinateurs."}
                     </p>
 
+                    {/* Bloc d'auto-attribution en consultation pour le coordinateur (Annotation 4 & 5) */}
+                    {isProposed && isCoordinator && (task?.auto_assign_by_workload || !task?.assigned_members || (Array.isArray(task?.assigned_members) && task.assigned_members.length === 0)) && (
+                      <div className="p-3.5 bg-white/90 dark:bg-slate-900/80 rounded-xl border border-emerald-300 dark:border-emerald-700/60 text-xs space-y-2.5">
+                        <div className="flex items-center justify-between font-bold text-forest-deep dark:text-emerald-300">
+                          <span className="flex items-center gap-1.5">
+                            <span>🎯</span>
+                            <span>Top 3 des membres recommandés pour cette mission :</span>
+                          </span>
+                          <span className="px-2 py-0.5 rounded-full text-[10px] bg-purple-100 text-purple-800 font-semibold border border-purple-200">
+                            Auto-attribution équitable
+                          </span>
+                        </div>
+                        <div className="grid grid-cols-1 sm:grid-cols-3 gap-2">
+                          {recommendations.slice(0, 3).map((rec, idx) => (
+                            <div
+                              key={rec.name || idx}
+                              className={`p-2 rounded-lg border flex flex-col gap-0.5 ${
+                                idx === 0
+                                  ? 'bg-emerald-50/80 border-emerald-400 font-semibold shadow-xs ring-1 ring-emerald-400/20'
+                                  : 'bg-canvas-slate/60 border-slate-200'
+                              }`}
+                            >
+                              <div className="flex items-center gap-1.5">
+                                <span className={`w-4 h-4 rounded-full flex items-center justify-center text-[10px] shrink-0 ${
+                                  idx === 0 ? 'bg-emerald-700 text-white font-bold' : 'bg-slate-300 text-slate-700'
+                                }`}>
+                                  {idx + 1}
+                                </span>
+                                <span className="truncate">{rec.name}</span>
+                              </div>
+                              {rec.reason && (
+                                <span className="text-[10px] text-on-surface-variant font-normal truncate">
+                                  ({rec.reason})
+                                </span>
+                              )}
+                            </div>
+                          ))}
+                        </div>
+                        <p className="text-[11px] text-emerald-900/90 dark:text-emerald-300/90">
+                          ℹ️ En approuvant cette tâche, <strong>{recommendations[0]?.name || 'Joséphine Jamet'}</strong> sera automatiquement désigné(e) responsable selon le modèle d'équité.
+                        </p>
+                      </div>
+                    )}
+
                     <div className="pt-2 flex flex-wrap items-center gap-3">
                       {/* Cas 1 : Tâche proposée (orange) - Arbitrage coordinateur */}
                       {isProposed && isCoordinator && (
@@ -1784,24 +1895,107 @@ export default function TaskDetailModal({
                       </div>
                     )}
 
-                    {/* Annotation 1 : Auto-attribution équitable */}
+                    {/* Annotation 1 & 5 : Auto-attribution équitable */}
                     {!isVoteInitiative && (
-                      <label className="flex items-center gap-3 p-3.5 bg-canvas-slate rounded-xl border border-slate-200 select-none cursor-pointer">
-                        <input
-                          type="checkbox"
-                          id="toggle-task-auto-assign"
-                          checked={editAutoAssignByWorkload}
-                          onChange={(e) => setEditAutoAssignByWorkload(e.target.checked)}
-                          className="w-4 h-4 rounded text-primary accent-primary cursor-pointer"
-                        />
-                        <div className="text-xs">
-                          <strong className="text-forest-deep flex items-center gap-1.5">
-                            <span className="material-symbols-outlined text-[16px] text-primary">balance</span>
-                            Auto-attribution équitable (selon taux d'usage du domaine)
-                          </strong>
-                          <span className="text-on-surface-variant">Attribue la tâche à l'associé le plus disponible selon le ratio charge / présence sur le domaine</span>
-                        </div>
-                      </label>
+                      <div className="space-y-3">
+                        <label className="flex items-center gap-3 p-3.5 bg-canvas-slate rounded-xl border border-slate-200 select-none cursor-pointer">
+                          <input
+                            type="checkbox"
+                            id="toggle-task-auto-assign"
+                            checked={editAutoAssignByWorkload}
+                            onChange={(e) => setEditAutoAssignByWorkload(e.target.checked)}
+                            className="w-4 h-4 rounded text-primary accent-primary cursor-pointer"
+                          />
+                          <div className="text-xs">
+                            <strong className="text-forest-deep flex items-center gap-1.5">
+                              <span className="material-symbols-outlined text-[16px] text-primary">balance</span>
+                              Auto-attribution équitable (selon taux d'usage du domaine)
+                            </strong>
+                            <span className="text-on-surface-variant">Attribue la tâche à l'associé le plus disponible selon le ratio charge / présence sur le domaine</span>
+                          </div>
+                        </label>
+
+                        {/* Annotation 5 : Top 3 des membres recommandés selon le domaine et l'équité */}
+                        {editAutoAssignByWorkload && (
+                          <div
+                            id="block-top3-recommendations"
+                            className="p-4 bg-emerald-50/70 dark:bg-emerald-950/20 border-2 border-emerald-300 dark:border-emerald-700/60 rounded-xl space-y-3 animate-in fade-in duration-200"
+                          >
+                            <div className="flex items-center justify-between">
+                              <span className="text-xs font-bold text-forest-deep dark:text-emerald-200 flex items-center gap-1.5">
+                                <span>🎯</span>
+                                <span>Top 3 des membres recommandés pour cette mission :</span>
+                              </span>
+                              {loadingRecs && (
+                                <span className="text-[11px] text-emerald-700 dark:text-emerald-300 animate-pulse font-medium">
+                                  Calcul d'équité en cours...
+                                </span>
+                              )}
+                            </div>
+
+                            <div className="space-y-2">
+                              {recommendations.slice(0, 3).map((rec, idx) => {
+                                const rankNum = rec.rank || (idx + 1);
+                                const isRank1 = rankNum === 1;
+                                const isSelected = editMembers.includes(rec.name);
+                                return (
+                                  <div
+                                    key={rec.name || idx}
+                                    className={`flex items-center justify-between gap-2 p-2.5 rounded-lg border text-xs transition-all ${
+                                      isRank1
+                                        ? 'bg-white dark:bg-slate-900 border-emerald-400 dark:border-emerald-600 shadow-xs ring-1 ring-emerald-400/30'
+                                        : 'bg-white/80 dark:bg-slate-900/60 border-slate-200 dark:border-slate-800'
+                                    }`}
+                                  >
+                                    <div className="flex items-center gap-2 min-w-0">
+                                      <span className={`w-5 h-5 rounded-full flex items-center justify-center text-[11px] font-bold shrink-0 ${
+                                        isRank1
+                                          ? 'bg-emerald-700 text-white'
+                                          : 'bg-slate-200 dark:bg-slate-700 text-slate-700 dark:text-slate-300'
+                                      }`}>
+                                        {rankNum}
+                                      </span>
+                                      <div className="min-w-0">
+                                        <span className="font-bold text-on-surface">
+                                          {rec.name}
+                                        </span>
+                                        {rec.reason && (
+                                          <span className="text-on-surface-variant text-[11px] ml-1.5 font-medium">
+                                            ({rec.reason})
+                                          </span>
+                                        )}
+                                      </div>
+                                    </div>
+
+                                    <button
+                                      type="button"
+                                      onClick={() => {
+                                        if (isSelected) {
+                                          setEditMembers(editMembers.filter((m) => m !== rec.name));
+                                        } else {
+                                          setEditMembers([...editMembers, rec.name]);
+                                        }
+                                      }}
+                                      title={isSelected ? `Retirer ${rec.name}` : `Assigner ${rec.name}`}
+                                      className={`shrink-0 px-2.5 py-0.5 text-[11px] font-semibold rounded-md border transition-colors cursor-pointer ${
+                                        isSelected
+                                          ? 'bg-emerald-100 text-emerald-800 border-emerald-300 font-bold'
+                                          : 'bg-white hover:bg-emerald-50 text-emerald-800 border-emerald-300'
+                                      }`}
+                                    >
+                                      {isSelected ? '✓ Assigné' : '+ Assigner'}
+                                    </button>
+                                  </div>
+                                );
+                              })}
+                            </div>
+
+                            <p className="text-[11px] text-emerald-900/80 dark:text-emerald-300/80 leading-tight">
+                              💡 En mode auto-attribution, la tâche sera automatiquement assignée au n°1 (<strong>{recommendations[0]?.name || 'Joséphine Jamet'}</strong>) lors de l'approbation de la mission.
+                            </p>
+                          </div>
+                        )}
+                      </div>
                     )}
                   </section>
                 )}

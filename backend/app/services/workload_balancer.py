@@ -170,27 +170,34 @@ def calculate_workload_distribution(
     }
 
 
-def resolve_auto_assignment_by_workload(
+def get_task_recommendations(
     members: List[Any],
     reservations: List[Any],
-    tasks: Optional[List[Any]] = None
-) -> Optional[str]:
+    tasks: Optional[List[Any]] = None,
+    subject: Optional[str] = None,
+    category: Optional[str] = None,
+    complexity: Optional[str] = None,
+    limit: int = 3
+) -> List[Dict[str, Any]]:
     """
-    Détermine l'associé auquel attribuer automatiquement une tâche récurrente
-    selon le modèle proportionnel d'équité d'Henri :
-    - Score d'usage O_u = sum(jours * chambres_effectives)
-    - Score de corvées C_u = somme pondérée des points de charge des tâches (1, 2, 3, 5, 8 pts)
-    - Ratio d'équité gamifié : R_u = (C_u + 0.5) / (O_u + 0.5)
+    Calcule dynamiquement les associés les plus recommandés pour une tâche
+    selon le sujet/domaine/lieu et les scores de charge actuels (Annotation 5).
     
-    L'associé ayant le ratio d'implication le plus faible (celui qui utilise le plus le domaine
-    et a le moins contribué en charge de tâches) est sélectionné en priorité absolue.
+    Critères d'équité :
+    1. Charge de tâches actuelle dans le sujet / domaine (subject_charge_points croissant)
+    2. Nombre de tâches dans le sujet (subject_tasks_count croissant)
+    3. Ratio d'implication global : R_u = (C_u + 0.5) / (O_u + 0.5) croissant
+       (priorité à celui qui utilise le plus le domaine et a le moins contribué)
+    4. Score d'usage O_u décroissant
     """
     if not members:
-        return "Henri Jamet"
+        return []
 
-    # Calcul des scores d'usage par associé
+    target_domain = (subject or category or "").strip()
+
+    # 1. Calcul des scores d'usage par associé (jours * chambres effectives)
     usage_by_name: Dict[str, float] = {}
-    for res in reservations:
+    for res in (reservations or []):
         u_name = res.get("user_name") if isinstance(res, dict) else getattr(res, "user_name", "")
         if not u_name:
             continue
@@ -202,19 +209,24 @@ def resolve_auto_assignment_by_workload(
         cu = res.get("chambers_used", 1) if isinstance(res, dict) else getattr(res, "chambers_used", 1)
 
         score = calculate_reservation_score(s_date, e_date, accepts_extra, rc, cu, cohab)
-        # Rapprochement souple sur le nom canonique
         for m in members:
             m_name = m.name if hasattr(m, "name") else (m.get("name") if isinstance(m, dict) else str(m))
             m_prenom = m.prenom if hasattr(m, "prenom") else (m.get("prenom") if isinstance(m, dict) else "")
             if (m_prenom and m_prenom.lower() in u_name.lower()) or (m_name and m_name.lower() in u_name.lower()):
                 usage_by_name[m_name] = usage_by_name.get(m_name, 0.0) + score
 
-    # Compte pondéré des tâches par associé selon la Charge de la tâche (Annotation 3)
-    tasks_by_name: Dict[str, float] = {}
+    # 2. Compte pondéré des tâches globales et par domaine/sujet
+    global_charge_by_name: Dict[str, float] = {}
+    global_tasks_count_by_name: Dict[str, int] = {}
+    domain_charge_by_name: Dict[str, float] = {}
+    domain_tasks_count_by_name: Dict[str, int] = {}
+
     if tasks:
         for t in tasks:
             t_comp = getattr(t, "complexity", None) if not isinstance(t, dict) else t.get("complexity")
             charge_pts = float(get_task_charge_points(t_comp))
+            t_subj = str(getattr(t, "subject", "") if not isinstance(t, dict) else t.get("subject", "")).strip()
+            t_cat = str(getattr(t, "category", "") if not isinstance(t, dict) else t.get("category", "")).strip()
 
             assigned = getattr(t, "assigned_members", None) if not isinstance(t, dict) else t.get("assigned_members")
             if isinstance(assigned, str):
@@ -226,21 +238,147 @@ def resolve_auto_assignment_by_workload(
             elif not isinstance(assigned, list):
                 assigned = [getattr(t, "assignee", None)] if getattr(t, "assignee", None) else []
 
-            for a in (assigned or []):
-                if a:
-                    tasks_by_name[str(a)] = tasks_by_name.get(str(a), 0.0) + charge_pts
+            is_in_domain = False
+            if target_domain:
+                target_clean = target_domain.lower()
+                if (t_subj and (target_clean in t_subj.lower() or t_subj.lower() in target_clean)) or \
+                   (t_cat and (target_clean in t_cat.lower() or t_cat.lower() in target_clean)):
+                    is_in_domain = True
 
-    # Calcul du ratio d'implication pour chaque associé éligible
-    scored_members = []
+            for a in (assigned or []):
+                if not a:
+                    continue
+                # Rapprochement du nom du membre
+                for m in members:
+                    m_name = m.name if hasattr(m, "name") else (m.get("name") if isinstance(m, dict) else str(m))
+                    m_prenom = m.prenom if hasattr(m, "prenom") else (m.get("prenom") if isinstance(m, dict) else "")
+                    if str(a).strip().lower() in m_name.lower() or (m_prenom and m_prenom.lower() in str(a).strip().lower()):
+                        global_charge_by_name[m_name] = global_charge_by_name.get(m_name, 0.0) + charge_pts
+                        global_tasks_count_by_name[m_name] = global_tasks_count_by_name.get(m_name, 0) + 1
+                        if is_in_domain:
+                            domain_charge_by_name[m_name] = domain_charge_by_name.get(m_name, 0.0) + charge_pts
+                            domain_tasks_count_by_name[m_name] = domain_tasks_count_by_name.get(m_name, 0) + 1
+
+    # 3. Calcul du score et classement pour chaque membre
+    candidates = []
+    # Ordre de départ canonique si égalité parfaite
+    priority_order = [
+        "Joséphine Jamet", "Hortense Jamet", "Marguerite Jamet",
+        "Eugénie Jamet", "Frédéric Jamet", "Maman (Élisabeth) Jamet", "Henri Jamet"
+    ]
+
     for m in members:
         m_name = m.name if hasattr(m, "name") else (m.get("name") if isinstance(m, dict) else str(m))
-        u_score = usage_by_name.get(m_name, 0.0)
-        t_score = tasks_by_name.get(m_name, 0.0)
-        # Ratio gamifié inversé : plus le ratio est petit, plus la personne "doit" du temps
-        ratio = (t_score + 0.5) / (u_score + 0.5)
-        scored_members.append((ratio, u_score, -t_score, m_name))
+        m_prenom = m.prenom if hasattr(m, "prenom") else (m.get("prenom") if isinstance(m, dict) else "")
+        if not m_prenom:
+            m_prenom = m_name.split()[0] if m_name else "Associé"
 
-    # Tri par ratio croissant : le plus faible en tête (doit le plus de corvées)
-    scored_members.sort(key=lambda x: (x[0], -x[1], x[2]))
-    return scored_members[0][3] if scored_members else "Henri Jamet"
+        u_score = usage_by_name.get(m_name, 0.0)
+        g_charge = global_charge_by_name.get(m_name, 0.0)
+        g_count = global_tasks_count_by_name.get(m_name, 0)
+        d_charge = domain_charge_by_name.get(m_name, 0.0)
+        d_count = domain_tasks_count_by_name.get(m_name, 0)
+
+        # Ratio d'implication gamifié
+        ratio = (g_charge + 0.5) / (u_score + 0.5)
+
+        # Index de priorité par défaut
+        pref_idx = 99
+        for idx, pref_name in enumerate(priority_order):
+            if m_prenom.lower() in pref_name.lower() or m_name.lower() in pref_name.lower():
+                pref_idx = idx
+                break
+
+        candidates.append({
+            "name": m_name,
+            "prenom": m_prenom,
+            "score_usage": round(u_score, 1),
+            "global_tasks_count": g_count,
+            "global_charge_points": round(g_charge, 1),
+            "ratio": round(ratio, 3),
+            "domain_charge_points": round(d_charge, 1),
+            "domain_tasks_count": d_count,
+            "pref_idx": pref_idx,
+        })
+
+    # Tri par :
+    # 1. Moins de charge dans le domaine
+    # 2. Moins de tâches dans le domaine
+    # 3. Ratio d'équité global plus bas (doit le plus de corvées)
+    # 4. Score d'usage plus élevé
+    # 5. Index de préférence par défaut
+    candidates.sort(key=lambda x: (
+        x["domain_charge_points"],
+        x["domain_tasks_count"],
+        x["ratio"],
+        -x["score_usage"],
+        x["pref_idx"]
+    ))
+
+    # Formater les recommandations avec libellés explicatifs
+    results = []
+    for rank_idx, c in enumerate(candidates[:limit]):
+        rank = rank_idx + 1
+        d_pts = c["domain_charge_points"]
+        d_cnt = c["domain_tasks_count"]
+
+        if target_domain:
+            if rank == 1:
+                reason = f"charge la plus basse dans {target_domain}"
+            elif d_pts == 0 and d_cnt == 0:
+                reason = f"aucune tâche en cours dans {target_domain}"
+            elif d_cnt == 1:
+                reason = f"1 seule tâche dans {target_domain}"
+            elif d_pts <= 3:
+                reason = f"charge modérée dans {target_domain}"
+            else:
+                reason = f"charge de {int(d_pts)} pts dans {target_domain}"
+        else:
+            if rank == 1:
+                reason = "ratio d'équité le plus favorable"
+            elif c["ratio"] < 1.0:
+                reason = "faible charge globale"
+            else:
+                reason = "charge globale équilibrée"
+
+        results.append({
+            "rank": rank,
+            "name": c["name"],
+            "prenom": c["prenom"],
+            "reason": reason,
+            "score_usage": c["score_usage"],
+            "global_charge_points": c["global_charge_points"],
+            "domain_charge_points": c["domain_charge_points"],
+            "domain_tasks_count": c["domain_tasks_count"],
+            "ratio": c["ratio"]
+        })
+
+    return results
+
+
+def resolve_auto_assignment_by_workload(
+    members: List[Any],
+    reservations: List[Any],
+    tasks: Optional[List[Any]] = None,
+    subject: Optional[str] = None,
+    category: Optional[str] = None,
+    complexity: Optional[str] = None
+) -> Optional[str]:
+    """
+    Détermine l'associé auquel attribuer automatiquement une tâche
+    selon le modèle proportionnel d'équité d'Henri et le sujet/domaine.
+    """
+    recs = get_task_recommendations(
+        members=members,
+        reservations=reservations,
+        tasks=tasks,
+        subject=subject,
+        category=category,
+        complexity=complexity,
+        limit=1
+    )
+    if recs:
+        return recs[0]["name"]
+    return "Joséphine Jamet"
+
 

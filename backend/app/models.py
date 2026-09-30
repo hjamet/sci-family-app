@@ -469,7 +469,30 @@ class Notification(Base):
     member = relationship("Member", backref="notifications")
 
 
+class AppRelease(Base):
+    __tablename__ = "app_releases"
+
+    id = Column(Integer, primary_key=True, index=True)
+    version = Column(String(50), unique=True, index=True, nullable=False)
+    title = Column(String(255), nullable=False)
+    pages_json = Column(Text, nullable=False)
+    is_active = Column(Boolean, default=True, nullable=False, server_default="1")
+    created_at = Column(DateTime, default=datetime.utcnow)
 
 
+class MemberReleaseView(Base):
+    __tablename__ = "member_release_views"
+
+    id = Column(Integer, primary_key=True, index=True)
+    member_id = Column(Integer, ForeignKey("members.id", ondelete="CASCADE"), nullable=False, index=True)
+    release_version = Column(String(50), nullable=False, index=True)
+    viewed_at = Column(DateTime, default=datetime.utcnow)
+
+    __table_args__ = (
+        UniqueConstraint("member_id", "release_version", name="uq_member_release_view"),
+    )
+
+    member = relationship("Member", backref="release_views")
 
 
+OnboardingRelease = AppRelease

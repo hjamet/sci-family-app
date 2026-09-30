@@ -280,13 +280,25 @@ export default function HeatingPage({ currentUser }) {
               <div className="flex items-center gap-2 min-w-0">
                 <span className="material-symbols-outlined text-primary text-[22px]">hvac</span>
                 <h3 className="font-headline-sm text-headline-sm text-on-surface font-semibold truncate">Chauffage ViCare</h3>
-                <span className={`inline-flex items-center gap-1 px-2 py-0.5 rounded-full font-label-sm text-[11px] font-bold shrink-0 ${
-                  status?.is_heating_active
-                    ? 'bg-sage-soft text-primary'
-                    : 'bg-slate-100 text-slate-600 border border-slate-200'
+                <span className={`inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full font-label-sm text-[11px] font-bold shrink-0 ${
+                  status?.is_heating_active && status?.burner_active
+                    ? 'bg-rose-100 text-rose-800 border border-rose-300 animate-pulse'
+                    : status?.is_heating_active
+                      ? 'bg-amber-50 text-amber-800 border border-amber-200'
+                      : 'bg-slate-100 text-slate-700 border border-slate-200'
                 }`}>
-                  <span className={`w-1.5 h-1.5 rounded-full ${status?.is_heating_active ? 'bg-primary' : 'bg-slate-400'}`}></span>
-                  {status?.is_heating_active ? 'En chauffe' : 'À l\'arrêt (Veille)'}
+                  <span className={`w-1.5 h-1.5 rounded-full ${
+                    status?.is_heating_active && status?.burner_active
+                      ? 'bg-rose-600 animate-ping'
+                      : status?.is_heating_active
+                        ? 'bg-amber-500'
+                        : 'bg-slate-400'
+                  }`}></span>
+                  {status?.is_heating_active && status?.burner_active
+                    ? 'Chauffe en cours'
+                    : status?.is_heating_active
+                      ? 'Au repos (brûleur éteint)'
+                      : `Arrêt hors-gel (${status?.reduced_temperature != null ? status.reduced_temperature.toFixed(1) : '5.0'}°C)`}
                 </span>
               </div>
               <div className="flex items-center gap-1 px-2.5 py-1 rounded-full bg-canvas-slate border border-border-subtle shrink-0">
@@ -360,26 +372,26 @@ export default function HeatingPage({ currentUser }) {
                 <span className="material-symbols-outlined text-primary text-[22px]">water_heater</span>
                 <h3 className="font-headline-sm text-headline-sm text-on-surface font-semibold truncate">Eau Chaude (ECS)</h3>
                 <span className={`inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full font-label-sm text-[11px] font-bold shrink-0 ${
-                  status?.is_dhw_heating || status?.dhw_status_state === 'heating'
+                  status?.is_dhw_heating || (status?.is_dhw_active && status?.burner_active)
                     ? 'bg-rose-100 text-rose-800 border border-rose-300 animate-pulse'
                     : status?.is_dhw_active
-                      ? 'bg-sky-50 text-sky-800 border border-sky-200'
+                      ? 'bg-amber-50 text-amber-800 border border-amber-200'
                       : 'bg-slate-100 text-slate-700 border border-slate-200'
                 }`}>
                   <span className={`w-1.5 h-1.5 rounded-full ${
-                    status?.is_dhw_heating || status?.dhw_status_state === 'heating'
+                    status?.is_dhw_heating || (status?.is_dhw_active && status?.burner_active)
                       ? 'bg-rose-600 animate-ping'
                       : status?.is_dhw_active
-                        ? 'bg-sky-500'
+                        ? 'bg-amber-500'
                         : 'bg-slate-400'
                   }`}></span>
-                  {status?.dhw_status_label || (
-                    status?.is_dhw_heating
-                      ? 'Chauffe en cours'
-                      : status?.is_dhw_active
-                        ? 'Au repos / Refroidissement naturel'
-                        : 'À l\'arrêt (Consigne 10°C)'
-                  )}
+                  {status?.is_dhw_heating || (status?.is_dhw_active && status?.burner_active)
+                    ? 'Chauffe en cours'
+                    : (status?.dhw_status_label || (
+                        status?.is_dhw_active
+                          ? 'Au repos (brûleur éteint)'
+                          : `À l'arrêt (Consigne ${status?.dhw_reduced_temperature != null ? status.dhw_reduced_temperature.toFixed(1) : '10.0'}°C)`
+                      ))}
                 </span>
               </div>
               <div className="flex items-center gap-1 px-2.5 py-1 rounded-full bg-canvas-slate border border-border-subtle shrink-0">
@@ -484,18 +496,34 @@ export default function HeatingPage({ currentUser }) {
           {/* Read-Only Top Watermark Indicator */}
           <div className="flex flex-col gap-4">
             <div className="flex items-center justify-between border-b border-border-subtle pb-3 gap-2">
-              <div className="flex items-center gap-2 min-w-0">
+              <div className="flex items-center gap-2 min-w-0 flex-wrap">
                 <span className="material-symbols-outlined text-amber-700 text-[22px]">pool</span>
                 <h3 className="font-headline-sm text-headline-sm text-on-surface font-semibold truncate">Piscine Klereo</h3>
-                {poolStatus?.radio_error ? (
+                {/* Badge d'état opérationnel harmonisé (Annotation 9) */}
+                <span className={`inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full font-label-sm text-[11px] font-bold shrink-0 ${
+                  poolStatus?.pac_active || poolStatus?.is_heating_active || poolStatus?.pac_state?.toLowerCase().includes('chauffe')
+                    ? 'bg-rose-100 text-rose-800 border border-rose-300 animate-pulse'
+                    : poolStatus?.is_pump_active || (poolStatus?.filtration_state && !poolStatus.filtration_state.toLowerCase().includes('arrêt') && !poolStatus.filtration_state.toLowerCase().includes('arret'))
+                      ? 'bg-emerald-50 text-emerald-800 border border-emerald-300'
+                      : 'bg-slate-100 text-slate-700 border border-slate-200'
+                }`}>
+                  <span className={`w-1.5 h-1.5 rounded-full ${
+                    poolStatus?.pac_active || poolStatus?.is_heating_active || poolStatus?.pac_state?.toLowerCase().includes('chauffe')
+                      ? 'bg-rose-600 animate-ping'
+                      : poolStatus?.is_pump_active || (poolStatus?.filtration_state && !poolStatus.filtration_state.toLowerCase().includes('arrêt') && !poolStatus.filtration_state.toLowerCase().includes('arret'))
+                        ? 'bg-emerald-600 animate-pulse'
+                        : 'bg-slate-400'
+                  }`}></span>
+                  {poolStatus?.pac_active || poolStatus?.is_heating_active || poolStatus?.pac_state?.toLowerCase().includes('chauffe')
+                    ? 'Chauffe PAC active'
+                    : poolStatus?.is_pump_active || (poolStatus?.filtration_state && !poolStatus.filtration_state.toLowerCase().includes('arrêt') && !poolStatus.filtration_state.toLowerCase().includes('arret'))
+                      ? 'Filtration active'
+                      : 'En veille (Hivernage)'}
+                </span>
+                {poolStatus?.radio_error && (
                   <span className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full bg-rose-100 text-rose-800 border border-rose-300 font-label-sm text-[11px] font-bold shrink-0">
                     <AlertTriangle className="h-3 w-3 text-rose-600" />
                     Rupture Radio K-Link
-                  </span>
-                ) : (
-                  <span className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full bg-emerald-50 text-emerald-800 border border-emerald-300 font-label-sm text-[11px] font-semibold shrink-0">
-                    <span className="w-1.5 h-1.5 rounded-full bg-emerald-600"></span>
-                    Liaison radio K-Link active
                   </span>
                 )}
               </div>

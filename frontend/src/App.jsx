@@ -17,7 +17,8 @@ import VoteRoofModal from './components/VoteRoofModal';
 import TaskDetailModal from './components/TaskDetailModal';
 import BugReportButton from './components/BugReportButton';
 import EmailPreviewModal from './components/EmailPreviewModal';
-import { fetchProperties, fetchProjects, fetchTaskById, castProjectVote, getCachedData } from './api';
+import WelcomeOnboardingModal from './components/WelcomeOnboardingModal';
+import { fetchProperties, fetchProjects, fetchTaskById, castProjectVote, getCachedData, fetchCurrentOnboarding } from './api';
 import GlobalErrorAlert from './components/GlobalErrorAlert';
 
 export default function App() {
@@ -39,6 +40,10 @@ export default function App() {
   const [activeTask, setActiveTask] = useState(null);
   const [isBugReportMode, setIsBugReportMode] = useState(false);
   const [tempUploadedDocIds, setTempUploadedDocIds] = useState([]);
+
+  // Onboarding & Patch Notes évolutifs
+  const [isOnboardingOpen, setIsOnboardingOpen] = useState(false);
+  const [onboardingData, setOnboardingData] = useState(null);
 
   const handleOpenVoteModal = async (projectId, projectData) => {
     if (projectData && (projectData.title || projectData.id)) {
@@ -120,8 +125,34 @@ export default function App() {
       fetchProperties()
         .then(setProperties)
         .catch((err) => console.warn('Properties load fallback:', err.message));
+
+      // Vérification auto-affichage du guide d'onboarding / patch notes
+      fetchCurrentOnboarding()
+        .then((data) => {
+          if (data && data.release) {
+            setOnboardingData(data);
+            if (data.needs_display) {
+              setIsOnboardingOpen(true);
+            }
+          }
+        })
+        .catch((err) => console.warn('Onboarding check fallback:', err.message));
     }
   }, [isAuthenticated]);
+
+  const handleOpenOnboarding = async () => {
+    if (!onboardingData || !onboardingData.pages || onboardingData.pages.length === 0) {
+      try {
+        const fresh = await fetchCurrentOnboarding();
+        if (fresh && fresh.release) {
+          setOnboardingData(fresh);
+        }
+      } catch (err) {
+        console.warn('Erreur rafraîchissement guide onboarding:', err);
+      }
+    }
+    setIsOnboardingOpen(true);
+  };
 
   const handleTabChange = (tabId) => {
     const routeMap = {
@@ -188,6 +219,7 @@ export default function App() {
         onOpenTaskModal={handleOpenTaskModal}
         onOpenBookingModal={() => setIsBookingOpen(true)}
         onViewEmail={(email) => setPreviewEmail(email)}
+        onOpenOnboardingModal={handleOpenOnboarding}
       />
 
       {/* Main Container */}
@@ -357,6 +389,19 @@ export default function App() {
         isOpen={Boolean(previewEmail)}
         email={previewEmail}
         onClose={() => setPreviewEmail(null)}
+      />
+
+      {/* Modale d'Onboarding Multi-Pages & Patch Notes Évolutifs */}
+      <WelcomeOnboardingModal
+        isOpen={isOnboardingOpen}
+        onClose={() => setIsOnboardingOpen(false)}
+        release={onboardingData?.release}
+        pages={onboardingData?.pages || []}
+        onAcknowledged={(version) => {
+          setOnboardingData((prev) =>
+            prev ? { ...prev, has_seen: true, needs_display: false } : prev
+          );
+        }}
       />
 
     </div>
