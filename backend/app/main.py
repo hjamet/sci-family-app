@@ -6832,21 +6832,23 @@ def update_heating_settings(
         is_heating = (setting.mode == "dhwAndHeating") if setting.mode else True
 
     # Couplage Matériel Standby / Été / Hiver :
-    # - Si not req.is_dhw_active : coupure totale ➔ ViCareService.set_mode("standby"), setting.mode = "standby", dhw_setting.mode = "off"
-    # - Si req.is_dhw_active and not req.is_heating_active : mode été ➔ ViCareService.set_mode("dhw"), setting.mode = "dhw", dhw_setting.mode = "on"
-    # - Si req.is_dhw_active and req.is_heating_active : mode hiver ➔ ViCareService.set_mode("dhwAndHeating"), setting.mode = "dhwAndHeating", dhw_setting.mode = "on"
-    if not is_dhw:
-        target_mode = "standby"
-        setting.mode = "standby"
-        dhw_setting.mode = "off"
-    elif not is_heating:
+    # - Si is_heating : mode hiver ➔ ViCareService.set_mode("dhwAndHeating"), setting.mode = "dhwAndHeating", dhw_setting.mode = "on"
+    # - Si not is_heating and is_dhw : mode été ➔ ViCareService.set_mode("dhw"), setting.mode = "dhw", dhw_setting.mode = "on"
+    # - Si not is_heating and not is_dhw : coupure totale ➔ ViCareService.set_mode("standby"), setting.mode = "standby", dhw_setting.mode = "off"
+    dhw_was_off = dhw_setting.mode == "off" if dhw_setting and dhw_setting.mode else False
+
+    if is_heating:
+        target_mode = "dhwAndHeating"
+        setting.mode = "dhwAndHeating"
+        dhw_setting.mode = "on"
+    elif is_dhw:
         target_mode = "dhw"
         setting.mode = "dhw"
         dhw_setting.mode = "on"
     else:
-        target_mode = "dhwAndHeating"
-        setting.mode = "dhwAndHeating"
-        dhw_setting.mode = "on"
+        target_mode = "standby"
+        setting.mode = "standby"
+        dhw_setting.mode = "off"
 
     setting.updated_by = author
     setting.updated_at = datetime.utcnow()
@@ -6854,26 +6856,25 @@ def update_heating_settings(
     dhw_setting.updated_at = datetime.utcnow()
 
     # A5: Détecter la transition ECS off→on AVANT le commit
-    dhw_was_off = dhw_setting.mode == "off" if dhw_setting and dhw_setting.mode else False
-    dhw_now_on = is_dhw
+    dhw_now_on = is_dhw or is_heating
 
     db.commit()
     db.refresh(setting)
 
     # ──── Commande matérielle ViCare ────
     try:
-        if not is_dhw:
-            ViCareService.set_mode("standby")
-        elif not is_heating:
-            ViCareService.set_mode("dhw")
-            if dhw_setting.target_temperature:
-                ViCareService.set_temperature(dhw_setting.target_temperature, program="dhw")
-        else:
+        if is_heating:
             ViCareService.set_mode("dhwAndHeating")
             if setting.target_temperature:
                 ViCareService.set_temperature(setting.target_temperature, program="comfort")
             if dhw_setting.target_temperature:
                 ViCareService.set_temperature(dhw_setting.target_temperature, program="dhw")
+        elif is_dhw:
+            ViCareService.set_mode("dhw")
+            if dhw_setting.target_temperature:
+                ViCareService.set_temperature(dhw_setting.target_temperature, program="dhw")
+        else:
+            ViCareService.set_mode("standby")
 
         logger.info(f"[HEATING SETTINGS] Commande ViCare envoyée : mode={target_mode}, heating={is_heating}, dhw={is_dhw}")
     except HTTPException as vicare_err:

@@ -232,31 +232,33 @@ def test_vicare_double_consigne_dhw_temperature_endpoint():
 
 def test_vicare_dhw_mode_switching_applies_comfort_and_reduced():
     """
-    Vérifie que set_dhw_mode applique _dhw_comfort_temperature en marche.
-    À l'arrêt, set_dhw_mode ne modifie plus la consigne (le mode circuit gère via standby).
+    Vérifie que set_dhw_mode applique _dhw_comfort_temperature en marche et bascule en standby à l'arrêt.
     """
     ViCareService._dhw_comfort_temperature = 53.0
     ViCareService._dhw_reduced_temperature = 10.0
 
     with patch.object(ViCareService, "set_temperature") as mock_set_temp, \
+         patch.object(ViCareService, "set_mode") as mock_set_mode, \
          patch.object(ViCareService, "get_status") as mock_get_status:
         mock_set_temp.return_value = {"status": "ok"}
+        mock_set_mode.return_value = {"status": "ok"}
         mock_get_status.return_value = {"status": "ok"}
 
-        # Marche -> Consigne confort (53.0°C)
+        # Marche -> Consigne confort (53.0°C) et mode dhw
         ViCareService.set_dhw_mode(True)
+        mock_set_mode.assert_called_with("dhw")
         mock_set_temp.assert_called_with(target_temp=53.0, program="dhw")
 
-        # Arrêt -> applique la consigne réduite de veille (10.0°C) pour couper la charge sanitaire sur Vitotronic
-        mock_set_temp.reset_mock()
+        # Arrêt -> mode standby
+        mock_set_mode.reset_mock()
         ViCareService.set_dhw_mode(False)
-        mock_set_temp.assert_called_with(target_temp=10.0, program="dhw")
+        mock_set_mode.assert_called_with("standby")
 
 
 def test_klereo_pump_mode_arret_mapping():
     """
     Vérifie que les commandes 'arret', 'arrêt', 'off' de la pompe Klereo
-    mappent bien vers outIdx=1, newState="0".
+    mappent bien vers outIdx=1, newState="0", newMode="0", et auto vers newMode="3".
     """
     with patch.object(KlereoService, "is_read_only_mode", return_value=False), \
          patch.object(KlereoService, "_get_system_id", return_value="12345"), \
@@ -267,25 +269,109 @@ def test_klereo_pump_mode_arret_mapping():
         KlereoService.set_pump_mode(mode="arret")
         assert mock_send.call_args[0][1]["outIdx"] == "1"
         assert mock_send.call_args[0][1]["newState"] == "0"
+        assert mock_send.call_args[0][1]["newMode"] == "0"
         assert mock_send.call_args[0][1]["poolID"] == "12345"
 
         # Test mode 'arrêt'
         mock_send.reset_mock()
         KlereoService.set_pump_mode(mode="arrêt")
         assert mock_send.call_args[0][1]["newState"] == "0"
+        assert mock_send.call_args[0][1]["newMode"] == "0"
 
         # Test mode 'off'
         mock_send.reset_mock()
         KlereoService.set_pump_mode(mode="off")
         assert mock_send.call_args[0][1]["newState"] == "0"
+        assert mock_send.call_args[0][1]["newMode"] == "0"
 
         # Test mode 'on'
         mock_send.reset_mock()
         KlereoService.set_pump_mode(mode="on")
         assert mock_send.call_args[0][1]["newState"] == "1"
+        assert mock_send.call_args[0][1]["newMode"] == "0"
 
         # Test mode 'auto'
         mock_send.reset_mock()
         KlereoService.set_pump_mode(mode="auto")
         assert mock_send.call_args[0][1]["newState"] == "2"
+        assert mock_send.call_args[0][1]["newMode"] == "3"
+
+
+def test_klereo_pac_heating_mode_newmode_mapping():
+    """
+    Vérifie que la PAC piscine Klereo envoie bien newMode='3' à l'activation et newMode='0' à l'arrêt.
+    """
+    with patch.object(KlereoService, "is_read_only_mode", return_value=False), \
+         patch.object(KlereoService, "_get_system_id", return_value="12345"), \
+         patch.object(KlereoService, "_send_command") as mock_send, \
+         patch.object(KlereoService, "get_pool_status", return_value={"status": "ok"}):
+
+        # Activation PAC
+        KlereoService.set_heating_mode(active=True)
+        set_out_call = mock_send.call_args_list[0][0][1]
+        assert set_out_call["outIdx"] == "4"
+        assert set_out_call["newState"] == "1"
+        assert set_out_call["newMode"] == "3"
+
+        # Arrêt PAC
+        mock_send.reset_mock()
+        KlereoService.set_heating_mode(active=False)
+        set_out_call_off = mock_send.call_args_list[0][0][1]
+        assert set_out_call_off["outIdx"] == "4"
+        assert set_out_call_off["newState"] == "0"
+        assert set_out_call_off["newMode"] == "0"
+
+
+def test_vicare_heating_priority_over_dhw_standby():
+    """
+    Vérifie que l'activation du chauffage (is_heating_active=True) bascule la chaudière
+    en dhwAndHeating même si l'ECS est éteinte (is_dhw_active=False).
+    """
+    with patch.object(ViCareService, "set_mode") as mock_set_mode, \
+         patch.object(ViCareService, "set_temperature") as mock_set_temp:
+        mock_set_mode.return_value = {"status": "ok"}
+        mock_set_temp.return_value = {"status": "ok"}
+
+        # 1. Chauffage actif, ECS inactive -> doit activer dhwAndHeating
+        resp = client.post("/api/heating/settings", json={
+            "target_temperature": 21.0,
+            "is_heating_active": True,
+            "is_dhw_active": False,
+            "author_name": "Henri Jamet"
+        })
+        assert resp.status_code == 200
+        data = resp.json()
+        assert data["mode"] == "dhwAndHeating"
+        assert data["is_heating_active"] is True
+        mock_set_mode.assert_called_with("dhwAndHeating")
+
+        # 2. Chauffage inactif, ECS active -> doit basculer en dhw
+        mock_set_mode.reset_mock()
+        resp2 = client.post("/api/heating/settings", json={
+            "target_temperature": 19.0,
+            "is_heating_active": False,
+            "is_dhw_active": True,
+            "author_name": "Henri Jamet"
+        })
+        assert resp2.status_code == 200
+        data2 = resp2.json()
+        assert data2["mode"] == "dhw"
+        assert data2["is_heating_active"] is False
+        assert data2["is_dhw_active"] is True
+        mock_set_mode.assert_called_with("dhw")
+
+        # 3. Chauffage inactif, ECS inactive -> doit basculer en standby
+        mock_set_mode.reset_mock()
+        resp3 = client.post("/api/heating/settings", json={
+            "target_temperature": 19.0,
+            "is_heating_active": False,
+            "is_dhw_active": False,
+            "author_name": "Henri Jamet"
+        })
+        assert resp3.status_code == 200
+        data3 = resp3.json()
+        assert data3["mode"] == "standby"
+        assert data3["is_heating_active"] is False
+        assert data3["is_dhw_active"] is False
+        mock_set_mode.assert_called_with("standby")
 

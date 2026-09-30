@@ -611,13 +611,15 @@ class KlereoService:
                     "false": "0"
                 }
                 new_state = state_map.get(new_mode, "0" if not new_active else "2")
+                new_mode_param = "3" if new_mode == "auto" else "0"
                 cls._send_command(SET_OUT_URL, {
                     "poolID": str(sys_id),
                     "outIdx": "1",
                     "newState": new_state,
+                    "newMode": new_mode_param,
                     "comMode": "1"
                 })
-                logger.info(f"[KLEREO] Pompe filtration commandée : outIdx=1, newState={new_state}")
+                logger.info(f"[KLEREO] Pompe filtration commandée : outIdx=1, newState={new_state}, newMode={new_mode_param}")
             except Exception as e:
                 logger.error(f"[KLEREO] Erreur commande pompe : {e}")
                 raise HTTPException(status_code=502, detail={"error": f"Erreur Klereo : {e}"})
@@ -694,11 +696,12 @@ class KlereoService:
             try:
                 sys_id = cls._get_system_id()
                 if new_active:
-                    # PAC ON : SetOut outIdx=4 newState=1 (Auto/Chauffe)
+                    # PAC ON : SetOut outIdx=4 newState=1 (Auto/Chauffe), newMode=3 (MODE_REGUL)
                     cls._send_command(SET_OUT_URL, {
                         "poolID": str(sys_id),
                         "outIdx": "4",
                         "newState": "1",
+                        "newMode": "3",
                         "comMode": "1"
                     })
                     # Appliquer la consigne de température
@@ -709,16 +712,17 @@ class KlereoService:
                         "newValue": str(target),
                         "comMode": "1"
                     })
-                    logger.info(f"[KLEREO] PAC activée, consigne → {target}°C")
+                    logger.info(f"[KLEREO] PAC activée, consigne → {target}°C (newMode=3, newState=1)")
                 else:
-                    # PAC OFF : SetOut outIdx=4 newState=0 (Stop)
+                    # PAC OFF : SetOut outIdx=4 newState=0 (Stop), newMode=0 (MODE_MANU)
                     cls._send_command(SET_OUT_URL, {
                         "poolID": str(sys_id),
                         "outIdx": "4",
                         "newState": "0",
+                        "newMode": "0",
                         "comMode": "1"
                     })
-                    logger.info("[KLEREO] PAC désactivée (mode antigel natif)")
+                    logger.info("[KLEREO] PAC désactivée (mode antigel natif, newMode=0, newState=0)")
             except Exception as e:
                 logger.error(f"[KLEREO] Erreur commande PAC : {e}")
                 raise HTTPException(status_code=502, detail={"error": f"Erreur Klereo : {e}"})
