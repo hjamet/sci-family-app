@@ -343,14 +343,20 @@ export default function VademecumPage({ properties, currentUser, reservations = 
           setPoolTarget(poolRes.frost_protection_target);
         }
 
-        const pumpActive = poolRes.filtration_state
-          ? !poolRes.filtration_state.toLowerCase().includes('arrêt') && !poolRes.filtration_state.toLowerCase().includes('arret') && !poolRes.filtration_state.toLowerCase().includes('off')
-          : true;
+        const pumpActive = poolRes.is_pump_active != null
+          ? Boolean(poolRes.is_pump_active)
+          : (poolRes.filtration_state
+              ? !poolRes.filtration_state.toLowerCase().includes('arrêt') && !poolRes.filtration_state.toLowerCase().includes('arret') && !poolRes.filtration_state.toLowerCase().includes('off')
+              : true);
         setIsPoolPumpActive(pumpActive);
 
-        const pacActive = poolRes.pac_state
-          ? poolRes.pac_state.toLowerCase().includes('chauffe') || poolRes.pac_state.toLowerCase().includes('marche') || poolRes.pac_state.toLowerCase().includes('actif')
-          : false;
+        const pacActive = poolRes.is_heating_active != null
+          ? Boolean(poolRes.is_heating_active)
+          : (poolRes.pac_active != null
+              ? Boolean(poolRes.pac_active)
+              : (poolRes.pac_state
+                  ? poolRes.pac_state.toLowerCase().includes('chauffe') || poolRes.pac_state.toLowerCase().includes('marche') || poolRes.pac_state.toLowerCase().includes('actif')
+                  : false));
         setIsPoolHeatingActive(pacActive);
       } else {
         setPiscineStatus(null);
@@ -467,9 +473,10 @@ export default function VademecumPage({ properties, currentUser, reservations = 
     setPoolTarget(nextVal);
   };
 
-  // Bascule instantanée du switch Marche/Arrêt Chauffage
+  // Bascule du switch Marche/Arrêt Chauffage avec boucle fermée et réconciliation télémétrique réelle
   const handleToggleHeating = async (targetActive) => {
     setIsHeatingActive(targetActive);
+    setSavingThermal(true);
     try {
       await saveHeatingSettings({
         is_heating_active: targetActive,
@@ -483,19 +490,53 @@ export default function VademecumPage({ properties, currentUser, reservations = 
           ? `Chauffage ViCare activé en Marche (Confort ${heatingComfortTarget.toFixed(1)}°C)`
           : `Chauffage ViCare mis à l'Arrêt (Sécurité Hors-gel permanente active à ${heatingFrostTarget.toFixed(1)}°C)`
       });
-      showToast(
-        targetActive
-          ? `Chauffage activé : Mode Confort ${heatingComfortTarget.toFixed(1)}°C 🔥`
-          : `Chauffage à l'arrêt : Sécurité Hors-gel active (${heatingFrostTarget.toFixed(1)}°C) 🛑`
-      );
+
+      // Relecture directe de la télémétrie matérielle ViCare
+      const freshHeat = await fetchHeatingStatus({ forceRefresh: true, force: true, refresh: true });
+      if (freshHeat && !freshHeat.error) {
+        setHeatingStatus(freshHeat);
+        setHeatingError(null);
+        let realActive = false;
+        if (freshHeat.is_heating_active != null) {
+          realActive = Boolean(freshHeat.is_heating_active);
+        } else if (freshHeat.active_mode) {
+          const m = (freshHeat.active_mode || '').toLowerCase();
+          const p = (freshHeat.active_program || '').toLowerCase();
+          realActive = m !== 'dhw' && !m.includes('standby') && !m.includes('off') && !p.includes('standby');
+        }
+        // Recalage strict sur l'état physique réel
+        setIsHeatingActive(realActive);
+
+        if (!targetActive && realActive) {
+          showToast("La commande a été transmise, mais l'équipement physique signale être toujours en marche.");
+        } else if (targetActive && !realActive) {
+          showToast("La commande a été transmise, mais l'équipement physique signale être toujours à l'arrêt.");
+        } else {
+          showToast(
+            realActive
+              ? `Chauffage confirmé en marche : Mode Confort ${heatingComfortTarget.toFixed(1)}°C 🔥`
+              : `Chauffage confirmé à l'arrêt : Sécurité Hors-gel active (${heatingFrostTarget.toFixed(1)}°C) 🛑`
+          );
+        }
+      }
     } catch (err) {
-      showToast(`Avertissement liaison : ${err.message}`);
+      try {
+        const fallback = await fetchHeatingStatus({ forceRefresh: true, force: true });
+        if (fallback && !fallback.error) {
+          setHeatingStatus(fallback);
+          setIsHeatingActive(Boolean(fallback.is_heating_active));
+        }
+      } catch (_) {}
+      showToast(`Erreur liaison chaudière : ${err.message}`);
+    } finally {
+      setSavingThermal(false);
     }
   };
 
-  // Bascule instantanée du switch Marche/Arrêt Eau Chaude Sanitaire
+  // Bascule du switch Marche/Arrêt Eau Chaude Sanitaire avec boucle fermée et réconciliation télémétrique réelle
   const handleToggleDhw = async (targetActive) => {
     setIsDhwActive(targetActive);
+    setSavingThermal(true);
     try {
       await saveHeatingSettings({
         is_heating_active: isHeatingActive,
@@ -514,43 +555,135 @@ export default function VademecumPage({ properties, currentUser, reservations = 
           await setDhwTemperature(dhwTarget);
         }
       } catch (_) {}
-      showToast(
-        targetActive
-          ? `Eau Chaude Sanitaire activée (Cible : ${dhwTarget.toFixed(1)}°C) 🔥`
-          : `Eau Chaude mise à l'arrêt (Veille à ${dhwFrostTarget.toFixed(1)}°C) 🛑`
-      );
+
+      // Relecture directe de la télémétrie matérielle ViCare
+      const freshHeat = await fetchHeatingStatus({ forceRefresh: true, force: true, refresh: true });
+      if (freshHeat && !freshHeat.error) {
+        setHeatingStatus(freshHeat);
+        setHeatingError(null);
+        const realDhwActive = freshHeat.is_dhw_active != null
+          ? Boolean(freshHeat.is_dhw_active)
+          : (freshHeat.dhw_target_temperature != null && freshHeat.dhw_target_temperature > 20.0);
+        // Recalage strict sur l'état physique réel
+        setIsDhwActive(realDhwActive);
+
+        if (!targetActive && realDhwActive) {
+          showToast("La commande a été transmise, mais l'équipement physique signale être toujours en marche.");
+        } else if (targetActive && !realDhwActive) {
+          showToast("La commande a été transmise, mais le ballon physique signale être toujours à l'arrêt.");
+        } else {
+          showToast(
+            realDhwActive
+              ? `Eau Chaude confirmée en marche (Cible : ${dhwTarget.toFixed(1)}°C) 🔥`
+              : `Eau Chaude confirmée à l'arrêt (Veille à ${dhwFrostTarget.toFixed(1)}°C) 🛑`
+          );
+        }
+      }
     } catch (err) {
-      showToast(`Avertissement liaison : ${err.message}`);
+      try {
+        const fallback = await fetchHeatingStatus({ forceRefresh: true, force: true });
+        if (fallback && !fallback.error) {
+          setHeatingStatus(fallback);
+          setIsDhwActive(Boolean(fallback.is_dhw_active));
+        }
+      } catch (_) {}
+      showToast(`Erreur liaison eau chaude : ${err.message}`);
+    } finally {
+      setSavingThermal(false);
     }
   };
 
-  // Bascule instantanée du switch Marche/Arrêt Pompe de filtration Piscine
+  // Bascule du switch Marche/Arrêt Pompe de filtration avec boucle fermée et réconciliation télémétrique réelle
   const handleTogglePoolPump = async (targetActive) => {
     setIsPoolPumpActive(targetActive);
+    setSavingThermal(true);
     try {
       await setPoolPumpMode(targetActive);
-      showToast(
-        targetActive
-          ? 'Pompe de filtration activée (Marche) 🌊'
-          : 'Pompe de filtration mise à l\'arrêt 🛑'
-      );
+
+      // Relecture directe de la télémétrie matérielle Klereo
+      const freshPool = await fetchPiscineStatus({ forceRefresh: true, force: true, refresh: true });
+      if (freshPool && !freshPool.error) {
+        setPiscineStatus(freshPool);
+        setPiscineError(null);
+        const realPumpActive = freshPool.is_pump_active != null
+          ? Boolean(freshPool.is_pump_active)
+          : (freshPool.filtration_state
+              ? !freshPool.filtration_state.toLowerCase().includes('arrêt') && !freshPool.filtration_state.toLowerCase().includes('arret') && !freshPool.filtration_state.toLowerCase().includes('off')
+              : true);
+        // Recalage strict sur l'état physique réel
+        setIsPoolPumpActive(realPumpActive);
+
+        if (!targetActive && realPumpActive) {
+          showToast("La commande a été transmise, mais l'équipement physique signale être toujours en marche.");
+        } else if (targetActive && !realPumpActive) {
+          showToast("La commande a été transmise, mais la pompe physique signale être toujours à l'arrêt.");
+        } else {
+          showToast(
+            realPumpActive
+              ? 'Pompe de filtration confirmée en marche 🌊'
+              : 'Pompe de filtration confirmée à l\'arrêt 🛑'
+          );
+        }
+      }
     } catch (err) {
+      try {
+        const fallback = await fetchPiscineStatus({ forceRefresh: true, force: true });
+        if (fallback && !fallback.error) {
+          setPiscineStatus(fallback);
+          setIsPoolPumpActive(Boolean(fallback.is_pump_active));
+        }
+      } catch (_) {}
       showToast(`Avertissement piscine : ${err.message}`);
+    } finally {
+      setSavingThermal(false);
     }
   };
 
-  // Bascule instantanée du switch Marche/Arrêt Chauffage Piscine (PAC Inopac 20 kW)
+  // Bascule du switch Marche/Arrêt Chauffage Piscine (PAC) avec boucle fermée et réconciliation télémétrique réelle
   const handleTogglePoolHeating = async (targetActive) => {
     setIsPoolHeatingActive(targetActive);
+    setSavingThermal(true);
     try {
       await setPoolHeatingMode(targetActive);
-      showToast(
-        targetActive
-          ? 'Chauffage piscine PAC activé (Marche) 🔥'
-          : 'Chauffage piscine PAC mis à l\'arrêt ❄️'
-      );
+
+      // Relecture directe de la télémétrie matérielle Klereo
+      const freshPool = await fetchPiscineStatus({ forceRefresh: true, force: true, refresh: true });
+      if (freshPool && !freshPool.error) {
+        setPiscineStatus(freshPool);
+        setPiscineError(null);
+        const realHeatingActive = freshPool.is_heating_active != null
+          ? Boolean(freshPool.is_heating_active)
+          : (freshPool.pac_active != null
+              ? Boolean(freshPool.pac_active)
+              : (freshPool.pac_state
+                  ? freshPool.pac_state.toLowerCase().includes('chauffe') || freshPool.pac_state.toLowerCase().includes('marche') || freshPool.pac_state.toLowerCase().includes('actif')
+                  : false));
+        // Recalage strict sur l'état physique réel
+        setIsPoolHeatingActive(realHeatingActive);
+
+        if (!targetActive && realHeatingActive) {
+          showToast("La commande a été transmise, mais l'équipement physique signale être toujours en marche.");
+        } else if (targetActive && !realHeatingActive) {
+          showToast("La commande a été transmise, mais la PAC physique signale être toujours à l'arrêt.");
+        } else {
+          showToast(
+            realHeatingActive
+              ? 'Chauffage PAC piscine confirmé en marche 🔥'
+              : 'Chauffage PAC piscine confirmé à l\'arrêt ❄️'
+          );
+        }
+      }
     } catch (err) {
+      try {
+        const fallback = await fetchPiscineStatus({ forceRefresh: true, force: true });
+        if (fallback && !fallback.error) {
+          setPiscineStatus(fallback);
+          setIsPoolHeatingActive(Boolean(fallback.is_heating_active || fallback.pac_active));
+        }
+      } catch (_) {}
       showToast(`Avertissement piscine : ${err.message}`);
+    } finally {
+      setSavingThermal(false);
     }
   };
 
@@ -579,10 +712,40 @@ export default function VademecumPage({ properties, currentUser, reservations = 
         });
       } catch (_) {}
 
+      // Recharger la télémétrie fraîche
+      const [freshHeatRes, freshPoolRes] = await Promise.allSettled([
+        fetchHeatingStatus({ forceRefresh: true, force: true }),
+        fetchPiscineStatus({ forceRefresh: true, force: true }),
+      ]);
+
+      if (freshHeatRes.status === 'fulfilled' && freshHeatRes.value && !freshHeatRes.value.error) {
+        const h = freshHeatRes.value;
+        setHeatingStatus(h);
+        setHeatingError(null);
+        if (h.is_heating_active != null) {
+          setIsHeatingActive(Boolean(h.is_heating_active));
+        }
+        if (h.is_dhw_active != null) {
+          setIsDhwActive(Boolean(h.is_dhw_active));
+        }
+      }
+
+      if (freshPoolRes.status === 'fulfilled' && freshPoolRes.value && !freshPoolRes.value.error) {
+        const p = freshPoolRes.value;
+        setPiscineStatus(p);
+        setPiscineError(null);
+        if (p.is_pump_active != null) {
+          setIsPoolPumpActive(Boolean(p.is_pump_active));
+        }
+        if (p.is_heating_active != null || p.pac_active != null) {
+          setIsPoolHeatingActive(Boolean(p.is_heating_active || p.pac_active));
+        }
+      }
+
       if (currentPageIndex > 0 && currentStay) {
-        showToast(`Consignes du séjour enregistrées : Chauffage ${isHeatingActive ? 'Marche' : 'Arrêt'} (Confort ${heatingComfortTarget.toFixed(1)}°C, Hors-gel ${heatingFrostTarget.toFixed(1)}°C), ECS ${isDhwActive ? 'Marche' : 'Arrêt'} (${dhwTarget.toFixed(1)}°C), Pompe ${isPoolPumpActive ? 'Marche' : 'Arrêt'}, PAC ${isPoolHeatingActive ? 'Marche' : 'Arrêt'}. Notification transmise.`);
+        showToast(`Consignes du séjour enregistrées et synchronisées avec les équipements physiques.`);
       } else {
-        showToast(`Consignes enregistrées : Chauffage ${isHeatingActive ? 'Marche' : 'Arrêt'} (Confort ${heatingComfortTarget.toFixed(1)}°C, Hors-gel ${heatingFrostTarget.toFixed(1)}°C), ECS ${isDhwActive ? 'Marche' : 'Arrêt'} (${dhwTarget.toFixed(1)}°C), Pompe ${isPoolPumpActive ? 'Marche' : 'Arrêt'}, PAC ${isPoolHeatingActive ? 'Marche' : 'Arrêt'}. Notification transmise.`);
+        showToast(`Consignes enregistrées et synchronisées avec les équipements physiques.`);
       }
     } catch (err) {
       showToast(`Erreur : ${err.message}`);
@@ -1397,7 +1560,7 @@ export default function VademecumPage({ properties, currentUser, reservations = 
                   <ThermalMasterSwitch
                     isActive={isHeatingActive}
                     onChange={handleToggleHeating}
-                    disabled={Boolean(heatingError)}
+                    disabled={Boolean(heatingError) || savingThermal}
                     offLabel="Arrêt"
                     onLabel="Marche"
                     offIcon="power_settings_new"
@@ -1417,7 +1580,6 @@ export default function VademecumPage({ properties, currentUser, reservations = 
                       }
                       const isBurning = Boolean(heatingStatus?.burner_active);
                       const temp = heatingStatus?.room_temperature;
-                      const isReadOnly = Boolean(heatingStatus?.test_mode_read_only);
 
                       if (isBurning) {
                         return {
@@ -1429,12 +1591,8 @@ export default function VademecumPage({ properties, currentUser, reservations = 
                       }
                       if (temp != null && temp < heatingComfortTarget) {
                         return {
-                          title: isReadOnly
-                            ? `Marche (consigne ${heatingComfortTarget.toFixed(1)}°C) • Ambiante à ${temp.toFixed(1)}°C au repos`
-                            : `Marche demandée (${heatingComfortTarget.toFixed(1)}°C) • Au repos`,
-                          subtext: isReadOnly
-                            ? 'Consigne confort mémorisée. Mode test actif : brûleur physique au repos.'
-                            : 'Chaudière sous tension. Le brûleur régule et se déclenchera selon le cycle de chauffe.',
+                          title: `Marche demandée (${heatingComfortTarget.toFixed(1)}°C) • Au repos`,
+                          subtext: 'Chaudière sous tension. Le brûleur régule et se déclenchera selon le cycle de chauffe.',
                           icon: 'schedule',
                           style: 'bg-amber-50/80 dark:bg-amber-950/30 border-amber-200 dark:border-amber-800/60 text-amber-950 dark:text-amber-100'
                         };
@@ -1675,7 +1833,7 @@ export default function VademecumPage({ properties, currentUser, reservations = 
                   <ThermalMasterSwitch
                     isActive={isDhwActive}
                     onChange={handleToggleDhw}
-                    disabled={Boolean(heatingError)}
+                    disabled={Boolean(heatingError) || savingThermal}
                     offLabel="Arrêt"
                     onLabel="Marche"
                     offIcon="power_settings_new"
@@ -1695,7 +1853,6 @@ export default function VademecumPage({ properties, currentUser, reservations = 
                       }
                       const isBurning = Boolean(heatingStatus?.is_dhw_heating || (isDhwActive && heatingStatus?.burner_active));
                       const temp = heatingStatus?.dhw_temperature;
-                      const isReadOnly = Boolean(heatingStatus?.test_mode_read_only);
 
                       if (isBurning) {
                         return {
@@ -1707,12 +1864,8 @@ export default function VademecumPage({ properties, currentUser, reservations = 
                       }
                       if (temp != null && temp < dhwTarget) {
                         return {
-                          title: isReadOnly
-                            ? `Marche (consigne ${dhwTarget.toFixed(1)}°C) • Ballon à ${temp.toFixed(1)}°C au repos`
-                            : `Marche demandée • Ballon à ${temp.toFixed(1)}°C (au repos)`,
-                          subtext: isReadOnly
-                            ? 'Consigne confort mémorisée. Mode test actif : chauffe réelle désactivée (lecture seule).'
-                            : 'Chauffe-eau sous tension. Le brûleur se déclenchera selon le cycle de relance pour atteindre la consigne.',
+                          title: `Marche demandée • Ballon à ${temp.toFixed(1)}°C (au repos)`,
+                          subtext: 'Chauffe-eau sous tension. Le brûleur se déclenchera selon le cycle de relance pour atteindre la consigne.',
                           icon: 'schedule',
                           style: 'bg-amber-50/80 dark:bg-amber-950/30 border-amber-200 dark:border-amber-800/60 text-amber-950 dark:text-amber-100'
                         };
@@ -1931,7 +2084,7 @@ export default function VademecumPage({ properties, currentUser, reservations = 
                   <ThermalMasterSwitch
                     isActive={isPoolPumpActive}
                     onChange={handleTogglePoolPump}
-                    disabled={Boolean(piscineError)}
+                    disabled={Boolean(piscineError) || savingThermal}
                     offLabel="Arrêt"
                     onLabel="Marche"
                     offIcon="power_settings_new"
@@ -1948,7 +2101,7 @@ export default function VademecumPage({ properties, currentUser, reservations = 
                   <ThermalMasterSwitch
                     isActive={isPoolHeatingActive}
                     onChange={handleTogglePoolHeating}
-                    disabled={Boolean(piscineError)}
+                    disabled={Boolean(piscineError) || savingThermal}
                     offLabel="Arrêt"
                     onLabel="Marche"
                     offIcon="power_settings_new"

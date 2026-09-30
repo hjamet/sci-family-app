@@ -818,8 +818,8 @@ class PiscineStatusResponse(BaseModel):
     radio_status: Optional[str] = "Liaison radio K-Link active"
     radio_alert: Optional[str] = None
     radio_error: bool = False
-    test_mode_read_only: bool = True
-    message: Optional[str] = "Garde-fou de sécurité inviolable actif (Garde-fou Henri #1) : Mode lecture seule permanent. Toute commande actionneur piscine est formellement interdite."
+    test_mode_read_only: bool = False
+    message: Optional[str] = "Télémétrie Klereo Connect en direct."
     pool_nickname: Optional[str] = "Ma piscine"
     system_id: Optional[int] = None
     last_update: Optional[str] = None

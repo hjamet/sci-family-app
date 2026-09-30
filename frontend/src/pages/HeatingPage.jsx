@@ -1,6 +1,6 @@
 /**
  * HeatingPage — Route autonome /energie (alias /chauffage)
- * Supervision connectée ViCare (Presbytère) & Piscine Klereo (Rosings avec verrou lecture seule)
+ * Supervision connectée ViCare (Presbytère) & Piscine Klereo (Rosings)
  */
 import React, { useState, useEffect } from 'react';
 import {
@@ -32,14 +32,15 @@ export default function HeatingPage({ currentUser }) {
   // Confirmation Modal State for ViCare API calls
   const [pendingAction, setPendingAction] = useState(null);
 
-  const loadStatus = async () => {
+  const loadStatus = async (options = {}) => {
     try {
       if (!status) setLoading(true);
       setErrorMsg(null);
       setPoolErrorMsg(null);
+      const force = Boolean(options?.forceRefresh || options?.force);
       const [heatResult, poolResult] = await Promise.allSettled([
-        fetchHeatingStatus(),
-        fetchPiscineStatus(),
+        fetchHeatingStatus({ forceRefresh: force }),
+        fetchPiscineStatus({ forceRefresh: force }),
       ]);
 
       if (heatResult.status === 'fulfilled' && heatResult.value && !heatResult.value.error) {
@@ -84,7 +85,7 @@ export default function HeatingPage({ currentUser }) {
       setUpdating(true);
       setErrorMsg(null);
       await saveHeatingSettings({ mode: modeKey, target_temperature: sliderTemp });
-      await loadStatus();
+      await loadStatus({ force: true });
     } catch (err) {
       console.error('Error setting heating mode:', err);
       setErrorMsg(err.message || String(err) || 'Erreur lors du changement de mode');
@@ -98,7 +99,7 @@ export default function HeatingPage({ currentUser }) {
       setUpdating(true);
       setErrorMsg(null);
       await saveHeatingSettings({ target_temperature: targetVal });
-      await loadStatus();
+      await loadStatus({ force: true });
     } catch (err) {
       console.error('Error setting heating temperature:', err);
       setErrorMsg(err.message || String(err) || 'Erreur lors du changement de consigne');
@@ -204,7 +205,7 @@ export default function HeatingPage({ currentUser }) {
             <div className="flex flex-wrap items-center gap-2">
               <div className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-full bg-sage-soft border border-sage-border text-primary font-label-sm text-xs font-semibold shadow-xs">
                 <span className="w-2 h-2 rounded-full bg-primary animate-pulse"></span>
-                <span>ViCare : Connecté (Lecture seule)</span>
+                <span>ViCare : Connecté</span>
               </div>
               {poolStatus?.radio_error ? (
                 <div className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-full bg-amber-50 border border-amber-300 text-amber-900 font-label-sm text-xs font-bold shadow-xs">
@@ -220,7 +221,7 @@ export default function HeatingPage({ currentUser }) {
             </div>
 
             <button
-              onClick={loadStatus}
+              onClick={() => loadStatus({ force: true })}
               disabled={loading || updating}
               className="inline-flex items-center gap-2 px-4 py-2 rounded-xl bg-canvas-slate hover:bg-surface-container border border-border-subtle text-forest-deep font-label-sm text-xs font-semibold transition-all shadow-xs disabled:opacity-50 cursor-pointer"
             >
@@ -249,7 +250,7 @@ export default function HeatingPage({ currentUser }) {
                 {errorMsg}
               </div>
               <button
-                onClick={loadStatus}
+                onClick={() => loadStatus({ force: true })}
                 disabled={loading}
                 className="mt-3 px-4 py-2 bg-rose-600 hover:bg-rose-700 text-white font-bold text-xs rounded-lg shadow-sm transition inline-flex items-center space-x-2"
               >
@@ -505,7 +506,7 @@ export default function HeatingPage({ currentUser }) {
           </div>
         </div>
 
-        {/* ---------------- CARD 3 : PISCINE KLEREO (AVEC VERROU EN LECTURE SEULE & ALERTE RADIO) ---------------- */}
+        {/* ---------------- CARD 3 : PISCINE KLEREO & ALERTE RADIO ---------------- */}
         <div className="p-5 rounded-2xl bg-surface-container-lowest border-2 border-amber-300 flex flex-col justify-between gap-5 shadow-sm relative overflow-hidden">
           {/* Read-Only Top Watermark Indicator */}
           <div className="flex flex-col gap-4">
@@ -593,15 +594,11 @@ export default function HeatingPage({ currentUser }) {
               </div>
             )}
 
-            {/* Target Temperature with STRICT READ-ONLY LOCK */}
+            {/* Target Temperature with Operational Stepper */}
             <div className="p-3.5 bg-canvas-slate rounded-xl border border-border-subtle flex items-center justify-between gap-2 shadow-xs relative opacity-90">
               <div className="flex flex-col min-w-0 pr-1">
                 <div className="flex items-center gap-1.5">
                   <span className="font-label-md text-label-md text-on-surface font-semibold leading-tight">Consigne PAC Piscine</span>
-                  <span className="inline-flex items-center gap-0.5 px-2 py-0.5 rounded-full bg-slate-200/80 text-slate-700 text-[10px] font-bold">
-                    <Lock className="h-3 w-3" />
-                    Lecture seule
-                  </span>
                 </div>
                 <span className="font-label-sm text-xs text-on-surface-variant mt-0.5 whitespace-nowrap">
                   {poolStatus?.is_heating_active
@@ -610,13 +607,13 @@ export default function HeatingPage({ currentUser }) {
                 </span>
               </div>
 
-              {/* Locked Stepper (Read-Only) */}
+              {/* Stepper Display */}
               <div className="flex items-center gap-1.5 shrink-0 bg-white p-1 rounded-full border border-border-subtle shadow-xs opacity-75">
                 <button
                   type="button"
                   disabled
                   className="w-7 h-7 rounded-full bg-canvas-slate border border-border-subtle flex items-center justify-center text-slate-400 cursor-not-allowed"
-                  title="Consigne verrouillée en lecture seule (sécurité Klereo)"
+                  title="Consigne PAC piscine"
                 >
                   <Lock className="h-3.5 w-3.5" />
                 </button>
@@ -632,7 +629,7 @@ export default function HeatingPage({ currentUser }) {
                   type="button"
                   disabled
                   className="w-7 h-7 rounded-full bg-canvas-slate border border-border-subtle flex items-center justify-center text-slate-400 cursor-not-allowed"
-                  title="Consigne verrouillée en lecture seule (sécurité Klereo)"
+                  title="Consigne PAC piscine"
                 >
                   <Lock className="h-3.5 w-3.5" />
                 </button>
@@ -651,9 +648,12 @@ export default function HeatingPage({ currentUser }) {
                     {poolStatus?.pac_state || 'Déconseillée (Saison Hiver)'}
                   </span>
                 </div>
-                <span className="inline-flex items-center gap-1 text-[11px] font-bold text-slate-600 bg-slate-100 px-2 py-0.5 rounded-md border border-slate-200">
-                  <Lock className="h-3 w-3" />
-                  Verrouillée
+                <span className={`inline-flex items-center gap-1 text-[11px] font-bold px-2 py-0.5 rounded-md border ${
+                  poolStatus?.is_heating_active
+                    ? 'text-rose-700 bg-rose-50 border-rose-200'
+                    : 'text-slate-600 bg-slate-100 border-slate-200'
+                }`}>
+                  {poolStatus?.is_heating_active ? 'Actif' : 'En veille'}
                 </span>
               </div>
 
@@ -701,7 +701,7 @@ export default function HeatingPage({ currentUser }) {
                   Klereo CONNECT 868 MHz (Rupture signal)
                 </span>
                 <span className="font-semibold text-rose-800 bg-rose-100 px-2 py-0.5 rounded border border-rose-200">
-                  🔒 Lecture seule & Radio KO
+                  Radio KO
                 </span>
               </>
             ) : (
@@ -711,7 +711,7 @@ export default function HeatingPage({ currentUser }) {
                   Klereo CONNECT 868 MHz (Liaison active)
                 </span>
                 <span className="font-semibold text-emerald-800 bg-emerald-100 px-2 py-0.5 rounded border border-emerald-200">
-                  🔒 Lecture seule
+                  Connecté
                 </span>
               </>
             )}
@@ -839,7 +839,7 @@ export default function HeatingPage({ currentUser }) {
             ) : (
               <span className="text-xs text-slate-500 font-medium bg-slate-100 px-3 py-1 rounded-full border border-slate-200 self-start sm:self-auto flex items-center gap-1">
                 <Lock className="h-3 w-3 text-slate-400" />
-                Lecture seule (seul le coordinateur peut changer la consigne)
+                Modification réservée au coordinateur
               </span>
             )}
           </div>
@@ -912,7 +912,7 @@ export default function HeatingPage({ currentUser }) {
             ) : (
               <div className="w-full md:w-auto px-4 py-2 bg-slate-100 text-slate-500 text-xs font-semibold rounded-xl border border-slate-200 text-center shrink-0 flex items-center justify-center gap-1.5">
                 <Lock className="h-3.5 w-3.5 text-slate-400" />
-                <span>Verrouillé en lecture seule</span>
+                <span>Réservé au coordinateur</span>
               </div>
             )}
           </div>

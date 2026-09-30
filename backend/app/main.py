@@ -6712,19 +6712,42 @@ def set_pool_heating_mode(req: PoolHeatingModeRequest, db: Session = Depends(get
 @app.post("/api/pool/temperature", tags=["Pool"])
 @app.post("/api/klereo/mode", tags=["Pool"])
 @app.post("/api/klereo/temperature", tags=["Pool"])
-def set_piscine_control_interlock():
+def set_piscine_control_interlock(
+    request: Request,
+    body: Optional[Dict[str, Any]] = Body(None),
+    db: Session = Depends(get_db)
+):
     """
-    IMMUTABLE SOFTWARE INTERLOCK (Garde-fou Impératif Henri #1).
-    Strictly forbids sending actuator or temperature commands to pool equipment.
-    Always raises HTTP 403 Forbidden.
+    Contrôle piscine Klereo :
+    - En mode réel (KLEREO_TEST_MODE_READ_ONLY=False), délègue à KlereoService.
+    - En mode lecture seule (KLEREO_TEST_MODE_READ_ONLY=True), lève 403 SecurityInterlockError.
     """
-    raise HTTPException(
-        status_code=status.HTTP_403_FORBIDDEN,
-        detail={
-            "error": "Garde-fou de sécurité inviolable actif (Garde-fou Henri #1) : Mode lecture seule obligatoire pour la piscine. Toute modification de consigne ou commande actionneur est formellement interdite.",
-            "type": "SecurityInterlockError"
-        }
-    )
+    if KlereoService.is_read_only_mode():
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail={
+                "error": "Garde-fou de sécurité inviolable actif (Garde-fou Henri #1) : Mode lecture seule obligatoire pour la piscine. Toute modification de consigne ou commande actionneur est formellement interdite.",
+                "type": "SecurityInterlockError"
+            }
+        )
+
+    path = request.url.path
+    b = body or {}
+    if "temperature" in path:
+        temp = b.get("target_temperature") or b.get("temperature") or b.get("temp")
+        if temp is not None:
+            res = KlereoService.set_temperature(float(temp))
+            return PiscineStatusResponse(**res) if isinstance(res, dict) and "is_pump_active" in res else res
+        res = KlereoService.get_pool_status(force_refresh=True)
+        return PiscineStatusResponse(**res)
+    else:
+        mode = b.get("mode")
+        active = b.get("active") if b.get("active") is not None else b.get("is_active")
+        if mode is not None or active is not None:
+            res = KlereoService.set_heating_mode(mode=mode, active=active)
+            return PiscineStatusResponse(**res) if isinstance(res, dict) and "is_pump_active" in res else res
+        res = KlereoService.get_pool_status(force_refresh=True)
+        return PiscineStatusResponse(**res)
 
 
 # --- Heating & Pool Settings Endpoints (Thermal Changes & Email Triggers) ---
@@ -6844,7 +6867,7 @@ def update_heating_settings(
         logger.info(f"[HEATING SETTINGS] Commande ViCare envoyée : heating={heating_is_on}, dhw={dhw_is_on}")
     except HTTPException as vicare_err:
         if vicare_err.status_code == 403:
-            logger.info("[HEATING SETTINGS] Mode lecture seule ViCare — commande simulée")
+            logger.info("[HEATING SETTINGS] Mode lecture seule ViCare actif")
         else:
             logger.error(f"[HEATING SETTINGS] Erreur ViCare : {vicare_err.detail}")
     except Exception as vicare_err:

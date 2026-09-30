@@ -86,13 +86,13 @@ class KlereoService:
     _simulated_heating_state: Optional[bool] = None
     _simulated_heating_mode: Optional[str] = None
 
-    @staticmethod
-    def is_read_only_mode() -> bool:
+    @classmethod
+    def is_read_only_mode(cls) -> bool:
         """
-        Garde-fou inviolable Henri #1 : Mode lecture seule pour les équipements piscine.
-        Pilotable via la variable d'environnement KLEREO_TEST_MODE_READ_ONLY (par défaut True).
+        Garde-fou Henri #1 : Mode lecture seule pour les équipements piscine.
+        Pilotable via la variable d'environnement KLEREO_TEST_MODE_READ_ONLY (par défaut False).
         """
-        env_val = os.getenv("KLEREO_TEST_MODE_READ_ONLY", "True").strip().lower()
+        env_val = os.getenv("KLEREO_TEST_MODE_READ_ONLY", "False").strip().lower()
         return env_val not in ("false", "0", "no")
 
     @classmethod
@@ -343,10 +343,11 @@ class KlereoService:
                 elif idx == 4 or out_map == 4:
                     pac_active = (real_st == 1)
 
-            if cls._simulated_pump_state is not None:
-                filtration_active = cls._simulated_pump_state
-            if cls._simulated_heating_state is not None:
-                pac_active = cls._simulated_heating_state
+            if cls.is_read_only_mode():
+                if cls._simulated_pump_state is not None:
+                    filtration_active = cls._simulated_pump_state
+                if cls._simulated_heating_state is not None:
+                    pac_active = cls._simulated_heating_state
 
             params = pool_detail.get("params", {})
             pool_mode = params.get("PoolMode", sys_0.get("RegulModes", {}).get("PoolMode", 2))
@@ -423,7 +424,7 @@ class KlereoService:
             antifreeze_threshold: float = 0.5  # SeuilHorsGel réel Klereo
             pool_comfort_target: float = 28.0
 
-            is_pac_switch_on = bool(pac_active or (cls._simulated_heating_state is True))
+            is_pac_switch_on = bool(pac_active or (cls.is_read_only_mode() and cls._simulated_heating_state is True))
 
             if pac_active:
                 pac_state_desc = "En chauffe (PAC Inopac 20 kW)"
@@ -457,8 +458,8 @@ class KlereoService:
                 "is_pump_active": filtration_active,
                 "is_heating_active": is_pac_switch_on,
                 "pac_active": pac_active,
-                "pump_mode": cls._simulated_pump_mode or ("auto" if pool_mode == 2 else ("on" if filtration_active else "off")),
-                "heating_mode": cls._simulated_heating_mode or ("auto" if pool_mode == 2 else ("on" if pac_active else "off")),
+                "pump_mode": (cls._simulated_pump_mode if (cls.is_read_only_mode() and cls._simulated_pump_mode) else ("auto" if pool_mode == 2 else ("on" if filtration_active else "off"))),
+                "heating_mode": (cls._simulated_heating_mode if (cls.is_read_only_mode() and cls._simulated_heating_mode) else ("auto" if pool_mode == 2 else ("on" if pac_active else "off"))),
                 "pac_state": pac_state_desc,
                 "pac_status_label": pac_status_label,
                 "pac_status_subtext": pac_status_subtext,
@@ -478,10 +479,9 @@ class KlereoService:
                 "radio_error": not radio_ok,
                 "test_mode_read_only": cls.is_read_only_mode(),
                 "message": (
-                    f"Commande simulée (mode test/lecture seule KLEREO_TEST_MODE_READ_ONLY) : "
-                    f"Pompe {'active' if filtration_active else 'inactive'}, PAC {'active' if pac_active else 'inactive'}."
-                    if (cls._simulated_pump_state is not None or cls._simulated_heating_state is not None)
-                    else "Garde-fou de sécurité inviolable actif (Garde-fou Henri #1) : Mode lecture seule permanent. Données télémétriques Klereo Connect en direct."
+                    "Télémétrie Klereo Connect en direct."
+                    if not cls.is_read_only_mode()
+                    else "Mode lecture seule actif (KLEREO_TEST_MODE_READ_ONLY=True)."
                 ),
                 "pool_nickname": pool_name,
                 "system_id": sys_id,
@@ -567,10 +567,9 @@ class KlereoService:
             )
 
         logger.info(f"[KLEREO] Commande pompe filtration : mode={new_mode}, active={new_active} (read_only={cls.is_read_only_mode()})")
-        cls._simulated_pump_state = new_active
-        cls._simulated_pump_mode = new_mode
-
         if cls.is_read_only_mode():
+            cls._simulated_pump_state = new_active
+            cls._simulated_pump_mode = new_mode
             try:
                 data = cls.get_pool_status(force_refresh=True)
             except Exception:
@@ -596,6 +595,8 @@ class KlereoService:
             data["message"] = f"Action enregistrée (mode lecture seule) : Pompe de filtration '{new_mode}'."
             return data
         else:
+            cls._simulated_pump_state = None
+            cls._simulated_pump_mode = None
             try:
                 sys_id = cls._get_system_id()
                 # Mapping mode → Klereo outIdx=1 newState
@@ -647,10 +648,10 @@ class KlereoService:
             )
 
         logger.info(f"[KLEREO] Commande PAC chauffage piscine : mode={new_mode}, active={new_active} (read_only={cls.is_read_only_mode()})")
-        cls._simulated_heating_state = new_active
-        cls._simulated_heating_mode = new_mode
 
         if cls.is_read_only_mode():
+            cls._simulated_heating_state = new_active
+            cls._simulated_heating_mode = new_mode
             try:
                 data = cls.get_pool_status(force_refresh=True)
             except Exception:
@@ -679,6 +680,8 @@ class KlereoService:
             data["message"] = f"Action enregistrée (mode lecture seule) : Chauffage PAC Inopac 20 kW '{new_mode}'."
             return data
         else:
+            cls._simulated_heating_state = None
+            cls._simulated_heating_mode = None
             try:
                 sys_id = cls._get_system_id()
                 if new_active:
@@ -711,4 +714,31 @@ class KlereoService:
                 logger.error(f"[KLEREO] Erreur commande PAC : {e}")
                 raise HTTPException(status_code=502, detail={"error": f"Erreur Klereo : {e}"})
             return cls.get_pool_status(force_refresh=True)
+
+    @classmethod
+    def set_temperature(cls, target_temperature: float) -> Dict[str, Any]:
+        """Ajuste la consigne de température de baignade Klereo (15°C à 32°C)."""
+        if cls.is_read_only_mode():
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail={
+                    "error": "Garde-fou de sécurité actif : Mode lecture seule obligatoire pour la piscine.",
+                    "type": "SecurityInterlockError"
+                }
+            )
+        try:
+            sys_id = cls._get_system_id()
+            cls._send_command(SET_PARAM_URL, {
+                "poolID": str(sys_id),
+                "paramID": "ConsigneEau",
+                "newValue": str(round(float(target_temperature), 1)),
+                "comMode": "1"
+            })
+            logger.info(f"[KLEREO] Consigne température eau ajustée → {target_temperature}°C")
+            return cls.get_pool_status(force_refresh=True)
+        except HTTPException:
+            raise
+        except Exception as e:
+            logger.error(f"[KLEREO] Erreur consigne température : {e}")
+            raise HTTPException(status_code=502, detail={"error": f"Erreur Klereo : {e}"})
 

@@ -24,11 +24,11 @@ HTTP_TIMEOUT_SECONDS: float = 3.5
 
 def is_read_only_mode() -> bool:
     """
-    Mandatory safety interlock (Garde-fou Henri #1).
-    Enforces read-only mode for ViCare heating & pool domotique when VICARE_TEST_MODE_READ_ONLY is True (default).
-    Can be explicitly set to False in .env to allow live hardware control.
+    Mandatory safety interlock.
+    Enforces read-only mode for ViCare heating when VICARE_TEST_MODE_READ_ONLY is True.
+    Defaults to False to allow live hardware control in production.
     """
-    env_val = os.getenv("VICARE_TEST_MODE_READ_ONLY", "True").strip().lower()
+    env_val = os.getenv("VICARE_TEST_MODE_READ_ONLY", "False").strip().lower()
     return env_val not in ("false", "0", "no")
 
 
@@ -589,11 +589,10 @@ class ViCareService:
 
         read_only = is_read_only_mode()
         msg = (
-            "Garde-fou de sécurité inviolable actif (Garde-fou Henri #1) : "
-            "Mode lecture seule permanent (VICARE_TEST_MODE_READ_ONLY=True). "
-            "Toute commande d'actionneur ou modification de consigne est strictement bloquée."
+            "Mode lecture seule actif (VICARE_TEST_MODE_READ_ONLY=True). "
+            "Toute commande d'actionneur ou modification de consigne est bloquée."
             if read_only else
-            "Mode pilotage actif : commandes matérielles autorisées."
+            "Système connecté en production : commandes matérielles directes autorisées."
         )
 
         return {

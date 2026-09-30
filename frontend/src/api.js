@@ -1053,8 +1053,9 @@ export async function deleteVademecumItem(itemId) {
 
 
 export async function fetchHeatingStatus(options = {}) {
+  const force = Boolean(options?.forceRefresh || options?.refresh || options?.force);
   return swrFetch('heating_status', async () => {
-    const query = (options?.forceRefresh || options?.refresh) ? '?refresh=true' : '';
+    const query = force ? '?refresh=true' : '';
     const res = await fetch(`${API_BASE}/heating/status${query}`, {
       headers: getAuthHeaders(),
       silentError: options?.silentError ?? true,
@@ -1064,7 +1065,7 @@ export async function fetchHeatingStatus(options = {}) {
       throw new Error(err.detail || 'Erreur lors de la récupération du statut du chauffage ViCare');
     }
     return res.json();
-  });
+  }, { forceRefresh: force });
 }
 
 export async function setHeatingMode(mode) {
@@ -1078,6 +1079,7 @@ export async function setHeatingMode(mode) {
     throw new Error(err.detail || 'Erreur lors du changement de mode de chauffage ViCare');
   }
   invalidateApiCache('heating');
+  invalidateApiCache('heating_status');
   return res.json();
 }
 
@@ -1092,6 +1094,7 @@ export async function setHeatingTemperature(target_temperature) {
     throw new Error(err.detail || 'Erreur lors du changement de température ViCare');
   }
   invalidateApiCache('heating');
+  invalidateApiCache('heating_status');
   return res.json();
 }
 
@@ -1106,6 +1109,7 @@ export async function setDhwMode(is_active) {
     throw new Error(err.detail || 'Erreur lors du changement de mode ECS');
   }
   invalidateApiCache('heating');
+  invalidateApiCache('heating_status');
   return res.json();
 }
 
@@ -1120,6 +1124,7 @@ export async function setDhwTemperature(target_temperature) {
     throw new Error(err.detail || 'Erreur lors du changement de consigne ECS');
   }
   invalidateApiCache('heating');
+  invalidateApiCache('heating_status');
   return res.json();
 }
 
@@ -1348,8 +1353,9 @@ export const addTaskMessage = addTaskComment;
 
 // Piscine Telemetry
 export async function fetchPiscineStatus(options = {}) {
+  const force = Boolean(options?.forceRefresh || options?.refresh || options?.force);
   return swrFetch('pool_status', async () => {
-    const query = (options?.forceRefresh || options?.refresh) ? '?refresh=true' : '';
+    const query = force ? '?refresh=true' : '';
     const res = await fetch(`${API_BASE}/pool/status${query}`, {
       headers: getAuthHeaders(),
       silentError: options?.silentError ?? true,
@@ -1359,7 +1365,7 @@ export async function fetchPiscineStatus(options = {}) {
       throw new Error(err.detail || 'Erreur lors de la récupération du statut piscine Klereo');
     }
     return res.json();
-  });
+  }, { forceRefresh: force });
 }
 
 export async function setPoolPumpMode(modeOrActive) {
@@ -1374,6 +1380,7 @@ export async function setPoolPumpMode(modeOrActive) {
     throw new Error(err.detail || 'Erreur lors du changement de mode de la pompe piscine');
   }
   invalidateApiCache('pool');
+  invalidateApiCache('pool_status');
   return res.json();
 }
 
@@ -1389,6 +1396,7 @@ export async function setPoolHeatingMode(modeOrActive) {
     throw new Error(err.detail || 'Erreur lors du changement de mode du chauffage piscine');
   }
   invalidateApiCache('pool');
+  invalidateApiCache('pool_status');
   return res.json();
 }
 
@@ -1711,6 +1719,7 @@ export async function saveHeatingSettings({
     throw new Error(err.detail || 'Erreur lors de l\'enregistrement des réglages thermiques');
   }
   invalidateApiCache('heating');
+  invalidateApiCache('heating_status');
   return res.json();
 }
 
@@ -1725,6 +1734,7 @@ export async function savePoolSettings({ target_temperature, filtration_mode, mo
     throw new Error(err.detail || 'Erreur lors de l\'enregistrement des réglages piscine');
   }
   invalidateApiCache('pool');
+  invalidateApiCache('pool_status');
   return res.json();
 }
 
