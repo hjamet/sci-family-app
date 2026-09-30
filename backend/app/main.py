@@ -6852,6 +6852,7 @@ def update_heating_settings(
                 ViCareService.set_temperature(dhw_setting.target_temperature, program="dhw")
         elif not heating_is_on and not dhw_is_on:
             ViCareService.set_mode("standby")
+            ViCareService.set_dhw_mode(False)  # Consigne ECS réduite 10°C (veille)
         elif not heating_is_on and dhw_is_on:
             ViCareService.set_mode("dhw")
             if dhw_setting and dhw_setting.target_temperature:

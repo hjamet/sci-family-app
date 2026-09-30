@@ -735,6 +735,8 @@ class HeatingStatusResponse(BaseModel):
     burner_active: bool = False
     burner_starts: Optional[int] = None
     burner_hours: Optional[int] = None
+    burner_error_code: Optional[int] = None
+    burner_error_message: Optional[str] = None
     mode: Optional[str] = None
     active_mode: Optional[str] = None
     active_program: Optional[str] = None

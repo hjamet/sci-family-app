@@ -358,18 +358,80 @@ def fetch_live_telemetry() -> Dict[str, Any]:
                 detail={"error": err_msg, "type": "ValueError"}
             )
 
-        # Burner telemetry
+        # Burner telemetry & error detection (Code 227 - mise en sécurité combustion)
         burner_active = False
         burner_hours = None
         burner_starts = None
+        burner_error_code = None
+        burner_error_message = None
+
         if hasattr(boiler_device, "burners") and boiler_device.burners:
+            b = boiler_device.burners[0]
             try:
-                b = boiler_device.burners[0]
                 burner_active = bool(b.getActive())
                 burner_hours = int(b.getHours())
                 burner_starts = int(b.getStarts())
             except Exception:
                 pass
+
+            try:
+                burner_id = getattr(b, "burner", "0")
+                burner_prop = None
+                for candidate in (
+                    f"heating.burners.{burner_id}.automatic",
+                    f"heating.burners.{burner_id}",
+                    "heating.burners.0.automatic",
+                    "heating.burners.0"
+                ):
+                    try:
+                        if hasattr(b, "getProperty"):
+                            burner_prop = b.getProperty(candidate)
+                        elif hasattr(boiler_device, "getProperty"):
+                            burner_prop = boiler_device.getProperty(candidate)
+                        if burner_prop:
+                            break
+                    except Exception as feat_err:
+                        err_text = str(feat_err)
+                        if "227" in err_text:
+                            burner_error_code = 227
+                        continue
+
+                if burner_prop and isinstance(burner_prop, dict):
+                    err_code = burner_prop.get("errorCode") or (
+                        burner_prop.get("properties", {}).get("errorCode", {}).get("value")
+                        if isinstance(burner_prop.get("properties"), dict) else None
+                    )
+                    err_status = burner_prop.get("status") or (
+                        burner_prop.get("properties", {}).get("status", {}).get("value")
+                        if isinstance(burner_prop.get("properties"), dict) else None
+                    )
+
+                    if err_code is not None:
+                        try:
+                            burner_error_code = int(err_code)
+                        except (ValueError, TypeError):
+                            burner_error_code = 227 if "227" in str(err_code) else None
+                    elif err_status == "error":
+                        burner_error_code = 227
+
+                if burner_error_code is None and hasattr(boiler_device, "getDeviceErrors"):
+                    try:
+                        errors = boiler_device.getDeviceErrors()
+                        if errors and isinstance(errors, list):
+                            for err_item in errors:
+                                if "227" in str(err_item):
+                                    burner_error_code = 227
+                                    break
+                    except Exception:
+                        pass
+
+                if burner_error_code is not None:
+                    burner_error_message = (
+                        f"Dérangement brûleur fioul (Code {burner_error_code}) : "
+                        "mise en sécurité d'allumage/combustion. Réarmement physique requis sur le coffret de sécurité de la chaudière."
+                    )
+            except Exception as e:
+                logger.warning(f"[VICARE] Erreur inspection sécurité brûleur: {e}")
 
         # Eco mode detection
         eco_mode_active = (active_program == "eco")
@@ -495,6 +557,8 @@ def fetch_live_telemetry() -> Dict[str, Any]:
             "burner_active": burner_active,
             "burner_starts": burner_starts,
             "burner_hours": burner_hours,
+            "burner_error_code": burner_error_code,
+            "burner_error_message": burner_error_message,
             "mode": active_mode,
             "active_mode": active_mode,
             "active_program": active_program,
@@ -586,6 +650,11 @@ class ViCareService:
             )
         if "heating_status_subtext" not in data:
             data["heating_status_subtext"] = None
+
+        if "burner_error_code" not in data:
+            data["burner_error_code"] = None
+        if "burner_error_message" not in data:
+            data["burner_error_message"] = None
 
         read_only = is_read_only_mode()
         msg = (
@@ -705,12 +774,14 @@ class ViCareService:
         """
         Active ou désactive l'ECS.
         - Marche : applique la consigne confort (52°C) en mode dhwAndHeating ou dhw.
-        - Arrêt : ne modifie plus la consigne (le mode circuit gère via standby).
+        - Arrêt : applique impérativement la consigne réduite de veille (10.0°C) sur la chaudière.
+          Sur ViCare Vitotronic, le seul moyen matériel de couper la charge ECS est de descendre la consigne
+          à son plancher (10°C), ce qui fait basculer is_dhw_active à False.
         """
         if is_active:
-            # Remonter la consigne confort
             cls.set_temperature(target_temp=cls._dhw_comfort_temperature, program="dhw")
-        # Le changement de mode circuit est géré par main.py (matrice d'états)
+        else:
+            cls.set_temperature(target_temp=cls._dhw_reduced_temperature, program="dhw")
         return cls.get_status(force_refresh=True)
 
     @classmethod

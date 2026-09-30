@@ -600,8 +600,17 @@ class KlereoService:
             try:
                 sys_id = cls._get_system_id()
                 # Mapping mode → Klereo outIdx=1 newState
-                state_map = {"auto": "2", "on": "1", "off": "0"}
-                new_state = state_map.get(new_mode, "2")
+                state_map = {
+                    "auto": "2",
+                    "on": "1",
+                    "marche": "1",
+                    "true": "1",
+                    "off": "0",
+                    "arret": "0",
+                    "arrêt": "0",
+                    "false": "0"
+                }
+                new_state = state_map.get(new_mode, "0" if not new_active else "2")
                 cls._send_command(SET_OUT_URL, {
                     "poolID": str(sys_id),
                     "outIdx": "1",
