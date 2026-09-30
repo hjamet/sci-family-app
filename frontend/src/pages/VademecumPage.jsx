@@ -240,7 +240,7 @@ export default function VademecumPage({ properties, currentUser, reservations = 
   const [dhwTarget, setDhwTarget] = useState(52.0);
   const [dhwFrostTarget, setDhwFrostTarget] = useState(10.0);
 
-  const [poolTarget, setPoolTarget] = useState(28.0);
+  const [poolTarget, setPoolTarget] = useState(27.0);
   const [isPoolPumpActive, setIsPoolPumpActive] = useState(true);
   const [isPoolHeatingActive, setIsPoolHeatingActive] = useState(false);
   const [savingThermal, setSavingThermal] = useState(false);
@@ -1404,28 +1404,73 @@ export default function VademecumPage({ properties, currentUser, reservations = 
                     onIcon="local_fire_department"
                     ariaLabel="Interrupteur principal Chauffage ViCare"
                   />
-                  {/* Bandeau d'état sémantique Marche/Arrêt (Annotation 4) */}
-                  <div className={`p-2.5 rounded-xl border text-xs flex items-start gap-2 shadow-2xs ${
-                    isHeatingActive
-                      ? 'bg-emerald-50/80 dark:bg-emerald-950/30 border-emerald-200 dark:border-emerald-800/60 text-emerald-950 dark:text-emerald-100'
-                      : 'bg-sky-50/80 dark:bg-sky-950/30 border-sky-200 dark:border-sky-800/60 text-sky-950 dark:text-sky-100'
-                  }`}>
-                    <span className="material-symbols-outlined text-[18px] shrink-0 mt-0.5 text-primary">
-                      {isHeatingActive ? 'check_circle' : 'ac_unit'}
-                    </span>
-                    <div className="flex flex-col">
-                      <span className="font-bold text-[11px]">
-                        {isHeatingActive
-                          ? `Marche • Confort actif (maintien ≥ ${heatingComfortTarget.toFixed(1)}°C)`
-                          : `Arrêt • Veille économique & Hors-gel (maintien à ${heatingFrostTarget.toFixed(1)}°C)`}
-                      </span>
-                      <span className="text-[10px] text-on-surface-variant mt-0.5 leading-snug">
-                        {isHeatingActive
-                          ? 'Chaudière sous tension permanente. Le brûleur régule pour maintenir la consigne de confort.'
-                          : 'Chaudière sous tension permanente. Le brûleur ne se déclenche que si la température descend sous la consigne hors-gel.'}
-                      </span>
-                    </div>
-                  </div>
+                  {/* Bandeau d'état sémantique Marche/Arrêt (Annotation 4 & 5) */}
+                  {(() => {
+                    const status = (() => {
+                      if (!isHeatingActive) {
+                        return {
+                          title: 'Arrêt • Veille économique (maintien hors-gel)',
+                          subtext: 'Chaudière sous tension permanente. Le brûleur ne se déclenche que si la température descend sous la consigne hors-gel.',
+                          icon: 'ac_unit',
+                          style: 'bg-sky-50/80 dark:bg-sky-950/30 border-sky-200 dark:border-sky-800/60 text-sky-950 dark:text-sky-100'
+                        };
+                      }
+                      const isBurning = Boolean(heatingStatus?.burner_active);
+                      const temp = heatingStatus?.room_temperature;
+                      const isReadOnly = Boolean(heatingStatus?.test_mode_read_only);
+
+                      if (isBurning) {
+                        return {
+                          title: `Marche • Chauffe en cours vers ${heatingComfortTarget.toFixed(1)}°C`,
+                          subtext: 'Brûleur fioul allumé. Régulation en cours pour atteindre la température de confort.',
+                          icon: 'local_fire_department',
+                          style: 'bg-rose-50/80 dark:bg-rose-950/30 border-rose-200 dark:border-rose-800/60 text-rose-950 dark:text-rose-100'
+                        };
+                      }
+                      if (temp != null && temp < heatingComfortTarget) {
+                        return {
+                          title: isReadOnly
+                            ? `Marche (consigne ${heatingComfortTarget.toFixed(1)}°C) • Ambiante à ${temp.toFixed(1)}°C au repos`
+                            : `Marche demandée (${heatingComfortTarget.toFixed(1)}°C) • Au repos`,
+                          subtext: isReadOnly
+                            ? 'Consigne confort mémorisée. Mode test actif : brûleur physique au repos.'
+                            : 'Chaudière sous tension. Le brûleur régule et se déclenchera selon le cycle de chauffe.',
+                          icon: 'schedule',
+                          style: 'bg-amber-50/80 dark:bg-amber-950/30 border-amber-200 dark:border-amber-800/60 text-amber-950 dark:text-amber-100'
+                        };
+                      }
+                      if (temp != null && temp >= heatingComfortTarget) {
+                        return {
+                          title: `Marche • Confort atteint (${temp.toFixed(1)}°C)`,
+                          subtext: 'Température de confort atteinte. Brûleur au repos.',
+                          icon: 'check_circle',
+                          style: 'bg-emerald-50/80 dark:bg-emerald-950/30 border-emerald-200 dark:border-emerald-800/60 text-emerald-950 dark:text-emerald-100'
+                        };
+                      }
+                      return {
+                        title: `Marche demandée (${heatingComfortTarget.toFixed(1)}°C) • Au repos`,
+                        subtext: 'Chaudière sous tension permanente. Le brûleur régule pour maintenir la consigne de confort.',
+                        icon: 'check_circle',
+                        style: 'bg-emerald-50/80 dark:bg-emerald-950/30 border-emerald-200 dark:border-emerald-800/60 text-emerald-950 dark:text-emerald-100'
+                      };
+                    })();
+
+                    return (
+                      <div className={`p-2.5 rounded-xl border text-xs flex items-start gap-2 shadow-2xs ${status.style}`}>
+                        <span className="material-symbols-outlined text-[18px] shrink-0 mt-0.5 text-primary">
+                          {status.icon}
+                        </span>
+                        <div className="flex flex-col">
+                          <span className="font-bold text-[11px]">
+                            {status.title}
+                          </span>
+                          <span className="text-[10px] text-on-surface-variant mt-0.5 leading-snug">
+                            {status.subtext}
+                          </span>
+                        </div>
+                      </div>
+                    );
+                  })()}
                 </div>
 
                 {/* Consigne et Horaires prévus pour le séjour (Annotation 8 Stitch 2c313f81e4f5499abb218f5b1dc25c68) */}
@@ -1514,11 +1559,7 @@ export default function VademecumPage({ properties, currentUser, reservations = 
                       <div className="flex flex-col min-w-0">
                         <div className="flex items-center gap-1.5 flex-wrap">
                           <span className="text-xs font-bold text-on-surface leading-tight">En fonctionnement</span>
-                          {isHeatingActive ? (
-                            <span className="inline-flex items-center gap-0.5 px-2 py-0.5 rounded-full text-[10px] font-bold bg-emerald-100 text-emerald-800 dark:bg-emerald-950 dark:text-emerald-300 border border-emerald-300">
-                              🟢 Consigne active
-                            </span>
-                          ) : (
+                          {!isHeatingActive && (
                             <span className="inline-flex items-center gap-0.5 px-1.5 py-0.5 rounded-full text-[10px] font-medium bg-slate-100 text-slate-600 dark:bg-slate-800 dark:text-slate-400">
                               En réserve
                             </span>
@@ -1549,16 +1590,6 @@ export default function VademecumPage({ properties, currentUser, reservations = 
                       </button>
                     </div>
                   </div>
-
-                  {/* 2. Protection gel — label statique quand chauffage à l'arrêt */}
-                  {!isHeatingActive && (
-                    <div className="flex items-center gap-2 px-3 py-2 rounded-xl bg-slate-50 border border-slate-200">
-                      <span className="material-symbols-rounded text-blue-500 text-lg">ac_unit</span>
-                      <span className="text-sm text-slate-600">
-                        Protection gel automatique (firmware Viessmann)
-                      </span>
-                    </div>
-                  )}
                 </div>
 
                 {/* Jauge Fioul (Cuve Éts JOSSE) */}
@@ -1651,28 +1682,73 @@ export default function VademecumPage({ properties, currentUser, reservations = 
                     onIcon="local_fire_department"
                     ariaLabel="Interrupteur principal Eau Chaude Sanitaire"
                   />
-                  {/* Bandeau d'état sémantique Marche/Arrêt (Annotation 4) */}
-                  <div className={`p-2.5 rounded-xl border text-xs flex items-start gap-2 shadow-2xs ${
-                    isDhwActive
-                      ? 'bg-emerald-50/80 dark:bg-emerald-950/30 border-emerald-200 dark:border-emerald-800/60 text-emerald-950 dark:text-emerald-100'
-                      : 'bg-sky-50/80 dark:bg-sky-950/30 border-sky-200 dark:border-sky-800/60 text-sky-950 dark:text-sky-100'
-                  }`}>
-                    <span className="material-symbols-outlined text-[18px] shrink-0 mt-0.5 text-primary">
-                      {isDhwActive ? 'check_circle' : 'water_heater'}
-                    </span>
-                    <div className="flex flex-col">
-                      <span className="font-bold text-[11px]">
-                        {isDhwActive
-                          ? `Marche • Confort actif (maintien ≥ ${dhwTarget.toFixed(1)}°C)`
-                          : `Arrêt • Veille économique (maintien à ${dhwFrostTarget.toFixed(1)}°C)`}
-                      </span>
-                      <span className="text-[10px] text-on-surface-variant mt-0.5 leading-snug">
-                        {isDhwActive
-                          ? 'Chauffe-eau sous tension permanente. Le brûleur se déclenche pour maintenir le ballon à température de consigne.'
-                          : 'Chauffe-eau sous tension permanente. Aucune chauffe active en veille, seuil de protection cuve maintenu.'}
-                      </span>
-                    </div>
-                  </div>
+                  {/* Bandeau d'état sémantique Marche/Arrêt (Annotation 4 & 5) */}
+                  {(() => {
+                    const status = (() => {
+                      if (!isDhwActive) {
+                        return {
+                          title: 'Arrêt • Veille économique (maintien hors-gel)',
+                          subtext: 'Chauffe-eau sous tension permanente. Aucune chauffe active en veille, seuil de protection cuve maintenu.',
+                          icon: 'water_heater',
+                          style: 'bg-sky-50/80 dark:bg-sky-950/30 border-sky-200 dark:border-sky-800/60 text-sky-950 dark:text-sky-100'
+                        };
+                      }
+                      const isBurning = Boolean(heatingStatus?.is_dhw_heating || (isDhwActive && heatingStatus?.burner_active));
+                      const temp = heatingStatus?.dhw_temperature;
+                      const isReadOnly = Boolean(heatingStatus?.test_mode_read_only);
+
+                      if (isBurning) {
+                        return {
+                          title: `Marche • Chauffe en cours vers ${dhwTarget.toFixed(1)}°C`,
+                          subtext: 'Brûleur allumé. Montée en température du ballon vers la consigne.',
+                          icon: 'local_fire_department',
+                          style: 'bg-rose-50/80 dark:bg-rose-950/30 border-rose-200 dark:border-rose-800/60 text-rose-950 dark:text-rose-100'
+                        };
+                      }
+                      if (temp != null && temp < dhwTarget) {
+                        return {
+                          title: isReadOnly
+                            ? `Marche (consigne ${dhwTarget.toFixed(1)}°C) • Ballon à ${temp.toFixed(1)}°C au repos`
+                            : `Marche demandée • Ballon à ${temp.toFixed(1)}°C (au repos)`,
+                          subtext: isReadOnly
+                            ? 'Consigne confort mémorisée. Mode test actif : chauffe réelle désactivée (lecture seule).'
+                            : 'Chauffe-eau sous tension. Le brûleur se déclenchera selon le cycle de relance pour atteindre la consigne.',
+                          icon: 'schedule',
+                          style: 'bg-amber-50/80 dark:bg-amber-950/30 border-amber-200 dark:border-amber-800/60 text-amber-950 dark:text-amber-100'
+                        };
+                      }
+                      if (temp != null && temp >= dhwTarget) {
+                        return {
+                          title: `Marche • Eau chaude disponible (${temp.toFixed(1)}°C)`,
+                          subtext: 'Température de consigne atteinte. Maintien au repos.',
+                          icon: 'check_circle',
+                          style: 'bg-emerald-50/80 dark:bg-emerald-950/30 border-emerald-200 dark:border-emerald-800/60 text-emerald-950 dark:text-emerald-100'
+                        };
+                      }
+                      return {
+                        title: `Marche demandée (${dhwTarget.toFixed(1)}°C) • Au repos`,
+                        subtext: 'Chauffe-eau sous tension permanente. Le brûleur se déclenche pour maintenir le ballon à température de consigne.',
+                        icon: 'check_circle',
+                        style: 'bg-emerald-50/80 dark:bg-emerald-950/30 border-emerald-200 dark:border-emerald-800/60 text-emerald-950 dark:text-emerald-100'
+                      };
+                    })();
+
+                    return (
+                      <div className={`p-2.5 rounded-xl border text-xs flex items-start gap-2 shadow-2xs ${status.style}`}>
+                        <span className="material-symbols-outlined text-[18px] shrink-0 mt-0.5 text-primary">
+                          {status.icon}
+                        </span>
+                        <div className="flex flex-col">
+                          <span className="font-bold text-[11px]">
+                            {status.title}
+                          </span>
+                          <span className="text-[10px] text-on-surface-variant mt-0.5 leading-snug">
+                            {status.subtext}
+                          </span>
+                        </div>
+                      </div>
+                    );
+                  })()}
                 </div>
 
 
@@ -1744,11 +1820,7 @@ export default function VademecumPage({ properties, currentUser, reservations = 
                       <div className="flex flex-col min-w-0">
                         <div className="flex items-center gap-1.5 flex-wrap">
                           <span className="text-xs font-bold text-on-surface leading-tight">En fonctionnement</span>
-                          {isDhwActive ? (
-                            <span className="inline-flex items-center gap-0.5 px-2 py-0.5 rounded-full text-[10px] font-bold bg-emerald-100 text-emerald-800 dark:bg-emerald-950 dark:text-emerald-300 border border-emerald-300">
-                              🟢 Consigne active
-                            </span>
-                          ) : (
+                          {!isDhwActive && (
                             <span className="inline-flex items-center gap-0.5 px-1.5 py-0.5 rounded-full text-[10px] font-medium bg-slate-100 text-slate-600 dark:bg-slate-800 dark:text-slate-400">
                               En réserve
                             </span>
@@ -1781,16 +1853,6 @@ export default function VademecumPage({ properties, currentUser, reservations = 
                       </button>
                     </div>
                   </div>
-
-                  {/* 2. Protection gel — label statique quand ECS à l'arrêt */}
-                  {!isDhwActive && (
-                    <div className="flex items-center gap-2 px-3 py-2 rounded-xl bg-slate-50 border border-slate-200">
-                      <span className="material-symbols-rounded text-blue-500 text-lg">ac_unit</span>
-                      <span className="text-sm text-slate-600">
-                        Protection gel automatique (firmware Viessmann) • Anti-légionelle au redémarrage
-                      </span>
-                    </div>
-                  )}
                 </div>
 
               </div>
@@ -1971,9 +2033,10 @@ export default function VademecumPage({ properties, currentUser, reservations = 
                   Réglages des Consignes
                 </span>
 
-                {/* 1. Température en fonctionnement (Baignade) — visible uniquement quand PAC en marche */}
-                {isPoolHeatingActive && (
-                <div className={`p-3.5 bg-white dark:bg-slate-900 rounded-xl border flex items-center justify-between gap-2 shadow-2xs transition-colors border-emerald-300 dark:border-emerald-800/80 ring-1 ring-emerald-400/30`}>
+                {/* 1. Température en fonctionnement (Baignade) — toujours visible et réglable en permanence */}
+                <div className={`p-3.5 bg-white dark:bg-slate-900 rounded-xl border flex items-center justify-between gap-2 shadow-2xs transition-colors ${
+                  isPoolHeatingActive ? 'border-emerald-300 dark:border-emerald-800/80 ring-1 ring-emerald-400/30' : 'border-border-subtle'
+                }`}>
                   <div className="flex items-center gap-2.5 min-w-0 pr-1">
                     <div className="w-8 h-8 rounded-lg bg-emerald-50 dark:bg-emerald-950/50 text-emerald-700 dark:text-emerald-300 flex items-center justify-center shrink-0">
                       <span className="material-symbols-outlined text-[20px]">pool</span>
@@ -1981,11 +2044,15 @@ export default function VademecumPage({ properties, currentUser, reservations = 
                     <div className="flex flex-col min-w-0">
                       <div className="flex items-center gap-1.5 flex-wrap">
                         <span className="text-xs font-bold text-on-surface leading-tight">En fonctionnement</span>
-                        <span className="inline-flex items-center gap-0.5 px-2 py-0.5 rounded-full text-[10px] font-bold bg-emerald-100 text-emerald-800 dark:bg-emerald-950 dark:text-emerald-300 border border-emerald-300">
-                          🟢 Consigne active
-                        </span>
+                        {!isPoolHeatingActive && (
+                          <span className="inline-flex items-center gap-0.5 px-1.5 py-0.5 rounded-full text-[10px] font-medium bg-slate-100 text-slate-600 dark:bg-slate-800 dark:text-slate-400">
+                            En réserve
+                          </span>
+                        )}
                       </div>
-                      <span className="text-[10px] text-on-surface-variant">Consigne de baignade (actif)</span>
+                      <span className="text-[10px] text-on-surface-variant">
+                        Consigne de baignade ({isPoolHeatingActive ? 'actif' : 'prévu'})
+                      </span>
                     </div>
                   </div>
                   <div className="flex items-center gap-1.5 shrink-0 bg-canvas-slate p-1 rounded-full border border-border-subtle">
@@ -2010,17 +2077,6 @@ export default function VademecumPage({ properties, currentUser, reservations = 
                     </button>
                   </div>
                 </div>
-                )}
-
-                {/* Protection antigel — label statique quand PAC à l'arrêt */}
-                {!isPoolHeatingActive && (
-                  <div className="flex items-center gap-2 px-3 py-2 rounded-xl bg-slate-50 border border-slate-200">
-                    <span className="material-symbols-rounded text-blue-500 text-lg">ac_unit</span>
-                    <span className="text-sm text-slate-600">
-                      Antigel natif Klereo (seuil 0.5°C air) • Filtration réduite automatique
-                    </span>
-                  </div>
-                )}
               </div>
 
               {/* Indicators */}
