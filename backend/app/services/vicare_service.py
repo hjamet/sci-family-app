@@ -354,15 +354,14 @@ def fetch_live_telemetry() -> Dict[str, Any]:
             )
 
         if current_desired_temp is None:
-            if active_mode == "standby" or (active_mode and str(active_mode).lower().startswith("standby")):
+            if active_mode in ("standby", "dhw") or (active_mode and (str(active_mode).lower().startswith("standby") or str(active_mode).lower() == "dhw")):
                 current_desired_temp = reduced_temp or 5.0
+            elif comfort_temp is not None:
+                current_desired_temp = comfort_temp
+            elif reduced_temp is not None:
+                current_desired_temp = reduced_temp
             else:
-                err_msg = "Consigne de température chaudière introuvable depuis l'API ViCare."
-                logger.error(f"[VICARE] {err_msg}")
-                raise HTTPException(
-                    status_code=status.HTTP_502_BAD_GATEWAY,
-                    detail={"error": err_msg, "type": "ValueError"}
-                )
+                current_desired_temp = 20.0
 
         # Burner telemetry
         burner_active = False
