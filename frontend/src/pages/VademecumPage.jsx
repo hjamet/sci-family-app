@@ -1531,42 +1531,26 @@ export default function VademecumPage({ properties, currentUser, reservations = 
                     <h3 className="font-headline-sm text-headline-sm text-on-surface font-semibold truncate">Chauffage (ViCare)</h3>
                   </div>
                   <span className={`inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full font-label-sm text-[11px] font-bold shrink-0 ${
-                    heatingStatus?.burner_error_code
-                      ? 'bg-rose-600 text-white border border-rose-700 animate-pulse'
-                      : isHeatingActive && heatingStatus?.burner_active
-                        ? 'bg-rose-100 text-rose-800 border border-rose-300 animate-pulse'
-                        : isHeatingActive
-                          ? 'bg-amber-50 text-amber-800 border border-amber-200'
-                          : 'bg-slate-100 text-slate-700 border border-slate-200'
+                    isHeatingActive && heatingStatus?.burner_active
+                      ? 'bg-rose-100 text-rose-800 border border-rose-300 animate-pulse'
+                      : isHeatingActive
+                        ? 'bg-amber-50 text-amber-800 border border-amber-200'
+                        : 'bg-slate-100 text-slate-700 border border-slate-200'
                   }`}>
                     <span className={`w-1.5 h-1.5 rounded-full ${
-                      heatingStatus?.burner_error_code
-                        ? 'bg-white'
-                        : isHeatingActive && heatingStatus?.burner_active
-                          ? 'bg-rose-600 animate-ping'
-                          : isHeatingActive
-                            ? 'bg-amber-500'
-                            : 'bg-slate-400'
-                    }`}></span>
-                    {heatingStatus?.burner_error_code
-                      ? `Sécurité Brûleur (${heatingStatus.burner_error_code})`
-                      : isHeatingActive && heatingStatus?.burner_active
-                        ? 'Chauffe en cours'
+                      isHeatingActive && heatingStatus?.burner_active
+                        ? 'bg-rose-600 animate-ping'
                         : isHeatingActive
-                          ? 'Au repos (brûleur éteint)'
-                          : `Arrêt hors-gel (${heatingFrostTarget.toFixed(1)}°C)`}
+                          ? 'bg-amber-500'
+                          : 'bg-slate-400'
+                    }`}></span>
+                    {isHeatingActive && heatingStatus?.burner_active
+                      ? 'Chauffe en cours'
+                      : isHeatingActive
+                        ? 'Au repos (brûleur éteint)'
+                        : `Arrêt hors-gel (${heatingFrostTarget.toFixed(1)}°C)`}
                   </span>
                 </div>
-
-                {/* Bandeau d'alerte rouge vif Panne Brûleur (si défaut matériel détecté) */}
-                {(heatingStatus?.burner_error_message || heatingStatus?.burner_error_code) && (
-                  <div className="p-3.5 bg-rose-600 text-white rounded-xl shadow-md border border-rose-700 flex items-start gap-2.5 animate-pulse">
-                    <span className="material-symbols-outlined text-white text-[22px] shrink-0 mt-0.5">warning</span>
-                    <div className="text-xs sm:text-sm font-bold leading-snug">
-                      ⚠️ Alerte Matérielle : {heatingStatus?.burner_error_message || `Dérangement Brûleur Fioul (Code ${heatingStatus?.burner_error_code}) — Réarmement physique requis sur la chaudière.`}
-                    </div>
-                  </div>
-                )}
 
                 {/* Gros Switch Marche / Arrêt géant (Annotation 2) */}
                 <div className="space-y-1.5">
@@ -1586,14 +1570,6 @@ export default function VademecumPage({ properties, currentUser, reservations = 
                   {/* Bandeau d'état sémantique Marche/Arrêt (Annotation 4 & 5) */}
                   {(() => {
                     const status = (() => {
-                      if (heatingStatus?.burner_error_code) {
-                        return {
-                          title: `Alerte : Dérangement Brûleur Fioul (Code ${heatingStatus.burner_error_code})`,
-                          subtext: heatingStatus.burner_error_message || 'Mise en sécurité d\'allumage/combustion. Réarmement physique requis sur le coffret de sécurité de la chaudière.',
-                          icon: 'error',
-                          style: 'bg-rose-100 dark:bg-rose-950/60 border-rose-300 dark:border-rose-700 text-rose-950 dark:text-rose-100'
-                        };
-                      }
                       if (!isHeatingActive) {
                         return {
                           title: 'Arrêt • Veille économique (maintien hors-gel)',
@@ -1826,44 +1802,28 @@ export default function VademecumPage({ properties, currentUser, reservations = 
                     <h3 className="font-headline-sm text-headline-sm text-on-surface font-semibold truncate">Eau Chaude (250L)</h3>
                   </div>
                   <span className={`inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full font-label-sm text-[11px] font-bold shrink-0 ${
-                    heatingStatus?.burner_error_code
-                      ? 'bg-rose-600 text-white border border-rose-700 animate-pulse'
-                      : heatingStatus?.is_dhw_heating || (isDhwActive && heatingStatus?.burner_active)
-                        ? 'bg-rose-100 text-rose-800 border border-rose-300 animate-pulse'
-                        : isDhwActive
-                          ? 'bg-amber-50 text-amber-800 border border-amber-200'
-                          : 'bg-slate-100 text-slate-700 border border-slate-200'
+                    heatingStatus?.is_dhw_heating || (isDhwActive && heatingStatus?.burner_active)
+                      ? 'bg-rose-100 text-rose-800 border border-rose-300 animate-pulse'
+                      : isDhwActive
+                        ? 'bg-amber-50 text-amber-800 border border-amber-200'
+                        : 'bg-slate-100 text-slate-700 border border-slate-200'
                   }`}>
                     <span className={`w-1.5 h-1.5 rounded-full ${
-                      heatingStatus?.burner_error_code
-                        ? 'bg-white'
-                        : heatingStatus?.is_dhw_heating || (isDhwActive && heatingStatus?.burner_active)
-                          ? 'bg-rose-600 animate-ping'
-                          : isDhwActive
-                            ? 'bg-amber-500'
-                            : 'bg-slate-400'
+                      heatingStatus?.is_dhw_heating || (isDhwActive && heatingStatus?.burner_active)
+                        ? 'bg-rose-600 animate-ping'
+                        : isDhwActive
+                          ? 'bg-amber-500'
+                          : 'bg-slate-400'
                     }`}></span>
-                    {heatingStatus?.burner_error_code
-                      ? `Sécurité Brûleur (${heatingStatus.burner_error_code})`
-                      : heatingStatus?.is_dhw_heating || (isDhwActive && heatingStatus?.burner_active)
-                        ? 'Chauffe en cours'
-                        : (heatingStatus?.dhw_status_label || (
-                            isDhwActive
-                              ? 'Au repos (brûleur éteint)'
-                              : `À l'arrêt (Veille ${dhwFrostTarget.toFixed(1)}°C)`
-                          ))}
+                    {heatingStatus?.is_dhw_heating || (isDhwActive && heatingStatus?.burner_active)
+                      ? 'Chauffe en cours'
+                      : (heatingStatus?.dhw_status_label || (
+                          isDhwActive
+                            ? 'Au repos (brûleur éteint)'
+                            : `À l'arrêt (Veille ${dhwFrostTarget.toFixed(1)}°C)`
+                        ))}
                   </span>
                 </div>
-
-                {/* Bandeau d'alerte rouge vif Panne Brûleur (si défaut matériel détecté) */}
-                {(heatingStatus?.burner_error_message || heatingStatus?.burner_error_code) && (
-                  <div className="p-3.5 bg-rose-600 text-white rounded-xl shadow-md border border-rose-700 flex items-start gap-2.5 animate-pulse">
-                    <span className="material-symbols-outlined text-white text-[22px] shrink-0 mt-0.5">warning</span>
-                    <div className="text-xs sm:text-sm font-bold leading-snug">
-                      ⚠️ Alerte Matérielle : {heatingStatus?.burner_error_message || `Dérangement Brûleur Fioul (Code ${heatingStatus?.burner_error_code}) — Réarmement physique requis sur la chaudière.`}
-                    </div>
-                  </div>
-                )}
 
                 {/* Gros Switch Marche / Arrêt géant (Annotation 1) */}
                 <div className="space-y-1.5">
@@ -1883,14 +1843,6 @@ export default function VademecumPage({ properties, currentUser, reservations = 
                   {/* Bandeau d'état sémantique Marche/Arrêt (Annotation 4 & 5) */}
                   {(() => {
                     const status = (() => {
-                      if (heatingStatus?.burner_error_code) {
-                        return {
-                          title: `Alerte : Dérangement Brûleur Fioul (Code ${heatingStatus.burner_error_code})`,
-                          subtext: heatingStatus.burner_error_message || 'Mise en sécurité d\'allumage/combustion. Réarmement physique requis sur le coffret de sécurité de la chaudière.',
-                          icon: 'error',
-                          style: 'bg-rose-100 dark:bg-rose-950/60 border-rose-300 dark:border-rose-700 text-rose-950 dark:text-rose-100'
-                        };
-                      }
                       if (!isDhwActive) {
                         return {
                           title: 'Arrêt • Veille économique (maintien hors-gel)',

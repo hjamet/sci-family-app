@@ -253,23 +253,6 @@ def test_vicare_dhw_mode_switching_applies_comfort_and_reduced():
         mock_set_temp.assert_called_with(target_temp=10.0, program="dhw")
 
 
-def test_vicare_burner_error_detection_227():
-    """
-    Vérifie la détection médico-légale du défaut matériel brûleur (Code 227).
-    """
-    from app.schemas import HeatingStatusResponse
-    data = {
-        "burner_error_code": 227,
-        "burner_error_message": "Dérangement brûleur fioul (Code 227) : mise en sécurité d'allumage/combustion. Réarmement physique requis sur le coffret de sécurité de la chaudière.",
-        "is_heating_active": False,
-        "is_dhw_active": False,
-    }
-    resp = HeatingStatusResponse(**data)
-    assert resp.burner_error_code == 227
-    assert "Code 227" in resp.burner_error_message
-    assert "Réarmement physique" in resp.burner_error_message
-
-
 def test_klereo_pump_mode_arret_mapping():
     """
     Vérifie que les commandes 'arret', 'arrêt', 'off' de la pompe Klereo
