@@ -34,7 +34,8 @@ def test_heating_status_structure_and_types():
         assert "is_dhw_active" in data
         assert isinstance(data["is_dhw_active"], bool)
 
-        assert data.get("frost_protection_active") is True
+        assert "frost_protection_active" in data
+        assert isinstance(data["frost_protection_active"], bool)
 
         assert "comfort_temperature" in data
         assert "reduced_temperature" in data

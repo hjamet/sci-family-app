@@ -232,19 +232,22 @@ def test_vicare_double_consigne_dhw_temperature_endpoint():
 
 def test_vicare_dhw_mode_switching_applies_comfort_and_reduced():
     """
-    Vérifie que set_dhw_mode applique _dhw_comfort_temperature en marche
-    et _dhw_reduced_temperature (10°C) à l'arrêt.
+    Vérifie que set_dhw_mode applique _dhw_comfort_temperature en marche.
+    À l'arrêt, set_dhw_mode ne modifie plus la consigne (le mode circuit gère via standby).
     """
     ViCareService._dhw_comfort_temperature = 53.0
     ViCareService._dhw_reduced_temperature = 10.0
 
-    with patch.object(ViCareService, "set_temperature") as mock_set_temp:
+    with patch.object(ViCareService, "set_temperature") as mock_set_temp, \
+         patch.object(ViCareService, "get_status") as mock_get_status:
         mock_set_temp.return_value = {"status": "ok"}
+        mock_get_status.return_value = {"status": "ok"}
 
         # Marche -> Consigne confort (53.0°C)
         ViCareService.set_dhw_mode(True)
         mock_set_temp.assert_called_with(target_temp=53.0, program="dhw")
 
-        # Arrêt -> Consigne réduite (10.0°C)
+        # Arrêt -> ne modifie plus la consigne (le mode circuit standby gère)
+        mock_set_temp.reset_mock()
         ViCareService.set_dhw_mode(False)
-        mock_set_temp.assert_called_with(target_temp=10.0, program="dhw")
+        mock_set_temp.assert_not_called()

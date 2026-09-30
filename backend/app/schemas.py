@@ -730,7 +730,7 @@ class HeatingStatusResponse(BaseModel):
     dhw_status_state: str = "off"
     dhw_status_label: str = "À l'arrêt (Veille 10°C)"
     dhw_status_subtext: Optional[str] = None
-    frost_protection_active: bool = True
+    frost_protection_active: bool = False  # Défaut prudent, valeur réelle depuis l'API
     eco_mode_active: bool = False
     burner_active: bool = False
     burner_starts: Optional[int] = None
@@ -792,8 +792,8 @@ class PiscineStatusResponse(BaseModel):
     filter_pressure: Optional[float] = None
     frost_protection_target: Optional[float] = 3.0
     target_temperature: Optional[float] = None
-    antifreeze_threshold: float = 3.0
-    frost_protection_threshold: float = 3.0
+    antifreeze_threshold: float = 0.5  # SeuilHorsGel réel Klereo
+    frost_protection_threshold: float = 0.5  # SeuilHorsGel réel Klereo
     pool_comfort_target: float = 28.0
     pool_frost_target: float = 3.0
     is_pump_active: bool = False

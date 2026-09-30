@@ -806,7 +806,16 @@ export default function HeatingPage({ currentUser }) {
           </div>
         </div>
 
-        {/* Target Temperature Stepper + Slider (12°C - 24°C) */}
+        {/* Target Temperature Stepper + Slider (12°C - 24°C) — hidden when standby */}
+        {(activeMode === 'standby' || activeMode === 'forcedReduced') ? (
+        <div className="p-6 rounded-2xl bg-canvas-slate border border-border-subtle">
+          <div className="text-center py-6 text-slate-500">
+            <span className="material-symbols-rounded text-4xl text-blue-400">ac_unit</span>
+            <p className="mt-2 text-sm">Protection gel automatique (firmware Viessmann)</p>
+            <p className="text-xs text-slate-400 mt-1">Aucune consigne de température active en mode veille</p>
+          </div>
+        </div>
+        ) : (
         <div className="p-6 rounded-2xl bg-canvas-slate border border-border-subtle space-y-4">
           <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2">
             <div className="flex items-center space-x-3">
@@ -908,6 +917,7 @@ export default function HeatingPage({ currentUser }) {
             )}
           </div>
         </div>
+        )}
 
         {/* ---------------- CUVE À FIOUL (PRESBYTÈRE) ---------------- */}
         <div className="p-6 rounded-2xl bg-canvas-slate border border-border-subtle">

@@ -490,7 +490,7 @@ def fetch_live_telemetry() -> Dict[str, Any]:
             "dhw_status_state": dhw_status_state,
             "dhw_status_label": dhw_status_label,
             "dhw_status_subtext": dhw_status_subtext,
-            "frost_protection_active": True,
+            "frost_protection_active": bool(circuit.getFrostProtectionActive()) if circuit else True,
             "eco_mode_active": eco_mode_active,
             "burner_active": burner_active,
             "burner_starts": burner_starts,
@@ -704,12 +704,35 @@ class ViCareService:
     @classmethod
     def set_dhw_mode(cls, is_active: bool) -> Dict[str, Any]:
         """
-        Active ou désactive la production d'eau chaude sanitaire (ECS).
-        - Si active: applique la consigne confort (ex: 50.0°C ou 55.0°C).
-        - Si inactive: applique la consigne réduite (10.0°C, arrêt/hors-gel du ballon).
+        Active ou désactive l'ECS.
+        - Marche : applique la consigne confort (52°C) en mode dhwAndHeating ou dhw.
+        - Arrêt : ne modifie plus la consigne (le mode circuit gère via standby).
         """
-        target = cls._dhw_comfort_temperature if is_active else cls._dhw_reduced_temperature
-        return cls.set_temperature(target_temp=target, program="dhw")
+        if is_active:
+            # Remonter la consigne confort
+            cls.set_temperature(target_temp=cls._dhw_comfort_temperature, program="dhw")
+        # Le changement de mode circuit est géré par main.py (matrice d'états)
+        return cls.get_status(force_refresh=True)
+
+    @classmethod
+    def trigger_anti_legionella_cycle(cls) -> Dict[str, Any]:
+        """
+        Déclenche un cycle anti-légionelle : consigne ECS temporairement à 65°C.
+        Après 30 minutes, la consigne redescend au confort (52°C).
+        Protégé par le garde-fou read-only.
+        """
+        if is_read_only_mode():
+            logger.info("[VICARE] Cycle anti-légionelle simulé (read-only mode)")
+            return {"message": "Cycle anti-légionelle simulé (mode lecture seule)", "target": 65.0}
+
+        try:
+            boiler, _ = cls._get_boiler_and_circuit()
+            boiler.setDomesticHotWaterTemperature(65)
+            logger.info("[VICARE] Cycle anti-légionelle démarré : consigne ECS → 65°C")
+            return {"message": "Cycle anti-légionelle démarré (65°C pendant 30 min)", "target": 65.0}
+        except Exception as e:
+            logger.error(f"[VICARE] Erreur cycle anti-légionelle : {e}")
+            raise
 
     @classmethod
     def set_dhw_temperature(cls, target_temp: float, target: Optional[str] = "comfort") -> Dict[str, Any]:

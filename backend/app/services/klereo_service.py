@@ -19,6 +19,9 @@ logger = logging.getLogger(__name__)
 LOGIN_URL = "https://connect.klereo.fr/php/GetJWT.php"
 INDEX_URL = "https://connect.klereo.fr/php/GetIndex.php"
 POOL_DETAILS_URL = "https://connect.klereo.fr/php/GetPoolDetails.php"
+SET_OUT_URL = "https://connect.klereo.fr/php/SetOut.php"
+SET_PARAM_URL = "https://connect.klereo.fr/php/SetParam.php"
+COMMAND_STATUS_URL = "https://connect.klereo.fr/php/CommandStatus.php"
 
 HEADERS = {
     "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36",
@@ -164,6 +167,84 @@ class KlereoService:
             )
 
         return token
+
+    @classmethod
+    def _send_command(cls, endpoint_url: str, params: dict, timeout: int = 15) -> dict:
+        """
+        Envoie une commande au cloud Klereo et attend la confirmation (polling).
+        Retourne le résultat de la commande ou lève une exception.
+        """
+        import requests as req_lib
+
+        jwt_token = cls._authenticate()
+        auth_headers = {**HEADERS, "Authorization": f"Bearer {jwt_token}"}
+
+        # 1. Envoi de la commande
+        resp = req_lib.post(endpoint_url, headers=auth_headers, data=params, timeout=timeout)
+        resp.raise_for_status()
+        result = resp.json()
+
+        if result.get("status") != "ok":
+            raise RuntimeError(f"Klereo command rejected: {result}")
+
+        cmd_id = None
+        response_data = result.get("response", [])
+        if response_data and isinstance(response_data, list):
+            cmd_id = response_data[0].get("cmdID")
+
+        if not cmd_id:
+            return result  # Pas de cmdID = commande immédiate
+
+        # 2. Polling du statut (max 10 tentatives, intervalle 0.5s)
+        for attempt in range(10):
+            time.sleep(0.5)
+            status_resp = req_lib.post(
+                COMMAND_STATUS_URL,
+                headers=auth_headers,
+                data={"cmdID": str(cmd_id), "comMode": "1"},
+                timeout=timeout
+            )
+            status_resp.raise_for_status()
+            status_data = status_resp.json()
+
+            cmd_status = None
+            status_response = status_data.get("response", [])
+            if status_response and isinstance(status_response, list):
+                cmd_status = status_response[0].get("status")
+
+            if cmd_status == 9:  # Succès
+                logger.info(f"[KLEREO] Commande {cmd_id} exécutée avec succès (tentative {attempt+1})")
+                return status_data
+            elif cmd_status == 10:  # Échec
+                raise RuntimeError(f"Klereo command {cmd_id} failed: {status_data}")
+
+        logger.warning(f"[KLEREO] Commande {cmd_id} : timeout polling (10 tentatives)")
+        return {"status": "pending", "cmdID": cmd_id, "message": "Commande envoyée, confirmation en attente"}
+
+    @classmethod
+    def _get_system_id(cls) -> int:
+        """Retourne l'ID système Klereo du bassin."""
+        import requests as req_lib
+
+        jwt_token = cls._authenticate()
+        auth_headers = {
+            "User-Agent": HEADERS["User-Agent"],
+            "Authorization": f"Bearer {jwt_token}",
+            "Accept": "application/json, text/javascript, */*; q=0.01"
+        }
+        idx_resp = req_lib.get(INDEX_URL, headers=auth_headers, timeout=HTTP_TIMEOUT_SECONDS)
+        if idx_resp.status_code != 200:
+            raise RuntimeError(f"Klereo GetIndex failed: HTTP {idx_resp.status_code}")
+        index_data = idx_resp.json()
+        systems = index_data.get("response", [])
+        if not systems:
+            raise RuntimeError("Aucun bassin Klereo trouvé")
+        return systems[0].get("idSystem") or systems[0].get("id")
+
+    @classmethod
+    def _get_comfort_target(cls) -> float:
+        """Retourne la consigne de confort piscine (défaut 27.0°C)."""
+        return getattr(cls, '_pool_comfort_target', 27.0)
 
     @classmethod
     def fetch_live_telemetry(cls, force_refresh: bool = False) -> Dict[str, Any]:
@@ -339,7 +420,7 @@ class KlereoService:
             # - Seuil antigel usine Klereo : 3.0°C (déclenche la circulation forcée de sauvegarde).
             # - En Mode MARCHE (Confort actif) : maintien de la consigne baignade (28.0°C).
             # - En Mode ARRÊT (Veille) : aucune limite basse de chauffe, surveillance sécurité antigel Klereo (3.0°C).
-            antifreeze_threshold: float = 3.0
+            antifreeze_threshold: float = 0.5  # SeuilHorsGel réel Klereo
             pool_comfort_target: float = 28.0
 
             is_pac_switch_on = bool(pac_active or (cls._simulated_heating_state is True))
@@ -354,8 +435,8 @@ class KlereoService:
                 pac_status_subtext = "Mode Confort actif • Maintien seuil 28.0°C (compresseur PAC au repos)"
             else:
                 pac_state_desc = "Mise en veille / Arrêt consigne"
-                pac_status_label = "Hors-gel actif (seuil sécurité 3.0°C)"
-                pac_status_subtext = "Chauffage coupé • Surveillance antigel active (circulation de sauvegarde sous 3.0°C)"
+                pac_status_label = "Hors-gel actif (seuil sécurité 0.5°C)"
+                pac_status_subtext = "Chauffage coupé • Surveillance antigel active (circulation de sauvegarde sous 0.5°C)"
 
             # Timestamp de dernière remontée
             now_ts = sys_0.get("Now", int(time.time()))
@@ -499,12 +580,12 @@ class KlereoService:
                     "ph_value": None,
                     "redox_value": None,
                     "filter_pressure": None,
-                    "frost_protection_target": 3.0,
+                    "frost_protection_target": 0.5,
                     "target_temperature": 28.0 if cls._simulated_heating_state else None,
-                    "antifreeze_threshold": 3.0,
-                    "frost_protection_threshold": 3.0,
+                    "antifreeze_threshold": 0.5,
+                    "frost_protection_threshold": 0.5,
                     "pool_comfort_target": 28.0,
-                    "pool_frost_target": 3.0,
+                    "pool_frost_target": 0.5,
                     "is_heating_active": bool(cls._simulated_heating_state),
                     "pac_active": bool(cls._simulated_heating_state),
                     "test_mode_read_only": True
@@ -515,6 +596,21 @@ class KlereoService:
             data["message"] = f"Action enregistrée (mode lecture seule) : Pompe de filtration '{new_mode}'."
             return data
         else:
+            try:
+                sys_id = cls._get_system_id()
+                # Mapping mode → Klereo outIdx=1 newState
+                state_map = {"auto": "2", "on": "1", "off": "0"}
+                new_state = state_map.get(new_mode, "2")
+                cls._send_command(SET_OUT_URL, {
+                    "poolID": str(sys_id),
+                    "outIdx": "1",
+                    "newState": new_state,
+                    "comMode": "1"
+                })
+                logger.info(f"[KLEREO] Pompe filtration commandée : outIdx=1, newState={new_state}")
+            except Exception as e:
+                logger.error(f"[KLEREO] Erreur commande pompe : {e}")
+                raise HTTPException(status_code=502, detail={"error": f"Erreur Klereo : {e}"})
             return cls.get_pool_status(force_refresh=True)
 
     @classmethod
@@ -564,24 +660,55 @@ class KlereoService:
                     "ph_value": None,
                     "redox_value": None,
                     "filter_pressure": None,
-                    "frost_protection_target": 3.0,
+                    "frost_protection_target": 0.5,
                     "target_temperature": 28.0 if new_active else None,
-                    "antifreeze_threshold": 3.0,
-                    "frost_protection_threshold": 3.0,
+                    "antifreeze_threshold": 0.5,
+                    "frost_protection_threshold": 0.5,
                     "pool_comfort_target": 28.0,
-                    "pool_frost_target": 3.0,
+                    "pool_frost_target": 0.5,
                     "is_pump_active": bool(cls._simulated_pump_state) if cls._simulated_pump_state is not None else True,
                     "test_mode_read_only": True
                 }
             data["is_heating_active"] = new_active
             data["pac_active"] = new_active
             data["heating_mode"] = new_mode
-            data["target_temperature"] = 28.0 if new_active else 3.0
+            data["target_temperature"] = 28.0 if new_active else 0.5
             data["pac_state"] = "En chauffe (PAC Inopac 20 kW)" if new_active else "Mise en veille / Arrêt consigne"
-            data["pac_status_label"] = "Chauffe en cours" if new_active else "Hors-gel actif (seuil sécurité 3.0°C)"
-            data["pac_status_subtext"] = "PAC Inopac 20 kW active • Montée vers 28.0°C" if new_active else "Chauffage coupé • Surveillance antigel active (circulation de sauvegarde sous 3.0°C)"
+            data["pac_status_label"] = "Chauffe en cours" if new_active else "Hors-gel actif (seuil sécurité 0.5°C)"
+            data["pac_status_subtext"] = "PAC Inopac 20 kW active • Montée vers 28.0°C" if new_active else "Chauffage coupé • Surveillance antigel active (circulation de sauvegarde sous 0.5°C)"
             data["message"] = f"Action enregistrée (mode lecture seule) : Chauffage PAC Inopac 20 kW '{new_mode}'."
             return data
         else:
+            try:
+                sys_id = cls._get_system_id()
+                if new_active:
+                    # PAC ON : SetOut outIdx=4 newState=1 (Auto/Chauffe)
+                    cls._send_command(SET_OUT_URL, {
+                        "poolID": str(sys_id),
+                        "outIdx": "4",
+                        "newState": "1",
+                        "comMode": "1"
+                    })
+                    # Appliquer la consigne de température
+                    target = cls._get_comfort_target()  # 27°C
+                    cls._send_command(SET_PARAM_URL, {
+                        "poolID": str(sys_id),
+                        "paramID": "ConsigneEau",
+                        "newValue": str(target),
+                        "comMode": "1"
+                    })
+                    logger.info(f"[KLEREO] PAC activée, consigne → {target}°C")
+                else:
+                    # PAC OFF : SetOut outIdx=4 newState=0 (Stop)
+                    cls._send_command(SET_OUT_URL, {
+                        "poolID": str(sys_id),
+                        "outIdx": "4",
+                        "newState": "0",
+                        "comMode": "1"
+                    })
+                    logger.info("[KLEREO] PAC désactivée (mode antigel natif)")
+            except Exception as e:
+                logger.error(f"[KLEREO] Erreur commande PAC : {e}")
+                raise HTTPException(status_code=502, detail={"error": f"Erreur Klereo : {e}"})
             return cls.get_pool_status(force_refresh=True)
 

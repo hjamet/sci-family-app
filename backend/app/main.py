@@ -6806,9 +6806,81 @@ def update_heating_settings(
         dhw_setting.updated_by = author
         dhw_setting.updated_at = datetime.utcnow()
 
+    # A5: Détecter la transition ECS off→on AVANT le commit
+    dhw_was_off = dhw_setting.mode == "off" if dhw_setting and dhw_setting.mode else False
+    dhw_now_on = req.is_dhw_active is True
+
     db.commit()
     db.refresh(setting)
 
+    # ──── A4: Commande matérielle ViCare ────
+    # Relire dhw_setting après commit pour avoir l'état final
+    dhw_setting = db.query(ThermalSettings).filter(ThermalSettings.equipment_type == "dhw").first()
+    dhw_is_on = (dhw_setting.mode == "on") if dhw_setting else True  # Par défaut on
+    heating_is_on = setting.mode not in ("dhw", "standby")
+
+    try:
+        # Matrice 2 états simplifiée (cas mixtes gérés manuellement via API)
+        if heating_is_on and dhw_is_on:
+            ViCareService.set_mode("dhwAndHeating")
+            if setting.target_temperature:
+                ViCareService.set_temperature(setting.target_temperature, program="comfort")
+            if dhw_setting and dhw_setting.target_temperature:
+                ViCareService.set_temperature(dhw_setting.target_temperature, program="dhw")
+        elif not heating_is_on and not dhw_is_on:
+            ViCareService.set_mode("standby")
+        elif not heating_is_on and dhw_is_on:
+            ViCareService.set_mode("dhw")
+            if dhw_setting and dhw_setting.target_temperature:
+                ViCareService.set_temperature(dhw_setting.target_temperature, program="dhw")
+        elif heating_is_on and not dhw_is_on:
+            # Cas rare : chauffage ON, ECS OFF
+            # Compromis — dhwAndHeating avec consigne ECS non remontée
+            ViCareService.set_mode("dhwAndHeating")
+            if setting.target_temperature:
+                ViCareService.set_temperature(setting.target_temperature, program="comfort")
+            ViCareService.set_dhw_mode(False)  # Consigne ECS basse
+
+        logger.info(f"[HEATING SETTINGS] Commande ViCare envoyée : heating={heating_is_on}, dhw={dhw_is_on}")
+    except HTTPException as vicare_err:
+        if vicare_err.status_code == 403:
+            logger.info("[HEATING SETTINGS] Mode lecture seule ViCare — commande simulée")
+        else:
+            logger.error(f"[HEATING SETTINGS] Erreur ViCare : {vicare_err.detail}")
+    except Exception as vicare_err:
+        logger.error(f"[HEATING SETTINGS] Erreur ViCare inattendue : {vicare_err}")
+    # ──── FIN COMMANDE MATÉRIELLE ────
+
+    # A5: Cycle anti-légionelle si transition ECS off → on
+    if dhw_was_off and dhw_now_on:
+        try:
+            ViCareService.trigger_anti_legionella_cycle()
+            # Stocker le flag en BDD (résilient Vercel, pas de threading.Timer)
+            leg_setting = db.query(ThermalSettings).filter(ThermalSettings.equipment_type == "dhw_legionella").first()
+            if not leg_setting:
+                leg_setting = ThermalSettings(equipment_type="dhw_legionella")
+                db.add(leg_setting)
+            leg_setting.target_temperature = 65.0
+            leg_setting.updated_at = datetime.utcnow()
+            leg_setting.updated_by = author
+            db.commit()
+            logger.info("[ANTI-LEGIONELLE] Flag BDD posé pour retour confort dans 30 min")
+        except Exception as leg_err:
+            logger.warning(f"[ANTI-LEGIONELLE] Cycle non déclenché : {leg_err}")
+
+    # Vérifier si un cycle anti-légionelle précédent doit être terminé (>30 min)
+    leg_check = db.query(ThermalSettings).filter(ThermalSettings.equipment_type == "dhw_legionella").first()
+    if leg_check and leg_check.updated_at:
+        elapsed = (datetime.utcnow() - leg_check.updated_at).total_seconds()
+        if elapsed >= 1800:  # 30 minutes
+            try:
+                comfort_temp = dhw_setting.target_temperature if dhw_setting and dhw_setting.target_temperature else 52.0
+                ViCareService.set_temperature(comfort_temp, program="dhw")
+                db.delete(leg_check)
+                db.commit()
+                logger.info(f"[ANTI-LEGIONELLE] Retour consigne confort ECS → {comfort_temp}°C")
+            except Exception as restore_err:
+                logger.warning(f"[ANTI-LEGIONELLE] Erreur retour confort : {restore_err}")
     # 2. Build human-readable details
     temp_str = f"{setting.target_temperature:.1f}°C" if setting.target_temperature is not None else "19.0°C"
     mode_str = setting.mode or "dhwAndHeating"
