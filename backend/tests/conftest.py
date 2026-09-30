@@ -12,6 +12,7 @@ os.environ["POSTGRES_URL"] = ""
 os.environ["EMAIL_TEST_MODE"] = "true"
 os.environ["DISABLE_ALL_EMAILS"] = "true"
 os.environ["VICARE_TEST_MODE_READ_ONLY"] = "true"
+os.environ["VICARE_FORCE_REAL_MODE"] = "false"
 os.environ["KLEREO_TEST_MODE_READ_ONLY"] = "true"
 os.environ["RATE_LIMIT_GENERAL_PER_MINUTE"] = "999999"
 

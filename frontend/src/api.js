@@ -1,6 +1,38 @@
 const API_BASE = '/api';
 
 /**
+ * Normalise et extrait un message d'erreur textuel lisible à partir d'une réponse API ou exception.
+ * Empêche formellement tout affichage '[object Object]'.
+ */
+export function parseApiError(err, fallback = 'Une erreur est survenue') {
+  if (!err) return fallback;
+  if (typeof err === 'string') {
+    if (err.includes('[object Object]')) return fallback;
+    return err;
+  }
+  if (err.detail) {
+    if (typeof err.detail === 'string') return err.detail;
+    if (typeof err.detail === 'object') {
+      return err.detail.error || err.detail.message || JSON.stringify(err.detail);
+    }
+  }
+  if (err.error) {
+    if (typeof err.error === 'string') return err.error;
+    if (typeof err.error === 'object') {
+      return err.error.message || err.error.error || JSON.stringify(err.error);
+    }
+  }
+  if (err.message && typeof err.message === 'string' && !err.message.includes('[object Object]')) {
+    return err.message;
+  }
+  try {
+    const serialized = JSON.stringify(err);
+    if (serialized && serialized !== '{}') return serialized;
+  } catch {}
+  return fallback;
+}
+
+/**
  * Émetteur d'événements pour le centre d'alerte global fail-fast
  */
 export function emitAppError(detail) {
@@ -103,7 +135,7 @@ async function monitoredFetch(input, init = {}) {
       if (contentType.includes('application/json')) {
         const json = await clone.json();
         if (json) {
-          detailMsg = json.detail || json.message || JSON.stringify(json);
+          detailMsg = parseApiError(json, detailMsg);
         }
       } else {
         const text = await clone.text();
@@ -1076,7 +1108,7 @@ export async function setHeatingMode(mode) {
   });
   if (!res.ok) {
     const err = await res.json().catch(() => ({}));
-    throw new Error(err.detail || 'Erreur lors du changement de mode de chauffage ViCare');
+    throw new Error(parseApiError(err, 'Erreur lors du changement de mode de chauffage ViCare'));
   }
   invalidateApiCache('heating');
   invalidateApiCache('heating_status');
@@ -1091,7 +1123,7 @@ export async function setHeatingTemperature(target_temperature) {
   });
   if (!res.ok) {
     const err = await res.json().catch(() => ({}));
-    throw new Error(err.detail || 'Erreur lors du changement de température ViCare');
+    throw new Error(parseApiError(err, 'Erreur lors du changement de température ViCare'));
   }
   invalidateApiCache('heating');
   invalidateApiCache('heating_status');
@@ -1106,7 +1138,7 @@ export async function setDhwMode(is_active) {
   });
   if (!res.ok) {
     const err = await res.json().catch(() => ({}));
-    throw new Error(err.detail || 'Erreur lors du changement de mode ECS');
+    throw new Error(parseApiError(err, 'Erreur lors du changement de mode ECS'));
   }
   invalidateApiCache('heating');
   invalidateApiCache('heating_status');
@@ -1121,7 +1153,7 @@ export async function setDhwTemperature(target_temperature) {
   });
   if (!res.ok) {
     const err = await res.json().catch(() => ({}));
-    throw new Error(err.detail || 'Erreur lors du changement de consigne ECS');
+    throw new Error(parseApiError(err, 'Erreur lors du changement de consigne ECS'));
   }
   invalidateApiCache('heating');
   invalidateApiCache('heating_status');
@@ -1377,7 +1409,7 @@ export async function setPoolPumpMode(modeOrActive) {
   });
   if (!res.ok) {
     const err = await res.json().catch(() => ({}));
-    throw new Error(err.detail || 'Erreur lors du changement de mode de la pompe piscine');
+    throw new Error(parseApiError(err, 'Erreur lors du changement de mode de la pompe piscine'));
   }
   invalidateApiCache('pool');
   invalidateApiCache('pool_status');
@@ -1393,7 +1425,7 @@ export async function setPoolHeatingMode(modeOrActive) {
   });
   if (!res.ok) {
     const err = await res.json().catch(() => ({}));
-    throw new Error(err.detail || 'Erreur lors du changement de mode du chauffage piscine');
+    throw new Error(parseApiError(err, 'Erreur lors du changement de mode du chauffage piscine'));
   }
   invalidateApiCache('pool');
   invalidateApiCache('pool_status');
@@ -1716,7 +1748,7 @@ export async function saveHeatingSettings({
   });
   if (!res.ok) {
     const err = await res.json().catch(() => ({}));
-    throw new Error(err.detail || 'Erreur lors de l\'enregistrement des réglages thermiques');
+    throw new Error(parseApiError(err, 'Erreur lors de l\'enregistrement des réglages thermiques'));
   }
   invalidateApiCache('heating');
   invalidateApiCache('heating_status');
@@ -1731,7 +1763,7 @@ export async function savePoolSettings({ target_temperature, filtration_mode, mo
   });
   if (!res.ok) {
     const err = await res.json().catch(() => ({}));
-    throw new Error(err.detail || 'Erreur lors de l\'enregistrement des réglages piscine');
+    throw new Error(parseApiError(err, 'Erreur lors de l\'enregistrement des réglages piscine'));
   }
   invalidateApiCache('pool');
   invalidateApiCache('pool_status');

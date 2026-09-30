@@ -216,7 +216,18 @@ class KlereoService:
                 logger.info(f"[KLEREO] Commande {cmd_id} exécutée avec succès (tentative {attempt+1})")
                 return status_data
             elif cmd_status == 10:  # Échec
-                raise RuntimeError(f"Klereo command {cmd_id} failed: {status_data}")
+                detail_text = "Échec de commande Klereo"
+                if status_response and isinstance(status_response, list) and len(status_response) > 0:
+                    raw_detail = status_response[0].get("detail")
+                    if raw_detail:
+                        if "coffret injoignable" in str(raw_detail).lower():
+                            detail_text = (
+                                "Coffret Klereo physique injoignable : la liaison radio K-Link avec le local technique "
+                                "n'a pas répondu. Vérifiez que le coffret électrique de la piscine et le récepteur internet Klereo sont alimentés."
+                            )
+                        else:
+                            detail_text = str(raw_detail)
+                raise RuntimeError(detail_text)
 
         logger.warning(f"[KLEREO] Commande {cmd_id} : timeout polling (10 tentatives)")
         return {"status": "pending", "cmdID": cmd_id, "message": "Commande envoyée, confirmation en attente"}

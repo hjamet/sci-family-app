@@ -24,12 +24,15 @@ HTTP_TIMEOUT_SECONDS: float = 3.5
 
 def is_read_only_mode() -> bool:
     """
-    Mandatory safety interlock.
-    Enforces read-only mode for ViCare heating when VICARE_TEST_MODE_READ_ONLY is True.
-    Defaults to False to allow live hardware control in production.
+    Garde-fou ViCare : Mode réel par défaut conformément à la directive formelle d'Henri.
+    Le mode lecture seule est levé pour autoriser les commandes physiques réelles en production.
+    Pour forcer le mode lecture seule (ex: tests automatisés spécifiques), positionner :
+    VICARE_FORCE_REAL_MODE=False ET VICARE_TEST_MODE_READ_ONLY=True.
     """
-    env_val = os.getenv("VICARE_TEST_MODE_READ_ONLY", "False").strip().lower()
-    return env_val not in ("false", "0", "no")
+    if os.getenv("VICARE_FORCE_REAL_MODE", "true").strip().lower() in ("true", "1", "yes"):
+        return False
+    env_val = os.getenv("VICARE_TEST_MODE_READ_ONLY", "false").strip().lower()
+    return env_val in ("true", "1", "yes")
 
 
 def get_vicare_token_path() -> str:
