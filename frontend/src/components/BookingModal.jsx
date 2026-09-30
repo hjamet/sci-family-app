@@ -8,6 +8,23 @@ function formatYMD(d) {
   return `${y}-${m}-${day}`;
 }
 
+export function isWinterSeason(dateStr) {
+  if (!dateStr) return false;
+  try {
+    const parts = String(dateStr).split('-');
+    if (parts.length >= 2) {
+      const month = parseInt(parts[1], 10);
+      return [11, 12, 1, 2, 3].includes(month);
+    }
+    const d = new Date(dateStr);
+    if (isNaN(d.getTime())) return false;
+    const m = d.getMonth() + 1;
+    return [11, 12, 1, 2, 3].includes(m);
+  } catch (_) {
+    return false;
+  }
+}
+
 export function getDefaultWeekendRange() {
   const now = new Date();
   const day = now.getDay(); // 0: Dimanche, 1: Lundi, ..., 5: Vendredi, 6: Samedi
@@ -307,6 +324,8 @@ function BookingModalContent({
 
   // Contrôles domotiques d'anticipation
   const [poolHeating, setPoolHeating] = useState(false);
+  const [dhwHeating, setDhwHeating] = useState(false);
+  const [dhwHeatingManual, setDhwHeatingManual] = useState(false);
   const [presbytereHeating, setPresbytereHeating] = useState(false);
   const [presbytereHeatingManual, setPresbytereHeatingManual] = useState(false);
 
@@ -333,6 +352,7 @@ function BookingModalContent({
       cohabitationType,
       notes: (notes || '').trim(),
       poolHeating: Boolean(poolHeating),
+      dhwHeating: Boolean(dhwHeating),
       presbytereHeating: Boolean(presbytereHeating),
     });
     return currentSnapshot !== initialSnapshotRef.current;
@@ -370,6 +390,7 @@ function BookingModalContent({
     cohabitationType,
     notes,
     poolHeating,
+    dhwHeating,
     presbytereHeating,
     isReadOnly,
   ]);
@@ -432,8 +453,19 @@ function BookingModalContent({
         initPool = true;
         setPoolHeating(true);
       }
+      let initDhw = false;
+      if (rawNotes.toLowerCase().includes('eau chaude') || rawNotes.toLowerCase().includes('ecs')) {
+        initDhw = true;
+        setDhwHeating(true);
+        setDhwHeatingManual(true);
+      }
       let initPresb = false;
-      if (rawNotes.toLowerCase().includes('presbytère') || rawNotes.toLowerCase().includes('presbytere')) {
+      if (
+        rawNotes.toLowerCase().includes('chauffage presbytère') ||
+        rawNotes.toLowerCase().includes('chauffage presbytere') ||
+        rawNotes.toLowerCase().includes('presbytère 20°c') ||
+        rawNotes.toLowerCase().includes('presbytere 20°c')
+      ) {
         initPresb = true;
         setPresbytereHeating(true);
         setPresbytereHeatingManual(true);
@@ -506,9 +538,16 @@ function BookingModalContent({
           const found = ROOMS.find((r) => r.name === rName);
           return found ? found.house === 'presbytere' : false;
         });
-        if (hasPresb && !presbytereHeatingManual) {
-          initPresb = true;
-          setPresbytereHeating(true);
+        if (hasPresb) {
+          if (!dhwHeatingManual && !initDhw) {
+            initDhw = true;
+            setDhwHeating(true);
+          }
+          if (!presbytereHeatingManual && !initPresb) {
+            const isWinter = isWinterSeason(initStart);
+            initPresb = isWinter;
+            setPresbytereHeating(isWinter);
+          }
         }
       } else {
         setSelectedRooms([]);
@@ -539,6 +578,7 @@ function BookingModalContent({
         cohabitationType: initCohabitation,
         notes: (initNotes || '').trim(),
         poolHeating: Boolean(initPool),
+        dhwHeating: Boolean(initDhw),
         presbytereHeating: Boolean(initPresb),
       });
     } else {
@@ -556,6 +596,8 @@ function BookingModalContent({
       setNotes('');
       setSelectedRooms([]); // Annotation 1 : ZÉRO CHAMBRE SÉLECTIONNÉE PAR DÉFAUT
       setPoolHeating(false);
+      setDhwHeating(false);
+      setDhwHeatingManual(false);
       setPresbytereHeating(false);
       setPresbytereHeatingManual(false);
 
@@ -573,6 +615,7 @@ function BookingModalContent({
         cohabitationType: 'total',
         notes: '',
         poolHeating: false,
+        dhwHeating: false,
         presbytereHeating: false,
       });
     }
@@ -590,15 +633,23 @@ function BookingModalContent({
     }
     setSelectedRooms(nextRooms);
 
-    // Asservissement Chauffage Presbytère :
-    // Passage auto à 20°C si chambres Presbytère sélectionnées, maintien à 12°C sinon
+    // Asservissements Domotiques Intelligents (Presbytère) :
     const hasPresb = nextRooms.some((rName) => {
       const found = ROOMS.find((r) => r.name === rName);
       return found ? found.house === 'presbytere' : false;
     });
 
+    // Eau Chaude Sanitaire : pré-cochée dès qu'une chambre Presbytère est sélectionnée
+    if (!dhwHeatingManual) {
+      setDhwHeating(hasPresb);
+    } else if (!hasPresb) {
+      setDhwHeating(false);
+      setDhwHeatingManual(false);
+    }
+
+    // Chauffage Presbytère : pré-coché si chambre Presbytère ET saison hivernale (Nov-Mars)
     if (!presbytereHeatingManual) {
-      setPresbytereHeating(hasPresb);
+      setPresbytereHeating(hasPresb && isWinterSeason(startDate));
     } else if (!hasPresb) {
       setPresbytereHeating(false);
       setPresbytereHeatingManual(false);
@@ -661,13 +712,16 @@ function BookingModalContent({
 
       // Notes enrichies avec les consignes domotiques et participants
       const domotiqueTags = [];
-      if (poolHeating) {
-        domotiqueTags.push('Préchauffage Piscine 27°C');
+      if (dhwHeating) {
+        domotiqueTags.push('Eau Chaude Sanitaire 52°C');
       }
       if (presbytereHeating) {
         domotiqueTags.push('Chauffage Presbytère 20°C');
       } else if (hasPresb) {
         domotiqueTags.push('Chauffage Presbytère Hors-gel 12°C');
+      }
+      if (poolHeating) {
+        domotiqueTags.push('Préchauffage Piscine 27°C');
       }
 
       const notesParts = [];
@@ -912,6 +966,14 @@ function BookingModalContent({
                         if (endDate && newStart > endDate) {
                           setEndDate(newStart);
                         }
+                        if (!presbytereHeatingManual) {
+                          const safeRooms = Array.isArray(selectedRooms) ? selectedRooms : [];
+                          const hasPresb = safeRooms.some((rName) => {
+                            const found = ROOMS.find((r) => r.name === rName);
+                            return found ? found.house === 'presbytere' : false;
+                          });
+                          setPresbytereHeating(hasPresb && isWinterSeason(newStart));
+                        }
                       }}
                       className="w-full h-11 px-3 bg-surface-container-lowest text-on-surface font-body-md text-body-md rounded-DEFAULT border border-border-subtle focus:border-primary-container focus:outline-none transition-colors disabled:opacity-75 disabled:cursor-not-allowed"
                     />
@@ -1113,52 +1175,57 @@ function BookingModalContent({
                 Énergie & Confort Thermique (Anticipation de Séjour)
               </label>
             </div>
-            <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
-              {/* Switch 1 : Préchauffage Piscine */}
+            <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
+              {/* Carte 1 : Eau Chaude Sanitaire (Ballon 250L) */}
               <div className="p-3.5 rounded-DEFAULT bg-surface-container-low/70 border border-border-subtle flex flex-col gap-2.5">
                 <div className="flex items-center justify-between">
                   <span className="font-label-md text-label-md text-forest-deep flex items-center gap-1.5 font-semibold">
-                    <span className="material-symbols-outlined text-[20px] text-primary-container">pool</span>
-                    Option Bassin & Piscine (Rosings)
+                    <span className="material-symbols-outlined text-[20px] text-primary-container">water_heater</span>
+                    Eau Chaude Sanitaire (Ballon 250L)
                   </span>
                   <span className={`px-2 py-0.5 rounded-full text-xs font-semibold ${
-                    poolHeating
+                    dhwHeating
                       ? 'bg-sage-soft text-primary-container border border-sage-border'
                       : 'bg-surface-container-high text-on-surface-variant border border-border-subtle'
                   }`}>
-                    {poolHeating ? 'Préchauffage programmé (27°C)' : 'Éteinte (Standard)'}
+                    {dhwHeating ? 'Active (52°C)' : 'Veille économique (10°C)'}
                   </span>
                 </div>
                 <label
-                  htmlFor="pool-heater-checkbox"
+                  htmlFor="dhw-heater-checkbox"
                   className={`flex items-start gap-2.5 p-2.5 rounded-DEFAULT border transition-all select-none ${
                     isReadOnly ? 'cursor-default opacity-85' : 'cursor-pointer'
                   } ${
-                    poolHeating
+                    dhwHeating
                       ? 'bg-sage-soft/60 border-primary-container/40 hover:bg-sage-soft'
                       : 'bg-surface-container-lowest border-border-subtle hover:border-outline'
                   }`}
                 >
                   <input
-                    id="pool-heater-checkbox"
+                    id="dhw-heater-checkbox"
                     type="checkbox"
                     disabled={isReadOnly}
-                    checked={poolHeating}
-                    onChange={(e) => !isReadOnly && setPoolHeating(e.target.checked)}
+                    checked={dhwHeating}
+                    onChange={(e) => {
+                      if (!isReadOnly) {
+                        setDhwHeating(e.target.checked);
+                        setDhwHeatingManual(true);
+                      }
+                    }}
                     className="mt-0.5 w-5 h-5 rounded accent-primary-container cursor-pointer shrink-0 disabled:cursor-not-allowed"
                   />
                   <div className="flex flex-col min-w-0">
-                    <span className={`font-label-md text-label-md font-semibold ${poolHeating ? 'text-forest-deep' : 'text-on-surface'}`}>
-                      Préchauffage Piscine
+                    <span className={`font-label-md text-label-md font-semibold ${dhwHeating ? 'text-forest-deep' : 'text-on-surface'}`}>
+                      Eau Chaude Sanitaire
                     </span>
                     <span className="font-body-md text-xs text-on-surface-variant mt-0.5">
-                      Activation consigne confort 27°C avant l'arrivée au domaine.
+                      Ballon 250L chauffé à 52°C pour douches et sanitaires. Pré-coché si une chambre Presbytère est occupée.
                     </span>
                   </div>
                 </label>
               </div>
 
-              {/* Switch 2 : Asservissement Chauffage Presbytère */}
+              {/* Carte 2 : Asservissement Chauffage Presbytère */}
               <div className="p-3.5 rounded-DEFAULT bg-surface-container-low/70 border border-border-subtle flex flex-col gap-2.5">
                 <div className="flex items-center justify-between">
                   <span className="font-label-md text-label-md text-forest-deep flex items-center gap-1.5 font-semibold">
@@ -1201,7 +1268,51 @@ function BookingModalContent({
                       Asservissement Chauffage Presbytère
                     </span>
                     <span className="font-body-md text-xs text-on-surface-variant mt-0.5">
-                      Passage auto à 20°C si chambres Presbytère sélectionnées, maintien à 12°C sinon.
+                      Passage auto à 20°C en saison hivernale (Nov-Mars), maintien à 12°C hors saison.
+                    </span>
+                  </div>
+                </label>
+              </div>
+
+              {/* Carte 3 : Préchauffage Piscine */}
+              <div className="p-3.5 rounded-DEFAULT bg-surface-container-low/70 border border-border-subtle flex flex-col gap-2.5">
+                <div className="flex items-center justify-between">
+                  <span className="font-label-md text-label-md text-forest-deep flex items-center gap-1.5 font-semibold">
+                    <span className="material-symbols-outlined text-[20px] text-primary-container">pool</span>
+                    Option Bassin & Piscine (Rosings)
+                  </span>
+                  <span className={`px-2 py-0.5 rounded-full text-xs font-semibold ${
+                    poolHeating
+                      ? 'bg-sage-soft text-primary-container border border-sage-border'
+                      : 'bg-surface-container-high text-on-surface-variant border border-border-subtle'
+                  }`}>
+                    {poolHeating ? 'Préchauffage programmé (27°C)' : 'Éteinte (Standard)'}
+                  </span>
+                </div>
+                <label
+                  htmlFor="pool-heater-checkbox"
+                  className={`flex items-start gap-2.5 p-2.5 rounded-DEFAULT border transition-all select-none ${
+                    isReadOnly ? 'cursor-default opacity-85' : 'cursor-pointer'
+                  } ${
+                    poolHeating
+                      ? 'bg-sage-soft/60 border-primary-container/40 hover:bg-sage-soft'
+                      : 'bg-surface-container-lowest border-border-subtle hover:border-outline'
+                  }`}
+                >
+                  <input
+                    id="pool-heater-checkbox"
+                    type="checkbox"
+                    disabled={isReadOnly}
+                    checked={poolHeating}
+                    onChange={(e) => !isReadOnly && setPoolHeating(e.target.checked)}
+                    className="mt-0.5 w-5 h-5 rounded accent-primary-container cursor-pointer shrink-0 disabled:cursor-not-allowed"
+                  />
+                  <div className="flex flex-col min-w-0">
+                    <span className={`font-label-md text-label-md font-semibold ${poolHeating ? 'text-forest-deep' : 'text-on-surface'}`}>
+                      Préchauffage Piscine
+                    </span>
+                    <span className="font-body-md text-xs text-on-surface-variant mt-0.5">
+                      Activation consigne confort 27°C avant l'arrivée au domaine.
                     </span>
                   </div>
                 </label>

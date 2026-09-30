@@ -374,16 +374,31 @@ def fetch_live_telemetry() -> Dict[str, Any]:
         # Eco mode detection
         eco_mode_active = (active_program == "eco")
 
-        # Détection réelle Chauffage actif (is_heating_active)
-        # Sémantique Marche/Arrêt :
-        # - Chauffage 'à l'arrêt' (is_heating_active = False) si active_program == "reduced" ou si la consigne courante désirée est <= 10.0°C.
-        # - Chauffage 'en marche' (is_heating_active = True) uniquement si la consigne est >= 15.0°C et mode chauffe actif.
-        if active_program == "reduced" or (current_desired_temp is not None and current_desired_temp <= 10.0):
+        # Détection réelle Chauffage & ECS actif
+        # Couplage catégorique Standby (Spécification ViCare Standby) :
+        if active_mode == "standby" or (active_mode and str(active_mode).lower().startswith("standby")):
             is_heating_active = False
-        elif (current_desired_temp is not None and current_desired_temp >= 15.0) and active_mode in ("dhwAndHeating", "forcedNormal"):
-            is_heating_active = True
+            is_dhw_active = False
         else:
-            is_heating_active = False
+            # Sémantique Marche/Arrêt Chauffage :
+            # - Chauffage 'à l'arrêt' (is_heating_active = False) si active_program == "reduced" ou si la consigne courante désirée est <= 10.0°C.
+            # - Chauffage 'en marche' (is_heating_active = True) uniquement si la consigne est >= 15.0°C et mode chauffe actif.
+            if active_program == "reduced" or (current_desired_temp is not None and current_desired_temp <= 10.0):
+                is_heating_active = False
+            elif (current_desired_temp is not None and current_desired_temp >= 15.0) and active_mode in ("dhwAndHeating", "forcedNormal"):
+                is_heating_active = True
+            else:
+                is_heating_active = False
+
+            # Détection Mode Autorisé Eau Chaude Sanitaire (is_dhw_active)
+            is_mode_allowing_dhw = active_mode in ("dhw", "dhwAndHeating", "forcedNormal")
+            is_consigne_confort = (dhw_configured_temp is None or dhw_configured_temp > 15.0)
+            is_not_off = (raw_dhw_mode is None or str(raw_dhw_mode).lower() not in ("off", "standby"))
+
+            if is_mode_allowing_dhw and is_consigne_confort and is_not_off:
+                is_dhw_active = True
+            else:
+                is_dhw_active = False
 
         # Détection Chauffe Physique Réelle Chauffage (is_heating_burning)
         # Ne chauffe réellement que si l'interrupteur est ON ET que le brûleur fioul tourne
@@ -396,9 +411,13 @@ def fetch_live_telemetry() -> Dict[str, Any]:
 
         if not is_heating_active:
             heating_status_state = "off"
-            frost_temp_str = f"{target_temp:.1f}°C"
-            heating_status_label = f"Arrêt hors-gel ({frost_temp_str})"
-            heating_status_subtext = f"Consigne hors-gel {frost_temp_str} • Veille économique (chaudière sous tension)"
+            if active_mode == "standby" or (active_mode and str(active_mode).lower().startswith("standby")):
+                heating_status_label = "Arrêt (Veille chaudière standby)"
+                heating_status_subtext = "Chaudière en veille totale standby • Chauffage et ECS coupés"
+            else:
+                frost_temp_str = f"{target_temp:.1f}°C"
+                heating_status_label = f"Arrêt hors-gel ({frost_temp_str})"
+                heating_status_subtext = f"Consigne hors-gel {frost_temp_str} • Veille économique (chaudière sous tension)"
         elif is_heating_burning:
             heating_status_state = "heating"
             heating_status_label = "Chauffe en cours"
@@ -409,32 +428,15 @@ def fetch_live_telemetry() -> Dict[str, Any]:
             room_str = f" • Ambiance {room_temp:.1f}°C" if room_temp is not None else ""
             heating_status_subtext = f"Confort actif ({target_temp:.1f}°C){room_str} • Brûleur éteint (température maintenue)"
 
-        # Détection Mode Autorisé Eau Chaude Sanitaire (is_dhw_active)
-        # Sémantique de l'interrupteur principal ECS :
-        # - L'ECS est 'en marche' (is_dhw_active = True) si la chaudière est configurée en mode ECS/Hiver
-        #   ET que la consigne est en mode confort (> 15.0°C, car <= 10.0°C = seuil de coupure/hors-gel Vitotronic)
-        #   ET que le mode n'est pas explicitement éteint ('off' / 'standby').
-        # - L'ECS est 'à l'arrêt' (is_dhw_active = False) si la consigne est <= 10.0°C ou si le mode chaudière est hors-gel/veille.
-        is_mode_allowing_dhw = active_mode in ("dhw", "dhwAndHeating", "forcedNormal")
-        is_consigne_confort = (dhw_configured_temp is None or dhw_configured_temp > 15.0)
-        is_not_off = (raw_dhw_mode is None or str(raw_dhw_mode).lower() not in ("off", "standby"))
-
-        if is_mode_allowing_dhw and is_consigne_confort and is_not_off:
-            is_dhw_active = True
-        else:
-            is_dhw_active = False
-
-        # Double consigne ECS ViCare (Confort marche 52.0°C vs Réduit veille 10.0°C)
+        # Consigne ECS ViCare (Préservation stricte de la consigne réelle sans écrasement artificiel 10°C)
         dhw_comfort = ViCareService._dhw_comfort_temperature
         if dhw_configured_temp is not None and dhw_configured_temp > 15.0:
             dhw_comfort = dhw_configured_temp
             ViCareService._dhw_comfort_temperature = dhw_comfort
         dhw_reduced = ViCareService._dhw_reduced_temperature
 
-        # Consigne active ECS effective :
-        # - Mode Marche : consigne confort (52.0°C)
-        # - Mode Arrêt : consigne veille économique (10.0°C)
-        dhw_active_target = dhw_comfort if is_dhw_active else dhw_reduced
+        # Consigne active ECS effective : réelle consigne configurée sans artefact 10°C
+        dhw_active_target = dhw_configured_temp if dhw_configured_temp is not None else dhw_comfort
 
         # Détection Chauffe Physique Réelle ECS (is_dhw_heating) - Vérité Terrain Absolue
         # Le ballon ne chauffe QUE SI le brûleur tourne réellement ET que l'ECS est active
@@ -443,11 +445,15 @@ def fetch_live_telemetry() -> Dict[str, Any]:
         else:
             is_dhw_heating = False
 
-        # Qualification sémantique limpide de l'état ECS (Annotations 7 & 9)
+        # Qualification sémantique limpide de l'état ECS
         if not is_dhw_active:
             dhw_status_state = "off"
-            dhw_status_label = f"À l'arrêt (Veille {dhw_reduced:.0f}°C)"
-            dhw_status_subtext = f"Consigne veille {dhw_reduced:.1f}°C • Ballon sous tension (chauffe coupée)"
+            if active_mode == "standby" or (active_mode and str(active_mode).lower().startswith("standby")):
+                dhw_status_label = "À l'arrêt (Veille chaudière standby)"
+                dhw_status_subtext = "Chaudière en veille standby • Ballon et brûleur coupés"
+            else:
+                dhw_status_label = "À l'arrêt (Veille)"
+                dhw_status_subtext = "Ballon sous tension • Chauffe coupée"
         elif is_dhw_heating:
             dhw_status_state = "heating"
             dhw_status_label = "Chauffe en cours"
@@ -570,7 +576,7 @@ class ViCareService:
         if "dhw_status_label" not in data:
             data["dhw_status_label"] = (
                 "Chauffe en cours" if data.get("is_dhw_heating")
-                else ("Au repos (brûleur éteint)" if data.get("is_dhw_active") else "À l'arrêt (Veille 10°C)")
+                else ("Au repos (brûleur éteint)" if data.get("is_dhw_active") else "À l'arrêt (Veille)")
             )
         if "dhw_status_subtext" not in data:
             data["dhw_status_subtext"] = None
@@ -704,15 +710,14 @@ class ViCareService:
     def set_dhw_mode(cls, is_active: bool) -> Dict[str, Any]:
         """
         Active ou désactive l'ECS.
-        - Marche : applique la consigne confort (52°C) en mode dhwAndHeating ou dhw.
-        - Arrêt : applique impérativement la consigne réduite de veille (10.0°C) sur la chaudière.
-          Sur ViCare Vitotronic, le seul moyen matériel de couper la charge ECS est de descendre la consigne
-          à son plancher (10°C), ce qui fait basculer is_dhw_active à False.
+        - Marche : applique le mode 'dhw' (ou active l'ECS) avec consigne confort 52°C.
+        - Arrêt : passe en mode 'standby' (coupure totale). Zéro consigne artificielle 10°C.
         """
         if is_active:
+            cls.set_mode("dhw")
             cls.set_temperature(target_temp=cls._dhw_comfort_temperature, program="dhw")
         else:
-            cls.set_temperature(target_temp=cls._dhw_reduced_temperature, program="dhw")
+            cls.set_mode("standby")
         return cls.get_status(force_refresh=True)
 
     @classmethod

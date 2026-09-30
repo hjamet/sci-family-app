@@ -6796,16 +6796,6 @@ def update_heating_settings(
     elif setting.target_temperature is None:
         setting.target_temperature = 20.0
 
-    if req.is_heating_active is not None:
-        setting.mode = "dhwAndHeating" if req.is_heating_active else "dhw"
-    elif req.mode is not None:
-        setting.mode = req.mode
-    elif setting.mode is None:
-        setting.mode = "dhwAndHeating"
-
-    setting.updated_by = author
-    setting.updated_at = datetime.utcnow()
-
     # 1b. Support frost / standby temperature
     frost_setting = db.query(ThermalSettings).filter(ThermalSettings.equipment_type == "heating_frost").first()
     if req.frost_temperature is not None:
@@ -6818,54 +6808,74 @@ def update_heating_settings(
 
     # 1c. Support DHW settings
     dhw_setting = db.query(ThermalSettings).filter(ThermalSettings.equipment_type == "dhw").first()
-    if req.is_dhw_active is not None or req.dhw_target_temperature is not None:
-        if not dhw_setting:
-            dhw_setting = ThermalSettings(equipment_type="dhw")
-            db.add(dhw_setting)
-        if req.is_dhw_active is not None:
-            dhw_setting.mode = "on" if req.is_dhw_active else "off"
-        if req.dhw_target_temperature is not None:
-            dhw_setting.target_temperature = req.dhw_target_temperature
-        dhw_setting.updated_by = author
-        dhw_setting.updated_at = datetime.utcnow()
+    if not dhw_setting:
+        dhw_setting = ThermalSettings(equipment_type="dhw")
+        db.add(dhw_setting)
+    if req.dhw_target_temperature is not None:
+        dhw_setting.target_temperature = req.dhw_target_temperature
+
+    # Résolution des états booléens selon spécification stricte
+    if req.is_dhw_active is not None:
+        is_dhw = bool(req.is_dhw_active)
+    elif req.mode == "standby":
+        is_dhw = False
+    else:
+        is_dhw = (dhw_setting.mode == "on") if dhw_setting.mode else True
+
+    if req.is_heating_active is not None:
+        is_heating = bool(req.is_heating_active)
+    elif req.mode in ("standby", "dhw"):
+        is_heating = False
+    elif req.mode == "dhwAndHeating":
+        is_heating = True
+    else:
+        is_heating = (setting.mode == "dhwAndHeating") if setting.mode else True
+
+    # Couplage Matériel Standby / Été / Hiver :
+    # - Si not req.is_dhw_active : coupure totale ➔ ViCareService.set_mode("standby"), setting.mode = "standby", dhw_setting.mode = "off"
+    # - Si req.is_dhw_active and not req.is_heating_active : mode été ➔ ViCareService.set_mode("dhw"), setting.mode = "dhw", dhw_setting.mode = "on"
+    # - Si req.is_dhw_active and req.is_heating_active : mode hiver ➔ ViCareService.set_mode("dhwAndHeating"), setting.mode = "dhwAndHeating", dhw_setting.mode = "on"
+    if not is_dhw:
+        target_mode = "standby"
+        setting.mode = "standby"
+        dhw_setting.mode = "off"
+    elif not is_heating:
+        target_mode = "dhw"
+        setting.mode = "dhw"
+        dhw_setting.mode = "on"
+    else:
+        target_mode = "dhwAndHeating"
+        setting.mode = "dhwAndHeating"
+        dhw_setting.mode = "on"
+
+    setting.updated_by = author
+    setting.updated_at = datetime.utcnow()
+    dhw_setting.updated_by = author
+    dhw_setting.updated_at = datetime.utcnow()
 
     # A5: Détecter la transition ECS off→on AVANT le commit
     dhw_was_off = dhw_setting.mode == "off" if dhw_setting and dhw_setting.mode else False
-    dhw_now_on = req.is_dhw_active is True
+    dhw_now_on = is_dhw
 
     db.commit()
     db.refresh(setting)
 
-    # ──── A4: Commande matérielle ViCare ────
-    # Relire dhw_setting après commit pour avoir l'état final
-    dhw_setting = db.query(ThermalSettings).filter(ThermalSettings.equipment_type == "dhw").first()
-    dhw_is_on = (dhw_setting.mode == "on") if dhw_setting else True  # Par défaut on
-    heating_is_on = setting.mode not in ("dhw", "standby")
-
+    # ──── Commande matérielle ViCare ────
     try:
-        # Matrice 2 états simplifiée (cas mixtes gérés manuellement via API)
-        if heating_is_on and dhw_is_on:
-            ViCareService.set_mode("dhwAndHeating")
-            if setting.target_temperature:
-                ViCareService.set_temperature(setting.target_temperature, program="comfort")
-            if dhw_setting and dhw_setting.target_temperature:
-                ViCareService.set_temperature(dhw_setting.target_temperature, program="dhw")
-        elif not heating_is_on and not dhw_is_on:
+        if not is_dhw:
             ViCareService.set_mode("standby")
-            ViCareService.set_dhw_mode(False)  # Consigne ECS réduite 10°C (veille)
-        elif not heating_is_on and dhw_is_on:
+        elif not is_heating:
             ViCareService.set_mode("dhw")
-            if dhw_setting and dhw_setting.target_temperature:
+            if dhw_setting.target_temperature:
                 ViCareService.set_temperature(dhw_setting.target_temperature, program="dhw")
-        elif heating_is_on and not dhw_is_on:
-            # Cas rare : chauffage ON, ECS OFF
-            # Compromis — dhwAndHeating avec consigne ECS non remontée
+        else:
             ViCareService.set_mode("dhwAndHeating")
             if setting.target_temperature:
                 ViCareService.set_temperature(setting.target_temperature, program="comfort")
-            ViCareService.set_dhw_mode(False)  # Consigne ECS basse
+            if dhw_setting.target_temperature:
+                ViCareService.set_temperature(dhw_setting.target_temperature, program="dhw")
 
-        logger.info(f"[HEATING SETTINGS] Commande ViCare envoyée : heating={heating_is_on}, dhw={dhw_is_on}")
+        logger.info(f"[HEATING SETTINGS] Commande ViCare envoyée : mode={target_mode}, heating={is_heating}, dhw={is_dhw}")
     except HTTPException as vicare_err:
         if vicare_err.status_code == 403:
             logger.info("[HEATING SETTINGS] Mode lecture seule ViCare actif")

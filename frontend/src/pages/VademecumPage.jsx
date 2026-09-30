@@ -536,22 +536,28 @@ export default function VademecumPage({ properties, currentUser, reservations = 
   // Bascule du switch Marche/Arrêt Eau Chaude Sanitaire avec boucle fermée et réconciliation télémétrique réelle
   const handleToggleDhw = async (targetActive) => {
     setIsDhwActive(targetActive);
+    if (!targetActive) {
+      setIsHeatingActive(false);
+    }
     setSavingThermal(true);
     try {
       await saveHeatingSettings({
-        is_heating_active: isHeatingActive,
+        is_heating_active: targetActive ? isHeatingActive : false,
         target_temperature: heatingComfortTarget,
         frost_temperature: heatingFrostTarget,
         is_dhw_active: targetActive,
         dhw_target_temperature: targetActive ? dhwTarget : dhwFrostTarget,
+        mode: targetActive ? (isHeatingActive ? 'dhwAndHeating' : 'dhw') : 'standby',
         author_name: resolveCurrentUserFullName(currentUser),
         details: targetActive
           ? `Eau Chaude (250L) activée en Marche (Chauffe cible ${dhwTarget.toFixed(1)}°C)`
-          : `Eau Chaude (250L) mise à l'Arrêt (Veille à ${dhwFrostTarget.toFixed(1)}°C)`
+          : `Eau Chaude (250L) et Chaudière mises à l'Arrêt (Veille totale standby)`
       });
       try {
-        await setDhwMode(targetActive);
-        if (targetActive) {
+        if (!targetActive) {
+          await apiSetHeatingMode('standby');
+        } else {
+          await setDhwMode(true);
           await setDhwTemperature(dhwTarget);
         }
       } catch (_) {}
@@ -566,6 +572,9 @@ export default function VademecumPage({ properties, currentUser, reservations = 
           : (freshHeat.dhw_target_temperature != null && freshHeat.dhw_target_temperature > 20.0);
         // Recalage strict sur l'état physique réel
         setIsDhwActive(realDhwActive);
+        if (!targetActive) {
+          setIsHeatingActive(Boolean(freshHeat.is_heating_active));
+        }
 
         if (!targetActive && realDhwActive) {
           showToast("La commande a été transmise, mais l'équipement physique signale être toujours en marche.");
@@ -575,7 +584,7 @@ export default function VademecumPage({ properties, currentUser, reservations = 
           showToast(
             realDhwActive
               ? `Eau Chaude confirmée en marche (Cible : ${dhwTarget.toFixed(1)}°C) 🔥`
-              : `Eau Chaude confirmée à l'arrêt (Veille à ${dhwFrostTarget.toFixed(1)}°C) 🛑`
+              : `Eau Chaude confirmée à l'arrêt (Chaudière en veille totale standby) 🛑`
           );
         }
       }
@@ -585,6 +594,9 @@ export default function VademecumPage({ properties, currentUser, reservations = 
         if (fallback && !fallback.error) {
           setHeatingStatus(fallback);
           setIsDhwActive(Boolean(fallback.is_dhw_active));
+          if (!targetActive) {
+            setIsHeatingActive(Boolean(fallback.is_heating_active));
+          }
         }
       } catch (_) {}
       showToast(`Erreur liaison eau chaude : ${err.message}`);
@@ -2074,23 +2086,13 @@ export default function VademecumPage({ properties, currentUser, reservations = 
                 </div>
               )}
 
-              {/* Double Switch Marche / Arrêt Piscine (Annotation 4) */}
+              {/* Contrôles Piscine (Régulation Filtration Klereo & Chauffage PAC) */}
               <div className="space-y-3">
-                {/* 1. Switch Pompe de filtration */}
-                <div className="space-y-1.5">
-                  <span className="text-[11px] font-bold text-on-surface-variant uppercase tracking-wider block">
-                    Pompe de filtration
+                {/* 1. Badge informatif Régulation Automatique Klereo */}
+                <div className="p-3 rounded-xl bg-sky-50/80 dark:bg-sky-950/30 border border-sky-200 dark:border-sky-800/60 text-sky-950 dark:text-sky-100 flex items-center gap-2">
+                  <span className="text-xs font-medium leading-snug">
+                    💧 Filtration : Active • Régulation automatique Klereo (selon température de l'eau)
                   </span>
-                  <ThermalMasterSwitch
-                    isActive={isPoolPumpActive}
-                    onChange={handleTogglePoolPump}
-                    disabled={Boolean(piscineError) || savingThermal}
-                    offLabel="Arrêt"
-                    onLabel="Marche"
-                    offIcon="power_settings_new"
-                    onIcon="local_fire_department"
-                    ariaLabel="Interrupteur Pompe de filtration piscine"
-                  />
                 </div>
 
                 {/* 2. Switch Chauffage Piscine (PAC Inopac 20 kW) */}
