@@ -6955,7 +6955,7 @@ def update_heating_settings(
         title="Consignes thermiques modifiées : Presbytère",
         description=f"{details} (par {author})",
         notif_type="thermal",
-        link_path="/energie",
+        link_path="/sejour",
         email_entry=dispatched_thermal_email
     )
 

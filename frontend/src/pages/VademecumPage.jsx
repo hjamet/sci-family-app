@@ -190,18 +190,19 @@ export default function VademecumPage({ properties, currentUser, reservations = 
   const [currentPageIndex, setCurrentPageIndex] = useState(0); // 0 = Domaine seul, 1..N = Séjours futurs
   const [stayLoading, setStayLoading] = useState(true);
 
-  // Navigation automatique vers la section Vadémécum si ancre #vademecum présente (Annotation 5)
+  // Navigation automatique vers la section Vadémécum ou Chauffage si ancre présente
   useEffect(() => {
-    const scrollToVademecum = () => {
-      const el = document.getElementById('vademecum');
+    const scrollToTarget = (targetId) => {
+      const el = document.getElementById(targetId);
       if (el) {
         el.scrollIntoView({ behavior: 'smooth', block: 'start' });
       }
     };
 
-    if (location.hash === '#vademecum' || (typeof window !== 'undefined' && window.location.hash === '#vademecum')) {
-      const t1 = setTimeout(scrollToVademecum, 100);
-      const t2 = setTimeout(scrollToVademecum, 400);
+    const hash = (location.hash || (typeof window !== 'undefined' ? window.location.hash : '')).replace('#', '');
+    if (hash === 'vademecum' || hash === 'chauffage') {
+      const t1 = setTimeout(() => scrollToTarget(hash), 100);
+      const t2 = setTimeout(() => scrollToTarget(hash), 400);
       return () => {
         clearTimeout(t1);
         clearTimeout(t2);
@@ -1509,7 +1510,7 @@ export default function VademecumPage({ properties, currentUser, reservations = 
       {/* ===================================================================== */}
       {/* 3. CHAUFFAGE ET PISCINE (Annotation 4)                                */}
       {/* ===================================================================== */}
-      <section className="bg-surface-container-lowest rounded-lg p-6 sm:p-8 lg:p-10 shadow-sm border border-border-subtle mb-10 flex flex-col gap-6 w-full max-w-full">
+      <section id="chauffage" className="scroll-mt-24 bg-surface-container-lowest rounded-lg p-6 sm:p-8 lg:p-10 shadow-sm border border-border-subtle mb-10 flex flex-col gap-6 w-full max-w-full">
         <div className="flex flex-wrap items-center justify-between gap-4 border-b border-border-subtle pb-5">
           <div className="flex items-center gap-3">
             <div className="w-11 h-11 rounded-2xl bg-sage-soft text-primary flex items-center justify-center shrink-0">

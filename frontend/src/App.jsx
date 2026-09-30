@@ -9,7 +9,6 @@ import TasksPage from './pages/TasksPage';
 import ProjectsPage from './components/ProjectsPage';
 import AdminPage from './components/AdminPage';
 import VademecumPage from './components/VademecumPage';
-import HeatingPage from './pages/HeatingPage';
 import SettingsPage from './pages/SettingsPage';
 import StatistiquesPage from './pages/StatistiquesPage';
 import BookingModal from './components/BookingModal';
@@ -111,8 +110,7 @@ export default function App() {
     if (path === '/reservations' || path === '/calendrier') return 'calendrier';
     if (path === '/tasks' || path === '/taches' || path === '/votes' || path === '/projets') return 'tasks';
     if (path === '/admin') return 'admin';
-    if (path === '/vademecum' || path === '/sejour') return 'sejour';
-    if (path === '/energie' || path === '/chauffage') return 'energie';
+    if (path === '/vademecum' || path === '/sejour' || path === '/energie' || path === '/chauffage') return 'sejour';
     if (path === '/parametres' || path === '/settings') return 'parametres';
     if (path === '/statistiques' || path === '/stats') return 'statistiques';
     return 'home';
@@ -200,8 +198,8 @@ export default function App() {
       admin: '/admin',
       vademecum: '/sejour',
       sejour: '/sejour',
-      energie: '/energie',
-      chauffage: '/energie',
+      energie: '/sejour',
+      chauffage: '/sejour',
       parametres: '/parametres',
       settings: '/parametres',
       statistiques: '/statistiques',
@@ -326,22 +324,8 @@ export default function App() {
               />
             }
           />
-          <Route
-            path="/energie"
-            element={
-              <HeatingPage
-                currentUser={currentUser}
-              />
-            }
-          />
-          <Route
-            path="/chauffage"
-            element={
-              <HeatingPage
-                currentUser={currentUser}
-              />
-            }
-          />
+          <Route path="/energie" element={<Navigate to="/sejour" replace />} />
+          <Route path="/chauffage" element={<Navigate to="/sejour" replace />} />
           <Route
             path="/parametres"
             element={

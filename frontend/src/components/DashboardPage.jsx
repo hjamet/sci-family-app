@@ -353,7 +353,7 @@ export default function DashboardPage({
       'finances-cca': '/admin',
       vademecum: '/sejour',
       sejour: '/sejour',
-      energie: '/energie',
+      energie: '/sejour',
     };
     const cleanKey = pathPart.startsWith('/') ? pathPart.slice(1) : pathPart;
     const basePath = routeMap[pathPart] || routeMap[cleanKey] || (pathPart.startsWith('/') ? pathPart : `/${pathPart}`);
@@ -670,7 +670,7 @@ export default function DashboardPage({
             <span
               onClick={(e) => {
                 e.stopPropagation();
-                navigateTo('/energie');
+                navigateTo('/sejour#chauffage');
               }}
               className="inline-flex items-center gap-1.5 text-[11px] font-semibold uppercase tracking-wider px-2.5 py-1 rounded-full bg-white/15 backdrop-blur-sm text-teal-100 hover:bg-white/30 cursor-pointer transition-all"
               title="Consulter la télémesure & chauffage ViCare"
