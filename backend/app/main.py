@@ -85,6 +85,8 @@ from .services.email_service import (
     send_thermal_change_email,
     send_password_reset_email,
     send_mention_notification,
+    send_task_chat_activity_email,
+    send_vote_chat_activity_email,
     notify_coordinator_new_issue,
     notify_all_members_project_vote,
     record_dispatched_email,
@@ -703,8 +705,10 @@ def run_member_migrations():
                         conn.execute(text("ALTER TABLE members ADD COLUMN notify_task_creation BOOLEAN DEFAULT 0"))
                     if "notif_task_completed" not in column_names:
                         conn.execute(text("ALTER TABLE members ADD COLUMN notif_task_completed BOOLEAN DEFAULT 1"))
-                    if "notif_stay_confirmation" not in column_names:
-                        conn.execute(text("ALTER TABLE members ADD COLUMN notif_stay_confirmation BOOLEAN DEFAULT 1"))
+                    if "notif_task_chat_activity" not in column_names:
+                        conn.execute(text("ALTER TABLE members ADD COLUMN notif_task_chat_activity BOOLEAN DEFAULT 0"))
+                    if "notif_vote_chat_activity" not in column_names:
+                        conn.execute(text("ALTER TABLE members ADD COLUMN notif_vote_chat_activity BOOLEAN DEFAULT 0"))
                     if "notif_stay_reminder" not in column_names:
                         conn.execute(text("ALTER TABLE members ADD COLUMN notif_stay_reminder BOOLEAN DEFAULT 1"))
                     if "notif_heating_start" not in column_names:
@@ -714,7 +718,8 @@ def run_member_migrations():
                     conn.execute(text("UPDATE members SET notify_mentions = 1 WHERE notify_mentions IS NULL"))
                     conn.execute(text("UPDATE members SET notify_task_creation = 0 WHERE notify_task_creation IS NULL"))
                     conn.execute(text("UPDATE members SET notif_task_completed = 1 WHERE notif_task_completed IS NULL"))
-                    conn.execute(text("UPDATE members SET notif_stay_confirmation = 1 WHERE notif_stay_confirmation IS NULL"))
+                    conn.execute(text("UPDATE members SET notif_task_chat_activity = 0 WHERE notif_task_chat_activity IS NULL"))
+                    conn.execute(text("UPDATE members SET notif_vote_chat_activity = 0 WHERE notif_vote_chat_activity IS NULL"))
                     conn.execute(text("UPDATE members SET notif_stay_reminder = 1 WHERE notif_stay_reminder IS NULL"))
                     conn.execute(text("UPDATE members SET notif_heating_start = 1 WHERE notif_heating_start IS NULL"))
                     conn.execute(text("UPDATE members SET notif_heating_stop = 1 WHERE notif_heating_stop IS NULL"))
@@ -743,14 +748,16 @@ def run_member_migrations():
                 conn.execute(text("ALTER TABLE members ADD COLUMN IF NOT EXISTS is_coordinator BOOLEAN DEFAULT FALSE;"))
                 conn.execute(text("ALTER TABLE members ADD COLUMN IF NOT EXISTS notify_task_creation BOOLEAN DEFAULT FALSE;"))
                 conn.execute(text("ALTER TABLE members ADD COLUMN IF NOT EXISTS notif_task_completed BOOLEAN DEFAULT TRUE;"))
-                conn.execute(text("ALTER TABLE members ADD COLUMN IF NOT EXISTS notif_stay_confirmation BOOLEAN DEFAULT TRUE;"))
+                conn.execute(text("ALTER TABLE members ADD COLUMN IF NOT EXISTS notif_task_chat_activity BOOLEAN DEFAULT FALSE;"))
+                conn.execute(text("ALTER TABLE members ADD COLUMN IF NOT EXISTS notif_vote_chat_activity BOOLEAN DEFAULT FALSE;"))
                 conn.execute(text("ALTER TABLE members ADD COLUMN IF NOT EXISTS notif_stay_reminder BOOLEAN DEFAULT TRUE;"))
                 conn.execute(text("ALTER TABLE members ADD COLUMN IF NOT EXISTS notif_heating_start BOOLEAN DEFAULT TRUE;"))
                 conn.execute(text("ALTER TABLE members ADD COLUMN IF NOT EXISTS notif_heating_stop BOOLEAN DEFAULT TRUE;"))
                 conn.execute(text("UPDATE members SET notify_mentions = TRUE WHERE notify_mentions IS NULL;"))
                 conn.execute(text("UPDATE members SET notify_task_creation = FALSE WHERE notify_task_creation IS NULL;"))
                 conn.execute(text("UPDATE members SET notif_task_completed = TRUE WHERE notif_task_completed IS NULL;"))
-                conn.execute(text("UPDATE members SET notif_stay_confirmation = TRUE WHERE notif_stay_confirmation IS NULL;"))
+                conn.execute(text("UPDATE members SET notif_task_chat_activity = FALSE WHERE notif_task_chat_activity IS NULL;"))
+                conn.execute(text("UPDATE members SET notif_vote_chat_activity = FALSE WHERE notif_vote_chat_activity IS NULL;"))
                 conn.execute(text("UPDATE members SET notif_stay_reminder = TRUE WHERE notif_stay_reminder IS NULL;"))
                 conn.execute(text("UPDATE members SET notif_heating_start = TRUE WHERE notif_heating_start IS NULL;"))
                 conn.execute(text("UPDATE members SET notif_heating_stop = TRUE WHERE notif_heating_stop IS NULL;"))
@@ -1322,12 +1329,14 @@ def get_auth_profile(current_user: User = Depends(get_current_user)):
         "notif_vote_required": getattr(current_user, "notif_vote_needed", True),
         "notif_vote_closed": getattr(current_user, "notif_vote_closed", True),
         "notif_stay_booked": getattr(current_user, "notif_stay_booked", True),
-        "notif_stay_confirmation": getattr(current_user, "notif_stay_confirmation", True),
         "notif_stay_reminder": getattr(current_user, "notif_stay_reminder", True),
         "notif_heating_start": getattr(current_user, "notif_heating_start", True),
         "notif_heating_stop": getattr(current_user, "notif_heating_stop", True),
         "notif_thermal_changes": getattr(current_user, "notif_thermal_changes", False),
         "notify_mentions": getattr(current_user, "notify_mentions", True),
+        "notif_chat_mentions": getattr(current_user, "notify_mentions", True),
+        "notif_task_chat_activity": getattr(current_user, "notif_task_chat_activity", False),
+        "notif_vote_chat_activity": getattr(current_user, "notif_vote_chat_activity", False),
         "notify_new_task": getattr(current_user, "notif_task_assigned", True),
         "notify_pending_vote": getattr(current_user, "notif_vote_needed", True),
         "notify_final_decision": getattr(current_user, "notif_vote_closed", True),
@@ -1386,9 +1395,6 @@ def update_auth_profile(
     elif data.notify_new_stay is not None:
         current_user.notif_stay_booked = data.notify_new_stay
 
-    if data.notif_stay_confirmation is not None:
-        current_user.notif_stay_confirmation = data.notif_stay_confirmation
-
     if data.notif_stay_reminder is not None:
         current_user.notif_stay_reminder = data.notif_stay_reminder
 
@@ -1405,6 +1411,14 @@ def update_auth_profile(
 
     if data.notify_mentions is not None:
         current_user.notify_mentions = data.notify_mentions
+    elif data.notif_chat_mentions is not None:
+        current_user.notify_mentions = data.notif_chat_mentions
+
+    if data.notif_task_chat_activity is not None:
+        current_user.notif_task_chat_activity = data.notif_task_chat_activity
+
+    if data.notif_vote_chat_activity is not None:
+        current_user.notif_vote_chat_activity = data.notif_vote_chat_activity
 
     if data.notify_task_creation is not None:
         current_user.notify_task_creation = data.notify_task_creation
@@ -1433,12 +1447,14 @@ def update_auth_profile(
         "notif_vote_required": getattr(current_user, "notif_vote_needed", True),
         "notif_vote_closed": getattr(current_user, "notif_vote_closed", True),
         "notif_stay_booked": getattr(current_user, "notif_stay_booked", True),
-        "notif_stay_confirmation": getattr(current_user, "notif_stay_confirmation", True),
         "notif_stay_reminder": getattr(current_user, "notif_stay_reminder", True),
         "notif_heating_start": getattr(current_user, "notif_heating_start", True),
         "notif_heating_stop": getattr(current_user, "notif_heating_stop", True),
         "notif_thermal_changes": getattr(current_user, "notif_thermal_changes", False),
         "notify_mentions": getattr(current_user, "notify_mentions", True),
+        "notif_chat_mentions": getattr(current_user, "notify_mentions", True),
+        "notif_task_chat_activity": getattr(current_user, "notif_task_chat_activity", False),
+        "notif_vote_chat_activity": getattr(current_user, "notif_vote_chat_activity", False),
         "notify_new_task": getattr(current_user, "notif_task_assigned", True),
         "notify_pending_vote": getattr(current_user, "notif_vote_needed", True),
         "notify_final_decision": getattr(current_user, "notif_vote_closed", True),
@@ -1524,12 +1540,14 @@ def get_member_settings(
         "notif_vote_required": getattr(member, "notif_vote_needed", True),
         "notif_vote_closed": getattr(member, "notif_vote_closed", True),
         "notif_stay_booked": getattr(member, "notif_stay_booked", True),
-        "notif_stay_confirmation": getattr(member, "notif_stay_confirmation", True),
         "notif_stay_reminder": getattr(member, "notif_stay_reminder", True),
         "notif_heating_start": getattr(member, "notif_heating_start", True),
         "notif_heating_stop": getattr(member, "notif_heating_stop", True),
         "notif_thermal_changes": getattr(member, "notif_thermal_changes", False),
         "notify_mentions": getattr(member, "notify_mentions", True),
+        "notif_chat_mentions": getattr(member, "notify_mentions", True),
+        "notif_task_chat_activity": getattr(member, "notif_task_chat_activity", False),
+        "notif_vote_chat_activity": getattr(member, "notif_vote_chat_activity", False),
         "notify_new_task": getattr(member, "notif_task_assigned", True),
         "notify_pending_vote": getattr(member, "notif_vote_needed", True),
         "notify_final_decision": getattr(member, "notif_vote_closed", True),
@@ -1607,9 +1625,6 @@ def update_member_settings(
     elif data.notify_new_stay is not None:
         member.notif_stay_booked = data.notify_new_stay
 
-    if data.notif_stay_confirmation is not None:
-        member.notif_stay_confirmation = data.notif_stay_confirmation
-
     if data.notif_stay_reminder is not None:
         member.notif_stay_reminder = data.notif_stay_reminder
 
@@ -1626,6 +1641,14 @@ def update_member_settings(
 
     if data.notify_mentions is not None:
         member.notify_mentions = data.notify_mentions
+    elif data.notif_chat_mentions is not None:
+        member.notify_mentions = data.notif_chat_mentions
+
+    if data.notif_task_chat_activity is not None:
+        member.notif_task_chat_activity = data.notif_task_chat_activity
+
+    if data.notif_vote_chat_activity is not None:
+        member.notif_vote_chat_activity = data.notif_vote_chat_activity
 
     if data.notify_task_creation is not None:
         member.notify_task_creation = data.notify_task_creation
@@ -1641,30 +1664,35 @@ def update_member_settings(
 
     # Sync MemberSettings table if present
     try:
-        ms = db.query(MemberSettings).filter(MemberSettings.member_id == member.id).first()
-        if ms:
-            if data.notify_task_creation is not None:
-                ms.notify_task_creation = data.notify_task_creation
-            if data.notif_task_completed is not None:
-                ms.notif_task_completed = data.notif_task_completed
-            if data.notify_vote_creation is not None:
-                ms.notify_vote_creation = data.notify_vote_creation
-            if data.notify_vote_arbitration is not None:
-                ms.notify_vote_arbitration = data.notify_vote_arbitration
-            if data.notify_mention_all is not None:
-                ms.notify_mention_all = data.notify_mention_all
-            if data.notify_mentions is not None:
-                ms.notify_mentions = data.notify_mentions
-            if data.notif_stay_confirmation is not None:
-                ms.notif_stay_confirmation = data.notif_stay_confirmation
-            if data.notif_stay_reminder is not None:
-                ms.notif_stay_reminder = data.notif_stay_reminder
-            if data.notif_heating_start is not None:
-                ms.notif_heating_start = data.notif_heating_start
-            if data.notif_heating_stop is not None:
-                ms.notif_heating_stop = data.notif_heating_stop
-    except Exception:
-        pass
+        with db.begin_nested():
+            ms = db.query(MemberSettings).filter(MemberSettings.member_id == member.id).first()
+            if ms:
+                if data.notify_task_creation is not None:
+                    ms.notify_task_creation = data.notify_task_creation
+                if data.notif_task_completed is not None:
+                    ms.notif_task_completed = data.notif_task_completed
+                if data.notify_vote_creation is not None:
+                    ms.notify_vote_creation = data.notify_vote_creation
+                if data.notify_vote_arbitration is not None:
+                    ms.notify_vote_arbitration = data.notify_vote_arbitration
+                if data.notify_mention_all is not None:
+                    ms.notify_mention_all = data.notify_mention_all
+                if data.notify_mentions is not None:
+                    ms.notify_mentions = data.notify_mentions
+                elif data.notif_chat_mentions is not None:
+                    ms.notify_mentions = data.notif_chat_mentions
+                if data.notif_task_chat_activity is not None:
+                    ms.notif_task_chat_activity = data.notif_task_chat_activity
+                if data.notif_vote_chat_activity is not None:
+                    ms.notif_vote_chat_activity = data.notif_vote_chat_activity
+                if data.notif_stay_reminder is not None:
+                    ms.notif_stay_reminder = data.notif_stay_reminder
+                if data.notif_heating_start is not None:
+                    ms.notif_heating_start = data.notif_heating_start
+                if data.notif_heating_stop is not None:
+                    ms.notif_heating_stop = data.notif_heating_stop
+    except Exception as ms_err:
+        logger.debug(f"[MEMBER SETTINGS SYNC NOTICE] Optional settings sync skipped: {ms_err}")
 
     db.commit()
     db.refresh(member)
@@ -1680,12 +1708,14 @@ def update_member_settings(
         "notif_vote_required": getattr(member, "notif_vote_needed", True),
         "notif_vote_closed": getattr(member, "notif_vote_closed", True),
         "notif_stay_booked": getattr(member, "notif_stay_booked", True),
-        "notif_stay_confirmation": getattr(member, "notif_stay_confirmation", True),
         "notif_stay_reminder": getattr(member, "notif_stay_reminder", True),
         "notif_heating_start": getattr(member, "notif_heating_start", True),
         "notif_heating_stop": getattr(member, "notif_heating_stop", True),
         "notif_thermal_changes": getattr(member, "notif_thermal_changes", False),
         "notify_mentions": getattr(member, "notify_mentions", True),
+        "notif_chat_mentions": getattr(member, "notify_mentions", True),
+        "notif_task_chat_activity": getattr(member, "notif_task_chat_activity", False),
+        "notif_vote_chat_activity": getattr(member, "notif_vote_chat_activity", False),
         "notify_task_creation": getattr(member, "notify_task_creation", False),
         "notify_vote_creation": getattr(member, "notify_vote_creation", False),
         "notify_vote_arbitration": getattr(member, "notify_vote_arbitration", False),
@@ -3594,6 +3624,63 @@ def add_project_comment(
     except Exception as e:
         logger.error(f"[MENTIONS ERROR] Project comment mention notification failed: {e}")
 
+    # Notification par email du proposant du vote si notif_vote_chat_activity est activé (et pas déjà mentionné)
+    try:
+        if db_proj.submitted_by:
+            sb_str = (db_proj.submitted_by or "").strip().lower()
+            all_m = db.query(Member).all()
+            creator = None
+            for m in all_m:
+                m_p = (m.prenom or "").strip().lower()
+                m_n = (m.name or "").strip().lower()
+                if (m_p and (m_p == sb_str or m_p in sb_str or sb_str in m_p)) or (m_n and (m_n == sb_str or m_n in sb_str or sb_str in m_n)):
+                    creator = m
+                    break
+
+            if creator and creator.email:
+                author_clean = (author_name or "").strip().lower()
+                c_p = (creator.prenom or "").strip().lower()
+                c_n = (creator.name or "").strip().lower()
+                is_self = bool(author_clean and (
+                    author_clean == c_p or author_clean == c_n
+                    or (len(author_clean) >= 3 and (author_clean in c_n or c_n in author_clean))
+                    or (len(c_p) >= 3 and (c_p in author_clean or author_clean in c_p))
+                ))
+                is_mentioned = False
+                if db_comment.content and "@" in db_comment.content:
+                    if has_collective_mention(db_comment.content):
+                        is_mentioned = True
+                    else:
+                        mentioned_list = find_mentioned_members(db_comment.content, db)
+                        if any(m.id == creator.id for m in mentioned_list):
+                            is_mentioned = True
+
+                if not is_self and not is_mentioned:
+                    pref_vote_chat = bool(getattr(creator, "notif_vote_chat_activity", False))
+                    send_vote_chat_res = send_vote_chat_activity_email(
+                        to_email=creator.email,
+                        recipient_name=creator.prenom,
+                        author_name=author_name,
+                        vote_title=db_proj.title,
+                        message_text=db_comment.content,
+                        project_id=db_proj.id,
+                        actually_send=pref_vote_chat
+                    )
+                    vote_chat_dispatched = send_vote_chat_res.get("_email_dispatched") if isinstance(send_vote_chat_res, dict) else None
+                    snippet = db_comment.content[:80] + ("..." if len(db_comment.content) > 80 else "")
+                    create_internal_notification(
+                        db=db,
+                        title=f"💬 Nouveau message sur votre vote : {db_proj.title}",
+                        description=f"{author_name} : « {snippet} »",
+                        notif_type="vote_chat",
+                        member_id=creator.id,
+                        link_path=f"/taches?project_id={db_proj.id}",
+                        link_id=str(db_proj.id),
+                        email_entry=vote_chat_dispatched
+                    )
+    except Exception as vote_chat_err:
+        logger.error(f"[VOTE CHAT ACTIVITY ERROR] Notification failed: {vote_chat_err}")
+
     return db_comment
 
 @app.post("/api/projects/{project_id}/messages", response_model=ProjectCommentResponse, status_code=status.HTTP_201_CREATED)
@@ -4360,23 +4447,24 @@ def create_task(
             for member in target_members_dict.values():
                 m_email = member.email or f"{member.prenom.lower()}@sci-familiale.fr"
                 actually_send_mail = bool(getattr(member, "notify_task_creation", False) and member.email)
-
-                send_coord_res = send_task_creation_pending_email(
-                    to_email=m_email,
-                    task_title=db_task.title,
-                    created_by=created_by or "Un associé",
-                    domain=db_task.subject or db_task.category or "SCI Familiale",
-                    location=db_task.category or "Domaine d'Hellenvilliers",
-                    priority=db_task.priority or "Normale",
-                    complexity=db_task.complexity or "Modérée",
-                    task_id=db_task.id,
-                    coordinator_name=member.prenom,
-                    description=db_task.description,
-                    actually_send=actually_send_mail
-                )
-                m_dispatched = send_coord_res.get("_email_dispatched") if isinstance(send_coord_res, dict) else None
-                if not dispatched_email and m_dispatched:
-                    dispatched_email = m_dispatched
+                m_dispatched = None
+                if actually_send_mail:
+                    send_coord_res = send_task_creation_pending_email(
+                        to_email=m_email,
+                        task_title=db_task.title,
+                        created_by=created_by or "Un associé",
+                        domain=db_task.subject or db_task.category or "SCI Familiale",
+                        location=db_task.category or "Domaine d'Hellenvilliers",
+                        priority=db_task.priority or "Normale",
+                        complexity=db_task.complexity or "Modérée",
+                        task_id=db_task.id,
+                        coordinator_name=member.prenom,
+                        description=db_task.description,
+                        actually_send=True
+                    )
+                    m_dispatched = send_coord_res.get("_email_dispatched") if isinstance(send_coord_res, dict) else None
+                    if not dispatched_email and m_dispatched:
+                        dispatched_email = m_dispatched
 
                 # Notification interne obligatoire dans la cloche (Annotation 2)
                 create_internal_notification(
@@ -5000,6 +5088,63 @@ def create_task_comment(
         )
     except Exception as e:
         logger.error(f"[MENTIONS ERROR] Task comment mention notification failed: {e}")
+
+    # Notification par email du créateur de la tâche si notif_task_chat_activity est activé (et pas déjà mentionné)
+    try:
+        if task.created_by:
+            cb_str = (task.created_by or "").strip().lower()
+            all_m = db.query(Member).all()
+            creator = None
+            for m in all_m:
+                m_p = (m.prenom or "").strip().lower()
+                m_n = (m.name or "").strip().lower()
+                if (m_p and (m_p == cb_str or m_p in cb_str or cb_str in m_p)) or (m_n and (m_n == cb_str or m_n in cb_str or cb_str in m_n)):
+                    creator = m
+                    break
+
+            if creator and creator.email:
+                author_clean = (author_name or "").strip().lower()
+                c_p = (creator.prenom or "").strip().lower()
+                c_n = (creator.name or "").strip().lower()
+                is_self = bool(author_clean and (
+                    author_clean == c_p or author_clean == c_n
+                    or (len(author_clean) >= 3 and (author_clean in c_n or c_n in author_clean))
+                    or (len(c_p) >= 3 and (c_p in author_clean or author_clean in c_p))
+                ))
+                is_mentioned = False
+                if db_comment.content and "@" in db_comment.content:
+                    if has_collective_mention(db_comment.content):
+                        is_mentioned = True
+                    else:
+                        mentioned_list = find_mentioned_members(db_comment.content, db)
+                        if any(m.id == creator.id for m in mentioned_list):
+                            is_mentioned = True
+
+                if not is_self and not is_mentioned:
+                    pref_task_chat = bool(getattr(creator, "notif_task_chat_activity", False))
+                    send_task_chat_res = send_task_chat_activity_email(
+                        to_email=creator.email,
+                        recipient_name=creator.prenom,
+                        author_name=author_name,
+                        task_title=task.title,
+                        message_text=db_comment.content,
+                        task_id=task.id,
+                        actually_send=pref_task_chat
+                    )
+                    task_chat_dispatched = send_task_chat_res.get("_email_dispatched") if isinstance(send_task_chat_res, dict) else None
+                    snippet = db_comment.content[:80] + ("..." if len(db_comment.content) > 80 else "")
+                    create_internal_notification(
+                        db=db,
+                        title=f"💬 Nouveau message sur votre tâche : {task.title}",
+                        description=f"{author_name} : « {snippet} »",
+                        notif_type="task_chat",
+                        member_id=creator.id,
+                        link_path=f"/taches?task_id={task.id}",
+                        link_id=str(task.id),
+                        email_entry=task_chat_dispatched
+                    )
+    except Exception as chat_err:
+        logger.error(f"[TASK CHAT ACTIVITY ERROR] Notification failed: {chat_err}")
 
     return format_comment_response(db_comment)
 

@@ -328,6 +328,17 @@ def migrate_engine(engine):
 
                 # member_settings notifications
                 try:
+                    conn.execute(text("ALTER TABLE member_settings ADD COLUMN IF NOT EXISTS notif_task_assigned BOOLEAN DEFAULT TRUE;"))
+                    conn.execute(text("ALTER TABLE member_settings ADD COLUMN IF NOT EXISTS notif_task_completed BOOLEAN DEFAULT TRUE;"))
+                    conn.execute(text("ALTER TABLE member_settings ADD COLUMN IF NOT EXISTS notif_vote_required BOOLEAN DEFAULT TRUE;"))
+                    conn.execute(text("ALTER TABLE member_settings ADD COLUMN IF NOT EXISTS notif_task_chat_activity BOOLEAN DEFAULT FALSE;"))
+                    conn.execute(text("UPDATE member_settings SET notif_task_chat_activity = FALSE WHERE notif_task_chat_activity IS NULL;"))
+                    conn.execute(text("ALTER TABLE member_settings ADD COLUMN IF NOT EXISTS notif_vote_chat_activity BOOLEAN DEFAULT FALSE;"))
+                    conn.execute(text("UPDATE member_settings SET notif_vote_chat_activity = FALSE WHERE notif_vote_chat_activity IS NULL;"))
+                    conn.execute(text("ALTER TABLE member_settings ADD COLUMN IF NOT EXISTS notif_stay_reminder BOOLEAN DEFAULT TRUE;"))
+                    conn.execute(text("ALTER TABLE member_settings ADD COLUMN IF NOT EXISTS notif_heating_start BOOLEAN DEFAULT TRUE;"))
+                    conn.execute(text("ALTER TABLE member_settings ADD COLUMN IF NOT EXISTS notif_heating_stop BOOLEAN DEFAULT TRUE;"))
+                    conn.execute(text("ALTER TABLE member_settings ADD COLUMN IF NOT EXISTS notify_thermal_changes BOOLEAN DEFAULT FALSE;"))
                     conn.execute(text("ALTER TABLE member_settings ADD COLUMN IF NOT EXISTS notify_mentions BOOLEAN DEFAULT TRUE;"))
                     conn.execute(text("UPDATE member_settings SET notify_mentions = TRUE WHERE notify_mentions IS NULL;"))
                     conn.execute(text("ALTER TABLE member_settings ADD COLUMN IF NOT EXISTS notify_mention_all BOOLEAN DEFAULT TRUE;"))

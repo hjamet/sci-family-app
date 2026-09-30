@@ -21,6 +21,7 @@ import {
   Thermometer,
   AtSign,
   Megaphone,
+  MessageSquare,
   Flame,
   Home,
   Users,
@@ -102,7 +103,7 @@ export default function SettingsPage({ currentUser }) {
   const [passwordLoading, setPasswordLoading] = useState(false);
   const [passwordError, setPasswordError] = useState(null);
 
-  // --- États Préférences de Notifications (4 Domaines Thématiques) ---
+  // --- États Préférences de Notifications (5 Domaines Thématiques) ---
   const [notifications, setNotifications] = useState({
     notif_task_assigned: true,
     notify_new_task: true,
@@ -112,14 +113,16 @@ export default function SettingsPage({ currentUser }) {
     notify_pending_vote: true,
     notify_vote_arbitration: false,
     notify_final_decision: true,
+    notify_mentions: true,
+    notif_chat_mentions: true,
     notify_mention_all: true,
+    notif_task_chat_activity: false,
+    notif_vote_chat_activity: false,
     notif_stay_booked: true,
     notify_new_stay: true,
-    notif_stay_confirmation: true,
     notif_stay_reminder: true,
     notif_heating_start: true,
     notif_heating_stop: true,
-    notify_mentions: true,
     notif_thermal_changes: false,
     notify_thermal_changes: false,
     notify_vote_creation: false
@@ -211,14 +214,16 @@ export default function SettingsPage({ currentUser }) {
             notify_pending_vote: (settings.notify_pending_vote != null ? settings.notify_pending_vote : (settings.notif_vote_needed != null ? settings.notif_vote_needed : true)) !== false,
             notify_vote_arbitration: voteArbitrationPref,
             notify_final_decision: settings.notify_final_decision !== false,
+            notify_mentions: (settings.notify_mentions != null ? settings.notify_mentions : (settings.notif_chat_mentions != null ? settings.notif_chat_mentions : (userProfile?.notify_mentions ?? true))) !== false,
+            notif_chat_mentions: (settings.notif_chat_mentions != null ? settings.notif_chat_mentions : (settings.notify_mentions != null ? settings.notify_mentions : (userProfile?.notify_mentions ?? true))) !== false,
             notify_mention_all: mentionAllPref,
+            notif_task_chat_activity: Boolean(settings.notif_task_chat_activity != null ? settings.notif_task_chat_activity : (userProfile?.notif_task_chat_activity ?? false)),
+            notif_vote_chat_activity: Boolean(settings.notif_vote_chat_activity != null ? settings.notif_vote_chat_activity : (userProfile?.notif_vote_chat_activity ?? false)),
             notif_stay_booked: (settings.notif_stay_booked != null ? settings.notif_stay_booked : (settings.notify_new_stay != null ? settings.notify_new_stay : (userProfile?.notif_stay_booked ?? true))) !== false,
             notify_new_stay: (settings.notify_new_stay != null ? settings.notify_new_stay : (settings.notif_stay_booked != null ? settings.notif_stay_booked : true)) !== false,
-            notif_stay_confirmation: (settings.notif_stay_confirmation != null ? settings.notif_stay_confirmation : (userProfile?.notif_stay_confirmation ?? true)) !== false,
             notif_stay_reminder: (settings.notif_stay_reminder != null ? settings.notif_stay_reminder : (userProfile?.notif_stay_reminder ?? true)) !== false,
             notif_heating_start: (settings.notif_heating_start != null ? settings.notif_heating_start : (userProfile?.notif_heating_start ?? true)) !== false,
             notif_heating_stop: (settings.notif_heating_stop != null ? settings.notif_heating_stop : (userProfile?.notif_heating_stop ?? true)) !== false,
-            notify_mentions: settings.notify_mentions !== false,
             notif_thermal_changes: thermalPref,
             notify_thermal_changes: thermalPref,
             notify_vote_creation: voteCreationPref
@@ -298,7 +303,7 @@ export default function SettingsPage({ currentUser }) {
     }
   };
 
-  // --- Actions Section 3 : Préférences de notification (4 Domaines) ---
+  // --- Actions Section 3 : Préférences de notification (5 Domaines) ---
   const handleToggleNotification = (key) => {
     setNotifications((prev) => {
       const nextVal = !prev[key];
@@ -312,6 +317,12 @@ export default function SettingsPage({ currentUser }) {
       if (key === 'notify_pending_vote') {
         updated.notif_vote_required = nextVal;
         updated.notif_vote_needed = nextVal;
+      }
+      if (key === 'notify_mentions') {
+        updated.notif_chat_mentions = nextVal;
+      }
+      if (key === 'notif_chat_mentions') {
+        updated.notify_mentions = nextVal;
       }
       if (key === 'notif_stay_booked') updated.notify_new_stay = nextVal;
       if (key === 'notify_new_stay') updated.notif_stay_booked = nextVal;
@@ -331,14 +342,16 @@ export default function SettingsPage({ currentUser }) {
       notify_pending_vote: status,
       notify_vote_arbitration: status,
       notify_final_decision: status,
+      notify_mentions: status,
+      notif_chat_mentions: status,
       notify_mention_all: status,
+      notif_task_chat_activity: status,
+      notif_vote_chat_activity: status,
       notif_stay_booked: status,
       notify_new_stay: status,
-      notif_stay_confirmation: status,
       notif_stay_reminder: status,
       notif_heating_start: status,
       notif_heating_stop: status,
-      notify_mentions: status,
       notif_thermal_changes: status,
       notify_thermal_changes: status,
       notify_vote_creation: status
@@ -641,7 +654,7 @@ export default function SettingsPage({ currentUser }) {
         </div>
 
         {/* ======================================================== */}
-        {/* 4 CARTES THÉMATIQUES DE NOTIFICATIONS (ANNOTATION 3)    */}
+        {/* 5 CARTES THÉMATIQUES DE NOTIFICATIONS                    */}
         {/* ======================================================== */}
         <div className="space-y-6">
 
@@ -840,40 +853,124 @@ export default function SettingsPage({ currentUser }) {
                   </div>
                 </div>
               </div>
+            </div>
+          </div>
 
-              {/* Item 3 : Mention collective dans le chat (@all) */}
+          {/* 3. 💬 Discussions & Chat */}
+          <div className="bg-slate-50/70 rounded-2xl border border-slate-200/90 p-5 sm:p-6 space-y-4 hover:border-slate-300 transition-colors shadow-2xs">
+            <div className="flex items-center justify-between gap-3 border-b border-slate-200/70 pb-3">
+              <div className="flex items-center gap-2.5">
+                <div className="w-8 h-8 rounded-xl bg-teal-100 text-teal-800 flex items-center justify-center shrink-0 border border-teal-200 shadow-2xs">
+                  <MessageSquare className="w-4 h-4" />
+                </div>
+                <div>
+                  <h3 className="text-sm font-bold text-slate-900 tracking-tight">
+                    3. 💬 Discussions &amp; Chat
+                  </h3>
+                  <p className="text-[11px] text-slate-500">
+                    Notifications de mentions directes (@vous, @all) et suivi d'activité sur vos sujets
+                  </p>
+                </div>
+              </div>
+              <span className="text-[11px] font-semibold px-2.5 py-0.5 rounded-full bg-white text-teal-800 border border-teal-200 shrink-0">
+                Messagerie &amp; Échanges
+              </span>
+            </div>
+
+            <div className="space-y-3">
+              {/* Item 1 : Mentions dans le chat */}
               <div
-                id="toggle-notify-mention-all"
-                onClick={() => handleToggleNotification('notify_mention_all')}
+                id="toggle-notify-mentions"
+                onClick={() => handleToggleNotification('notify_mentions')}
                 className={`flex items-start justify-between gap-3.5 p-3.5 sm:p-4 rounded-xl border transition-all cursor-pointer select-none ${
-                  notifications.notify_mention_all
+                  notifications.notify_mentions
                     ? 'border-emerald-300/80 bg-white hover:bg-emerald-50/20 shadow-xs'
                     : 'border-slate-200 bg-white/70 hover:bg-slate-100/60'
                 }`}
               >
                 <div className="flex items-start gap-3">
-                  <div className="w-8 h-8 rounded-xl bg-amber-100 text-amber-800 flex items-center justify-center shrink-0 mt-0.5 border border-amber-200 shadow-2xs">
-                    <Megaphone className="w-4 h-4" />
+                  <div className="w-8 h-8 rounded-xl bg-emerald-100 text-emerald-800 flex items-center justify-center shrink-0 mt-0.5 border border-emerald-200 shadow-2xs">
+                    <AtSign className="w-4 h-4" />
                   </div>
                   <div>
                     <span className="text-sm font-bold text-slate-900 block leading-snug">
-                      Mention collective dans le chat (@all)
+                      Mentions dans le chat (@vous, @all)
                     </span>
                     <p className="text-xs text-slate-600 mt-1 leading-relaxed">
-                      Recevoir une notification et un e-mail prioritaire lorsqu'un message s'adresse à l'ensemble des associés (@all / @tous).
+                      M'alerter par e-mail lorsque je suis mentionné nominativement (@mon_prénom) ou collectivement (@all / @tous) dans le chat d'une tâche ou d'un vote.
                     </p>
                   </div>
                 </div>
                 <div className="shrink-0 pt-1">
-                  <div className={`w-11 h-6 flex items-center rounded-full p-1 duration-300 ease-in-out ${notifications.notify_mention_all ? 'bg-primary' : 'bg-slate-300'}`}>
-                    <div className={`bg-white w-4 h-4 rounded-full shadow-md transform duration-300 ease-in-out ${notifications.notify_mention_all ? 'translate-x-5' : 'translate-x-0'}`} />
+                  <div className={`w-11 h-6 flex items-center rounded-full p-1 duration-300 ease-in-out ${notifications.notify_mentions ? 'bg-primary' : 'bg-slate-300'}`}>
+                    <div className={`bg-white w-4 h-4 rounded-full shadow-md transform duration-300 ease-in-out ${notifications.notify_mentions ? 'translate-x-5' : 'translate-x-0'}`} />
+                  </div>
+                </div>
+              </div>
+
+              {/* Item 2 : Nouveaux messages sur mes tâches */}
+              <div
+                id="toggle-notif-task-chat-activity"
+                onClick={() => handleToggleNotification('notif_task_chat_activity')}
+                className={`flex items-start justify-between gap-3.5 p-3.5 sm:p-4 rounded-xl border transition-all cursor-pointer select-none ${
+                  notifications.notif_task_chat_activity
+                    ? 'border-emerald-300/80 bg-white hover:bg-emerald-50/20 shadow-xs'
+                    : 'border-slate-200 bg-white/70 hover:bg-slate-100/60'
+                }`}
+              >
+                <div className="flex items-start gap-3">
+                  <div className="w-8 h-8 rounded-xl bg-blue-100 text-blue-800 flex items-center justify-center shrink-0 mt-0.5 border border-blue-200 shadow-2xs">
+                    <ClipboardList className="w-4 h-4" />
+                  </div>
+                  <div>
+                    <span className="text-sm font-bold text-slate-900 block leading-snug">
+                      Nouveaux messages sur mes tâches
+                    </span>
+                    <p className="text-xs text-slate-600 mt-1 leading-relaxed">
+                      M'alerter par e-mail à chaque nouveau message d'un associé posté sur une tâche ou un chantier que j'ai créé ou proposé.
+                    </p>
+                  </div>
+                </div>
+                <div className="shrink-0 pt-1">
+                  <div className={`w-11 h-6 flex items-center rounded-full p-1 duration-300 ease-in-out ${notifications.notif_task_chat_activity ? 'bg-primary' : 'bg-slate-300'}`}>
+                    <div className={`bg-white w-4 h-4 rounded-full shadow-md transform duration-300 ease-in-out ${notifications.notif_task_chat_activity ? 'translate-x-5' : 'translate-x-0'}`} />
+                  </div>
+                </div>
+              </div>
+
+              {/* Item 3 : Nouveaux messages sur mes votes */}
+              <div
+                id="toggle-notif-vote-chat-activity"
+                onClick={() => handleToggleNotification('notif_vote_chat_activity')}
+                className={`flex items-start justify-between gap-3.5 p-3.5 sm:p-4 rounded-xl border transition-all cursor-pointer select-none ${
+                  notifications.notif_vote_chat_activity
+                    ? 'border-emerald-300/80 bg-white hover:bg-emerald-50/20 shadow-xs'
+                    : 'border-slate-200 bg-white/70 hover:bg-slate-100/60'
+                }`}
+              >
+                <div className="flex items-start gap-3">
+                  <div className="w-8 h-8 rounded-xl bg-purple-100 text-purple-800 flex items-center justify-center shrink-0 mt-0.5 border border-purple-200 shadow-2xs">
+                    <Vote className="w-4 h-4" />
+                  </div>
+                  <div>
+                    <span className="text-sm font-bold text-slate-900 block leading-snug">
+                      Nouveaux messages sur mes votes
+                    </span>
+                    <p className="text-xs text-slate-600 mt-1 leading-relaxed">
+                      M'alerter par e-mail à chaque nouveau message d'un associé posté sur un vote ou une délibération dont je suis l'initiateur.
+                    </p>
+                  </div>
+                </div>
+                <div className="shrink-0 pt-1">
+                  <div className={`w-11 h-6 flex items-center rounded-full p-1 duration-300 ease-in-out ${notifications.notif_vote_chat_activity ? 'bg-primary' : 'bg-slate-300'}`}>
+                    <div className={`bg-white w-4 h-4 rounded-full shadow-md transform duration-300 ease-in-out ${notifications.notif_vote_chat_activity ? 'translate-x-5' : 'translate-x-0'}`} />
                   </div>
                 </div>
               </div>
             </div>
           </div>
 
-          {/* 3. 📅 Réservations */}
+          {/* 4. 📅 Réservations */}
           <div className="bg-slate-50/70 rounded-2xl border border-slate-200/90 p-5 sm:p-6 space-y-4 hover:border-slate-300 transition-colors shadow-2xs">
             <div className="flex items-center justify-between gap-3 border-b border-slate-200/70 pb-3">
               <div className="flex items-center gap-2.5">
@@ -882,7 +979,7 @@ export default function SettingsPage({ currentUser }) {
                 </div>
                 <div>
                   <h3 className="text-sm font-bold text-slate-900 tracking-tight">
-                    3. 📅 Réservations
+                    4. 📅 Réservations
                   </h3>
                   <p className="text-[11px] text-slate-500">
                     Calendrier d'occupation des propriétés et passages des associés
@@ -924,40 +1021,10 @@ export default function SettingsPage({ currentUser }) {
                   </div>
                 </div>
               </div>
-
-              {/* Item 2 : Confirmation de passage avec participants */}
-              <div
-                id="toggle-notif-stay-confirmation"
-                onClick={() => handleToggleNotification('notif_stay_confirmation')}
-                className={`flex items-start justify-between gap-3.5 p-3.5 sm:p-4 rounded-xl border transition-all cursor-pointer select-none ${
-                  notifications.notif_stay_confirmation
-                    ? 'border-emerald-300/80 bg-white hover:bg-emerald-50/20 shadow-xs'
-                    : 'border-slate-200 bg-white/70 hover:bg-slate-100/60'
-                }`}
-              >
-                <div className="flex items-start gap-3">
-                  <div className="w-8 h-8 rounded-xl bg-indigo-100 text-indigo-800 flex items-center justify-center shrink-0 mt-0.5 border border-indigo-200 shadow-2xs">
-                    <Users className="w-4 h-4" />
-                  </div>
-                  <div>
-                    <span className="text-sm font-bold text-slate-900 block leading-snug">
-                      Confirmation de passage avec participants
-                    </span>
-                    <p className="text-xs text-slate-600 mt-1 leading-relaxed">
-                      Recevoir un récapitulatif des dates et de la liste des participants déclarés lors d'un séjour confirmé.
-                    </p>
-                  </div>
-                </div>
-                <div className="shrink-0 pt-1">
-                  <div className={`w-11 h-6 flex items-center rounded-full p-1 duration-300 ease-in-out ${notifications.notif_stay_confirmation ? 'bg-primary' : 'bg-slate-300'}`}>
-                    <div className={`bg-white w-4 h-4 rounded-full shadow-md transform duration-300 ease-in-out ${notifications.notif_stay_confirmation ? 'translate-x-5' : 'translate-x-0'}`} />
-                  </div>
-                </div>
-              </div>
             </div>
           </div>
 
-          {/* 4. 🏡 Séjour & Confort Thermique */}
+          {/* 5. 🏡 Séjour & Confort Thermique */}
           <div className="bg-slate-50/70 rounded-2xl border border-slate-200/90 p-5 sm:p-6 space-y-4 hover:border-slate-300 transition-colors shadow-2xs">
             <div className="flex items-center justify-between gap-3 border-b border-slate-200/70 pb-3">
               <div className="flex items-center gap-2.5">
@@ -966,7 +1033,7 @@ export default function SettingsPage({ currentUser }) {
                 </div>
                 <div>
                   <h3 className="text-sm font-bold text-slate-900 tracking-tight">
-                    4. 🏡 Séjour &amp; Confort Thermique
+                    5. 🏡 Séjour &amp; Confort Thermique
                   </h3>
                   <p className="text-[11px] text-slate-500">
                     Rappels d'arrivée, automatisation du chauffage ViCare et gestion hors-gel

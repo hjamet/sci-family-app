@@ -30,18 +30,23 @@ FALLBACK_FROM_EMAIL = "SCI Familiale Hellenvilliers <notifications@henri-jamet.c
 SANDBOX_FROM_EMAIL = "SCI Familiale Hellenvilliers <onboarding@resend.dev>"
 
 # ==============================================================================
-# COUPE-CIRCUIT D'URGENCE TOTAL & ABSOLU (PHASE DE TEST)
+# GOUVERNANCE PRODUCTION & COUPE-CIRCUIT D'URGENCE
 # ==============================================================================
-# Désactive formellement 100% des envois d'e-mails vers l'extérieur.
-# Aucun appel HTTP vers Resend, zéro consommation de quota, zéro email envoyé.
-DISABLE_ALL_EMAILS: bool = True
+# Conformément à la directive formelle de passage en production d'Henri :
+# L'envoi d'e-mails est activé en production réelle.
+# Le pare-feu strict de protection familiale reste actif (hellenvillierssci@gmail.com).
+# Pour forcer le coupe-circuit hermétique en test automatisé : DISABLE_ALL_EMAILS=true ou EMAIL_FORCE_REAL_MODE=false.
+DISABLE_ALL_EMAILS: bool = False
 
 def is_email_disabled() -> bool:
     """
     Coupe-circuit d'urgence global :
-    Désactive formellement 100% des envois d'e-mails vers l'extérieur.
-    Actif par défaut (DISABLE_ALL_EMAILS=True ou env DISABLE_ALL_EMAILS != 'false').
+    En production réelle (directive formelle d'Henri), les emails sont réactivés.
+    Le coupe-circuit peut être réarmé d'urgence via DISABLE_ALL_EMAILS=true.
     """
+    if os.getenv("EMAIL_FORCE_REAL_MODE", "true").strip().lower() in ("true", "1", "yes"):
+        env_val = os.getenv("DISABLE_ALL_EMAILS", "false").strip().lower()
+        return env_val in ("true", "1", "yes")
     env_val = os.getenv("DISABLE_ALL_EMAILS", "").strip().lower()
     if env_val in ("false", "0", "no"):
         return False
@@ -52,16 +57,18 @@ def is_email_disabled() -> bool:
 def is_test_mode() -> bool:
     """
     Mode test hermétique :
-    Si EMAIL_TEST_MODE est actif (True par défaut), AUCUN e-mail physique ne sort via Resend.
-    Zéro appel réseau HTTP, zéro crédit consommé.
-    L'e-mail est consigné en base / mémoire pour l'aperçu in-app (EmailPreviewModal / cloche).
+    Si EMAIL_TEST_MODE est actif (ex: 'true' dans conftest.py), AUCUN e-mail physique ne sort via Resend.
+    En production réelle, EMAIL_TEST_MODE=False permet la délivrance effective des courriels.
     """
+    if os.getenv("EMAIL_FORCE_REAL_MODE", "true").strip().lower() in ("true", "1", "yes"):
+        env_val = os.getenv("EMAIL_TEST_MODE", "false").strip().lower()
+        return env_val in ("true", "1", "yes")
     env_val = os.getenv("EMAIL_TEST_MODE", "").strip().lower()
     if env_val in ("false", "0", "no"):
         return False
     if env_val in ("true", "1", "yes"):
         return True
-    return EMAIL_TEST_MODE
+    return False
 
 def get_circuit_breaker_response() -> dict:
     """Retour standardisé du coupe-circuit d'urgence."""
@@ -421,6 +428,9 @@ def send_task_assigned_email(
     Zéro champ fictif (aucune date limite).
     """
     # Pare-feu et coupe-circuit hermétiques gérés de façon centrale dans send_email
+    if is_email_disabled():
+        return get_circuit_breaker_response()
+
     priority_colors = {
         "critique": ("#fee2e2", "#991b1b", "#dc2626"),
         "haute": ("#ffedd5", "#9a3412", "#ea580c"),
@@ -625,6 +635,9 @@ def send_vote_required_email(
     - Ajoute la description complète du vote.
     - Supprime l'encadré verbeux « Règle statutaire etc. ».
     """
+    if is_email_disabled():
+        return get_circuit_breaker_response()
+
     import html as html_lib
     action_url = f"{APP_BASE_URL}/#votes"
     safe_description = html_lib.escape(description or "").replace("\n", "<br>") if description else ""
@@ -1354,5 +1367,139 @@ def send_mention_notification(
         return False
 
     return True
+
+
+def send_task_chat_activity_email(
+    to_email: str,
+    recipient_name: str,
+    author_name: str,
+    task_title: str,
+    message_text: str,
+    task_id: Any,
+    actually_send: bool = True
+) -> dict:
+    """
+    Template: NOUVEAU MESSAGE SUR UNE TÂCHE CRÉÉE / PROPOSÉE (notif_task_chat_activity)
+    Notifies the creator of a task when another member posts a comment.
+    """
+    import html as html_lib
+    safe_message = html_lib.escape(message_text or "").replace("\n", "<br>")
+    safe_author = html_lib.escape(author_name or "Un associé")
+    safe_title = html_lib.escape(task_title or "Tâche")
+    greeting_name = recipient_name or "associé(e)"
+
+    subject = f'[Hellenvilliers SCI] 💬 Nouveau message sur votre tâche : {task_title}'
+    preheader = f"{author_name} a publié un message sur votre tâche {task_title}"
+    action_url = f"{APP_BASE_URL}/taches?task_id={task_id}"
+
+    content_html = f"""
+    <p>Bonjour {greeting_name},</p>
+    <p><strong>{safe_author}</strong> a publié un nouveau message sur une tâche que vous avez créée ou proposée (<strong>{safe_title}</strong>) :</p>
+
+    <div style="background-color: #f9f8f6; border: 1px solid #e5e3dc; border-left: 4px solid #1e3a2f; border-radius: 6px; padding: 16px 20px; margin: 20px 0; font-style: italic; color: #1f2937; font-size: 15px; line-height: 1.6;">
+        « {safe_message} »
+    </div>
+
+    <p style="color: #4b5563; font-size: 14px;">
+        Vous pouvez accéder directement à la tâche pour lire l'échange et y répondre :
+    </p>
+    <p style="font-size: 12px; color: #6b7280; margin-top: 24px; padding-top: 12px; border-top: 1px solid #eee;">
+        💡 <em>Vous pouvez désactiver cette notification à tout moment dans vos <a href="{APP_BASE_URL}/#settings" style="color: #2d5a47; text-decoration: underline;">Paramètres &amp; Préférences</a>.</em>
+    </p>
+    """
+
+    html_body = render_email_layout(
+        title="Nouveau message sur votre tâche",
+        preheader=preheader,
+        content_html=content_html,
+        action_url=action_url,
+        action_label="Consulter la tâche"
+    )
+
+    names = [greeting_name]
+    email_entry = record_dispatched_email(
+        trigger_action="task_chat_activity",
+        subject=subject,
+        recipients=to_email,
+        html_content=html_body,
+        recipients_names=names,
+        status="sent" if (actually_send and not is_email_disabled() and not is_test_mode()) else "simulated"
+    )
+
+    if actually_send and not is_email_disabled() and not is_test_mode():
+        res = send_email(to_email=to_email, subject=subject, html_content=html_body)
+    else:
+        res = {"status": "simulated", "id": email_entry["id"]}
+
+    if isinstance(res, dict):
+        res["_email_dispatched"] = email_entry
+    return res
+
+
+def send_vote_chat_activity_email(
+    to_email: str,
+    recipient_name: str,
+    author_name: str,
+    vote_title: str,
+    message_text: str,
+    project_id: Any,
+    actually_send: bool = True
+) -> dict:
+    """
+    Template: NOUVEAU MESSAGE SUR UN VOTE / SCRUTIN PROPOSÉ (notif_vote_chat_activity)
+    Notifies the creator of a vote/proposal when another member posts a comment.
+    """
+    import html as html_lib
+    safe_message = html_lib.escape(message_text or "").replace("\n", "<br>")
+    safe_author = html_lib.escape(author_name or "Un associé")
+    safe_title = html_lib.escape(vote_title or "Scrutin")
+    greeting_name = recipient_name or "associé(e)"
+
+    subject = f'[Hellenvilliers SCI] 💬 Nouveau message sur votre vote : {vote_title}'
+    preheader = f"{author_name} a publié un message sur votre scrutin {vote_title}"
+    action_url = f"{APP_BASE_URL}/taches?project_id={project_id}"
+
+    content_html = f"""
+    <p>Bonjour {greeting_name},</p>
+    <p><strong>{safe_author}</strong> a publié un nouveau message sur un scrutin que vous avez proposé (<strong>{safe_title}</strong>) :</p>
+
+    <div style="background-color: #f9f8f6; border: 1px solid #e5e3dc; border-left: 4px solid #1e3a2f; border-radius: 6px; padding: 16px 20px; margin: 20px 0; font-style: italic; color: #1f2937; font-size: 15px; line-height: 1.6;">
+        « {safe_message} »
+    </div>
+
+    <p style="color: #4b5563; font-size: 14px;">
+        Vous pouvez accéder directement au scrutin pour lire l'échange et y répondre :
+    </p>
+    <p style="font-size: 12px; color: #6b7280; margin-top: 24px; padding-top: 12px; border-top: 1px solid #eee;">
+        💡 <em>Vous pouvez désactiver cette notification à tout moment dans vos <a href="{APP_BASE_URL}/#settings" style="color: #2d5a47; text-decoration: underline;">Paramètres &amp; Préférences</a>.</em>
+    </p>
+    """
+
+    html_body = render_email_layout(
+        title="Nouveau message sur votre vote",
+        preheader=preheader,
+        content_html=content_html,
+        action_url=action_url,
+        action_label="Consulter le scrutin"
+    )
+
+    names = [greeting_name]
+    email_entry = record_dispatched_email(
+        trigger_action="vote_chat_activity",
+        subject=subject,
+        recipients=to_email,
+        html_content=html_body,
+        recipients_names=names,
+        status="sent" if (actually_send and not is_email_disabled() and not is_test_mode()) else "simulated"
+    )
+
+    if actually_send and not is_email_disabled() and not is_test_mode():
+        res = send_email(to_email=to_email, subject=subject, html_content=html_body)
+    else:
+        res = {"status": "simulated", "id": email_entry["id"]}
+
+    if isinstance(res, dict):
+        res["_email_dispatched"] = email_entry
+    return res
 
 

@@ -48,6 +48,9 @@ class MemberBase(BaseModel):
     notif_stay_booked: bool = True
     notif_thermal_changes: bool = False
     notify_mentions: bool = True
+    notif_chat_mentions: Optional[bool] = None
+    notif_task_chat_activity: bool = False
+    notif_vote_chat_activity: bool = False
     notify_vote_creation: bool = False
     notify_vote_arbitration: bool = False
     notify_mention_all: bool = True
@@ -69,6 +72,9 @@ class MemberUpdate(BaseModel):
     notif_stay_booked: Optional[bool] = None
     notif_thermal_changes: Optional[bool] = None
     notify_mentions: Optional[bool] = None
+    notif_chat_mentions: Optional[bool] = None
+    notif_task_chat_activity: Optional[bool] = None
+    notif_vote_chat_activity: Optional[bool] = None
     notify_task_creation: Optional[bool] = False
     notify_vote_creation: Optional[bool] = None
     notify_vote_arbitration: Optional[bool] = None
@@ -95,12 +101,14 @@ class MemberSettingsResponse(BaseModel):
     notif_vote_required: bool = True
     notif_vote_closed: bool = True
     notif_stay_booked: bool = True
-    notif_stay_confirmation: bool = True
     notif_stay_reminder: bool = True
     notif_heating_start: bool = True
     notif_heating_stop: bool = True
     notif_thermal_changes: bool = False
     notify_mentions: bool = True
+    notif_chat_mentions: bool = True
+    notif_task_chat_activity: bool = False
+    notif_vote_chat_activity: bool = False
     notify_task_creation: bool = False
     notify_vote_creation: bool = False
     notify_vote_arbitration: bool = False
@@ -118,12 +126,14 @@ class MemberSettingsUpdate(BaseModel):
     notif_vote_required: Optional[bool] = None
     notif_vote_closed: Optional[bool] = None
     notif_stay_booked: Optional[bool] = None
-    notif_stay_confirmation: Optional[bool] = None
     notif_stay_reminder: Optional[bool] = None
     notif_heating_start: Optional[bool] = None
     notif_heating_stop: Optional[bool] = None
     notif_thermal_changes: Optional[bool] = None
     notify_mentions: Optional[bool] = None
+    notif_chat_mentions: Optional[bool] = None
+    notif_task_chat_activity: Optional[bool] = None
+    notif_vote_chat_activity: Optional[bool] = None
     notify_task_creation: Optional[bool] = None
     notify_vote_creation: Optional[bool] = None
     notify_vote_arbitration: Optional[bool] = None
@@ -150,6 +160,9 @@ class TokenResponse(BaseModel):
     notif_stay_booked: Optional[bool] = None
     notif_thermal_changes: Optional[bool] = None
     notify_mentions: Optional[bool] = None
+    notif_chat_mentions: Optional[bool] = None
+    notif_task_chat_activity: Optional[bool] = None
+    notif_vote_chat_activity: Optional[bool] = None
     notify_task_creation: Optional[bool] = None
 
 # Property Schemas
@@ -1129,7 +1142,6 @@ class ProfileUpdateRequest(BaseModel):
     notif_vote_required: Optional[bool] = None
     notif_vote_closed: Optional[bool] = None
     notif_stay_booked: Optional[bool] = None
-    notif_stay_confirmation: Optional[bool] = None
     notif_stay_reminder: Optional[bool] = None
     notif_heating_start: Optional[bool] = None
     notif_heating_stop: Optional[bool] = None
@@ -1140,6 +1152,9 @@ class ProfileUpdateRequest(BaseModel):
     notify_new_stay: Optional[bool] = None
     notify_thermal_changes: Optional[bool] = None
     notify_mentions: Optional[bool] = None
+    notif_chat_mentions: Optional[bool] = None
+    notif_task_chat_activity: Optional[bool] = None
+    notif_vote_chat_activity: Optional[bool] = None
     notify_task_creation: Optional[bool] = None
     notify_vote_creation: Optional[bool] = None
     notify_vote_arbitration: Optional[bool] = None
@@ -1165,12 +1180,14 @@ class MemberSettingsResponse(BaseModel):
     notif_vote_required: bool = True
     notif_vote_closed: bool = True
     notif_stay_booked: bool = True
-    notif_stay_confirmation: bool = True
     notif_stay_reminder: bool = True
     notif_heating_start: bool = True
     notif_heating_stop: bool = True
     notif_thermal_changes: bool = False
     notify_mentions: bool = True
+    notif_chat_mentions: bool = True
+    notif_task_chat_activity: bool = False
+    notif_vote_chat_activity: bool = False
     notify_task_creation: bool = False
     notify_vote_creation: bool = False
     notify_vote_arbitration: bool = False
@@ -1195,12 +1212,14 @@ class MemberSettingsUpdate(BaseModel):
     notif_vote_required: Optional[bool] = None
     notif_vote_closed: Optional[bool] = None
     notif_stay_booked: Optional[bool] = None
-    notif_stay_confirmation: Optional[bool] = None
     notif_stay_reminder: Optional[bool] = None
     notif_heating_start: Optional[bool] = None
     notif_heating_stop: Optional[bool] = None
     notif_thermal_changes: Optional[bool] = None
     notify_mentions: Optional[bool] = None
+    notif_chat_mentions: Optional[bool] = None
+    notif_task_chat_activity: Optional[bool] = None
+    notif_vote_chat_activity: Optional[bool] = None
     notify_task_creation: Optional[bool] = None
     notify_vote_creation: Optional[bool] = None
     notify_vote_arbitration: Optional[bool] = None

@@ -57,9 +57,8 @@ def hermetic_resend_mock():
 # NIVEAU 1 : COUPE-CIRCUIT TOTAL ET ABSOLU D'URGENCE (DISABLE_ALL_EMAILS = True)
 # ==============================================================================
 
-def test_circuit_breaker_active_by_default():
-    """Vérifie que le coupe-circuit DISABLE_ALL_EMAILS est activé à True par défaut."""
-    assert email_mod.DISABLE_ALL_EMAILS is True
+def test_circuit_breaker_active_in_test_env():
+    """Vérifie que le coupe-circuit est activé (is_email_disabled() is True) dans l'environnement de test isolé."""
     assert email_mod.is_email_disabled() is True
 
 def test_circuit_breaker_blocks_henri(hermetic_resend_mock):
@@ -103,6 +102,7 @@ def disabled_circuit_breaker(monkeypatch):
     monkeypatch.setattr(email_mod, "DISABLE_ALL_EMAILS", False)
     monkeypatch.setenv("DISABLE_ALL_EMAILS", "false")
     monkeypatch.setenv("EMAIL_TEST_MODE", "false")
+    monkeypatch.setenv("EMAIL_FORCE_REAL_MODE", "true")
     monkeypatch.setenv("EMAIL_TEST_REDIRECT_TO", "hellenvillierssci@gmail.com")
     assert email_mod.is_email_disabled() is False
 
