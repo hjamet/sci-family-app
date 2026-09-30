@@ -385,12 +385,10 @@ def fetch_live_telemetry() -> Dict[str, Any]:
             is_heating_active = False
             is_dhw_active = False
         else:
-            # Sémantique Marche/Arrêt Chauffage :
-            # - Chauffage 'à l'arrêt' (is_heating_active = False) si active_program == "reduced" ou si la consigne courante désirée est <= 10.0°C.
-            # - Chauffage 'en marche' (is_heating_active = True) uniquement si la consigne est >= 15.0°C et mode chauffe actif.
-            if active_program == "reduced" or (current_desired_temp is not None and current_desired_temp <= 10.0):
-                is_heating_active = False
-            elif (current_desired_temp is not None and current_desired_temp >= 15.0) and active_mode in ("dhwAndHeating", "forcedNormal"):
+            # Sémantique Marche/Arrêt Chauffage (Matrice Unifiée) :
+            # - Chauffage en marche (is_heating_active = True) dès lors que le mode actif ViCare est dhwAndHeating ou forcedNormal.
+            # - Chauffage à l'arrêt (is_heating_active = False) si mode standby ou dhw (eau chaude seule).
+            if active_mode in ("dhwAndHeating", "forcedNormal"):
                 is_heating_active = True
             else:
                 is_heating_active = False
@@ -410,7 +408,7 @@ def fetch_live_telemetry() -> Dict[str, Any]:
         is_heating_burning = bool(is_heating_active and burner_active and active_mode in ("dhwAndHeating", "forcedNormal"))
 
         # Consigne active Chauffage effective (Sémantique Marche vs Arrêt) :
-        # - Mode Marche : consigne de confort (20.0°C)
+        # - Mode Marche : consigne de confort (20.0°C) ou consigne courante désirée
         # - Mode Arrêt : consigne de veille économique / hors-gel (5.0°C)
         target_temp = (comfort_temp or 20.0) if is_heating_active else (reduced_temp or 5.0)
 
@@ -421,17 +419,22 @@ def fetch_live_telemetry() -> Dict[str, Any]:
                 heating_status_subtext = "Chaudière en veille totale standby • Chauffage et ECS coupés"
             else:
                 frost_temp_str = f"{target_temp:.1f}°C"
-                heating_status_label = f"Arrêt hors-gel ({frost_temp_str})"
-                heating_status_subtext = f"Consigne hors-gel {frost_temp_str} • Veille économique (chaudière sous tension)"
+                heating_status_label = "Arrêt (Mode été • Eau chaude seule)"
+                heating_status_subtext = f"Circuit chauffage à l'arrêt • Seule la production d'eau chaude sanitaire est active"
         elif is_heating_burning:
             heating_status_state = "heating"
             heating_status_label = "Chauffe en cours"
             heating_status_subtext = f"Brûleur fioul allumé • Montée en température vers {target_temp:.1f}°C"
         else:
             heating_status_state = "standby"
-            heating_status_label = "Au repos (brûleur éteint)"
             room_str = f" • Ambiance {room_temp:.1f}°C" if room_temp is not None else ""
-            heating_status_subtext = f"Confort actif ({target_temp:.1f}°C){room_str} • Brûleur éteint (température maintenue)"
+            if active_program == "reduced":
+                night_temp = current_desired_temp if current_desired_temp is not None else (reduced_temp or 5.0)
+                heating_status_label = f"Au repos (abaissement nocturne {night_temp:.1f}°C)"
+                heating_status_subtext = f"Mode Chauffage actif en réduit nocturne ({night_temp:.1f}°C){room_str} • Brûleur au repos"
+            else:
+                heating_status_label = "Au repos (brûleur éteint)"
+                heating_status_subtext = f"Confort actif ({target_temp:.1f}°C){room_str} • Brûleur éteint (température maintenue)"
 
         # Consigne ECS ViCare (Préservation stricte de la consigne réelle sans écrasement artificiel 10°C)
         dhw_comfort = ViCareService._dhw_comfort_temperature
@@ -711,18 +714,45 @@ class ViCareService:
                 detail={"error": f"Erreur lors de la modification de température: {e}", "type": type(e).__name__}
             )
 
+    @staticmethod
+    def resolve_unified_mode(is_heating: bool, is_dhw: bool) -> str:
+        """
+        Matrice de couplage unifiée (Directive Henri) :
+        - Chauffage ON + Eau Chaude ON -> ViCare dhwAndHeating
+        - Chauffage ON + Eau Chaude OFF -> ViCare dhwAndHeating (le chauffage fioul a besoin de ce mode)
+        - Chauffage OFF + Eau Chaude ON -> ViCare dhw
+        - Chauffage OFF + Eau Chaude OFF -> ViCare standby
+        """
+        if is_heating:
+            return "dhwAndHeating"
+        elif is_dhw:
+            return "dhw"
+        else:
+            return "standby"
+
     @classmethod
-    def set_dhw_mode(cls, is_active: bool) -> Dict[str, Any]:
+    def set_dhw_mode(cls, is_active: bool, is_heating_active: Optional[bool] = None) -> Dict[str, Any]:
         """
-        Active ou désactive l'ECS.
-        - Marche : applique le mode 'dhw' (ou active l'ECS) avec consigne confort 52°C.
-        - Arrêt : passe en mode 'standby' (coupure totale). Zéro consigne artificielle 10°C.
+        Active ou désactive l'ECS selon la matrice unifiée.
+        Bascule l'ECS ne doit JAMAIS couper le chauffage par inadvertance.
         """
+        if is_heating_active is None:
+            try:
+                current_telemetry = cls.get_status()
+                is_heating_active = bool(current_telemetry.get("is_heating_active", False))
+            except Exception:
+                is_heating_active = False
+
+        target_mode = cls.resolve_unified_mode(is_heating=is_heating_active, is_dhw=is_active)
+        cls.set_mode(target_mode)
         if is_active:
-            cls.set_mode("dhw")
             cls.set_temperature(target_temp=cls._dhw_comfort_temperature, program="dhw")
         else:
-            cls.set_mode("standby")
+            if is_heating_active:
+                try:
+                    cls.set_temperature(target_temp=10.0, program="dhw")
+                except Exception:
+                    pass
         return cls.get_status(force_refresh=True)
 
     @classmethod

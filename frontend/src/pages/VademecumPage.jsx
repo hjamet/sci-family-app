@@ -231,6 +231,7 @@ export default function VademecumPage({ properties, currentUser, reservations = 
   const [heatingError, setHeatingError] = useState(null);
   const [piscineStatus, setPiscineStatus] = useState(() => getCachedData('pool_status') || null);
   const [piscineError, setPiscineError] = useState(null);
+  const [klereoRadioAlert, setKlereoRadioAlert] = useState(null);
   const [telemetryLoading, setTelemetryLoading] = useState(() => !getCachedData('heating_status') && !getCachedData('pool_status'));
 
   // Thermal controls state (Refonte Switches XXL Marche/Arrêt & Double Consigne)
@@ -302,14 +303,13 @@ export default function VademecumPage({ properties, currentUser, reservations = 
           setDhwFrostTarget(heatRes.dhw_reduced_temperature);
         }
 
-        // Heating active state
+        // Heating active state (Matrice Unifiée)
         let heatingActive = false;
         if (heatRes.is_heating_active != null) {
           heatingActive = Boolean(heatRes.is_heating_active);
         } else if (heatRes.active_mode) {
           const m = (heatRes.active_mode || '').toLowerCase();
-          const p = (heatRes.active_program || '').toLowerCase();
-          heatingActive = m !== 'dhw' && !m.includes('standby') && !m.includes('off') && !p.includes('standby');
+          heatingActive = m === 'dhwandheating' || m === 'forcednormal';
         }
         setIsHeatingActive(heatingActive);
 
@@ -339,6 +339,11 @@ export default function VademecumPage({ properties, currentUser, reservations = 
       if (poolRes && !poolRes.error) {
         setPiscineStatus(poolRes);
         setPiscineError(null);
+        if (poolRes.radio_error || poolRes.radio_link_ok === false || poolRes.radio_alert) {
+          setKlereoRadioAlert(poolRes.radio_alert || "⚠️ Liaison radio K-Link injoignable : le coffret physique au local technique ne répond pas.");
+        } else {
+          setKlereoRadioAlert(null);
+        }
         if (poolRes.target_temperature != null && poolRes.target_temperature >= 15.0) {
           setPoolTarget(poolRes.target_temperature);
         } else if (poolRes.frost_protection_target != null && poolRes.frost_protection_target >= 15.0) {
@@ -366,6 +371,9 @@ export default function VademecumPage({ properties, currentUser, reservations = 
           ? (poolResResult.reason?.message || 'Liaison Klereo Connect indisponible')
           : (poolRes?.error || 'Liaison Klereo Connect indisponible');
         setPiscineError(`⚠️ Liaison Klereo Connect indisponible : ${errMsg}`);
+        if (errMsg.toLowerCase().includes('injoignable') || errMsg.toLowerCase().includes('radio') || errMsg.toLowerCase().includes('k-link') || errMsg.toLowerCase().includes('coffret')) {
+          setKlereoRadioAlert(`⚠️ Liaison radio K-Link injoignable : le coffret physique au local technique ne répond pas.`);
+        }
       }
 
       // Tasks (Annotation 7 : Déduplication et purge des tâches inventées)
@@ -480,13 +488,17 @@ export default function VademecumPage({ properties, currentUser, reservations = 
     setIsHeatingActive(targetActive);
     setSavingThermal(true);
     try {
+      const targetMode = targetActive
+        ? 'dhwAndHeating'
+        : (isDhwActive ? 'dhw' : 'standby');
+
       await saveHeatingSettings({
         is_heating_active: targetActive,
         target_temperature: heatingComfortTarget,
         frost_temperature: heatingFrostTarget,
         is_dhw_active: isDhwActive,
-        dhw_target_temperature: dhwTarget,
-        mode: targetActive ? 'dhwAndHeating' : 'dhw',
+        dhw_target_temperature: isDhwActive ? dhwTarget : dhwFrostTarget,
+        mode: targetMode,
         author_name: resolveCurrentUserFullName(currentUser),
         details: targetActive
           ? `Chauffage ViCare activé en Marche (Confort ${heatingComfortTarget.toFixed(1)}°C)`
@@ -512,8 +524,7 @@ export default function VademecumPage({ properties, currentUser, reservations = 
               realActive = Boolean(freshHeat.is_heating_active);
             } else if (freshHeat.active_mode) {
               const m = (freshHeat.active_mode || '').toLowerCase();
-              const p = (freshHeat.active_program || '').toLowerCase();
-              realActive = m !== 'dhw' && !m.includes('standby') && !m.includes('off') && !p.includes('standby');
+              realActive = m === 'dhwandheating' || m === 'forcednormal';
             }
             if (realActive === targetActive) {
               setIsHeatingActive(realActive);
@@ -537,29 +548,30 @@ export default function VademecumPage({ properties, currentUser, reservations = 
   // Bascule du switch Marche/Arrêt Eau Chaude Sanitaire avec boucle fermée et réconciliation télémétrique réelle
   const handleToggleDhw = async (targetActive) => {
     setIsDhwActive(targetActive);
-    if (!targetActive) {
-      setIsHeatingActive(false);
-    }
     setSavingThermal(true);
     try {
+      const targetMode = isHeatingActive
+        ? 'dhwAndHeating'
+        : (targetActive ? 'dhw' : 'standby');
+
       await saveHeatingSettings({
-        is_heating_active: targetActive ? isHeatingActive : false,
+        is_heating_active: isHeatingActive,
         target_temperature: heatingComfortTarget,
         frost_temperature: heatingFrostTarget,
         is_dhw_active: targetActive,
         dhw_target_temperature: targetActive ? dhwTarget : dhwFrostTarget,
-        mode: targetActive ? (isHeatingActive ? 'dhwAndHeating' : 'dhw') : 'standby',
+        mode: targetMode,
         author_name: resolveCurrentUserFullName(currentUser),
         details: targetActive
           ? `Eau Chaude (250L) activée en Marche (Chauffe cible ${dhwTarget.toFixed(1)}°C)`
-          : `Eau Chaude (250L) et Chaudière mises à l'Arrêt (Veille totale standby)`
+          : `Eau Chaude (250L) mise à l'Arrêt (Veille économique)`
       });
 
       // Notification immédiate positive et explicite
       showToast(
         targetActive
           ? `Commande eau chaude transmise : chauffe cible ${dhwTarget.toFixed(1)}°C (allumage en cours...) 🔥`
-          : `Commande transmise : coupure eau chaude et chaudière en veille standby 🛑`
+          : `Commande transmise : coupure eau chaude sanitaire 🛑`
       );
 
       // Relecture en tâche de fond pour synchroniser la télémétrie ViCare
@@ -574,13 +586,10 @@ export default function VademecumPage({ properties, currentUser, reservations = 
               : (freshHeat.dhw_target_temperature != null && freshHeat.dhw_target_temperature > 20.0);
             if (realDhwActive === targetActive) {
               setIsDhwActive(realDhwActive);
-              if (!targetActive) {
-                setIsHeatingActive(Boolean(freshHeat.is_heating_active));
-              }
               showToast(
                 realDhwActive
                   ? `Eau Chaude confirmée en marche (Cible : ${dhwTarget.toFixed(1)}°C) 🔥`
-                  : `Eau Chaude confirmée à l'arrêt (Chaudière en veille totale standby) 🛑`
+                  : `Eau Chaude confirmée à l'arrêt 🛑`
               );
             }
           }
@@ -631,7 +640,11 @@ export default function VademecumPage({ properties, currentUser, reservations = 
       }, 6000);
     } catch (err) {
       setIsPoolPumpActive(!targetActive);
-      showToast(`Avertissement piscine : ${parseApiError(err)}`);
+      const parsedErr = parseApiError(err);
+      if (parsedErr.toLowerCase().includes('injoignable') || parsedErr.toLowerCase().includes('radio') || parsedErr.toLowerCase().includes('k-link') || parsedErr.toLowerCase().includes('coffret')) {
+        setKlereoRadioAlert(`⚠️ Liaison radio K-Link injoignable : le coffret physique au local technique ne répond pas. (${parsedErr})`);
+      }
+      showToast(`Avertissement piscine : ${parsedErr}`);
     } finally {
       setSavingThermal(false);
     }
@@ -676,7 +689,11 @@ export default function VademecumPage({ properties, currentUser, reservations = 
       }, 6000);
     } catch (err) {
       setIsPoolHeatingActive(!targetActive);
-      showToast(`Avertissement piscine : ${parseApiError(err)}`);
+      const parsedErr = parseApiError(err);
+      if (parsedErr.toLowerCase().includes('injoignable') || parsedErr.toLowerCase().includes('radio') || parsedErr.toLowerCase().includes('k-link') || parsedErr.toLowerCase().includes('coffret')) {
+        setKlereoRadioAlert(`⚠️ Liaison radio K-Link injoignable : le coffret physique au local technique ne répond pas. (${parsedErr})`);
+      }
+      showToast(`Avertissement piscine : ${parsedErr}`);
     } finally {
       setSavingThermal(false);
     }
@@ -1562,68 +1579,6 @@ export default function VademecumPage({ properties, currentUser, reservations = 
                     onIcon="local_fire_department"
                     ariaLabel="Interrupteur principal Chauffage ViCare"
                   />
-                  {/* Bandeau d'état sémantique Marche/Arrêt (Annotation 4 & 5) */}
-                  {(() => {
-                    const status = (() => {
-                      if (!isHeatingActive) {
-                        return {
-                          title: 'Arrêt • Veille économique (maintien hors-gel)',
-                          subtext: 'Chaudière sous tension permanente. Le brûleur ne se déclenche que si la température descend sous la consigne hors-gel.',
-                          icon: 'ac_unit',
-                          style: 'bg-sky-50/80 dark:bg-sky-950/30 border-sky-200 dark:border-sky-800/60 text-sky-950 dark:text-sky-100'
-                        };
-                      }
-                      const isBurning = Boolean(heatingStatus?.burner_active);
-                      const temp = heatingStatus?.room_temperature;
-
-                      if (isBurning) {
-                        return {
-                          title: `Marche • Chauffe en cours vers ${heatingComfortTarget.toFixed(1)}°C`,
-                          subtext: 'Brûleur fioul allumé. Régulation en cours pour atteindre la température de confort.',
-                          icon: 'local_fire_department',
-                          style: 'bg-rose-50/80 dark:bg-rose-950/30 border-rose-200 dark:border-rose-800/60 text-rose-950 dark:text-rose-100'
-                        };
-                      }
-                      if (temp != null && temp < heatingComfortTarget) {
-                        return {
-                          title: `Marche demandée (${heatingComfortTarget.toFixed(1)}°C) • Au repos`,
-                          subtext: 'Chaudière sous tension. Le brûleur régule et se déclenchera selon le cycle de chauffe.',
-                          icon: 'schedule',
-                          style: 'bg-amber-50/80 dark:bg-amber-950/30 border-amber-200 dark:border-amber-800/60 text-amber-950 dark:text-amber-100'
-                        };
-                      }
-                      if (temp != null && temp >= heatingComfortTarget) {
-                        return {
-                          title: `Marche • Confort atteint (${temp.toFixed(1)}°C)`,
-                          subtext: 'Température de confort atteinte. Brûleur au repos.',
-                          icon: 'check_circle',
-                          style: 'bg-emerald-50/80 dark:bg-emerald-950/30 border-emerald-200 dark:border-emerald-800/60 text-emerald-950 dark:text-emerald-100'
-                        };
-                      }
-                      return {
-                        title: `Marche demandée (${heatingComfortTarget.toFixed(1)}°C) • Au repos`,
-                        subtext: 'Chaudière sous tension permanente. Le brûleur régule pour maintenir la consigne de confort.',
-                        icon: 'check_circle',
-                        style: 'bg-emerald-50/80 dark:bg-emerald-950/30 border-emerald-200 dark:border-emerald-800/60 text-emerald-950 dark:text-emerald-100'
-                      };
-                    })();
-
-                    return (
-                      <div className={`p-2.5 rounded-xl border text-xs flex items-start gap-2 shadow-2xs ${status.style}`}>
-                        <span className="material-symbols-outlined text-[18px] shrink-0 mt-0.5 text-primary">
-                          {status.icon}
-                        </span>
-                        <div className="flex flex-col">
-                          <span className="font-bold text-[11px]">
-                            {status.title}
-                          </span>
-                          <span className="text-[10px] text-on-surface-variant mt-0.5 leading-snug">
-                            {status.subtext}
-                          </span>
-                        </div>
-                      </div>
-                    );
-                  })()}
                 </div>
 
                 {/* Consigne et Horaires prévus pour le séjour (Annotation 8 Stitch 2c313f81e4f5499abb218f5b1dc25c68) */}
@@ -1835,68 +1790,6 @@ export default function VademecumPage({ properties, currentUser, reservations = 
                     onIcon="local_fire_department"
                     ariaLabel="Interrupteur principal Eau Chaude Sanitaire"
                   />
-                  {/* Bandeau d'état sémantique Marche/Arrêt (Annotation 4 & 5) */}
-                  {(() => {
-                    const status = (() => {
-                      if (!isDhwActive) {
-                        return {
-                          title: 'Arrêt • Veille économique (maintien hors-gel)',
-                          subtext: 'Chauffe-eau sous tension permanente. Aucune chauffe active en veille, seuil de protection cuve maintenu.',
-                          icon: 'water_heater',
-                          style: 'bg-sky-50/80 dark:bg-sky-950/30 border-sky-200 dark:border-sky-800/60 text-sky-950 dark:text-sky-100'
-                        };
-                      }
-                      const isBurning = Boolean(heatingStatus?.is_dhw_heating || (isDhwActive && heatingStatus?.burner_active));
-                      const temp = heatingStatus?.dhw_temperature;
-
-                      if (isBurning) {
-                        return {
-                          title: `Marche • Chauffe en cours vers ${dhwTarget.toFixed(1)}°C`,
-                          subtext: 'Brûleur allumé. Montée en température du ballon vers la consigne.',
-                          icon: 'local_fire_department',
-                          style: 'bg-rose-50/80 dark:bg-rose-950/30 border-rose-200 dark:border-rose-800/60 text-rose-950 dark:text-rose-100'
-                        };
-                      }
-                      if (temp != null && temp < dhwTarget) {
-                        return {
-                          title: `Marche demandée • Ballon à ${temp.toFixed(1)}°C (au repos)`,
-                          subtext: 'Chauffe-eau sous tension. Le brûleur se déclenchera selon le cycle de relance pour atteindre la consigne.',
-                          icon: 'schedule',
-                          style: 'bg-amber-50/80 dark:bg-amber-950/30 border-amber-200 dark:border-amber-800/60 text-amber-950 dark:text-amber-100'
-                        };
-                      }
-                      if (temp != null && temp >= dhwTarget) {
-                        return {
-                          title: `Marche • Eau chaude disponible (${temp.toFixed(1)}°C)`,
-                          subtext: 'Température de consigne atteinte. Maintien au repos.',
-                          icon: 'check_circle',
-                          style: 'bg-emerald-50/80 dark:bg-emerald-950/30 border-emerald-200 dark:border-emerald-800/60 text-emerald-950 dark:text-emerald-100'
-                        };
-                      }
-                      return {
-                        title: `Marche demandée (${dhwTarget.toFixed(1)}°C) • Au repos`,
-                        subtext: 'Chauffe-eau sous tension permanente. Le brûleur se déclenche pour maintenir le ballon à température de consigne.',
-                        icon: 'check_circle',
-                        style: 'bg-emerald-50/80 dark:bg-emerald-950/30 border-emerald-200 dark:border-emerald-800/60 text-emerald-950 dark:text-emerald-100'
-                      };
-                    })();
-
-                    return (
-                      <div className={`p-2.5 rounded-xl border text-xs flex items-start gap-2 shadow-2xs ${status.style}`}>
-                        <span className="material-symbols-outlined text-[18px] shrink-0 mt-0.5 text-primary">
-                          {status.icon}
-                        </span>
-                        <div className="flex flex-col">
-                          <span className="font-bold text-[11px]">
-                            {status.title}
-                          </span>
-                          <span className="text-[10px] text-on-surface-variant mt-0.5 leading-snug">
-                            {status.subtext}
-                          </span>
-                        </div>
-                      </div>
-                    );
-                  })()}
                 </div>
 
 
@@ -2061,6 +1954,21 @@ export default function VademecumPage({ properties, currentUser, reservations = 
                 </div>
               </div>
 
+              {/* Alerte Radio Klereo si coffret injoignable ou anomalie radio (Question 3) */}
+              {(klereoRadioAlert || piscineStatus?.radio_error || piscineStatus?.radio_link_ok === false || (piscineStatus?.radio_alert && !piscineStatus?.radio_link_ok) || (piscineError && (piscineError.toLowerCase().includes('injoignable') || piscineError.toLowerCase().includes('radio')))) && (
+                <div className="p-3.5 bg-amber-50 dark:bg-amber-950/50 border-2 border-amber-500 dark:border-amber-500 text-amber-950 dark:text-amber-100 rounded-xl text-xs font-semibold flex items-start gap-2.5 shadow-sm animate-in fade-in duration-200">
+                  <span className="material-symbols-outlined text-amber-600 dark:text-amber-400 text-[24px] shrink-0 mt-0.5">wifi_off</span>
+                  <div className="flex flex-col gap-1 min-w-0">
+                    <span className="font-bold text-sm text-amber-900 dark:text-amber-200 flex items-center gap-1.5">
+                      ⚠️ Liaison radio K-Link injoignable : le coffret physique au local technique ne répond pas
+                    </span>
+                    <span className="text-[11px] text-amber-800 dark:text-amber-300 font-normal leading-relaxed">
+                      {klereoRadioAlert || piscineStatus?.radio_alert || "La communication radio entre le modem internet et le coffret électrique du local technique est interrompue. Les commandes d'actionneurs et la télémesure en direct sont suspendues jusqu'au rétablissement de la liaison radio."}
+                    </span>
+                  </div>
+                </div>
+              )}
+
               {/* Fail-Fast Piscine Alert */}
               {piscineError && (
                 <div className="p-3 bg-rose-50 border border-rose-300 text-rose-900 rounded-xl text-xs font-semibold flex items-center gap-2 animate-in fade-in duration-200">
@@ -2069,16 +1977,9 @@ export default function VademecumPage({ properties, currentUser, reservations = 
                 </div>
               )}
 
-              {/* Contrôles Piscine (Régulation Filtration Klereo & Chauffage PAC) */}
+              {/* Contrôles Piscine (Chauffage PAC Inopac 20 kW) */}
               <div className="space-y-3">
-                {/* 1. Badge informatif Régulation Automatique Klereo */}
-                <div className="p-3 rounded-xl bg-sky-50/80 dark:bg-sky-950/30 border border-sky-200 dark:border-sky-800/60 text-sky-950 dark:text-sky-100 flex items-center gap-2">
-                  <span className="text-xs font-medium leading-snug">
-                    💧 Filtration : Active • Régulation automatique Klereo (selon température de l'eau)
-                  </span>
-                </div>
-
-                {/* 2. Switch Chauffage Piscine (PAC Inopac 20 kW) */}
+                {/* Switch Chauffage Piscine (PAC Inopac 20 kW) */}
                 <div className="space-y-1.5">
                   <span className="text-[11px] font-bold text-on-surface-variant uppercase tracking-wider block">
                     Chauffage Piscine (PAC Inopac 20 kW)
@@ -2093,28 +1994,6 @@ export default function VademecumPage({ properties, currentUser, reservations = 
                     onIcon="local_fire_department"
                     ariaLabel="Interrupteur Chauffage Piscine PAC Inopac"
                   />
-                  {/* Bandeau d'état sémantique PAC (Annotation 4) */}
-                  <div className={`p-2.5 rounded-xl border text-xs flex items-start gap-2 shadow-2xs ${
-                    isPoolHeatingActive
-                      ? 'bg-emerald-50/80 dark:bg-emerald-950/30 border-emerald-200 dark:border-emerald-800/60 text-emerald-950 dark:text-emerald-100'
-                      : 'bg-sky-50/80 dark:bg-sky-950/30 border-sky-200 dark:border-sky-800/60 text-sky-950 dark:text-sky-100'
-                  }`}>
-                    <span className="material-symbols-outlined text-[18px] shrink-0 mt-0.5 text-primary">
-                      {isPoolHeatingActive ? 'check_circle' : 'ac_unit'}
-                    </span>
-                    <div className="flex flex-col">
-                      <span className="font-bold text-[11px]">
-                        {isPoolHeatingActive
-                          ? `Marche • Confort baignade (régulation vers ${poolTarget.toFixed(1)}°C)`
-                          : 'Arrêt • Veille économique (aucune consigne basse • sauvegarde antigel 3.0°C)'}
-                      </span>
-                      <span className="text-[10px] text-on-surface-variant mt-0.5 leading-snug">
-                        {isPoolHeatingActive
-                          ? 'La pompe à chaleur régule activement dès que la pompe de filtration est en marche.'
-                          : 'Compresseur PAC au repos. Sauvegarde antigel physique Klereo active en continu (seuil 3.0°C).'}
-                      </span>
-                    </div>
-                  </div>
                 </div>
               </div>
 
@@ -2139,14 +2018,6 @@ export default function VademecumPage({ properties, currentUser, reservations = 
                       Hors-gel Klereo
                     </span>
                   )}
-                </div>
-              )}
-
-              {/* Alerte Radio Klereo si anomalie radio avérée renvoyée par l'API */}
-              {piscineStatus?.radio_error && piscineStatus?.radio_alert && (
-                <div className="p-3 bg-amber-50 dark:bg-amber-950/40 border border-amber-300 text-amber-900 dark:text-amber-200 rounded-xl text-xs font-medium flex items-center gap-2 animate-in fade-in duration-200">
-                  <span className="material-symbols-outlined text-amber-600 text-sm">wifi_off</span>
-                  <span>{piscineStatus.radio_alert}</span>
                 </div>
               )}
 

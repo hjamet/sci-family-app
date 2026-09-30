@@ -6618,8 +6618,19 @@ def set_heating_temperature(req: HeatingTemperatureRequest):
 @app.post("/api/heating/dhw/mode", response_model=HeatingStatusResponse)
 @app.post("/api/heating/dhw-mode", response_model=HeatingStatusResponse)
 @app.post("/api/vicare/dhw/mode", response_model=HeatingStatusResponse)
-def set_dhw_mode(req: DhwModeRequest):
-    return ViCareService.set_dhw_mode(req.is_active)
+def set_dhw_mode(req: DhwModeRequest, db: Session = Depends(get_db)):
+    heating_setting = db.query(ThermalSettings).filter(ThermalSettings.equipment_type == "heating").first()
+    is_heating = (heating_setting.mode == "dhwAndHeating") if heating_setting and heating_setting.mode else False
+
+    dhw_setting = db.query(ThermalSettings).filter(ThermalSettings.equipment_type == "dhw").first()
+    if not dhw_setting:
+        dhw_setting = ThermalSettings(equipment_type="dhw")
+        db.add(dhw_setting)
+    dhw_setting.mode = "on" if req.is_active else "off"
+    dhw_setting.updated_at = datetime.utcnow()
+    db.commit()
+
+    return ViCareService.set_dhw_mode(req.is_active, is_heating_active=is_heating)
 
 @app.post("/api/heating/dhw/temperature", response_model=HeatingStatusResponse)
 @app.post("/api/heating/dhw-temperature", response_model=HeatingStatusResponse)
@@ -6831,24 +6842,16 @@ def update_heating_settings(
     else:
         is_heating = (setting.mode == "dhwAndHeating") if setting.mode else True
 
-    # Couplage Matériel Standby / Été / Hiver :
-    # - Si is_heating : mode hiver ➔ ViCareService.set_mode("dhwAndHeating"), setting.mode = "dhwAndHeating", dhw_setting.mode = "on"
-    # - Si not is_heating and is_dhw : mode été ➔ ViCareService.set_mode("dhw"), setting.mode = "dhw", dhw_setting.mode = "on"
-    # - Si not is_heating and not is_dhw : coupure totale ➔ ViCareService.set_mode("standby"), setting.mode = "standby", dhw_setting.mode = "off"
     dhw_was_off = dhw_setting.mode == "off" if dhw_setting and dhw_setting.mode else False
 
-    if is_heating:
-        target_mode = "dhwAndHeating"
-        setting.mode = "dhwAndHeating"
-        dhw_setting.mode = "on"
-    elif is_dhw:
-        target_mode = "dhw"
-        setting.mode = "dhw"
-        dhw_setting.mode = "on"
-    else:
-        target_mode = "standby"
-        setting.mode = "standby"
-        dhw_setting.mode = "off"
+    # Matrice de Couplage Unifiée ViCare (Directive Henri) :
+    # - Chauffage ON + Eau Chaude ON -> ViCare dhwAndHeating, dhw_setting="on"
+    # - Chauffage ON + Eau Chaude OFF -> ViCare dhwAndHeating (le chauffage fioul a besoin de ce mode), dhw_setting="off"
+    # - Chauffage OFF + Eau Chaude ON -> ViCare dhw, dhw_setting="on"
+    # - Chauffage OFF + Eau Chaude OFF -> ViCare standby, dhw_setting="off"
+    target_mode = ViCareService.resolve_unified_mode(is_heating=is_heating, is_dhw=is_dhw)
+    setting.mode = target_mode
+    dhw_setting.mode = "on" if is_dhw else "off"
 
     setting.updated_by = author
     setting.updated_at = datetime.utcnow()
@@ -6863,18 +6866,21 @@ def update_heating_settings(
 
     # ──── Commande matérielle ViCare ────
     try:
+        ViCareService.set_mode(target_mode)
         if is_heating:
-            ViCareService.set_mode("dhwAndHeating")
             if setting.target_temperature:
                 ViCareService.set_temperature(setting.target_temperature, program="comfort")
-            if dhw_setting.target_temperature:
-                ViCareService.set_temperature(dhw_setting.target_temperature, program="dhw")
+            if is_dhw:
+                target_dhw = dhw_setting.target_temperature or ViCareService._dhw_comfort_temperature
+                ViCareService.set_temperature(target_dhw, program="dhw")
+            else:
+                try:
+                    ViCareService.set_temperature(10.0, program="dhw")
+                except Exception:
+                    pass
         elif is_dhw:
-            ViCareService.set_mode("dhw")
-            if dhw_setting.target_temperature:
-                ViCareService.set_temperature(dhw_setting.target_temperature, program="dhw")
-        else:
-            ViCareService.set_mode("standby")
+            target_dhw = dhw_setting.target_temperature or ViCareService._dhw_comfort_temperature
+            ViCareService.set_temperature(target_dhw, program="dhw")
 
         logger.info(f"[HEATING SETTINGS] Commande ViCare envoyée : mode={target_mode}, heating={is_heating}, dhw={is_dhw}")
     except HTTPException as vicare_err:
