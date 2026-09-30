@@ -8,7 +8,7 @@ def seed_database(db: Session = None, force: bool = False):
     """
     Initialisation sanctuarisée de la base de données :
     - S'assure que les tables existent.
-    - S'assure que les 2 propriétés fondamentales (Villa Rosing & Le Presbytère) existent.
+    - S'assure que les 2 propriétés fondamentales (Rosings & Le Presbytère) existent.
     - S'assure que les 7 associés statutaires de la SCI existent.
     - S'assure que le compte Swan officiel existe (solde 0.0).
     - ZÉRO DONNÉE FICTIVE : Aucune tâche, aucun projet, aucun vote, aucune réservation,
@@ -29,9 +29,9 @@ def seed_database(db: Session = None, force: bool = False):
         if prop_count == 0:
             p1 = Property(
                 id=1,
-                name="Villa Rosing",
+                name="Rosings",
                 address="8 rue Ancienne Mairie",
-                description="Grande propriété familiale Villa Rosing (8 rue Ancienne Mairie).",
+                description="Grande propriété familiale Rosings (8 rue Ancienne Mairie).",
                 total_chambers=2
             )
             p2 = Property(
@@ -43,7 +43,7 @@ def seed_database(db: Session = None, force: bool = False):
             )
             session.add_all([p1, p2])
             session.commit()
-            print("Propriétés Domaine d'Hellenvilliers initialisées (Villa Rosing, Le Presbytère).")
+            print("Propriétés Domaine d'Hellenvilliers initialisées (Rosings, Le Presbytère).")
 
         # 2. Vérification des 7 associés
         member_count = session.query(Member).count()

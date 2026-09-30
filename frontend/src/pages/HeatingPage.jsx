@@ -1,6 +1,6 @@
 /**
  * HeatingPage — Route autonome /energie (alias /chauffage)
- * Supervision connectée ViCare (Presbytère) & Piscine Klereo (Villa Rosing avec verrou lecture seule)
+ * Supervision connectée ViCare (Presbytère) & Piscine Klereo (Rosings avec verrou lecture seule)
  */
 import React, { useState, useEffect } from 'react';
 import {
@@ -196,7 +196,7 @@ export default function HeatingPage({ currentUser }) {
               Régulation & Confort Énergétique
             </h1>
             <p className="font-body-md text-on-surface-variant text-sm sm:text-base leading-relaxed">
-              Supervision à distance de la chaudière Viessmann ViCare (Le Presbytère) et de la domotique piscine Klereo (Villa Rosing).
+              Supervision à distance de la chaudière Viessmann ViCare (Le Presbytère) et de la domotique piscine Klereo (Rosings).
             </p>
           </div>
 
@@ -268,7 +268,7 @@ export default function HeatingPage({ currentUser }) {
         <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
           <ThermalMetricSkeleton title="Supervision ViCare (Presbytère)..." />
           <ThermalMetricSkeleton title="Eau Chaude Sanitaire (Ballon)..." />
-          <ThermalMetricSkeleton title="Domotique Bassin & Piscine (Rosing)..." />
+          <ThermalMetricSkeleton title="Domotique Bassin & Piscine (Rosings)..." />
         </div>
       ) : (
         <div className="grid grid-cols-1 md:grid-cols-3 gap-6">

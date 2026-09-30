@@ -12,6 +12,7 @@ import {
   createProject,
   updateProject,
   deleteProject,
+  addProjectComment,
   attachDocumentsToProject,
   rejectAndReopenProject,
   invalidateApiCache,
@@ -1015,17 +1016,19 @@ function VoteRoofModalInner({
           external_links: editExternalLinks
         };
         const created = await createProject(newPayload);
-        invalidateCache('/api/projects');
-        invalidateCache('/api/projects/pending');
+        const newProject = created && created.id ? { ...created, status: created.status || 'PROPOSED' } : { ...newPayload, id: Date.now() };
+        invalidateApiCache('projects');
+        invalidateApiCache('/api/projects');
+        invalidateApiCache('/api/projects/pending');
         mutate('projects');
-        setLocalProject(created);
+        setLocalProject(newProject);
         setIsEditing(false);
         initialFormSnapshotRef.current = null;
         setToastMessage('Initiative proposée avec succès !');
         if (typeof onProjectCreated === 'function') {
-          onProjectCreated(created);
+          onProjectCreated(newProject);
         } else if (typeof onVoteSubmit === 'function') {
-          onVoteSubmit(created);
+          onVoteSubmit(newProject);
         }
         onClose();
       } else {
@@ -1066,18 +1069,45 @@ function VoteRoofModalInner({
   };
 
   // Envoi d'un message dans le fil de discussion
-  const handleSendMessageText = (text) => {
+  const handleSendMessageText = async (text) => {
     if (!text || !text.trim()) return;
+
+    const author = currentAssociate?.name || currentUserName || 'Henri Jamet';
+    const trimmed = text.trim();
+
+    if (activeProject && activeProject.id) {
+      try {
+        const createdComment = await addProjectComment(activeProject.id, {
+          author_name: author,
+          content: trimmed
+        });
+        if (createdComment) {
+          const formatted = {
+            id: createdComment.id || Date.now(),
+            author: createdComment.author_name || author,
+            initials: (createdComment.author_name || author).split(' ').map(w => w[0]).join('').slice(0, 2).toUpperCase(),
+            isGerance: (createdComment.author_name || author).toLowerCase().includes('henri'),
+            date: createdComment.created_at ? new Date(createdComment.created_at).toLocaleDateString('fr-FR') : 'Aujourd\'hui',
+            content: createdComment.content || trimmed,
+            reactions: createdComment.reactions || []
+          };
+          setMessages(prev => [...prev, formatted]);
+          return;
+        }
+      } catch (err) {
+        console.error("Erreur ajout commentaire projet:", err);
+      }
+    }
 
     const now = new Date();
     const formattedDate = `${now.getDate()} mai, ${now.getHours().toString().padStart(2, '0')}:${now.getMinutes().toString().padStart(2, '0')}`;
 
     const newMsg = {
       id: Date.now(),
-      author: currentAssociate?.name || currentUserName,
+      author: author,
       initials: currentAssociate?.initials || 'AJ',
       date: formattedDate,
-      content: text.trim(),
+      content: trimmed,
       reactions: []
     };
 

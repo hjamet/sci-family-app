@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useRef } from 'react';
-import { createReservation, updateReservation, deleteReservation } from '../api';
+import { createReservation, updateReservation, deleteReservation, invalidateApiCache } from '../api';
 
 function formatYMD(d) {
   const y = d.getFullYear();
@@ -252,6 +252,7 @@ function BookingModalContent({
   properties,
   currentUser = 'Henri Jamet',
   onBooked,
+  onReservationCreated,
   initialReservation = null,
 }) {
   const loggedInUserName = resolveSafeUserName(resolveCurrentUserFullName(currentUser)) || 'Henri Jamet';
@@ -655,8 +656,8 @@ function BookingModalContent({
 
       const resolvedPropertyId = hasPresb && !hasRosing ? 2 : 1;
       const resolvedPropertyName = hasPresb && hasRosing
-        ? 'Rosing & Presbytère'
-        : (resolvedPropertyId === 2 ? 'Le Presbytère' : 'Villa Rosing');
+        ? 'Rosings & Presbytère'
+        : (resolvedPropertyId === 2 ? 'Le Presbytère' : 'Rosings');
 
       // Notes enrichies avec les consignes domotiques et participants
       const domotiqueTags = [];
@@ -706,12 +707,21 @@ function BookingModalContent({
         notes: notesParts.join(' • '),
       };
 
+      let savedReservation = null;
       if (isEditMode) {
-        await updateReservation(initialReservation.id, payload);
+        savedReservation = await updateReservation(initialReservation.id, payload);
       } else {
-        await createReservation(payload);
+        savedReservation = await createReservation(payload);
       }
-      if (onBooked) await onBooked();
+      invalidateApiCache('reservations');
+      invalidateApiCache('/api/reservations');
+
+      if (!isEditMode && savedReservation && typeof onReservationCreated === 'function') {
+        onReservationCreated(savedReservation);
+      }
+      if (onBooked) {
+        await onBooked(savedReservation);
+      }
       onClose();
     } catch (err) {
       console.error('Erreur réservation:', err);
@@ -732,7 +742,9 @@ function BookingModalContent({
       setSubmitting(true);
       setError(null);
       await deleteReservation(reservationId);
-      if (onBooked) await onBooked();
+      invalidateApiCache('reservations');
+      invalidateApiCache('/api/reservations');
+      if (onBooked) await onBooked({ deleted: true, id: reservationId });
       onClose();
     } catch (err) {
       console.error('Erreur annulation séjour:', err);
@@ -984,7 +996,7 @@ function BookingModalContent({
                         : 'text-on-surface-variant hover:text-on-surface'
                     }`}
                   >
-                    Rosing
+                    Rosings
                   </button>
                   <button
                     type="button"
@@ -1005,13 +1017,13 @@ function BookingModalContent({
             </div>
 
             <div className={`grid grid-cols-1 ${selectedHouse === 'all' ? 'lg:grid-cols-2' : ''} gap-space-sm items-start`}>
-              {/* Villa Rosing */}
+              {/* Rosings */}
               {(selectedHouse === 'all' || selectedHouse === 'rosing') && (
                 <div className="p-space-sm bg-canvas-slate rounded-DEFAULT border border-border-subtle flex flex-col gap-2.5">
                   <div className="flex items-center justify-between pb-2 border-b border-border-subtle">
                     <div className="flex items-center gap-2">
                       <span className="material-symbols-outlined text-primary-container">villa</span>
-                      <span className="font-headline-sm text-headline-sm text-on-surface font-semibold">Villa Rosing</span>
+                      <span className="font-headline-sm text-headline-sm text-on-surface font-semibold">Rosings</span>
                     </div>
                     <span className="px-2 py-0.5 rounded-full bg-surface-container-lowest text-on-surface-variant font-label-sm text-xs border border-border-subtle">
                       {rosingRooms.length} chambres
@@ -1107,7 +1119,7 @@ function BookingModalContent({
                 <div className="flex items-center justify-between">
                   <span className="font-label-md text-label-md text-forest-deep flex items-center gap-1.5 font-semibold">
                     <span className="material-symbols-outlined text-[20px] text-primary-container">pool</span>
-                    Option Bassin & Piscine (Villa Rosing)
+                    Option Bassin & Piscine (Rosings)
                   </span>
                   <span className={`px-2 py-0.5 rounded-full text-xs font-semibold ${
                     poolHeating

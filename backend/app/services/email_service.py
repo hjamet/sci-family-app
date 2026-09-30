@@ -229,7 +229,7 @@ def render_email_layout(title: str, preheader: str, content_html: str, action_ur
                     <tr>
                         <td style="background-color: #faf9f6; padding: 20px 32px; border-top: 1px solid #edebe4; font-size: 12px; color: #6b7280; text-align: center; line-height: 1.5;">
                             <div style="font-weight: 600; color: #1e3a2f; margin-bottom: 4px;">
-                                SCI Familiale Hellenvilliers • Villa Rosing & Le Presbytère
+                                SCI Familiale Hellenvilliers • Rosings & Le Presbytère
                             </div>
                             <div>
                                 Notification automatique transmise aux associés. Vos préférences de notifications sont réglables sur votre
@@ -560,7 +560,7 @@ def send_task_creation_pending_email(
                 </td>
             </tr>
             <tr>
-                <td style="color: #6b7280;">⏱️ Complexité :</td>
+                <td style="color: #6b7280;">⏱️ Charge de la tâche :</td>
                 <td style="font-weight: 600; color: #1f2937;">{complexity or 'Modérée'}</td>
             </tr>
         </table>
@@ -568,7 +568,7 @@ def send_task_creation_pending_email(
     </div>
 
     <p style="color: #4b5563; font-size: 14px;">
-        En tant que coordinateur, vous pouvez examiner la proposition, lui assigner un membre responsable et approuver sa mise en œuvre :
+        Vous pouvez examiner la proposition, lui assigner un membre responsable et suivre sa mise en œuvre :
     </p>
     """
 

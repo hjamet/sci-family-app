@@ -17,6 +17,7 @@ import {
   uploadTaskDocuments,
   deleteDocument,
   invalidateCache,
+  invalidateApiCache,
 } from '../api';
 import {
   isTaskPendingValidation,
@@ -44,7 +45,8 @@ const SUBJECTS = [
   'SCI & Administratif',
 ];
 
-const COMPLEXITIES = ['Faible', 'Modérée', 'Élevée', 'Expertise requise'];
+export const CHARGES = ['Négligeable', 'Faible', 'Modérée', 'Élevée', 'Très élevée'];
+export const COMPLEXITIES = CHARGES;
 
 const ALL_MEMBERS = [
   'Henri Jamet',
@@ -127,6 +129,8 @@ export default function TaskDetailModal({
   currentUser = 'Henri Jamet',
   onTaskUpdated,
   onTaskDeleted,
+  onProjectCreated,
+  onTaskCreated,
   initialMode = 'view',
   isEditing = false,
   isBugReport = false,
@@ -683,7 +687,7 @@ export default function TaskDetailModal({
         // Création unifiée (Tâche standard ou Initiative de vote - Annotation 2 & 4)
         try {
           if (isVoteInitiative) {
-            await createProject({
+            const created = await createProject({
               title: editTitle.trim(),
               description: editDescription.trim(),
               category: editSubject,
@@ -696,13 +700,28 @@ export default function TaskDetailModal({
               linked_documents: editDocuments.map((d) => d.name || d.filename).join(', '),
               external_links: editExternalLinks,
             });
+            invalidateApiCache('projects');
+            invalidateApiCache('/api/projects');
+            invalidateApiCache('/api/projects/pending');
+            if (typeof onProjectCreated === 'function') {
+              onProjectCreated(created);
+            } else if (typeof onTaskUpdated === 'function') {
+              onTaskUpdated(created);
+            }
           } else {
-            await createTask(payload);
+            const createdTaskObj = await createTask(payload);
+            invalidateApiCache('tasks');
+            invalidateApiCache('/api/tasks');
+            if (typeof onTaskCreated === 'function') {
+              onTaskCreated(createdTaskObj);
+            } else if (typeof onTaskUpdated === 'function') {
+              onTaskUpdated(createdTaskObj);
+            }
           }
         } catch (apiErr) {
           console.warn('API create notice, fallback local:', apiErr);
+          if (typeof onTaskUpdated === 'function') onTaskUpdated();
         }
-        if (onTaskUpdated) onTaskUpdated();
         onClose();
       }
     } catch (err) {
@@ -861,7 +880,8 @@ export default function TaskDetailModal({
 
       if (task?.id) {
         const accepted = await acceptTask(task.id, { assigned_members: currentMembers, status: 'EN_COURS' });
-        refreshed = (accepted && accepted.id) ? accepted : await fetchTaskById(task.id).catch(() => ({ ...task, status: 'EN_COURS', assigned_members: currentMembers }));
+        const fetched = (accepted && accepted.id) ? accepted : await fetchTaskById(task.id).catch(() => ({ ...task, status: 'EN_COURS', assigned_members: currentMembers }));
+        refreshed = { ...fetched, status: 'EN_COURS', assigned_members: currentMembers };
         setTask(refreshed);
         syncEditFields(refreshed);
       } else {
@@ -1012,9 +1032,13 @@ export default function TaskDetailModal({
   // Emoji Reactions
   const handleEmojiReact = async (commentId, emoji) => {
     try {
-      if (task.id) {
-        const updated = await reactToTaskComment(task.id, commentId, emoji, currentUser);
-        setComments(comments.map((c) => (c.id === commentId ? updated : c)));
+      const userName = typeof currentUser === 'object' && currentUser !== null
+        ? (currentUser.name || currentUser.prenom || 'Henri')
+        : (currentUser || 'Henri');
+
+      if (task?.id) {
+        const updated = await reactToTaskComment(task.id, commentId, emoji, userName);
+        setComments(comments.map((c) => (c.id === commentId ? (updated || c) : c)));
       } else {
         setComments(
           comments.map((c) => {
@@ -1206,10 +1230,10 @@ export default function TaskDetailModal({
                     </span>
                     {!(
                       (task.category || (isVoteInitiative ? 'Projet & Scrutin SCI' : 'Espaces Verts & Parc')).trim().toLowerCase() ===
-                      (task.subject || (isVoteInitiative ? 'Presbytère' : 'Rosing')).trim().toLowerCase()
+                      (task.subject || (isVoteInitiative ? 'Presbytère' : 'Rosings')).trim().toLowerCase()
                     ) && (
                       <span className="px-3 py-1 bg-surface-container text-on-surface font-label-sm text-xs rounded-full">
-                        {task.subject || (isVoteInitiative ? 'Presbytère' : 'Rosing')}
+                        {task.subject || (isVoteInitiative ? 'Presbytère' : 'Rosings')}
                       </span>
                     )}
                     {task.is_recurring && (
@@ -1641,14 +1665,14 @@ export default function TaskDetailModal({
                         />
                       </div>
 
-                      {/* Annotation 8 : Masquer degré de complexité en mode vote */}
+                      {/* Annotation 3 : Charge de la tâche */}
                       {!isVoteInitiative && (
                         <div className="flex flex-col gap-1">
-                          <label className="font-label-md text-xs font-semibold text-on-surface">Degré de complexité</label>
+                          <label className="font-label-md text-xs font-semibold text-on-surface">Charge de la tâche</label>
                           <CustomSelect
                             value={editComplexity}
                             onChange={(e) => setEditComplexity(e.target.value)}
-                            options={COMPLEXITIES}
+                            options={CHARGES}
                             className="h-10 text-xs sm:text-sm"
                           />
                         </div>

@@ -36,9 +36,14 @@ export default function NotificationBell({
   onOpenTaskModal,
   onOpenBookingModal,
   onNavigate,
-  setActiveTab
+  setActiveTab,
+  isOpen: controlledIsOpen,
+  setIsOpen: controlledSetIsOpen,
+  onUnreadCountChange,
 }) {
-  const [isOpen, setIsOpen] = useState(false);
+  const [internalIsOpen, setInternalIsOpen] = useState(false);
+  const isOpen = controlledIsOpen !== undefined ? controlledIsOpen : internalIsOpen;
+  const setIsOpen = controlledSetIsOpen !== undefined ? controlledSetIsOpen : setInternalIsOpen;
   const [notifications, setNotifications] = useState([]);
   const [loading, setLoading] = useState(false);
   const dropdownRef = useRef(null);
@@ -175,7 +180,7 @@ export default function NotificationBell({
             if (!exists) {
               dynamicNotifs.push({
                 id: `dyn-res-${r.id}`,
-                title: `Séjour : ${r.house === 'rosing' ? 'Villa Rosing' : 'Presbytère'}`,
+                title: `Séjour : ${r.house === 'rosing' ? 'Rosings' : 'Presbytère'}`,
                 description: `Du ${r.start_date} au ${r.end_date} (${r.status || 'Confirmé'}).`,
                 type: 'booking',
                 link_id: r.id,
@@ -310,6 +315,12 @@ function getNotificationEmail(notif, currentUser) {
 
   const unreadNotifications = notifications.filter((n) => !isNotifRead(n));
   const unreadCount = unreadNotifications.length;
+
+  useEffect(() => {
+    if (typeof onUnreadCountChange === 'function') {
+      onUnreadCountChange(unreadCount);
+    }
+  }, [unreadCount, onUnreadCountChange]);
 
   const evictNotification = (notifId) => {
     const idStr = String(notifId);

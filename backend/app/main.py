@@ -54,7 +54,7 @@ from .schemas import (
     VoteSubmissionRequest, ForgotPasswordRequest, NotificationResponse
 )
 from .seed import seed_database
-from .services.workload_balancer import calculate_workload_distribution, resolve_auto_assignment_by_workload
+from .services.workload_balancer import calculate_workload_distribution, resolve_auto_assignment_by_workload, get_task_charge_points, TASK_CHARGE_WEIGHTS
 from .services.vicare_service import ViCareService
 from .services.klereo_service import KlereoService
 from .services.banking import enable_banking_service
@@ -738,27 +738,16 @@ def dispatch_chat_mentions(
 
         dispatched_email = None
         try:
-            if background_tasks:
-                background_tasks.add_task(
-                    send_mention_notification,
-                    mentioned_member=member,
-                    author_name=author_name,
-                    context_title=context_title,
-                    message_text=content,
-                    target_url=target_url,
-                    is_collective=is_all,
-                    actually_send=bool(pref and member.email)
-                )
-            else:
-                send_mention_notification(
-                    mentioned_member=member,
-                    author_name=author_name,
-                    context_title=context_title,
-                    message_text=content,
-                    target_url=target_url,
-                    is_collective=is_all,
-                    actually_send=bool(pref and member.email)
-                )
+            # Envoi et enregistrement synchrone pour garantir l'association immédiate dans la cloche (Annotation 9)
+            send_mention_notification(
+                mentioned_member=member,
+                author_name=author_name,
+                context_title=context_title,
+                message_text=content,
+                target_url=target_url,
+                is_collective=is_all,
+                actually_send=bool(pref and member.email)
+            )
             dispatched_email = getattr(send_mention_notification, "last_dispatched_email", None)
         except Exception as err:
             logger.error(f"[MENTIONS ERROR] Échec notification email pour {member.prenom}: {err}")
@@ -1521,9 +1510,9 @@ ALL_SCI_ROOMS = [
     {"id": "presbytere_3", "name": "Chambre Hortense Presbytère", "property": "Le Presbytère", "property_id": 2},
     {"id": "presbytere_4", "name": "Chambre Joséphine Presbytère", "property": "Le Presbytère", "property_id": 2},
     {"id": "presbytere_5", "name": "Chambre Eugénie et Alexandre Presbytère", "property": "Le Presbytère", "property_id": 2},
-    # Villa Rosing (2 chambres)
-    {"id": "rosing_1", "name": "Chambre Marguerite Rosings", "property": "Villa Rosing", "property_id": 1},
-    {"id": "rosing_2", "name": "Chambre Hortense Rosings", "property": "Villa Rosing", "property_id": 1},
+    # Rosings (2 chambres)
+    {"id": "rosing_1", "name": "Chambre Marguerite Rosings", "property": "Rosings", "property_id": 1},
+    {"id": "rosing_2", "name": "Chambre Hortense Rosings", "property": "Rosings", "property_id": 1},
 ]
 
 @app.get("/api/properties", response_model=List[PropertyResponse])
@@ -1532,7 +1521,7 @@ def get_properties(db: Session = Depends(get_db)):
 
 @app.get("/api/rooms")
 def get_rooms():
-    """Returns the exact 7 rooms across Le Presbytère (5) and Villa Rosing (2)."""
+    """Returns the exact 7 rooms across Le Presbytère (5) and Rosings (2)."""
     return ALL_SCI_ROOMS
 
 
@@ -1897,6 +1886,106 @@ def validate_iso_date_string(date_str: str, field_name: str = "date") -> datetim
         )
 
 
+def dispatch_stay_confirmation(db_res: Reservation, db: Session, prop_name: Optional[str] = None) -> Optional[dict]:
+    """
+    Annotation 1:
+    Lorsque la confirmation de séjour est déclenchée, si l'option est active (notif_stay_booked),
+    envoyer un e-mail et une notification à TOUS les membres assignés/participants au séjour
+    (y compris ceux n'ayant pas effectué la réservation eux-mêmes), et pas seulement au créateur.
+    """
+    dispatched_email = None
+    try:
+        booker_name = db_res.user_name or "Un associé"
+        all_members = db.query(Member).filter(Member.email.isnot(None)).all()
+
+        # Identifier les participants / assignés au séjour :
+        # - Le créateur (booker_name)
+        # - Les membres listés dans les notes [Membres: ...]
+        # - Les membres assignés aux tâches de séjour (StayTaskAssignment)
+        participant_names = set()
+        participant_names.add(booker_name.strip().lower())
+
+        if db_res.notes:
+            match_membres = re.search(r'\[Membres:\s*([^\]]+)\]', str(db_res.notes), re.IGNORECASE)
+            if match_membres:
+                raw_names = match_membres.group(1).split(',')
+                for rn in raw_names:
+                    if rn.strip():
+                        participant_names.add(rn.strip().lower())
+
+        try:
+            task_assignments = db.query(StayTaskAssignment).filter(StayTaskAssignment.reservation_id == db_res.id).all() if db_res.id else []
+            for ta in task_assignments:
+                if getattr(ta, 'assigned_member', None):
+                    participant_names.add(str(ta.assigned_member).strip().lower())
+        except Exception:
+            pass
+
+        def is_participant(m: Member) -> bool:
+            m_name = (m.name or "").strip().lower()
+            m_prenom = (m.prenom or "").strip().lower()
+            return any(
+                p == m_name or p == m_prenom or (len(p) >= 3 and (p in m_name or p in m_prenom or m_name in p or m_prenom in p))
+                for p in participant_names
+            )
+
+        # Destinataires de l'e-mail : tous les membres participants et abonnés ayant l'option notif_stay_booked active
+        stay_recipients = []
+        for m in all_members:
+            if not m.email:
+                continue
+            if getattr(m, 'notif_stay_booked', True):
+                stay_recipients.append(m.email)
+
+        # Déduplication en conservant l'ordre
+        stay_recipients = list(dict.fromkeys(stay_recipients))
+
+        effective_prop = db_res.property_name or prop_name or "Domaine d'Hellenvilliers"
+        if stay_recipients:
+            send_res = send_stay_booked_email(
+                to_email=stay_recipients,
+                member_name=booker_name,
+                start_date=db_res.start_date,
+                end_date=db_res.end_date,
+                property_name=effective_prop,
+                rooms=db_res.selected_rooms,
+                guest_count=db_res.guest_count or 1,
+                reservation_id=db_res.id,
+                notes=db_res.notes
+            )
+            if isinstance(send_res, dict) and "_email_dispatched" in send_res:
+                dispatched_email = send_res["_email_dispatched"]
+
+        # Notification interne globale pour la cloche
+        create_internal_notification(
+            db=db,
+            title=f"Nouveau séjour réservé : {booker_name}",
+            description=f"Séjour au {effective_prop} du {db_res.start_date} au {db_res.end_date}.",
+            notif_type="booking",
+            link_path="/calendrier",
+            link_id=str(db_res.id) if db_res.id else None,
+            email_entry=dispatched_email
+        )
+
+        # Notifications internes ciblées pour CHAQUE participant assigné au séjour (Annotation 1)
+        for m in all_members:
+            if is_participant(m) and getattr(m, 'notif_stay_booked', True):
+                create_internal_notification(
+                    db=db,
+                    member_id=m.id,
+                    title=f"Confirmation de votre séjour au Domaine",
+                    description=f"Séjour avec {booker_name} au {effective_prop} du {db_res.start_date} au {db_res.end_date}.",
+                    notif_type="booking",
+                    link_path="/calendrier",
+                    link_id=str(db_res.id) if db_res.id else None,
+                    email_entry=dispatched_email
+                )
+    except Exception as e:
+        logger.error(f"[EMAIL ERROR] Failed to send stay booked notification: {e}")
+
+    return dispatched_email
+
+
 @app.post("/api/reservations", response_model=ReservationResponse, status_code=status.HTTP_201_CREATED)
 def create_reservation(res: ReservationCreate, response: Response, db: Session = Depends(get_db)):
     # 1. Enforce ISO date format and start_date <= end_date
@@ -2016,43 +2105,8 @@ def create_reservation(res: ReservationCreate, response: Response, db: Session =
     db.commit()
     db.refresh(db_res)
 
-    # Email Trigger 4: Notify other family members if notif_stay_booked is True
-    dispatched_email = None
-    try:
-        booker_name = db_res.user_name or "Un associé"
-        booker_first = booker_name.strip().split()[0].lower()
-        other_members = db.query(Member).filter(Member.email.isnot(None)).all()
-        stay_recipients = [
-            m.email for m in other_members
-            if getattr(m, 'notif_stay_booked', True) and m.email and m.prenom.strip().lower() != booker_first
-        ]
-        if stay_recipients:
-            send_res = send_stay_booked_email(
-                to_email=stay_recipients,
-                member_name=booker_name,
-                start_date=db_res.start_date,
-                end_date=db_res.end_date,
-                property_name=db_res.property_name or prop_name or "Domaine d'Hellenvilliers",
-                rooms=db_res.selected_rooms,
-                guest_count=db_res.guest_count or 1,
-                reservation_id=db_res.id,
-                notes=db_res.notes
-            )
-            if isinstance(send_res, dict) and "_email_dispatched" in send_res:
-                dispatched_email = send_res["_email_dispatched"]
-    except Exception as e:
-        logger.error(f"[EMAIL ERROR] Failed to send stay booked notification: {e}")
-
-    # Notification interne globale pour la cloche (Annotation 13)
-    create_internal_notification(
-        db=db,
-        title=f"Nouveau séjour réservé : {booker_name}",
-        description=f"Séjour au {db_res.property_name or prop_name or 'Domaine d\'Hellenvilliers'} du {db_res.start_date} au {db_res.end_date}.",
-        notif_type="booking",
-        link_path="/calendrier",
-        link_id=db_res.id,
-        email_entry=dispatched_email
-    )
+    # Email Trigger 4 & Notification: Confirmation envoyée à TOUS les participants et abonnés (Annotation 1)
+    dispatched_email = dispatch_stay_confirmation(db_res, db, prop_name=prop_name)
 
     if dispatched_email:
         setattr(db_res, "_email_dispatched", dispatched_email)
@@ -2070,6 +2124,8 @@ def update_reservation(reservation_id: int, update: ReservationUpdate, db: Sessi
     db_res = db.query(Reservation).filter(Reservation.id == reservation_id).first()
     if not db_res:
         raise HTTPException(status_code=404, detail="Réservation non trouvée")
+
+    old_status = db_res.status
 
     # 1. Enforce ISO date format and start_date <= end_date
     if update.start_date is not None:
@@ -2203,6 +2259,11 @@ def update_reservation(reservation_id: int, update: ReservationUpdate, db: Sessi
 
     db.commit()
     db.refresh(db_res)
+
+    # Déclenchement de la confirmation si transition vers 'Confirmée' (Annotation 1)
+    if db_res.status == "Confirmée" and old_status != "Confirmée":
+        dispatch_stay_confirmation(db_res, db)
+
     return db_res
 
 @app.delete("/api/reservations/{reservation_id}", status_code=status.HTTP_204_NO_CONTENT)
@@ -3714,6 +3775,7 @@ def format_task_response(task: Task, include_comments: bool = False) -> dict:
         "auto_assign_by_workload": bool(getattr(task, "auto_assign_by_workload", False)),
         "last_completed_at": task.last_completed_at,
         "complexity": task.complexity,
+        "charge_points": getattr(task, "charge_points", None) or get_task_charge_points(task.complexity),
         "budget": task.budget,
         "budget_notes": task.budget_notes,
         "assignee_id": task.assignee_id,
@@ -3779,9 +3841,9 @@ def list_tasks(
         query = query.filter(Task.subject.ilike(f"%{subject}%"))
     if property_id:
         if property_id == 1:
-            query = query.filter(Task.subject.in_(["Rosing", "Piscine", "Jardin", "SCI"]))
+            query = query.filter(Task.subject.in_(["Rosings", "Rosing", "Piscine", "Jardin", "Jardin & Espaces Verts", "Petites cabanes", "Hangar à meuble", "SCI", "SCI & Administratif"]))
         elif property_id == 2:
-            query = query.filter(Task.subject.in_(["Presbytère", "Jardin", "SCI"]))
+            query = query.filter(Task.subject.in_(["Presbytère", "Jardin", "Jardin & Espaces Verts", "Petites cabanes", "Hangar à meuble", "SCI", "SCI & Administratif"]))
     if assignee_id:
         query = query.filter(Task.assignee_id == assignee_id)
     if assigned_members:
@@ -3828,6 +3890,14 @@ def create_task(
     recurrence_unit = str(payload.get("recurrence_unit", "semaines") or "semaines")
     auto_assign_by_workload = bool(payload.get("auto_assign_by_workload", False))
     complexity = payload.get("complexity", "Modérée")
+    raw_charge_pts = payload.get("charge_points")
+    if raw_charge_pts is not None:
+        try:
+            charge_points = int(raw_charge_pts)
+        except Exception:
+            charge_points = get_task_charge_points(complexity)
+    else:
+        charge_points = get_task_charge_points(complexity)
 
     # Neutralisation / purge du champ budget (100% optionnel et tolérant)
     raw_budget = payload.get("budget")
@@ -3957,6 +4027,7 @@ def create_task(
         recurrence_unit=recurrence_unit,
         auto_assign_by_workload=auto_assign_by_workload,
         complexity=complexity,
+        charge_points=charge_points,
         budget=budget,
         budget_notes=budget_notes,
         assignee_id=assignee_id,
@@ -4015,26 +4086,19 @@ def create_task(
     except Exception as e:
         logger.error(f"[EMAIL ERROR] Failed to send task assignment notification: {e}")
 
-    # Email Trigger 2: Notify coordinators on new task proposal if notify_task_creation is True (Annotation 16)
+    # Email Trigger 2: Notify subscribed members on new task proposal if notify_task_creation is True (Annotation 5 & 16)
     if db_task.status == "PROPOSED":
         try:
-            coordinators = db.query(Member).filter(
-                or_(
-                    Member.is_coordinator == True,
-                    func.lower(Member.prenom).in_(["henri", "joséphine", "josephine"])
-                ),
+            subscribed_members = db.query(Member).filter(
+                Member.notify_task_creation == True,
                 Member.email.isnot(None)
             ).all()
 
             # Garantit un objet e-mail virtuel prêt à afficher dans la cloche
             coord_email_template = None
-            for coord in coordinators:
-                # Annotation 16: Conditionné strictement par notify_task_creation (False par défaut)
-                if not getattr(coord, "notify_task_creation", False):
-                    continue
-
+            for member in subscribed_members:
                 send_coord_res = send_task_creation_pending_email(
-                    to_email=coord.email,
+                    to_email=member.email,
                     task_title=db_task.title,
                     created_by=created_by or "Un associé",
                     domain=db_task.subject or db_task.category or "SCI Familiale",
@@ -4042,7 +4106,7 @@ def create_task(
                     priority=db_task.priority or "Normale",
                     complexity=db_task.complexity or "Modérée",
                     task_id=db_task.id,
-                    coordinator_name=coord.prenom,
+                    coordinator_name=member.prenom,
                     description=db_task.description
                 )
                 if isinstance(send_coord_res, dict) and "_email_dispatched" in send_coord_res:
@@ -4051,10 +4115,10 @@ def create_task(
             if coord_email_template:
                 dispatched_email = coord_email_template
 
-            for coord in coordinators:
+            for member in subscribed_members:
                 create_internal_notification(
                     db=db,
-                    member_id=coord.id,
+                    member_id=member.id,
                     title=f"Nouvelle tâche en attente : {db_task.title}",
                     description=f"Soumise par {created_by or 'un associé'} et en attente d'arbitrage par la coordination.",
                     notif_type="task",
@@ -4063,7 +4127,7 @@ def create_task(
                     email_entry=coord_email_template
                 )
         except Exception as coord_err:
-            logger.error(f"[EMAIL ERROR] Failed to send coordinator task proposal notification: {coord_err}")
+            logger.error(f"[EMAIL ERROR] Failed to send task proposal notification to subscribed members: {coord_err}")
 
     task_res_data = format_task_response(db_task, include_comments=True)
     if dispatched_email:
@@ -4166,6 +4230,12 @@ def update_task(
         task.last_completed_at = payload["last_completed_at"]
     if "complexity" in payload and payload["complexity"] is not None:
         task.complexity = payload["complexity"]
+        task.charge_points = get_task_charge_points(task.complexity)
+    if "charge_points" in payload and payload["charge_points"] is not None:
+        try:
+            task.charge_points = int(payload["charge_points"])
+        except Exception:
+            task.charge_points = get_task_charge_points(task.complexity)
     if "budget" in payload:
         raw_budget = payload["budget"]
         try:
@@ -6093,8 +6163,9 @@ def get_workload_summary(
         query = query.filter(Reservation.year == year)
 
     reservations = query.all()
+    all_tasks = db.query(Task).all()
 
-    dist = calculate_workload_distribution(reservations, total_charge_points=total_charge_points)
+    dist = calculate_workload_distribution(reservations, total_charge_points=total_charge_points, tasks=all_tasks)
 
     user_stats = [
         UserWorkloadStats(
@@ -6102,6 +6173,7 @@ def get_workload_summary(
             total_days=stat["total_days"],
             occupation_score=stat["occupation_score"],
             target_charge_points=stat["target_charge_points"],
+            performed_charge_points=stat.get("performed_charge_points", 0.0),
             charge_percentage=stat["charge_percentage"]
         ) for stat in dist["user_stats"]
     ]

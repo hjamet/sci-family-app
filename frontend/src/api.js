@@ -1309,10 +1309,13 @@ export async function addTaskComment(taskId, commentData) {
 }
 
 export async function reactToTaskComment(taskId, commentId, emoji, userName) {
+  const cleanUserName = typeof userName === 'object' && userName !== null
+    ? (userName.name || userName.prenom || 'Membre')
+    : (userName || 'Membre');
   const res = await fetch(`${API_BASE}/tasks/${taskId}/comments/${commentId}/react`, {
     method: 'POST',
     headers: getAuthJsonHeaders(),
-    body: JSON.stringify({ emoji, user_name: userName })
+    body: JSON.stringify({ emoji, user_name: cleanUserName })
   });
   if (!res.ok) {
     const err = await res.json().catch(() => ({}));

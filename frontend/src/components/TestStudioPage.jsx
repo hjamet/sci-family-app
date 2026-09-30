@@ -27,9 +27,9 @@ const INITIAL_TASKS = [
   { id: 2, title: 'Contrôle niveau Fioul & Pression Chauffage', category: 'Maintenance & Équipements', weight: 'Critique', points: 5, property: 'Le Presbytère' },
   { id: 3, title: 'Nettoyage terrasse & Mobilier de jardin', category: 'Propreté & Tri', weight: 'Moyen', points: 2, property: 'Le Presbytère' },
   { id: 4, title: 'Evacuation tri sélectif & Poubelles', category: 'Propreté & Tri', weight: 'Faible', points: 1, property: 'Le Presbytère' },
-  { id: 5, title: 'Inspection toiture & Nettoyage gouttières', category: 'Maintenance & Équipements', weight: 'Lourd', points: 3, property: 'Villa Rosing' },
+  { id: 5, title: 'Inspection toiture & Nettoyage gouttières', category: 'Maintenance & Équipements', weight: 'Lourd', points: 3, property: 'Rosings' },
   { id: 6, title: 'Vérification disjoncteurs & Remplacement ampoules', category: 'Électricité & Securité', weight: 'Moyen', points: 2, property: 'Le Presbytère' },
-  { id: 7, title: 'Inventaire vaisselle & Linge de maison', category: 'Inspection Général', weight: 'Faible', points: 1, property: 'Villa Rosing' }
+  { id: 7, title: 'Inventaire vaisselle & Linge de maison', category: 'Inspection Général', weight: 'Faible', points: 1, property: 'Rosings' }
 ];
 
 export default function TestStudioPage({ currentUser }) {

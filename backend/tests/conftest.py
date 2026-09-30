@@ -12,6 +12,7 @@ os.environ["POSTGRES_URL"] = ""
 os.environ["EMAIL_TEST_MODE"] = "true"
 os.environ["DISABLE_ALL_EMAILS"] = "true"
 os.environ["VICARE_TEST_MODE_READ_ONLY"] = "true"
+os.environ["RATE_LIMIT_GENERAL_PER_MINUTE"] = "999999"
 
 # Insérer backend dans le path
 BACKEND_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
@@ -107,7 +108,7 @@ def isolate_test_database_and_drive():
     # 3. Seed minimal obligatoire pour les propriétés et membres de test
     with TestingSessionLocal() as db:
         from app.models import Property, Member
-        p1 = Property(id=1, name="Villa Rosing", address="Hellenvilliers", description="Propriété 1")
+        p1 = Property(id=1, name="Rosings", address="Hellenvilliers", description="Propriété 1")
         p2 = Property(id=2, name="Le Presbytère", address="Hellenvilliers", description="Propriété 2")
         db.add_all([p1, p2])
 

@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { fetchReservations, getCachedData } from '../api';
+import { fetchReservations, getCachedData, invalidateApiCache } from '../api';
 import BookingModal from '../components/BookingModal';
 import { StayCardSkeleton } from '../components/SkeletonLoaders';
 
@@ -180,6 +180,36 @@ export default function CalendarPage({ properties, currentUser = 'Henri Jamet' }
     }
   };
 
+  const handleReservationCreated = (newReservation) => {
+    if (newReservation && newReservation.id) {
+      setReservations((prev) => {
+        if (prev.some((r) => r.id === newReservation.id)) return prev;
+        return [newReservation, ...prev];
+      });
+    }
+    invalidateApiCache('reservations');
+    invalidateApiCache('/api/reservations');
+  };
+
+  const handleReservationSaved = async (savedReservation) => {
+    if (savedReservation) {
+      if (savedReservation.deleted && savedReservation.id) {
+        setReservations((prev) => prev.filter((r) => r.id !== savedReservation.id));
+      } else if (savedReservation.id) {
+        setReservations((prev) => {
+          const exists = prev.some((r) => r.id === savedReservation.id);
+          if (exists) {
+            return prev.map((r) => (r.id === savedReservation.id ? { ...r, ...savedReservation } : r));
+          }
+          return [savedReservation, ...prev];
+        });
+      }
+    }
+    invalidateApiCache('reservations');
+    invalidateApiCache('/api/reservations');
+    await loadReservations();
+  };
+
   useEffect(() => {
     loadReservations();
   }, [selectedYear]);
@@ -293,7 +323,8 @@ export default function CalendarPage({ properties, currentUser = 'Henri Jamet' }
 
   // Filter reservations based on active filters
   const filteredReservations = reservations.filter((r) => {
-    if (selectedYear && r.year && r.year !== selectedYear) return false;
+    const resYear = r.year || (r.start_date ? parseInt(String(r.start_date).split('-')[0], 10) : null);
+    if (selectedYear && resYear && resYear !== selectedYear) return false;
     const isRosing = r.property_name?.toLowerCase().includes('rosing');
     const isPresbytere = r.property_name?.toLowerCase().includes('presbytère') || r.property_name?.toLowerCase().includes('presbytere');
     if (!filterRosing && !filterPresbytere) return true;
@@ -587,7 +618,7 @@ export default function CalendarPage({ properties, currentUser = 'Henri Jamet' }
                     ? 'bg-sage-soft text-forest-deep border-emerald-700/30 hover:bg-emerald-100'
                     : 'bg-slate-50 text-slate-400 border-slate-200 hover:bg-slate-100'
                 }`}
-                title="Filtrer Villa Rosing"
+                title="Filtrer Rosings"
               >
                 <input
                   type="checkbox"
@@ -597,7 +628,7 @@ export default function CalendarPage({ properties, currentUser = 'Henri Jamet' }
                   className="accent-forest-deep w-3.5 h-3.5 rounded cursor-pointer"
                 />
                 <span className="material-symbols-outlined text-[16px] text-forest-deep">roofing</span>
-                <span className="font-semibold">Villa Rosing</span>
+                <span className="font-semibold">Rosings</span>
                 <span className="text-[11px] text-emerald-800 font-normal">(4 ch.)</span>
               </label>
 
@@ -893,8 +924,8 @@ export default function CalendarPage({ properties, currentUser = 'Henri Jamet' }
                   </h2>
                   <p className="font-body-md text-xs sm:text-sm text-on-surface-variant">
                     {currentMonth >= 5 && currentMonth <= 8
-                      ? 'Occupation estivale simultanée des deux demeures (Villa Rosing & Presbytère)'
-                      : 'Occupation et présences au domaine (Villa Rosing & Le Presbytère)'}
+                      ? 'Occupation estivale simultanée des deux demeures (Rosings & Presbytère)'
+                      : 'Occupation et présences au domaine (Rosings & Le Presbytère)'}
                   </p>
                 </div>
               </div>
@@ -1213,7 +1244,8 @@ export default function CalendarPage({ properties, currentUser = 'Henri Jamet' }
         properties={properties}
         currentUser={currentUser}
         initialReservation={editingReservation}
-        onBooked={loadReservations}
+        onReservationCreated={handleReservationCreated}
+        onBooked={handleReservationSaved}
       />
 
       {/* Styles d'impression dédiés pour l'export PDF (Annotation 6) */}

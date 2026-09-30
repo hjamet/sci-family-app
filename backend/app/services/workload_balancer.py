@@ -50,15 +50,50 @@ def calculate_reservation_score(
     return float(days * rooms)
 
 
+# Barème pondéré officiel Henri - Charge de la tâche (Annotation 3)
+TASK_CHARGE_WEIGHTS: Dict[str, int] = {
+    "Négligeable": 1,
+    "Faible": 2,
+    "Modérée": 3,
+    "Élevée": 5,
+    "Très élevée": 8,
+}
+
+def get_task_charge_points(complexity: Optional[str]) -> int:
+    """
+    Retourne les points de charge d'une tâche selon le barème officiel :
+    Négligeable -> 1 pt, Faible -> 2 pts, Modérée -> 3 pts, Élevée -> 5 pts, Très élevée -> 8 pts.
+    """
+    if not complexity:
+        return 3
+    comp = str(complexity).strip()
+    if comp in TASK_CHARGE_WEIGHTS:
+        return TASK_CHARGE_WEIGHTS[comp]
+    c_lower = comp.lower()
+    if "neglig" in c_lower:
+        return 1
+    elif "faible" in c_lower:
+        return 2
+    elif "modér" in c_lower or "moder" in c_lower:
+        return 3
+    elif "très" in c_lower or "tres" in c_lower:
+        return 8
+    elif "élev" in c_lower or "elev" in c_lower or "expertise" in c_lower:
+        return 5
+    return 3
+
+
 def calculate_workload_distribution(
     reservations: List[Any],
-    total_charge_points: float = 100.0
+    total_charge_points: float = 100.0,
+    tasks: Optional[List[Any]] = None
 ) -> Dict[str, Any]:
     """
     Henri's Proportional Usage Workload Model:
     - User occupation score: O_u = sum(days * rooms_count)
     - If cohabitation_type == 'exclusive' or accepts_extra_family == False: rooms_count = 7 (100% capacity penalty).
     - Target Charge Points: C_u^target = (O_u / sum(O_v)) * Total Charge Points.
+    - Points de charge réalisés ou assignés basés sur la Charge de la tâche (1, 2, 3, 5, 8 pts).
     
     Accepts SQLAlchemy Reservation objects or dictionary representations.
     """
@@ -93,17 +128,39 @@ def calculate_workload_distribution(
 
     total_o = sum(user_scores.values())
 
+    # Points de charge réalisés par membre (si les tâches sont fournies)
+    user_performed_charge: Dict[str, float] = {}
+    if tasks:
+        for t in tasks:
+            t_comp = getattr(t, "complexity", None) if not isinstance(t, dict) else t.get("complexity")
+            pts = float(get_task_charge_points(t_comp))
+            assigned = getattr(t, "assigned_members", None) if not isinstance(t, dict) else t.get("assigned_members")
+            if isinstance(assigned, str):
+                try:
+                    import json
+                    assigned = json.loads(assigned)
+                except Exception:
+                    assigned = [assigned]
+            elif not isinstance(assigned, list):
+                assigned = [getattr(t, "assignee", None)] if getattr(t, "assignee", None) else []
+
+            for a in (assigned or []):
+                if a:
+                    user_performed_charge[str(a)] = user_performed_charge.get(str(a), 0.0) + pts
+
     user_stats = []
     for user_name, o_u in user_scores.items():
         charge_pct = (o_u / total_o * 100.0) if total_o > 0 else 0.0
         target_charge = (o_u / total_o * total_charge_points) if total_o > 0 else 0.0
+        perf_charge = user_performed_charge.get(user_name, 0.0)
 
         user_stats.append({
             "user_name": user_name,
             "total_days": user_days.get(user_name, 0),
             "occupation_score": round(o_u, 2),
             "target_charge_points": round(target_charge, 2),
-            "charge_percentage": round(charge_pct, 2)
+            "charge_percentage": round(charge_pct, 2),
+            "performed_charge_points": round(perf_charge, 2)
         })
 
     return {
@@ -122,11 +179,11 @@ def resolve_auto_assignment_by_workload(
     Détermine l'associé auquel attribuer automatiquement une tâche récurrente
     selon le modèle proportionnel d'équité d'Henri :
     - Score d'usage O_u = sum(jours * chambres_effectives)
-    - Score de corvées C_u = nombre de tâches assignées/validées au membre
+    - Score de corvées C_u = somme pondérée des points de charge des tâches (1, 2, 3, 5, 8 pts)
     - Ratio d'équité gamifié : R_u = (C_u + 0.5) / (O_u + 0.5)
     
     L'associé ayant le ratio d'implication le plus faible (celui qui utilise le plus le domaine
-    et a le moins contribué en tâches) est sélectionné en priorité absolue.
+    et a le moins contribué en charge de tâches) est sélectionné en priorité absolue.
     """
     if not members:
         return "Henri Jamet"
@@ -152,11 +209,14 @@ def resolve_auto_assignment_by_workload(
             if (m_prenom and m_prenom.lower() in u_name.lower()) or (m_name and m_name.lower() in u_name.lower()):
                 usage_by_name[m_name] = usage_by_name.get(m_name, 0.0) + score
 
-    # Compte des tâches par associé
-    tasks_by_name: Dict[str, int] = {}
+    # Compte pondéré des tâches par associé selon la Charge de la tâche (Annotation 3)
+    tasks_by_name: Dict[str, float] = {}
     if tasks:
         for t in tasks:
-            assigned = getattr(t, "assigned_members", None)
+            t_comp = getattr(t, "complexity", None) if not isinstance(t, dict) else t.get("complexity")
+            charge_pts = float(get_task_charge_points(t_comp))
+
+            assigned = getattr(t, "assigned_members", None) if not isinstance(t, dict) else t.get("assigned_members")
             if isinstance(assigned, str):
                 try:
                     import json
@@ -168,14 +228,14 @@ def resolve_auto_assignment_by_workload(
 
             for a in (assigned or []):
                 if a:
-                    tasks_by_name[str(a)] = tasks_by_name.get(str(a), 0) + 1
+                    tasks_by_name[str(a)] = tasks_by_name.get(str(a), 0.0) + charge_pts
 
     # Calcul du ratio d'implication pour chaque associé éligible
     scored_members = []
     for m in members:
         m_name = m.name if hasattr(m, "name") else (m.get("name") if isinstance(m, dict) else str(m))
         u_score = usage_by_name.get(m_name, 0.0)
-        t_score = tasks_by_name.get(m_name, 0)
+        t_score = tasks_by_name.get(m_name, 0.0)
         # Ratio gamifié inversé : plus le ratio est petit, plus la personne "doit" du temps
         ratio = (t_score + 0.5) / (u_score + 0.5)
         scored_members.append((ratio, u_score, -t_score, m_name))

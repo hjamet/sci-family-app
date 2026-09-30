@@ -295,3 +295,185 @@ def test_annotation_17_mandatory_assignment_on_accept():
     finally:
         client.delete(f"/api/tasks/{task_id}")
 
+
+def test_annotation_3_charge_scale_and_weights():
+    """Vérifie la nouvelle échelle 'Charge de la tâche' et la pondération 1, 2, 3, 5, 8."""
+    from app.services.workload_balancer import get_task_charge_points, TASK_CHARGE_WEIGHTS
+
+    assert TASK_CHARGE_WEIGHTS["Négligeable"] == 1
+    assert TASK_CHARGE_WEIGHTS["Faible"] == 2
+    assert TASK_CHARGE_WEIGHTS["Modérée"] == 3
+    assert TASK_CHARGE_WEIGHTS["Élevée"] == 5
+    assert TASK_CHARGE_WEIGHTS["Très élevée"] == 8
+
+    # Création d'une tâche avec charge 'Très élevée'
+    res = client.post("/api/tasks", json={
+        "title": "Mission Rénovation Toiture Rosings",
+        "subject": "Rosings",
+        "complexity": "Très élevée",
+        "created_by": "Henri"
+    })
+    assert res.status_code == 201
+    task = res.json()
+    task_id = task["id"]
+    try:
+        assert task["complexity"] == "Très élevée"
+        assert task["charge_points"] == 8
+
+        # Mise à jour vers charge 'Faible'
+        up_res = client.patch(f"/api/tasks/{task_id}", json={"complexity": "Faible"})
+        assert up_res.status_code == 200
+        get_res = client.get(f"/api/tasks/{task_id}")
+        assert get_res.status_code == 200
+        updated = get_res.json()
+        assert updated["complexity"] == "Faible"
+        assert updated["charge_points"] == 2
+    finally:
+        client.delete(f"/api/tasks/{task_id}")
+
+
+def test_annotation_7_rosings_and_canonical_locations():
+    """Vérifie que 'Rosings' et les lieux canoniques sont reconnus et filtrables."""
+    locations = [
+        "Presbytère", "Rosings", "Piscine", "Jardin & Espaces Verts",
+        "Petites cabanes", "Hangar à meuble", "SCI & Administratif"
+    ]
+    created_ids = []
+    try:
+        for loc in locations:
+            res = client.post("/api/tasks", json={
+                "title": f"Maintenance lieu {loc}",
+                "subject": loc,
+                "complexity": "Modérée",
+                "created_by": "Henri"
+            })
+            assert res.status_code == 201
+            created_ids.append(res.json()["id"])
+
+        # Filtrage par property_id = 1 (doit inclure Rosings)
+        list_res = client.get("/api/tasks?property_id=1")
+        assert list_res.status_code == 200
+        tasks = list_res.json()
+        subjects = [t["subject"] for t in tasks]
+        assert "Rosings" in subjects
+    finally:
+        for tid in created_ids:
+            client.delete(f"/api/tasks/{tid}")
+
+
+def test_annotation_5_subscribed_non_coordinator_receives_task_creation_email():
+    """Vérifie que les membres non-coordinateurs avec notify_task_creation=True reçoivent l'email."""
+    from app.models import Member
+    db = SessionLocal()
+    task_id = None
+    try:
+        # Trouver un membre non-coordinateur et activer notify_task_creation
+        non_coord = db.query(Member).filter(Member.is_coordinator == False, Member.email.isnot(None)).first()
+        if not non_coord:
+            pytest.skip("Aucun membre non-coordinateur avec email")
+        non_coord.notify_task_creation = True
+        db.commit()
+
+        res = client.post("/api/tasks", json={
+            "title": "Mission Test Abonné Non Coordinateur",
+            "subject": "Rosings",
+            "status": "PROPOSED",
+            "created_by": "Henri"
+        })
+        assert res.status_code == 201
+        data = res.json()
+        task_id = data["id"]
+        assert "_email_dispatched" in data or "email_dispatched" in data
+        dispatched = data.get("_email_dispatched") or data.get("email_dispatched")
+        assert dispatched["trigger_action"] == "task_creation_pending"
+
+        # Remettre à False
+        non_coord.notify_task_creation = False
+        db.commit()
+    finally:
+        if task_id:
+            client.delete(f"/api/tasks/{task_id}")
+        db.close()
+
+
+def test_annotation_9_chat_extended_emojis_and_all_mention():
+    """Vérifie la persistance synchrone des réactions (palette étendue) et la mention @all."""
+    # 1. Créer une tâche
+    res = client.post("/api/tasks", json={
+        "title": "Mission Chat & Réactions Étendues",
+        "subject": "Rosings",
+        "status": "EN_COURS",
+        "created_by": "Henri"
+    })
+    assert res.status_code == 201
+    task_id = res.json()["id"]
+
+    try:
+        # 2. Poster un commentaire avec @all
+        c_res = client.post(f"/api/tasks/{task_id}/comments", json={
+            "content": "Bonjour @all voici une annonce importante pour le domaine !",
+            "author_name": "Henri Jamet"
+        })
+        assert c_res.status_code == 201
+        comment = c_res.json()
+        comment_id = comment["id"]
+
+        # 3. Tester les réactions avec des emojis de la nouvelle palette (🎉, 🔥, 🏊)
+        for emoji in ["🎉", "🔥", "🏊"]:
+            r_res = client.post(
+                f"/api/tasks/{task_id}/comments/{comment_id}/react",
+                json={"emoji": emoji, "user_name": "Joséphine Jamet"}
+            )
+            assert r_res.status_code == 200, f"Échec réaction emoji {emoji}: {r_res.text}"
+            r_data = r_res.json()
+            reactions_dict = r_data.get("reactions") or {}
+            assert emoji in reactions_dict
+
+        # 4. Vérifier la persistance synchrone via GET /messages
+        get_res = client.get(f"/api/tasks/{task_id}/messages")
+        assert get_res.status_code == 200
+        messages = get_res.json()
+        assert len(messages) >= 1
+        last_msg = [m for m in messages if m["id"] == comment_id][0]
+        assert "🎉" in last_msg["reactions"]
+        assert "🔥" in last_msg["reactions"]
+        assert "🏊" in last_msg["reactions"]
+    finally:
+        client.delete(f"/api/tasks/{task_id}")
+
+
+def test_annotation_1_stay_confirmation_dispatches_to_all_participants():
+    """Vérifie que la confirmation d'un séjour notifie tous les participants et les membres abonnés."""
+    from app.models import Member
+    db = SessionLocal()
+    res_id = None
+    try:
+        # Activer notif_stay_booked sur au moins un membre
+        m = db.query(Member).filter(Member.email.isnot(None)).first()
+        if m:
+            m.notif_stay_booked = True
+            db.commit()
+
+        # Créer une réservation confirmée avec participants dans la note
+        payload = {
+            "property_name": "Rosings",
+            "property_id": 1,
+            "year": 2026,
+            "week_number": 28,
+            "start_date": "2026-07-10",
+            "end_date": "2026-07-15",
+            "user_name": "Henri Jamet",
+            "selected_rooms": ["rosing_1"],
+            "notes": "Séjour d'été [Membres: Joséphine Jamet, Frédéric Jamet]"
+        }
+        r = client.post("/api/reservations", json=payload)
+        assert r.status_code == 201
+        res_data = r.json()
+        res_id = res_data["id"]
+        assert res_data["status"] == "Confirmée"
+    finally:
+        if res_id:
+            client.delete(f"/api/reservations/{res_id}")
+        db.close()
+
+

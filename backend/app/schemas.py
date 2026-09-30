@@ -684,6 +684,7 @@ class UserWorkloadStats(BaseModel):
     occupation_score: float  # O_u = sum(days * chambers_used)
     target_charge_points: float  # C_u^target = (O_u / sum(O_v)) * total_charge_points
     charge_percentage: float  # (O_u / sum(O_v)) * 100
+    performed_charge_points: Optional[float] = 0.0  # Points de charge réalisés ou assignés
 
 class WorkloadSummaryResponse(BaseModel):
     total_charge_points: float
@@ -837,6 +838,7 @@ class TaskBase(BaseModel):
     auto_assign_by_workload: Optional[bool] = False
     last_completed_at: Optional[datetime] = None
     complexity: Optional[str] = "Modérée"
+    charge_points: Optional[int] = 3
     budget: Optional[float] = None
     budget_notes: Optional[str] = None
     assignee_id: Optional[int] = None
@@ -869,6 +871,7 @@ class TaskUpdate(BaseModel):
     auto_assign_by_workload: Optional[bool] = None
     last_completed_at: Optional[datetime] = None
     complexity: Optional[str] = None
+    charge_points: Optional[int] = None
     budget: Optional[float] = None
     budget_notes: Optional[str] = None
     assignee_id: Optional[int] = None
@@ -904,12 +907,24 @@ class TaskCommentCreate(TaskCommentBase):
     pass
 
 
-ALLOWED_REACTION_EMOJIS = ['👍', '❤️', '👏', '💡', '🌸']
+ALLOWED_REACTION_EMOJIS = [
+    '👍', '❤️', '🎉', '👏', '🔥', '🤔',
+    '🚀', '💡', '😂', '🏠', '🌿', '🏊',
+    '❄️', '✅', '⚠️', '☕', '🙏', '🤝',
+    '🌸'
+]
 
 
 class TaskCommentReactRequest(BaseModel):
-    emoji: str  # Allowed: 👍, ❤️, 👏, 💡, 🌸
-    user_name: Optional[str] = None
+    emoji: str
+    user_name: Optional[Any] = None
+
+    @field_validator("user_name", mode="before")
+    @classmethod
+    def parse_user_name(cls, v):
+        if isinstance(v, dict):
+            return v.get("name") or v.get("prenom") or "Henri Jamet"
+        return str(v) if v is not None else "Henri Jamet"
 
 
 class TaskCommentResponse(BaseModel):

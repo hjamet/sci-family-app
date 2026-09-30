@@ -130,6 +130,23 @@ export default function ProjectDetailModal({ project, isOpen, onClose, currentUs
     }
   };
 
+  const handleToggleReaction = (msgId, emoji) => {
+    setLocalComments(prev => prev.map(msg => {
+      if (msg.id !== msgId) return msg;
+      const reactions = Array.isArray(msg.reactions) ? msg.reactions : [];
+      const existing = reactions.find(r => r.emoji === emoji);
+      let updatedReactions;
+      if (existing) {
+        updatedReactions = reactions.map(r => 
+          r.emoji === emoji ? { ...r, count: r.count + 1 } : r
+        );
+      } else {
+        updatedReactions = [...reactions, { emoji, count: 1 }];
+      }
+      return { ...msg, reactions: updatedReactions };
+    }));
+  };
+
 
   const getPriorityBadge = (prio) => {
     const p = (prio || 'MOYENNE').toUpperCase();
@@ -635,6 +652,7 @@ export default function ProjectDetailModal({ project, isOpen, onClose, currentUs
               <FamilyChat
                 messages={localComments}
                 onSendMessage={handleSendThreadMessage}
+                onAddReaction={handleToggleReaction}
                 currentUser={currentUser}
                 title="Fil de discussion (Projet)"
                 placeholder="Poser une question ou commenter..."

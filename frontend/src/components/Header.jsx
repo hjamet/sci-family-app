@@ -60,6 +60,8 @@ export default function Header({
 }) {
   const [isUserMenuOpen, setIsUserMenuOpen] = useState(false);
   const [isMobileMenuOpen, setIsMobileMenuOpen] = useState(false);
+  const [isNotifOpen, setIsNotifOpen] = useState(false);
+  const [unreadCount, setUnreadCount] = useState(0);
   const dropdownRef = useRef(null);
   const mobileMenuRef = useRef(null);
 
@@ -81,6 +83,7 @@ export default function Header({
       if (event.key === 'Escape') {
         setIsUserMenuOpen(false);
         setIsMobileMenuOpen(false);
+        setIsNotifOpen(false);
       }
     }
 
@@ -172,6 +175,9 @@ export default function Header({
             onOpenBookingModal={onOpenBookingModal}
             onNavigate={onNavigate}
             setActiveTab={setActiveTab}
+            isOpen={isNotifOpen}
+            setIsOpen={setIsNotifOpen}
+            onUnreadCountChange={setUnreadCount}
           />
 
           {/* 2. Bouton [⚙️ Paramètres] */}

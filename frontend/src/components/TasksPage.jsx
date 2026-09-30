@@ -83,7 +83,7 @@ export default function TasksPage({ currentUser = 'Henri Jamet' }) {
     setInspectingTask({
       title: '',
       description: '',
-      subject: 'Rosing',
+      subject: 'Rosings',
       complexity: 'Modérée',
       budget: 0,
       assigned_members: [],
@@ -329,6 +329,10 @@ export default function TasksPage({ currentUser = 'Henri Jamet' }) {
         }
         return [updatedProject, ...prev];
       });
+      if (isVoteProposed(updatedProject)) {
+        setVoteFilter('PROPOSED');
+        setActiveVoteIndex(0);
+      }
     }
     invalidateApiCache('projects');
     invalidateApiCache('/api/projects');
@@ -355,12 +359,13 @@ export default function TasksPage({ currentUser = 'Henri Jamet' }) {
   const handleProjectCreated = (createdProject) => {
     if (!createdProject?.id) return;
     setProjects(prev => [createdProject, ...prev.filter(p => p.id !== createdProject.id)]);
-    setVoteFilter('PROPOSED'); // Bascule automatique sur l'onglet En attente de création !
+    setVoteFilter('PROPOSED'); // Bascule automatique et immédiate sur l'onglet En attente de création !
     setActiveVoteIndex(0);
     setIsRoofVoteModalOpen(false);
     setSelectedVoteForModal(null);
-    invalidateCache('/api/projects');
-    invalidateCache('/api/projects/pending');
+    invalidateApiCache('projects');
+    invalidateApiCache('/api/projects');
+    invalidateApiCache('/api/projects/pending');
     mutate('projects');
     loadTasks({ forceRefresh: true });
   };
@@ -1697,6 +1702,8 @@ export default function TasksPage({ currentUser = 'Henri Jamet' }) {
           currentUser={currentUser}
           onTaskUpdated={handleTaskUpdated}
           onTaskDeleted={handleTaskDeleted}
+          onProjectCreated={handleProjectCreated}
+          onTaskCreated={handleTaskCreated}
         />
       )}
 

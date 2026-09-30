@@ -293,7 +293,7 @@ class Task(Base):
     ref = Column(String(50), unique=True, index=True, nullable=True)  # ex: T-2026-088
     title = Column(String(255), nullable=False)
     description = Column(Text, nullable=False)
-    subject = Column(String(100), nullable=False, default="SCI")  # Rosing, Presbytère, Piscine, Jardin, SCI
+    subject = Column(String(100), nullable=False, default="SCI")  # Rosings, Presbytère, Piscine, Jardin & Espaces Verts, Petites cabanes, Hangar à meuble, SCI & Administratif
     category = Column(String(100), nullable=True)
     priority = Column(String(50), nullable=False, default="Normale")  # Critique, Haute, Normale, Planifié
     status = Column(String(50), nullable=False, default="PROPOSED")  # PROPOSED, A_FAIRE, EN_COURS, TODO, TERMINE, ARCHIVEE, SOUMIS, PENDING_VALIDATION, REJECTED
@@ -302,7 +302,8 @@ class Task(Base):
     recurrence_unit = Column(String(50), default="semaines", nullable=True)  # jours, semaines, mois, séjours
     auto_assign_by_workload = Column(Boolean, default=False, nullable=True)  # Répartition équitable selon score d'usage
     last_completed_at = Column(DateTime, nullable=True)
-    complexity = Column(String(50), default="Modérée")  # Faible, Modérée, Élevée, Expertise requise
+    complexity = Column(String(50), default="Modérée")  # Négligeable, Faible, Modérée, Élevée, Très élevée
+    charge_points = Column(Integer, default=3, nullable=True)  # Barème: 1, 2, 3, 5, 8 points
     budget = Column(Float, default=0.0, nullable=True)
     budget_notes = Column(String(255), nullable=True)
     assignee_id = Column(Integer, ForeignKey("members.id", ondelete="SET NULL"), nullable=True)

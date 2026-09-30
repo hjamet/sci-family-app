@@ -203,7 +203,7 @@ export default function DashboardPage({
     setInspectingTask({
       title: '',
       description: '',
-      subject: 'Rosing',
+      subject: 'Rosings',
       complexity: 'Modérée',
       budget: 0,
       assigned_members: [],
@@ -830,7 +830,7 @@ export default function DashboardPage({
               Prochains Séjours au Domaine
             </h2>
             <p className="font-body-md text-body-md text-on-surface-variant leading-relaxed">
-              Réservations et présences familiales à Rosing et au Presbytère.
+              Réservations et présences familiales à Rosings et au Presbytère.
             </p>
           </div>
 
@@ -840,10 +840,10 @@ export default function DashboardPage({
             <div className="flex flex-col space-y-3 max-h-[390px] overflow-y-auto pr-1">
               {displayedStays.map((stay, idx) => {
                 const { members = [], guests = [], cleanDescription = '' } = extractParticipants(stay);
-                const stayTitle = stay.title || stay.property_name || (stay.property_id === 2 ? 'Le Presbytère' : 'Rosing');
+                const stayTitle = stay.title || stay.property_name || (stay.property_id === 2 ? 'Le Presbytère' : 'Rosings');
                 const stayDescription = cleanDescription || stay.description || '';
 
-                const propName = stay.property_name || (stay.property_id === 2 ? 'Le Presbytère' : 'Rosing');
+                const propName = stay.property_name || (stay.property_id === 2 ? 'Le Presbytère' : 'Rosings');
                 const roomsCount = stay.chambers_used || stay.rooms_count || (Array.isArray(stay.selected_rooms) ? stay.selected_rooms.length : 1);
 
                 let propIcon = 'home';
