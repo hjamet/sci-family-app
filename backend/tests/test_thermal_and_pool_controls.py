@@ -247,7 +247,68 @@ def test_vicare_dhw_mode_switching_applies_comfort_and_reduced():
         ViCareService.set_dhw_mode(True)
         mock_set_temp.assert_called_with(target_temp=53.0, program="dhw")
 
-        # Arrêt -> ne modifie plus la consigne (le mode circuit standby gère)
+        # Arrêt -> applique la consigne réduite de veille (10.0°C) pour couper la charge sanitaire sur Vitotronic
         mock_set_temp.reset_mock()
         ViCareService.set_dhw_mode(False)
-        mock_set_temp.assert_not_called()
+        mock_set_temp.assert_called_with(target_temp=10.0, program="dhw")
+
+
+def test_vicare_burner_error_detection_227():
+    """
+    Vérifie la détection médico-légale du défaut matériel brûleur (Code 227).
+    """
+    from app.schemas import HeatingStatusResponse
+    data = {
+        "burner_error_code": 227,
+        "burner_error_message": "Dérangement brûleur fioul (Code 227) : mise en sécurité d'allumage/combustion. Réarmement physique requis sur le coffret de sécurité de la chaudière.",
+        "is_heating_active": False,
+        "is_dhw_active": False,
+    }
+    resp = HeatingStatusResponse(**data)
+    assert resp.burner_error_code == 227
+    assert "Code 227" in resp.burner_error_message
+    assert "Réarmement physique" in resp.burner_error_message
+
+
+def test_klereo_pump_mode_arret_mapping():
+    """
+    Vérifie que les commandes 'arret', 'arrêt', 'off' de la pompe Klereo
+    mappent bien vers outIdx=1, newState="0".
+    """
+    with patch.object(KlereoService, "is_read_only_mode", return_value=False), \
+         patch.object(KlereoService, "_get_system_id", return_value="12345"), \
+         patch.object(KlereoService, "_send_command") as mock_send, \
+         patch.object(KlereoService, "get_pool_status", return_value={"status": "ok"}):
+
+        # Test mode 'arret'
+        KlereoService.set_pump_mode(mode="arret")
+        mock_send.assert_called_with(
+            "https://connect.klereo.com/KlereoConnect/setPoolOut",
+            {
+                "poolID": "12345",
+                "outIdx": "1",
+                "newState": "0",
+                "comMode": "1"
+            }
+        )
+
+        # Test mode 'arrêt'
+        mock_send.reset_mock()
+        KlereoService.set_pump_mode(mode="arrêt")
+        assert mock_send.call_args[0][1]["newState"] == "0"
+
+        # Test mode 'off'
+        mock_send.reset_mock()
+        KlereoService.set_pump_mode(mode="off")
+        assert mock_send.call_args[0][1]["newState"] == "0"
+
+        # Test mode 'on'
+        mock_send.reset_mock()
+        KlereoService.set_pump_mode(mode="on")
+        assert mock_send.call_args[0][1]["newState"] == "1"
+
+        # Test mode 'auto'
+        mock_send.reset_mock()
+        KlereoService.set_pump_mode(mode="auto")
+        assert mock_send.call_args[0][1]["newState"] == "2"
+
