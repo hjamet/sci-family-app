@@ -19,12 +19,12 @@ DEFAULT_ONBOARDING_PAGES: List[Dict[str, Any]] = [
         "title": "Connexion, Mot de Passe & Notifications",
         "icon": "vpn_key",
         "emoji": "🔑",
-        "subtitle": "Accédez facilement au portail et configurez vos alertes",
+        "subtitle": "Naviguer brillamment sur le portail et configurer vos alertes",
         "cards": [
             {
                 "icon": "login",
                 "title": "Comment vous connecter",
-                "text": "Rendez-vous sur https://hellenvilliers.henri-jamet.com. Sur la page d'accueil, il vous suffit de cliquer directement sur votre prénom ou votre photo, puis de saisir votre mot de passe personnel. Vous pouvez aussi taper votre email si vous préférez."
+                "text": "Rendez-vous sur https://hellenvilliers.henri-jamet.com. Sur la page d'accueil, il vous suffit de cliquer directement sur votre prénom ou votre photo, puis de saisir votre mot de passe personnel."
             },
             {
                 "icon": "password",
@@ -55,7 +55,7 @@ DEFAULT_ONBOARDING_PAGES: List[Dict[str, Any]] = [
             {
                 "icon": "event",
                 "title": "Réserver votre séjour",
-                "text": "Rendez-vous sur le calendrier, sélectionnez les dates ou la semaine de votre passage, et indiquez les chambres occupées ainsi que vos accompagnants. C'est indispensable pour coordonner les présences et éviter les doublons entre nous."
+                "text": "Rendez-vous sur le calendrier, sélectionnez les dates ou la semaine de votre passage, et indiquez les chambres occupées ainsi que vos accompagnants."
             },
             {
                 "icon": "thermostat",
@@ -70,12 +70,12 @@ DEFAULT_ONBOARDING_PAGES: List[Dict[str, Any]] = [
             {
                 "icon": "water_drop",
                 "title": "Eau chaude et sécurité sanitaire",
-                "text": "Le ballon de 250L est régulé automatiquement à 52°C pendant les séjours, avec un cycle périodique de sécurité anti-légionelle au-dessus de 60°C."
+                "text": "Hors séjour, le ballon de 250L reste en veille économique à 10.0°C pour ne pas gaspiller de fioul. Dès votre arrivée, il monte automatiquement à 52.0°C (avec un cycle préventif au-dessus de 60°C contre la légionelle)."
             },
             {
                 "icon": "cottage",
                 "title": "Page Séjour et vadémécum",
-                "text": "Pendant que vous êtes sur place, l'onglet Séjour vous donne la météo locale, la température de la piscine Klereo, le niveau de la cuve à fioul et vous permet d'ajuster une consigne si nécessaire."
+                "text": "Pendant que vous êtes sur place, l'onglet Séjour affiche les missions qui vous sont attribuées à faire sur place, la température de la piscine Klereo, le niveau de la cuve à fioul, ainsi que la liste des super fiches du vadémécum de papa ! :D"
             }
         ]
     },
@@ -101,7 +101,7 @@ DEFAULT_ONBOARDING_PAGES: List[Dict[str, Any]] = [
             {
                 "icon": "event_repeat",
                 "title": "Option « Reporter à la prochaine AG »",
-                "text": "Si une question nécessite un débat approfondi de visu, vous pouvez choisir de la décaler à notre prochaine Assemblée Générale annuelle. Le sujet bascule alors automatiquement dans l'ordre du jour officiel de l'AG."
+                "text": "Si une question nécessite un débat de visu, vous pouvez choisir de la décaler à notre prochaine Assemblée Générale. Attention, un seul vote suffit pour annuler le scrutin en ligne et le reporter à l'assemblée : à ne pas cliquer à la légère donc ! :)"
             },
             {
                 "icon": "inventory_2",
@@ -127,7 +127,7 @@ DEFAULT_ONBOARDING_PAGES: List[Dict[str, Any]] = [
             {
                 "icon": "build",
                 "title": "Missions sur place vs Missions de fond",
-                "text": "• Sur place : ranger le bois, tondre une parcelle, changer un filtre, relever un compteur.\n• De fond : négocier une commande groupée de fioul, suivre un contrat d'assurance, superviser un devis d'artisan."
+                "text": "• Sur place : ranger le bois, tondre une parcelle, changer un filtre, relever un compteur.\n• Périodiques : nettoyage de fond d'une ou plusieurs pièces sélectionnées, tour du propriétaire pour inspecter les bâtiments et repérer d'éventuels soucis.\n• De fond : négocier une commande groupée de fioul, suivre un contrat d'assurance, superviser un devis d'artisan."
             },
             {
                 "icon": "check_circle",
@@ -137,7 +137,7 @@ DEFAULT_ONBOARDING_PAGES: List[Dict[str, Any]] = [
             {
                 "icon": "balance",
                 "title": "Attribution équitable et expérience",
-                "text": "Les tâches peuvent être confiées manuellement par Henri et Jo, ou attribuées automatiquement par le système selon votre expérience (le nombre de tâches similaires que vous maîtrisez déjà) et votre occupation de la maison (plus vous réservez de jours et de chambres au cours de l'année, plus vous participez à la vie du domaine !)."
+                "text": "Les tâches peuvent être confiées manuellement par Henri et Jo, ou attribuées automatiquement par le système selon deux critères objectifs :\n1. Votre expérience : le nombre de tâches similaires que vous maîtrisez déjà.\n2. Votre occupation de la maison : plus vous réservez de jours et de chambres au cours de l'année, plus vous participez à la vie du domaine !"
             }
         ]
     },
@@ -153,17 +153,17 @@ DEFAULT_ONBOARDING_PAGES: List[Dict[str, Any]] = [
             {
                 "icon": "folder_shared",
                 "title": "Centralisation des documents",
-                "text": "Plus besoin de chercher partout les contrats d'assurance, les statuts notariés de la SCI, les attestations RNE de l'INPI, les devis ou les factures des prestataires. Tout est archivé, classé par catégorie et téléchargeable dans l'onglet Administratif."
+                "text": "Plus besoin de chercher partout les contrats d'assurance, les statuts notariés de la SCI, les attestations RNE de l'INPI, les devis ou les factures des prestataires. Tout est archivé, classé par catégorie et téléchargeable dans l'onglet Administratif (et également synchronisé sur le Drive du compte de la SCI pour consultation :))."
             },
             {
                 "icon": "credit_card",
                 "title": "Compte bancaire de la SCI",
-                "text": "Nous avons ouvert le compte professionnel de la SCI chez Indy (adossé à Swan et BNP Paribas). Ce compte est 100% gratuit et sans frais de gestion."
+                "text": "J'ai ouvert le compte professionnel de la SCI chez Indy (adossé à Swan et BNP Paribas). Ce compte est 100% gratuit et sans frais de gestion. J'ai aussi complété les déclarations fiscales et associé le compte à la SCI et à un compte de facturation professionnel."
             },
             {
                 "icon": "payments",
                 "title": "Transparence financière",
-                "text": "Vous pouvez suivre en temps réel la trésorerie disponible, l'enregistrement des cotisations mensuelles de 50 € par branche en compte courant d'associé, ainsi que l'ensemble des dépenses acquittées par la SCI."
+                "text": "Vous pouvez suivre en temps réel la trésorerie disponible, l'enregistrement des cotisations mensuelles de 50 € par branche en compte courant d'associé, ainsi que l'ensemble des dépenses acquittées par la SCI. Si vous avez dû payer quelque chose pour la SCI, merci de garder la note et de la téléverser sur le site : le montant sera automatiquement déduit de vos prochaines factures. Si c'est pas beau !"
             }
         ]
     },
@@ -178,22 +178,19 @@ DEFAULT_ONBOARDING_PAGES: List[Dict[str, Any]] = [
         "cards": [
             {
                 "icon": "celebration",
-                "title": "Rétrospective en toute convivialité",
-                "text": "L'onglet Statistiques vous donne une vision globale et ludique de la vie de notre famille à Hellenvilliers."
+                "title": "Rétrospective et statistiques ludiques",
+                "text": "L'onglet Statistiques vous donne une vision globale de la vie de notre famille à Hellenvilliers."
             },
             {
                 "icon": "pie_chart",
                 "title": "Ce que vous y trouverez",
                 "text": "Le nombre total de nuitées passées par chacun, la répartition de la charge de travail entre les branches, les domaines d'activité les plus actifs (espaces verts, thermique, administratif, piscine) et l'évolution de nos dépenses au fil des saisons."
-            },
-            {
-                "icon": "favorite",
-                "title": "Objectif",
-                "text": "Zéro jugement, simplement un moyen sain et transparent de valoriser l'engagement de chacun et de garder notre domaine vivant et chaleureux pour les années à venir !"
             }
         ]
     }
 ]
+
+INITIAL_RELEASE_PAGES = DEFAULT_ONBOARDING_PAGES
 
 
 def run_onboarding_migrations(target_engine):
@@ -282,6 +279,14 @@ def seed_initial_onboarding(db: Session) -> AppRelease:
             db.commit()
             db.refresh(release)
             logger.info(f"[ONBOARDING SEED] Initial release v{INITIAL_RELEASE_VERSION} created successfully.")
+        else:
+            updated_pages = json.dumps(DEFAULT_ONBOARDING_PAGES, ensure_ascii=False)
+            if release.pages_json != updated_pages or release.title != INITIAL_RELEASE_TITLE:
+                release.pages_json = updated_pages
+                release.title = INITIAL_RELEASE_TITLE
+                db.commit()
+                db.refresh(release)
+                logger.info(f"[ONBOARDING SEED] Updated pages_json for release v{INITIAL_RELEASE_VERSION}.")
         return release
     except Exception as exc:
         logger.error(f"[ONBOARDING SEED ERROR] Failed to seed release: {exc}")
