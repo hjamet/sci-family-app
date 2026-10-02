@@ -122,6 +122,32 @@ class GoogleDriveJailService:
                     except Exception as env_err:
                         logger.warning(f"Impossible de lire {env_candidate}: {env_err}")
 
+        # Fallback base de données (table system_settings sur Supabase PostgreSQL / SQLite)
+        if not refresh_token or not client_id or not client_secret:
+            try:
+                from app.database import engine
+                from sqlalchemy import text
+                with engine.connect() as db_conn:
+                    rows = db_conn.execute(
+                        text("SELECT key, value FROM system_settings WHERE key IN ('GOOGLE_DRIVE_CLIENT_ID', 'GOOGLE_DRIVE_CLIENT_SECRET', 'GOOGLE_DRIVE_REFRESH_TOKEN', 'GOOGLE_DRIVE_FOLDER_ID', 'GOOGLE_DRIVE_FOLDER_IDS')")
+                    ).fetchall()
+                    for r_key, r_val in rows:
+                        if r_key == "GOOGLE_DRIVE_CLIENT_ID" and not client_id:
+                            client_id = r_val
+                        elif r_key == "GOOGLE_DRIVE_CLIENT_SECRET" and not client_secret:
+                            client_secret = r_val
+                        elif r_key == "GOOGLE_DRIVE_REFRESH_TOKEN" and not refresh_token:
+                            refresh_token = r_val
+                        elif r_key == "GOOGLE_DRIVE_FOLDER_ID" and not self.folder_id:
+                            self.folder_id = r_val
+                            self.allowed_folder_ids.add(r_val)
+                        elif r_key == "GOOGLE_DRIVE_FOLDER_IDS" and r_val:
+                            for fid in r_val.split(","):
+                                if fid.strip():
+                                    self.allowed_folder_ids.add(fid.strip())
+            except Exception as db_err:
+                logger.warning(f"Impossible de lire system_settings depuis la base de données: {db_err}")
+
         # 1. Mode OAuth (Prioritaire, quota du compte personnel Henri)
         if refresh_token and client_id and client_secret:
             logger.info("Initialisation Google Drive via OAuth Refresh Token (Compte personnel)")
