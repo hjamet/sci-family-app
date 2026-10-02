@@ -391,11 +391,25 @@ export default function AdminInfoPage({ currentUser }) {
     }
   };
 
-  // Annotation 10 : Ouverture de la modale d'édition de la catégorie sélectionnée
-  const handleOpenEditCategoryModal = () => {
-    const current = categoriesList.find((c) => c.name === uploadCategory) || categoriesList[0];
+  // Annotation 10 & Demande Henri : Ouverture de la modale d'édition de l'étiquette sélectionnée
+  const handleOpenEditCategoryModal = (targetCategory = null) => {
+    let current = null;
+    if (typeof targetCategory === 'string') {
+      current = categoriesList.find((c) => c.name === targetCategory);
+    } else if (targetCategory && targetCategory.name) {
+      current = targetCategory;
+    }
+
+    if (!current && selectedCategory !== 'all') {
+      current = categoriesList.find((c) => c.name === selectedCategory);
+    }
+
     if (!current) {
-      showToast('Aucune catégorie', 'Veuillez d\'abord sélectionner une catégorie.', 'warning');
+      current = categoriesList.find((c) => c.name === uploadCategory) || categoriesList[0];
+    }
+
+    if (!current) {
+      showToast('Aucune étiquette', 'Veuillez d\'abord sélectionner une étiquette.', 'warning');
       return;
     }
     setSelectedEditingCat(current);
@@ -420,13 +434,16 @@ export default function AdminInfoPage({ currentUser }) {
       if (uploadCategory === selectedEditingCat.name) {
         setUploadCategory(updated.name);
       }
+      if (selectedCategory === selectedEditingCat.name) {
+        setSelectedCategory(updated.name);
+      }
       if (selectedEditingCat.name !== updated.name) {
         setDocuments((prev) => prev.map((doc) =>
           doc.category === selectedEditingCat.name ? { ...doc, category: updated.name } : doc
         ));
       }
       setIsEditCategoryModalOpen(false);
-      showToast('Catégorie mise à jour', `Catégorie « ${updated.name} » actualisée avec succès.`, 'check_circle');
+      showToast('Étiquette mise à jour', `Étiquette « ${updated.name} » actualisée avec succès.`, 'check_circle');
     } catch (err) {
       showToast('Erreur mise à jour', err.message, 'error');
     } finally {
@@ -437,7 +454,7 @@ export default function AdminInfoPage({ currentUser }) {
   // Annotation 10 : Suppression de catégorie avec confirmation préalable obligatoire (DELETE)
   const handleDeleteCategory = async () => {
     if (!selectedEditingCat) return;
-    if (window.confirm("Êtes-vous certain de vouloir supprimer cette catégorie ?")) {
+    if (window.confirm(`Êtes-vous certain de vouloir supprimer l'étiquette « ${selectedEditingCat.name} » ?`)) {
       setIsDeletingCat(true);
       try {
         await deleteDocumentCategory(selectedEditingCat.id);
@@ -449,8 +466,11 @@ export default function AdminInfoPage({ currentUser }) {
         if (uploadCategory === selectedEditingCat.name) {
           setUploadCategory(remaining.length > 0 ? remaining[0].name : '');
         }
+        if (selectedCategory === selectedEditingCat.name) {
+          setSelectedCategory('all');
+        }
         setIsEditCategoryModalOpen(false);
-        showToast('Catégorie supprimée', `La catégorie « ${selectedEditingCat.name} » a été supprimée.`, 'delete');
+        showToast('Étiquette supprimée', `L'étiquette « ${selectedEditingCat.name} » a été supprimée.`, 'delete');
       } catch (err) {
         showToast('Erreur suppression', err.message, 'error');
       } finally {
@@ -1155,6 +1175,27 @@ export default function AdminInfoPage({ currentUser }) {
                 className="h-[52px] min-w-[240px]"
               />
             </div>
+
+            {/* Bouton d'édition de l'étiquette sélectionnée (Annotation Report Henri) */}
+            {selectedCategory && selectedCategory !== 'all' && (
+              <button
+                id="btn-edit-selected-category"
+                type="button"
+                onClick={() => handleOpenEditCategoryModal(selectedCategory)}
+                className="h-[52px] px-4 rounded-DEFAULT bg-surface-container-lowest border border-border-subtle hover:border-primary text-on-surface hover:text-primary font-label-sm text-label-sm flex items-center gap-2 shadow-xs transition-all cursor-pointer group"
+                title={`Modifier ou supprimer l'étiquette « ${selectedCategory} »`}
+              >
+                <span className="material-symbols-outlined text-[18px] text-primary group-hover:scale-110 transition-transform">
+                  edit_note
+                </span>
+                <span className="font-semibold whitespace-nowrap hidden sm:inline">
+                  Modifier l'étiquette
+                </span>
+                <span className="font-semibold whitespace-nowrap sm:hidden">
+                  Étiquette
+                </span>
+              </button>
+            )}
 
             {/* View Switch (Grid vs List) */}
             <div className="flex items-center p-1 bg-surface-container-low rounded-DEFAULT border border-border-subtle">

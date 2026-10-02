@@ -5661,10 +5661,12 @@ def list_documents(
     db_docs = []
     try:
         query = db.query(AdminDocument)
-        if category and category not in ("Toutes", "all"):
-            query = query.filter(AdminDocument.category == category)
-        if source_type:
-            query = query.filter(AdminDocument.source_type == source_type)
+        clean_category = category if isinstance(category, str) else None
+        clean_source_type = source_type if isinstance(source_type, str) else None
+        if clean_category and clean_category not in ("Toutes", "all"):
+            query = query.filter(AdminDocument.category == clean_category)
+        if clean_source_type:
+            query = query.filter(AdminDocument.source_type == clean_source_type)
         db_docs = query.order_by(AdminDocument.created_at.desc()).all()
     except Exception as db_err:
         logger.warning(f"Erreur requête AdminDocument en base ({db_err}), tentative de rattrapage / auto-migration...")
@@ -5709,94 +5711,33 @@ def list_documents(
             db_docs = []
 
     # 3. Synchronisation & Fusion intelligente Drive <-> DB
-    existing_drive_ids = {doc.drive_file_id for doc in db_docs if getattr(doc, "drive_file_id", None)}
-    existing_names = {doc.file_name for doc in db_docs if getattr(doc, "file_name", None)}
-    existing_titles = {doc.title for doc in db_docs if getattr(doc, "title", None)}
+    has_db_updates = False
+    drive_by_name = {df.get("name"): df for df in drive_docs if df.get("name")}
+    drive_by_id = {df.get("id"): df for df in drive_docs if df.get("id")}
 
-    for df in drive_docs:
-        df_id = df.get("id")
-        if not df_id:
-            continue
-        df_name = df.get("name") or f"document_{df_id}.pdf"
-        df_size = int(df.get("size")) if df.get("size") else 0
-        df_mime = df.get("mimeType") or "application/pdf"
-        df_created = df.get("createdTime")
+    for doc in db_docs:
+        # Si drive_file_id manquant, tentative d'association par nom de fichier
+        if not getattr(doc, "drive_file_id", None) and doc.file_name in drive_by_name:
+            matched_df = drive_by_name[doc.file_name]
+            doc.drive_file_id = matched_df.get("id")
+            if matched_df.get("size"):
+                doc.file_size = int(matched_df.get("size"))
+            has_db_updates = True
+        elif getattr(doc, "drive_file_id", None) and doc.drive_file_id in drive_by_id:
+            matched_df = drive_by_id[doc.drive_file_id]
+            df_size = int(matched_df.get("size") or 0)
+            if df_size > 0 and doc.file_size != df_size:
+                doc.file_size = df_size
+                has_db_updates = True
 
-        if df_id in existing_drive_ids:
-            continue
-
-        # Si le fichier existe en base sous le même nom, on associe le drive_file_id
-        matched_doc = None
-        for doc in db_docs:
-            if not getattr(doc, "drive_file_id", None) and (doc.file_name == df_name or doc.title == os.path.splitext(df_name)[0]):
-                matched_doc = doc
-                break
-
-        if matched_doc:
-            matched_doc.drive_file_id = df_id
-            existing_drive_ids.add(df_id)
-            try:
-                db.commit()
-            except Exception:
-                try:
-                    db.rollback()
-                except Exception:
-                    pass
-            continue
-
-        # Déduire la catégorie canonique depuis le nom du fichier
-        lower_name = df_name.lower()
-        cat = "Actes & Statuts"
-        if any(k in lower_name for k in ["facture", "devis", "travaux", "artisan", "edf", "eau", "gaz", "toiture", "maconnerie"]):
-            cat = "Travaux & Factures"
-        elif any(k in lower_name for k in ["releve", "banque", "rib", "virement", "compte", "emprunt", "credit", "swan"]):
-            cat = "Banque & Finances"
-        elif any(k in lower_name for k in ["impot", "taxe", "foncier", "cfe", "declaration", "cerfa"]):
-            cat = "Fiscalité & Impôts"
-
-        # Filtrage par catégorie demandée
-        if category and category not in ("Toutes", "all") and cat != category:
-            continue
-
-        clean_title = os.path.splitext(df_name)[0] if "." in df_name else df_name
-        created_dt = datetime.utcnow()
-        if df_created:
-            try:
-                created_dt = datetime.fromisoformat(df_created.replace("Z", "+00:00"))
-            except Exception:
-                pass
-
-        new_doc = AdminDocument(
-            title=clean_title,
-            category=cat,
-            file_url=f"/api/documents/drive/{df_id}",
-            file_name=df_name,
-            file_type=df_mime,
-            file_size=df_size,
-            drive_file_id=df_id,
-            source_type="DRIVE_SYNC",
-            source_id=None,
-            uploaded_by="Google Drive",
-            notes="Synchronisé depuis Google Drive",
-            created_at=created_dt
-        )
-
+    if has_db_updates:
         try:
-            db.add(new_doc)
             db.commit()
-            db.refresh(new_doc)
-            new_doc.file_url = f"/api/documents/{new_doc.id}/download"
-            db.commit()
-            db_docs.append(new_doc)
-            existing_drive_ids.add(df_id)
         except Exception:
             try:
                 db.rollback()
             except Exception:
                 pass
-            # Conservé en mémoire si écriture impossible
-            db_docs.append(new_doc)
-            existing_drive_ids.add(df_id)
 
     # 4. Formatage de la réponse strictement conforme au frontend
     results = []
@@ -5842,7 +5783,11 @@ def list_documents(
             "type": doc_type,
             "mime_type": doc_type,
             "file_size": file_size,
-            "size": f"{round(file_size / 1024, 1)} Ko" if file_size else "—",
+            "size": (
+                f"{round(file_size / (1024 * 1024), 1)} Mo"
+                if file_size >= 1024 * 1024
+                else (f"{round(file_size / 1024, 1)} Ko" if file_size else "—")
+            ),
             "drive_file_id": drive_id,
             "source_type": getattr(doc, "source_type", "MANUAL") or "MANUAL",
             "source_id": getattr(doc, "source_id", None),
@@ -6273,11 +6218,15 @@ def attach_documents_to_project(
 
 @app.get("/api/documents/{doc_id}/download", tags=["Documents"])
 @app.get("/api/admin-documents/{doc_id}/download", tags=["Documents"])
-def download_document(doc_id: str, db: Session = Depends(get_db)):
+def download_document(
+    doc_id: str,
+    download: Optional[bool] = Query(False),
+    db: Session = Depends(get_db)
+):
     """
-    Télécharge un document en extrayant directement le binaire depuis Google Drive via drive_service.py.
-    Applique le confinement strict (Strict Drive Jail) : HTTP 403 immédiat si hors du dossier Hellenvilliers SCI.
-    Secours transparent : Si Google Drive est indisponible ou non configuré, sert le binaire depuis la base de données ou le cache local.
+    Télécharge ou prévisualise un document en extrayant directement le binaire depuis Google Drive via drive_service.py.
+    Applique le confinement strict (Strict Drive Jail) sur les dossiers autorisés Hellenvilliers SCI.
+    Supporte inline (aperçu viewer iframe) et attachment (téléchargement direct).
     """
     doc = None
     if doc_id.isdigit():
@@ -6289,18 +6238,48 @@ def download_document(doc_id: str, db: Session = Depends(get_db)):
 
     target_drive_id = doc.drive_file_id if (doc and doc.drive_file_id) else (doc_id if not doc_id.isdigit() else None)
 
-    # 1. Extraction binaire prioritaire depuis Google Drive (avec vérification Strict Jail 403)
+    # Si pas de drive_file_id mais qu'on a un nom de fichier, rattrapage automatique sur Drive
+    if not target_drive_id and doc and doc.file_name:
+        try:
+            drive_matches = drive_jail_service.list_files(query_filter=f"name = '{doc.file_name}'")
+            if drive_matches:
+                target_drive_id = drive_matches[0]["id"]
+                doc.drive_file_id = target_drive_id
+                if drive_matches[0].get("size"):
+                    doc.file_size = int(drive_matches[0]["size"])
+                db.commit()
+        except Exception as e:
+            logger.warning(f"Rattrapage Drive échoué pour {doc.file_name}: {e}")
+
+    disposition_type = "attachment" if download else "inline"
+
+    # 1. Extraction binaire prioritaire depuis Google Drive (avec vérification Strict Jail)
     if target_drive_id:
         try:
             content, metadata = drive_jail_service.download_file(target_drive_id)
             filename = (doc.file_name if doc else None) or metadata.get("name") or f"document_{doc_id}.pdf"
             guessed_type, _ = mimetypes.guess_type(filename)
             drive_mime = metadata.get("mimeType")
-            mimetype = guessed_type or (drive_mime if drive_mime and drive_mime != "application/octet-stream" else None) or (doc.file_type if doc and doc.file_type != "application/octet-stream" else None) or "application/octet-stream"
+            mimetype = guessed_type or (drive_mime if drive_mime and drive_mime != "application/octet-stream" else None) or (doc.file_type if doc and doc.file_type != "application/octet-stream" else None) or "application/pdf"
+
+            # Synchronisation silencieuse de la taille en base si nécessaire
+            if doc and (not doc.file_size or doc.file_size != len(content)):
+                try:
+                    doc.file_size = len(content)
+                    db.commit()
+                except Exception:
+                    pass
+
             return Response(
                 content=content,
                 media_type=mimetype,
-                headers={"Content-Disposition": f'attachment; filename="{filename}"'}
+                headers={
+                    "Content-Disposition": f'{disposition_type}; filename="{filename}"',
+                    "Content-Length": str(len(content)),
+                    "Accept-Ranges": "bytes",
+                    "Access-Control-Allow-Origin": "*",
+                    "Cache-Control": "public, max-age=3600"
+                }
             )
         except Exception as e:
             logger.warning(f"Téléchargement Google Drive échoué pour {target_drive_id} ({e}), tentative depuis la base ou le cache local")
@@ -6309,11 +6288,16 @@ def download_document(doc_id: str, db: Session = Depends(get_db)):
     if doc and getattr(doc, "file_data", None):
         filename = doc.file_name or f"document_{doc_id}.pdf"
         guessed_type, _ = mimetypes.guess_type(filename)
-        mimetype = guessed_type or (doc.file_type if doc.file_type != "application/octet-stream" else None) or "application/octet-stream"
+        mimetype = guessed_type or (doc.file_type if doc.file_type != "application/octet-stream" else None) or "application/pdf"
         return Response(
             content=doc.file_data,
             media_type=mimetype,
-            headers={"Content-Disposition": f'attachment; filename="{filename}"'}
+            headers={
+                "Content-Disposition": f'{disposition_type}; filename="{filename}"',
+                "Content-Length": str(len(doc.file_data)),
+                "Accept-Ranges": "bytes",
+                "Access-Control-Allow-Origin": "*"
+            }
         )
 
     # 3. Secours cache local si fichier présent sans drive_id
@@ -6321,11 +6305,12 @@ def download_document(doc_id: str, db: Session = Depends(get_db)):
         fpath = os.path.join(DOCUMENTS_DIR, doc.file_name)
         if os.path.exists(fpath):
             guessed_type, _ = mimetypes.guess_type(fpath)
-            media_type = guessed_type or (doc.file_type if doc.file_type != "application/octet-stream" else None) or "application/octet-stream"
+            media_type = guessed_type or (doc.file_type if doc.file_type != "application/octet-stream" else None) or "application/pdf"
             return FileResponse(
                 path=fpath,
                 filename=doc.file_name,
-                media_type=media_type
+                media_type=media_type,
+                content_disposition_type=disposition_type
             )
 
     raise HTTPException(status_code=404, detail="Document non trouvé ou indisponible.")
