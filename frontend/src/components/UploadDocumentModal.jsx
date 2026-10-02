@@ -6,6 +6,7 @@ import {
 } from '../api';
 import CustomSelect from './CustomSelect';
 import CategoryManageModal from './CategoryManageModal';
+import TagMultiSelect from './TagMultiSelect';
 
 const COLOR_OPTIONS = [
   { id: 'slate', name: 'Ardoise', bg: 'bg-slate-500', text: 'text-slate-700', border: 'border-slate-500', badgeBg: 'bg-slate-100 text-slate-800 border-slate-200' },
@@ -43,7 +44,7 @@ export default function UploadDocumentModal({
   const [categoriesList, setCategoriesList] = useState([]);
   const [uploadOrganisme, setUploadOrganisme] = useState('');
   const [uploadTitle, setUploadTitle] = useState('');
-  const [uploadCategory, setUploadCategory] = useState(defaultCategory || '');
+  const [uploadTags, setUploadTags] = useState(() => (defaultCategory ? [defaultCategory] : []));
   const [uploadFile, setUploadFile] = useState(null);
   const [uploadedFileName, setUploadedFileName] = useState('');
   const [isDraggingFile, setIsDraggingFile] = useState(false);
@@ -58,6 +59,7 @@ export default function UploadDocumentModal({
 
   // Édition / suppression d'une catégorie existante (Annotation 1)
   const [isEditCategoryModalOpen, setIsEditCategoryModalOpen] = useState(false);
+  const [selectedCategoryToEdit, setSelectedCategoryToEdit] = useState(null);
 
   const fileDropInputRef = useRef(null);
 
@@ -67,10 +69,11 @@ export default function UploadDocumentModal({
       const cats = await fetchDocumentCategories();
       if (Array.isArray(cats) && cats.length > 0) {
         setCategoriesList(cats);
-        if (!uploadCategory) {
+        setUploadTags((prev) => {
+          if (prev.length > 0) return prev;
           const matched = defaultCategory ? cats.find(c => c.name.toLowerCase() === defaultCategory.toLowerCase()) : null;
-          setUploadCategory(matched ? matched.name : cats[0].name);
-        }
+          return [matched ? matched.name : cats[0].name];
+        });
       }
     } catch (err) {
       console.warn('Erreur chargement des catégories de documents:', err);
@@ -85,7 +88,7 @@ export default function UploadDocumentModal({
 
   useEffect(() => {
     if (defaultCategory) {
-      setUploadCategory(defaultCategory);
+      setUploadTags((prev) => (prev.includes(defaultCategory) ? prev : [defaultCategory, ...prev]));
     }
   }, [defaultCategory]);
 
@@ -113,6 +116,7 @@ export default function UploadDocumentModal({
       setNewCatName('');
       setNewCatEmoji('📁');
       setNewCatColor('slate');
+      setSelectedCategoryToEdit(null);
     }
   }, [isOpen]);
 
@@ -146,7 +150,7 @@ export default function UploadDocumentModal({
         color: newCatColor || 'slate'
       });
       setCategoriesList((prev) => [...prev, created]);
-      setUploadCategory(created.name);
+      setUploadTags((prev) => [...prev, created.name]);
       setIsNewCategoryOpen(false);
       setNewCatName('');
       setNewCatEmoji('📁');
@@ -174,11 +178,15 @@ export default function UploadDocumentModal({
           : (typeof currentUser === 'string' && currentUser ? currentUser : null)
       ) || 'Henri Jamet';
 
+      const primaryCat = uploadTags.length > 0 ? uploadTags.join(', ') : (categoriesList[0]?.name || defaultCategory || 'Travaux & Chantiers');
+      const finalTags = uploadTags.length > 0 ? uploadTags : [primaryCat];
+
       const formData = new FormData();
       formData.append('file', uploadFile);
       formData.append('organisme', uploadOrganisme.trim());
       formData.append('title', uploadTitle.trim());
-      formData.append('category', uploadCategory || (categoriesList[0]?.name || defaultCategory || 'Travaux & Chantiers'));
+      formData.append('category', primaryCat);
+      formData.append('tags', JSON.stringify(finalTags));
       formData.append('uploaded_by', deposant);
 
       if (targetTaskId) {
@@ -473,30 +481,25 @@ export default function UploadDocumentModal({
               </div>
             )}
 
-            {/* Liste des catégories disponibles avec bouton d'édition (Annotation 1) */}
-            <div className="flex items-center gap-2">
-              <div className="flex-1">
-                <CustomSelect
-                  id="modal-doc-category-select"
-                  value={uploadCategory}
-                  onChange={(e) => setUploadCategory(e.target.value)}
-                  options={categoriesList.map((cat) => ({
-                    value: cat.name,
-                    label: `${cat.emoji || '📁'} ${cat.name}`,
-                  }))}
-                  className="h-[48px]"
-                />
-              </div>
-              <button
-                type="button"
-                id="btn-edit-selected-category"
-                onClick={() => setIsEditCategoryModalOpen(true)}
-                className="h-[48px] w-[48px] rounded-DEFAULT border-2 border-border-subtle bg-surface-container-lowest text-on-surface-variant hover:text-primary hover:border-primary flex items-center justify-center transition-all cursor-pointer shrink-0 shadow-xs"
-                title="Modifier ou supprimer la catégorie sélectionnée"
-              >
-                <span className="material-symbols-outlined text-[20px]">edit</span>
-              </button>
-            </div>
+            {/* Multi-Sélecteur d'étiquettes / badges avec création et édition (Annotations 1, 2 & 6) */}
+            <TagMultiSelect
+              id="modal-doc-tags-select"
+              selectedTags={uploadTags}
+              onChange={(newTags) => setUploadTags(newTags)}
+              availableCategories={categoriesList}
+              onOpenCreateCategory={() => setIsNewCategoryOpen(true)}
+              onOpenEditCategory={(catName) => {
+                const targetCat = categoriesList.find((c) => c.name === catName) || {
+                  id: `virtual-${catName}`,
+                  name: catName,
+                  emoji: '📁',
+                  color: 'slate'
+                };
+                setSelectedCategoryToEdit(targetCat);
+                setIsEditCategoryModalOpen(true);
+              }}
+              placeholder="Sélectionnez un ou plusieurs tags..."
+            />
           </div>
 
           {/* Actions de la modale */}
@@ -529,16 +532,25 @@ export default function UploadDocumentModal({
       {/* Modale d'édition / suppression de catégorie existante (Annotation 1) */}
       <CategoryManageModal
         isOpen={isEditCategoryModalOpen}
-        onClose={() => setIsEditCategoryModalOpen(false)}
-        category={categoriesList.find((c) => c.name === uploadCategory) || categoriesList[0]}
+        onClose={() => {
+          setIsEditCategoryModalOpen(false);
+          setSelectedCategoryToEdit(null);
+        }}
+        category={selectedCategoryToEdit || categoriesList.find((c) => uploadTags.includes(c.name)) || categoriesList[0]}
         onUpdated={(updated) => {
           setCategoriesList((prev) => prev.map((c) => (c.id === updated.id ? updated : c)));
-          setUploadCategory(updated.name);
+          if (selectedCategoryToEdit) {
+            setUploadTags((prev) => prev.map((t) => (t === selectedCategoryToEdit.name ? updated.name : t)));
+          }
+          setSelectedCategoryToEdit(null);
         }}
-        onDeleted={(id) => {
+        onDeleted={(id, deletedCat) => {
           const remaining = categoriesList.filter((c) => c.id !== id);
           setCategoriesList(remaining);
-          setUploadCategory(remaining.length > 0 ? remaining[0].name : '');
+          if (deletedCat && deletedCat.name) {
+            setUploadTags((prev) => prev.filter((t) => t !== deletedCat.name));
+          }
+          setSelectedCategoryToEdit(null);
         }}
       />
     </div>

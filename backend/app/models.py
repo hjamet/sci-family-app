@@ -35,6 +35,9 @@ class Member(Base):
     notify_vote_creation = Column(Boolean, default=False, nullable=False, server_default="0")
     notify_vote_arbitration = Column(Boolean, default=False, nullable=False, server_default="0")
     notify_mention_all = Column(Boolean, default=True, nullable=False, server_default="1")
+    monthly_contribution = Column(Float, default=50.0, nullable=False, server_default="50.0")
+    notif_new_invoices = Column(Boolean, default=True, nullable=False, server_default="1")
+    notif_calls_for_funds = synonym("notif_new_invoices")
 
     tasks = relationship("Task", back_populates="assignee", foreign_keys="Task.assignee_id")
     task_comments = relationship("TaskComment", back_populates="author", foreign_keys="TaskComment.author_id")
@@ -76,6 +79,7 @@ class AdminDocument(Base):
     task_id = Column(Integer, ForeignKey("tasks.id", ondelete="SET NULL"), nullable=True, index=True)
     uploaded_by = Column(String, nullable=True)
     notes = Column(Text, nullable=True)
+    tags = Column(Text, nullable=True)  # JSON-encoded array or comma-separated tags
     created_at = Column(DateTime, default=datetime.utcnow)
 
     # Synonymes d'accès unifiés
@@ -439,6 +443,8 @@ class MemberSettings(Base):
     notify_vote_creation = Column(Boolean, default=False)
     notify_vote_arbitration = Column(Boolean, default=False)
     notify_mention_all = Column(Boolean, default=True)
+    notif_new_invoices = Column(Boolean, default=True)
+    notif_calls_for_funds = synonym("notif_new_invoices")
     updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
 
     member = relationship("Member", backref="settings")
@@ -500,3 +506,59 @@ class MemberReleaseView(Base):
 
 
 OnboardingRelease = AppRelease
+
+
+class CallForFunds(Base):
+    __tablename__ = "calls_for_funds"
+    __table_args__ = (
+        UniqueConstraint("member_id", "year", "month", name="uq_member_period_call"),
+    )
+
+    id = Column(Integer, primary_key=True, index=True)
+    reference = Column(String(50), unique=True, index=True, nullable=False)  # ex: AF-202610-HENRI
+    member_id = Column(Integer, ForeignKey("members.id", ondelete="CASCADE"), nullable=False, index=True)
+    member_name = Column(String(255), nullable=False)
+    year = Column(Integer, nullable=False)
+    month = Column(Integer, nullable=False)
+    period_label = Column(String(100), nullable=False)  # ex: "Octobre 2026"
+    theoretical_contribution = Column(Float, default=50.0, nullable=False)
+    approved_expenses_total = Column(Float, default=0.0, nullable=False)
+    net_amount = Column(Float, default=50.0, nullable=False)
+    status = Column(String(50), default="PENDING_SWAN_IBAN", nullable=False)  # PENDING_SWAN_IBAN, EMIS, REGLE, NEUTRALISE_COMPENSATION, ANNULE
+    iban = Column(String(100), nullable=True)
+    bic = Column(String(20), nullable=True)
+    payment_reference = Column(String(150), nullable=False)  # ex: "Apport CCA - Henri 10/2026"
+    pdf_filename = Column(String(255), nullable=True)
+    pdf_url = Column(String(255), nullable=True)
+    details_json = Column(Text, nullable=True)  # JSON-encoded list of deducted expenses
+    notification_sent = Column(Boolean, default=False, nullable=False, server_default="0")
+    notification_sent_at = Column(DateTime, nullable=True)
+    created_at = Column(DateTime, default=datetime.utcnow)
+    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+
+    member = relationship("Member", backref="calls_for_funds")
+    expenses = relationship("MemberExpense", back_populates="call_for_funds")
+
+
+class MemberExpense(Base):
+    __tablename__ = "member_expenses"
+
+    id = Column(Integer, primary_key=True, index=True)
+    member_id = Column(Integer, ForeignKey("members.id", ondelete="CASCADE"), nullable=False, index=True)
+    member_prenom = Column(String(100), nullable=False)
+    title = Column(String(255), nullable=False)
+    amount = Column(Float, nullable=False)
+    expense_date = Column(String(50), nullable=False)  # YYYY-MM-DD
+    category = Column(String(100), default="Entretien & Fournitures", nullable=False)
+    status = Column(String(50), default="VALIDATED", nullable=False)  # VALIDATED, PENDING, REJECTED
+    document_id = Column(Integer, ForeignKey("admin_documents.id", ondelete="SET NULL"), nullable=True)
+    document_url = Column(String(255), nullable=True)
+    document_filename = Column(String(255), nullable=True)
+    call_for_funds_id = Column(Integer, ForeignKey("calls_for_funds.id", ondelete="SET NULL"), nullable=True, index=True)
+    notes = Column(Text, nullable=True)
+    created_at = Column(DateTime, default=datetime.utcnow)
+    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+
+    member = relationship("Member", backref="member_expenses")
+    document = relationship("AdminDocument", backref="member_expense_records")
+    call_for_funds = relationship("CallForFunds", back_populates="expenses")

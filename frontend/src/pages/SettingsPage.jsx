@@ -27,7 +27,10 @@ import {
   Users,
   CheckSquare,
   Clock,
-  Power
+  Power,
+  Receipt,
+  Landmark,
+  Wallet
 } from 'lucide-react';
 import {
   fetchUserProfile,
@@ -103,7 +106,7 @@ export default function SettingsPage({ currentUser }) {
   const [passwordLoading, setPasswordLoading] = useState(false);
   const [passwordError, setPasswordError] = useState(null);
 
-  // --- États Préférences de Notifications (5 Domaines Thématiques) ---
+  // --- États Préférences de Notifications (6 Domaines Thématiques) ---
   const [notifications, setNotifications] = useState({
     notif_task_assigned: true,
     notify_new_task: true,
@@ -125,7 +128,9 @@ export default function SettingsPage({ currentUser }) {
     notif_heating_stop: true,
     notif_thermal_changes: false,
     notify_thermal_changes: false,
-    notify_vote_creation: false
+    notify_vote_creation: false,
+    notif_new_invoices: true,
+    notif_calls_for_funds: true
   });
   const [notificationsLoading, setNotificationsLoading] = useState(false);
 
@@ -226,7 +231,9 @@ export default function SettingsPage({ currentUser }) {
             notif_heating_stop: (settings.notif_heating_stop != null ? settings.notif_heating_stop : (userProfile?.notif_heating_stop ?? true)) !== false,
             notif_thermal_changes: thermalPref,
             notify_thermal_changes: thermalPref,
-            notify_vote_creation: voteCreationPref
+            notify_vote_creation: voteCreationPref,
+            notif_new_invoices: (settings.notif_new_invoices != null ? settings.notif_new_invoices : (settings.notif_calls_for_funds != null ? settings.notif_calls_for_funds : (userProfile?.notif_new_invoices ?? true))) !== false,
+            notif_calls_for_funds: (settings.notif_new_invoices != null ? settings.notif_new_invoices : (settings.notif_calls_for_funds != null ? settings.notif_calls_for_funds : (userProfile?.notif_new_invoices ?? true))) !== false
           });
         }
       } catch (err) {
@@ -328,6 +335,8 @@ export default function SettingsPage({ currentUser }) {
       if (key === 'notify_new_stay') updated.notif_stay_booked = nextVal;
       if (key === 'notif_thermal_changes') updated.notify_thermal_changes = nextVal;
       if (key === 'notify_thermal_changes') updated.notif_thermal_changes = nextVal;
+      if (key === 'notif_new_invoices') updated.notif_calls_for_funds = nextVal;
+      if (key === 'notif_calls_for_funds') updated.notif_new_invoices = nextVal;
       return updated;
     });
   };
@@ -354,7 +363,9 @@ export default function SettingsPage({ currentUser }) {
       notif_heating_stop: status,
       notif_thermal_changes: status,
       notify_thermal_changes: status,
-      notify_vote_creation: status
+      notify_vote_creation: status,
+      notif_new_invoices: status,
+      notif_calls_for_funds: status
     });
   };
 
@@ -654,7 +665,7 @@ export default function SettingsPage({ currentUser }) {
         </div>
 
         {/* ======================================================== */}
-        {/* 5 CARTES THÉMATIQUES DE NOTIFICATIONS                    */}
+        {/* 6 CARTES THÉMATIQUES DE NOTIFICATIONS                    */}
         {/* ======================================================== */}
         <div className="space-y-6">
 
@@ -1162,6 +1173,60 @@ export default function SettingsPage({ currentUser }) {
                 <div className="shrink-0 pt-1">
                   <div className={`w-11 h-6 flex items-center rounded-full p-1 duration-300 ease-in-out ${notifications.notif_thermal_changes ? 'bg-primary' : 'bg-slate-300'}`}>
                     <div className={`bg-white w-4 h-4 rounded-full shadow-md transform duration-300 ease-in-out ${notifications.notif_thermal_changes ? 'translate-x-5' : 'translate-x-0'}`} />
+                  </div>
+                </div>
+              </div>
+            </div>
+          </div>
+
+          {/* 6. 💶 Cotisations & Appels de Fonds */}
+          <div className="bg-slate-50/70 rounded-2xl border border-slate-200/90 p-5 sm:p-6 space-y-4 hover:border-slate-300 transition-colors shadow-2xs">
+            <div className="flex items-center justify-between gap-3 border-b border-slate-200/70 pb-3">
+              <div className="flex items-center gap-2.5">
+                <div className="w-8 h-8 rounded-xl bg-emerald-100 text-emerald-800 flex items-center justify-center shrink-0 border border-emerald-200 shadow-2xs">
+                  <Receipt className="w-4 h-4" />
+                </div>
+                <div>
+                  <h3 className="text-sm font-bold text-slate-900 tracking-tight">
+                    6. 💶 Cotisations &amp; Appels de Fonds
+                  </h3>
+                  <p className="text-[11px] text-slate-500">
+                    Appels de cotisations mensuelles, compensation des avances et coordonnées bancaires SEPA
+                  </p>
+                </div>
+              </div>
+              <span className="text-[11px] font-semibold px-2.5 py-0.5 rounded-full bg-white text-emerald-800 border border-emerald-200 shrink-0">
+                Finances &amp; Trésorerie
+              </span>
+            </div>
+
+            <div className="space-y-3">
+              {/* Item 1 : Appels de fonds & avis de cotisations mensuelles */}
+              <div
+                id="toggle-notif-new-invoices"
+                onClick={() => handleToggleNotification('notif_new_invoices')}
+                className={`flex items-start justify-between gap-3.5 p-3.5 sm:p-4 rounded-xl border transition-all cursor-pointer select-none ${
+                  notifications.notif_new_invoices
+                    ? 'border-emerald-300/80 bg-white hover:bg-emerald-50/20 shadow-xs'
+                    : 'border-slate-200 bg-white/70 hover:bg-slate-100/60'
+                }`}
+              >
+                <div className="flex items-start gap-3">
+                  <div className="w-8 h-8 rounded-xl bg-emerald-100 text-emerald-800 flex items-center justify-center shrink-0 mt-0.5 border border-emerald-200 shadow-2xs">
+                    <Receipt className="w-4 h-4" />
+                  </div>
+                  <div>
+                    <span className="text-sm font-bold text-slate-900 block leading-snug">
+                      Appels de fonds &amp; avis de cotisations mensuelles
+                    </span>
+                    <p className="text-xs text-slate-600 mt-1 leading-relaxed">
+                      Recevoir un e-mail avec l'avis récapitulatif mensuel et le QR-code de virement dès que votre quote-part nette est émise.
+                    </p>
+                  </div>
+                </div>
+                <div className="shrink-0 pt-1">
+                  <div className={`w-11 h-6 flex items-center rounded-full p-1 duration-300 ease-in-out ${notifications.notif_new_invoices ? 'bg-primary' : 'bg-slate-300'}`}>
+                    <div className={`bg-white w-4 h-4 rounded-full shadow-md transform duration-300 ease-in-out ${notifications.notif_new_invoices ? 'translate-x-5' : 'translate-x-0'}`} />
                   </div>
                 </div>
               </div>

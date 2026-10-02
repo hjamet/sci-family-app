@@ -13,6 +13,7 @@ GENERAL_NOTIFICATION_COLUMNS = [
     ("notif_stay_booked", "BOOLEAN DEFAULT TRUE"),
     ("notify_mentions", "BOOLEAN DEFAULT TRUE"),
     ("notify_mention_all", "BOOLEAN DEFAULT TRUE"),
+    ("notif_new_invoices", "BOOLEAN DEFAULT TRUE"),
 ]
 
 # Column for thermal changes (default FALSE, activated for coordinators)
@@ -135,6 +136,9 @@ def migrate_sqlite_db(db_path: str = None):
                 if "notify_vote_arbitration" not in ms_cols:
                     cursor.execute("ALTER TABLE member_settings ADD COLUMN notify_vote_arbitration BOOLEAN DEFAULT FALSE")
                 cursor.execute("UPDATE member_settings SET notify_vote_arbitration = 0 WHERE notify_vote_arbitration IS NULL")
+                if "notif_new_invoices" not in ms_cols:
+                    cursor.execute("ALTER TABLE member_settings ADD COLUMN notif_new_invoices BOOLEAN DEFAULT TRUE")
+                cursor.execute("UPDATE member_settings SET notif_new_invoices = 1 WHERE notif_new_invoices IS NULL")
                 # Activate for coordinator and assistant
                 cursor.execute("""
                     UPDATE member_settings SET notify_thermal_changes = 1
@@ -142,6 +146,62 @@ def migrate_sqlite_db(db_path: str = None):
                         SELECT id FROM members WHERE LOWER(prenom) = 'henri' OR LOWER(prenom) LIKE 'jos%' OR LOWER(role) LIKE '%coordinat%'
                     )
                 """)
+
+            # 5bis. monthly_contribution on members
+            cursor.execute("PRAGMA table_info(members)")
+            m_cols = {row[1] for row in cursor.fetchall()}
+            if "monthly_contribution" not in m_cols:
+                cursor.execute("ALTER TABLE members ADD COLUMN monthly_contribution FLOAT DEFAULT 50.0")
+                cursor.execute("UPDATE members SET monthly_contribution = 50.0 WHERE monthly_contribution IS NULL")
+                cursor.execute("UPDATE members SET monthly_contribution = 1000.0 WHERE LOWER(prenom) LIKE '%fred%'")
+
+            # 5ter. Create calls_for_funds and member_expenses tables if missing
+            cursor.execute("""
+                CREATE TABLE IF NOT EXISTS calls_for_funds (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    reference VARCHAR(50) UNIQUE NOT NULL,
+                    member_id INTEGER NOT NULL REFERENCES members(id) ON DELETE CASCADE,
+                    member_name VARCHAR(255) NOT NULL,
+                    year INTEGER NOT NULL,
+                    month INTEGER NOT NULL,
+                    period_label VARCHAR(100) NOT NULL,
+                    theoretical_contribution FLOAT NOT NULL DEFAULT 50.0,
+                    approved_expenses_total FLOAT NOT NULL DEFAULT 0.0,
+                    net_amount FLOAT NOT NULL DEFAULT 50.0,
+                    status VARCHAR(50) NOT NULL DEFAULT 'PENDING_SWAN_IBAN',
+                    iban VARCHAR(100),
+                    bic VARCHAR(20),
+                    payment_reference VARCHAR(150) NOT NULL,
+                    pdf_filename VARCHAR(255),
+                    pdf_url VARCHAR(255),
+                    details_json TEXT,
+                    notification_sent BOOLEAN DEFAULT 0,
+                    notification_sent_at TIMESTAMP,
+                    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                    CONSTRAINT uq_member_period_call UNIQUE (member_id, year, month)
+                )
+            """)
+
+            cursor.execute("""
+                CREATE TABLE IF NOT EXISTS member_expenses (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    member_id INTEGER NOT NULL REFERENCES members(id) ON DELETE CASCADE,
+                    member_prenom VARCHAR(100) NOT NULL,
+                    title VARCHAR(255) NOT NULL,
+                    amount FLOAT NOT NULL,
+                    expense_date VARCHAR(50) NOT NULL,
+                    category VARCHAR(100) NOT NULL DEFAULT 'Entretien & Fournitures',
+                    status VARCHAR(50) NOT NULL DEFAULT 'VALIDATED',
+                    document_id INTEGER REFERENCES admin_documents(id) ON DELETE SET NULL,
+                    document_url VARCHAR(255),
+                    document_filename VARCHAR(255),
+                    call_for_funds_id INTEGER REFERENCES calls_for_funds(id) ON DELETE SET NULL,
+                    notes TEXT,
+                    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+                )
+            """)
 
             # 6. Migrate tasks table (charge_points) (Annotation 1)
             cursor.execute("SELECT name FROM sqlite_master WHERE type='table' AND name='tasks'")
@@ -321,8 +381,73 @@ def migrate_engine(engine):
                     conn.execute(text("UPDATE member_settings SET notify_vote_creation = FALSE WHERE notify_vote_creation IS NULL;"))
                     conn.execute(text("ALTER TABLE member_settings ADD COLUMN IF NOT EXISTS notify_vote_arbitration BOOLEAN DEFAULT FALSE;"))
                     conn.execute(text("UPDATE member_settings SET notify_vote_arbitration = FALSE WHERE notify_vote_arbitration IS NULL;"))
+                    conn.execute(text("ALTER TABLE member_settings ADD COLUMN IF NOT EXISTS notif_new_invoices BOOLEAN DEFAULT TRUE;"))
+                    conn.execute(text("UPDATE member_settings SET notif_new_invoices = TRUE WHERE notif_new_invoices IS NULL;"))
                 except Exception as ms_mig_err:
                     logger.debug(f"[MIGRATION NOTICE] member_settings notice: {ms_mig_err}")
+
+                # monthly_contribution on members in Postgres
+                try:
+                    conn.execute(text("ALTER TABLE members ADD COLUMN IF NOT EXISTS monthly_contribution FLOAT DEFAULT 50.0;"))
+                    conn.execute(text("UPDATE members SET monthly_contribution = 50.0 WHERE monthly_contribution IS NULL;"))
+                    conn.execute(text("UPDATE members SET monthly_contribution = 1000.0 WHERE LOWER(prenom) LIKE '%fred%';"))
+                except Exception as m_mig_err:
+                    logger.warning(f"[MIGRATION NOTICE] members monthly_contribution notice: {m_mig_err}")
+
+                # calls_for_funds table in Postgres
+                try:
+                    conn.execute(text("""
+                        CREATE TABLE IF NOT EXISTS calls_for_funds (
+                            id SERIAL PRIMARY KEY,
+                            reference VARCHAR(50) UNIQUE NOT NULL,
+                            member_id INTEGER NOT NULL REFERENCES members(id) ON DELETE CASCADE,
+                            member_name VARCHAR(255) NOT NULL,
+                            year INTEGER NOT NULL,
+                            month INTEGER NOT NULL,
+                            period_label VARCHAR(100) NOT NULL,
+                            theoretical_contribution FLOAT NOT NULL DEFAULT 50.0,
+                            approved_expenses_total FLOAT NOT NULL DEFAULT 0.0,
+                            net_amount FLOAT NOT NULL DEFAULT 50.0,
+                            status VARCHAR(50) NOT NULL DEFAULT 'PENDING_SWAN_IBAN',
+                            iban VARCHAR(100),
+                            bic VARCHAR(20),
+                            payment_reference VARCHAR(150) NOT NULL,
+                            pdf_filename VARCHAR(255),
+                            pdf_url VARCHAR(255),
+                            details_json TEXT,
+                            notification_sent BOOLEAN DEFAULT FALSE,
+                            notification_sent_at TIMESTAMPTZ,
+                            created_at TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP,
+                            updated_at TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP,
+                            CONSTRAINT uq_member_period_call UNIQUE (member_id, year, month)
+                        );
+                    """))
+                except Exception as cff_mig_err:
+                    logger.warning(f"[MIGRATION NOTICE] calls_for_funds notice: {cff_mig_err}")
+
+                # member_expenses table in Postgres
+                try:
+                    conn.execute(text("""
+                        CREATE TABLE IF NOT EXISTS member_expenses (
+                            id SERIAL PRIMARY KEY,
+                            member_id INTEGER NOT NULL REFERENCES members(id) ON DELETE CASCADE,
+                            member_prenom VARCHAR(100) NOT NULL,
+                            title VARCHAR(255) NOT NULL,
+                            amount FLOAT NOT NULL,
+                            expense_date VARCHAR(50) NOT NULL,
+                            category VARCHAR(100) NOT NULL DEFAULT 'Entretien & Fournitures',
+                            status VARCHAR(50) NOT NULL DEFAULT 'VALIDATED',
+                            document_id INTEGER REFERENCES admin_documents(id) ON DELETE SET NULL,
+                            document_url VARCHAR(255),
+                            document_filename VARCHAR(255),
+                            call_for_funds_id INTEGER REFERENCES calls_for_funds(id) ON DELETE SET NULL,
+                            notes TEXT,
+                            created_at TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP,
+                            updated_at TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP
+                        );
+                    """))
+                except Exception as me_mig_err:
+                    logger.warning(f"[MIGRATION NOTICE] member_expenses notice: {me_mig_err}")
 
                 # admin_documents drive_file_id
                 try:

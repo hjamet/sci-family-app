@@ -13,6 +13,7 @@ import UploadDocumentModal from '../components/UploadDocumentModal';
 import SelectExistingDocumentModal from '../components/SelectExistingDocumentModal';
 import { BankMetricSkeleton } from '../components/SkeletonLoaders';
 import CustomSelect from '../components/CustomSelect';
+import TagMultiSelect, { getTagColorClass, parseDocumentTags } from '../components/TagMultiSelect';
 import {
   fetchDocuments,
   fetchDocumentCategories,
@@ -140,6 +141,7 @@ export default function AdminInfoPage({ currentUser }) {
   const [isRenameModalOpen, setIsRenameModalOpen] = useState(false);
   const [selectedRenamingDoc, setSelectedRenamingDoc] = useState(null);
   const [renameInputValue, setRenameInputValue] = useState('');
+  const [renameDocTags, setRenameDocTags] = useState([]);
 
   // Upload Modal State (Annotation 5 : Organisme, Titre, Format Canonique, Catégories Custom)
   const [uploadOrganisme, setUploadOrganisme] = useState('');
@@ -339,10 +341,12 @@ export default function AdminInfoPage({ currentUser }) {
     }
   };
 
-  // Rename document workflow
+  // Rename & Edit document tags workflow (Annotation 2 & 6)
   const openRenameModal = (doc) => {
     setSelectedRenamingDoc(doc);
     setRenameInputValue(doc.title || doc.name || '');
+    const currentTags = parseDocumentTags(doc);
+    setRenameDocTags(currentTags.length > 0 ? currentTags : (doc.category ? [doc.category] : ['Travaux & Chantiers']));
     setIsRenameModalOpen(true);
   };
 
@@ -353,14 +357,26 @@ export default function AdminInfoPage({ currentUser }) {
     const newTitle = renameInputValue.trim();
     const docId = selectedRenamingDoc.id || selectedRenamingDoc.filename;
     try {
-      const updated = await updateDocument(docId, { title: newTitle });
+      const finalTags = renameDocTags.length > 0 ? renameDocTags : ['Travaux & Chantiers'];
+      const updated = await updateDocument(docId, {
+        title: newTitle,
+        tags: finalTags,
+        category: finalTags.join(', ')
+      });
       setDocuments((prev) =>
-        prev.map((d) => (d.id === selectedRenamingDoc.id ? { ...d, ...updated, title: newTitle, name: newTitle } : d))
+        prev.map((d) => (d.id === selectedRenamingDoc.id ? {
+          ...d,
+          ...updated,
+          title: newTitle,
+          name: newTitle,
+          tags: finalTags,
+          category: finalTags.join(', ')
+        } : d))
       );
       setIsRenameModalOpen(false);
-      showToast('Document renommé', 'Le titre a été actualisé sur Google Drive et en base.', 'edit');
+      showToast('Document actualisé', 'Le titre et les étiquettes ont été enregistrés avec succès.', 'check_circle');
     } catch (err) {
-      showToast('Erreur renommage', err.message, 'error');
+      showToast('Erreur modification', err.message, 'error');
     }
   };
 
@@ -394,14 +410,13 @@ export default function AdminInfoPage({ currentUser }) {
   // Annotation 10 & Demande Henri : Ouverture de la modale d'édition de l'étiquette sélectionnée
   const handleOpenEditCategoryModal = (targetCategory = null) => {
     let current = null;
-    if (typeof targetCategory === 'string') {
-      current = categoriesList.find((c) => c.name === targetCategory);
-    } else if (targetCategory && targetCategory.name) {
-      current = targetCategory;
-    }
+    const targetName = typeof targetCategory === 'string' ? targetCategory : (targetCategory?.name || selectedCategory);
 
-    if (!current && selectedCategory !== 'all') {
-      current = categoriesList.find((c) => c.name === selectedCategory);
+    if (targetName && targetName !== 'all') {
+      current = categoriesList.find((c) => c.name.toLowerCase() === targetName.toLowerCase());
+      if (!current) {
+        current = { id: `virtual-${targetName}`, name: targetName, emoji: '📁', color: 'slate', isVirtual: true };
+      }
     }
 
     if (!current) {
@@ -425,23 +440,52 @@ export default function AdminInfoPage({ currentUser }) {
     if (!selectedEditingCat || !editCatName.trim()) return;
     setIsUpdatingCat(true);
     try {
-      const updated = await updateDocumentCategory(selectedEditingCat.id, {
-        name: editCatName.trim(),
-        emoji: editCatEmoji || '📁',
-        color: editCatColor || 'slate'
+      let updated;
+      const isNumericId = typeof selectedEditingCat.id === 'number' || (typeof selectedEditingCat.id === 'string' && /^\d+$/.test(selectedEditingCat.id));
+      if (isNumericId) {
+        updated = await updateDocumentCategory(selectedEditingCat.id, {
+          name: editCatName.trim(),
+          emoji: editCatEmoji || '📁',
+          color: editCatColor || 'slate'
+        });
+      } else {
+        // Catégorie virtuelle : création en base
+        updated = await createDocumentCategory({
+          name: editCatName.trim(),
+          emoji: editCatEmoji || '📁',
+          color: editCatColor || 'slate'
+        });
+      }
+
+      setCategoriesList((prev) => {
+        const withoutOld = prev.filter((c) => c.id !== selectedEditingCat.id && c.name.toLowerCase() !== selectedEditingCat.name.toLowerCase());
+        return [...withoutOld, updated];
       });
-      setCategoriesList((prev) => prev.map((c) => (c.id === updated.id ? updated : c)));
+
       if (uploadCategory === selectedEditingCat.name) {
         setUploadCategory(updated.name);
       }
       if (selectedCategory === selectedEditingCat.name) {
         setSelectedCategory(updated.name);
       }
-      if (selectedEditingCat.name !== updated.name) {
-        setDocuments((prev) => prev.map((doc) =>
-          doc.category === selectedEditingCat.name ? { ...doc, category: updated.name } : doc
-        ));
-      }
+
+      // Propager le renommage dans tous les documents locaux
+      setDocuments((prev) => prev.map((doc) => {
+        const docTags = parseDocumentTags(doc);
+        if (docTags.includes(selectedEditingCat.name) || doc.category === selectedEditingCat.name) {
+          const newTags = docTags.map((t) => (t === selectedEditingCat.name ? updated.name : t));
+          return {
+            ...doc,
+            tags: newTags,
+            category: newTags.join(', ')
+          };
+        }
+        return doc;
+      }));
+
+      // Si le document en cours d'édition est ouvert dans la modal rename
+      setRenameDocTags((prev) => prev.map((t) => (t === selectedEditingCat.name ? updated.name : t)));
+
       setIsEditCategoryModalOpen(false);
       showToast('Étiquette mise à jour', `Étiquette « ${updated.name} » actualisée avec succès.`, 'check_circle');
     } catch (err) {
@@ -457,12 +501,30 @@ export default function AdminInfoPage({ currentUser }) {
     if (window.confirm(`Êtes-vous certain de vouloir supprimer l'étiquette « ${selectedEditingCat.name} » ?`)) {
       setIsDeletingCat(true);
       try {
-        await deleteDocumentCategory(selectedEditingCat.id);
-        const remaining = categoriesList.filter((c) => c.id !== selectedEditingCat.id);
+        const isNumericId = typeof selectedEditingCat.id === 'number' || (typeof selectedEditingCat.id === 'string' && /^\d+$/.test(selectedEditingCat.id));
+        if (isNumericId) {
+          await deleteDocumentCategory(selectedEditingCat.id);
+        }
+        const remaining = categoriesList.filter((c) => c.id !== selectedEditingCat.id && c.name !== selectedEditingCat.name);
         setCategoriesList(remaining);
-        setDocuments((prev) => prev.map((doc) =>
-          doc.category === selectedEditingCat.name ? { ...doc, category: 'Autre' } : doc
-        ));
+
+        // Mettre à jour les documents
+        setDocuments((prev) => prev.map((doc) => {
+          const docTags = parseDocumentTags(doc);
+          if (docTags.includes(selectedEditingCat.name) || doc.category === selectedEditingCat.name) {
+            const newTags = docTags.filter((t) => t !== selectedEditingCat.name);
+            const finalTags = newTags.length > 0 ? newTags : ['Autre'];
+            return {
+              ...doc,
+              tags: finalTags,
+              category: finalTags.join(', ')
+            };
+          }
+          return doc;
+        }));
+
+        setRenameDocTags((prev) => prev.filter((t) => t !== selectedEditingCat.name));
+
         if (uploadCategory === selectedEditingCat.name) {
           setUploadCategory(remaining.length > 0 ? remaining[0].name : '');
         }
@@ -630,24 +692,30 @@ export default function AdminInfoPage({ currentUser }) {
     setIsOperationModalOpen(true);
   };
 
-  // Filter & Search Documents (Données réelles)
+  // Filter & Search Documents (Données réelles et Multi-Tags)
   const filteredDocuments = useMemo(() => {
     const q = searchQuery.toLowerCase().trim();
 
     return documents
       .filter((doc) => {
-        const docCat = doc.category || '';
-        const matchesCategory = selectedCategory === 'all' || docCat === selectedCategory;
+        const docTags = parseDocumentTags(doc);
+        const matchesCategory =
+          selectedCategory === 'all' ||
+          docTags.includes(selectedCategory) ||
+          doc.category === selectedCategory;
+
         const docTitle = (doc.title || doc.name || doc.filename || '').toLowerCase();
         const docAuthor = (doc.uploaded_by || doc.author || '').toLowerCase();
         const docOrg = (doc.notes || '').toLowerCase();
+        const docTagsStr = docTags.join(' ').toLowerCase();
 
         const matchesSearch =
           q === '' ||
           docTitle.includes(q) ||
           docAuthor.includes(q) ||
           docOrg.includes(q) ||
-          docCat.toLowerCase().includes(q);
+          docTagsStr.includes(q) ||
+          (doc.category || '').toLowerCase().includes(q);
 
         return matchesCategory && matchesSearch;
       })
@@ -664,12 +732,19 @@ export default function AdminInfoPage({ currentUser }) {
       });
   }, [documents, searchQuery, selectedCategory, sortCriteria]);
 
-  // Dynamic Category Counts
+  // Dynamic Category Counts (comptage par étiquette individuelle)
   const categoryCounts = useMemo(() => {
     const counts = { all: documents.length };
     documents.forEach((d) => {
-      const cat = d.category || 'Autre';
-      counts[cat] = (counts[cat] || 0) + 1;
+      const docTags = parseDocumentTags(d);
+      if (docTags.length === 0) {
+        const fallback = d.category || 'Autre';
+        counts[fallback] = (counts[fallback] || 0) + 1;
+      } else {
+        docTags.forEach((t) => {
+          counts[t] = (counts[t] || 0) + 1;
+        });
+      }
     });
     return counts;
   }, [documents]);
@@ -690,17 +765,20 @@ export default function AdminInfoPage({ currentUser }) {
       });
     });
 
-    // Compléter avec les catégories présentes dans les documents qui ne seraient pas dans categoriesList
+    // Compléter avec les étiquettes présentes dans les documents qui ne seraient pas dans categoriesList
     documents.forEach((d) => {
-      if (d.category && !seen.has(d.category)) {
-        seen.add(d.category);
-        base.push({
-          key: d.category,
-          label: `📁 ${d.category} (${categoryCounts[d.category] || 0})`,
-          emoji: '📁',
-          color: 'slate'
-        });
-      }
+      const docTags = parseDocumentTags(d);
+      docTags.forEach((tag) => {
+        if (tag && !seen.has(tag)) {
+          seen.add(tag);
+          base.push({
+            key: tag,
+            label: `📁 ${tag} (${categoryCounts[tag] || 0})`,
+            emoji: '📁',
+            color: 'slate'
+          });
+        }
+      });
     });
 
     return base;
@@ -1356,12 +1434,23 @@ export default function AdminInfoPage({ currentUser }) {
                     </div>
                   </div>
 
-                  {/* Document Metadata */}
+                  {/* Document Metadata & Multi-Tags */}
                   <div className="mt-3">
-                    <span className={`inline-flex items-center gap-1 px-2.5 py-0.5 rounded text-[11px] font-semibold border ${badgeColorClass} mb-1.5`}>
-                      <span>{catObj?.emoji || '📁'}</span>
-                      <span>{doc.category || 'Général'}</span>
-                    </span>
+                    <div className="flex items-center gap-1 flex-wrap mb-1.5 min-h-[22px]">
+                      {parseDocumentTags(doc).map((tag) => {
+                        const cat = categoriesList.find((c) => c.name === tag);
+                        const badgeColor = getTagColorClass(cat?.color);
+                        return (
+                          <span
+                            key={tag}
+                            className={`inline-flex items-center gap-1 px-2 py-0.5 rounded text-[10px] font-semibold border ${badgeColor}`}
+                          >
+                            <span>{cat?.emoji || '📁'}</span>
+                            <span>{tag}</span>
+                          </span>
+                        );
+                      })}
+                    </div>
                     <h3
                       className="font-headline-sm text-sm text-forest-deep font-bold line-clamp-2 leading-tight doc-title-text"
                       title={doc.filename || doc.title}
@@ -1394,7 +1483,7 @@ export default function AdminInfoPage({ currentUser }) {
                     type="button"
                     onClick={() => openRenameModal(doc)}
                     className="btn-rename p-2 h-[40px] w-[40px] rounded-DEFAULT bg-surface-container-lowest border-2 border-border-subtle text-on-surface-variant hover:text-primary hover:border-primary transition-all flex items-center justify-center cursor-pointer shrink-0"
-                    title="Renommer le fichier"
+                    title="Éditer le document (titre & étiquettes)"
                   >
                     <span className="material-symbols-outlined text-[18px]">edit</span>
                   </button>
@@ -1433,11 +1522,21 @@ export default function AdminInfoPage({ currentUser }) {
                     {catObj?.emoji || '📁'}
                   </div>
                   <div className="min-w-0">
-                    <div className="flex items-center gap-2 flex-wrap">
-                      <span className={`px-2 py-0.5 rounded text-[10px] font-semibold border ${badgeColorClass}`}>
-                        {catObj?.emoji || '📁'} {doc.category}
-                      </span>
-                      <span className="text-xs font-mono text-on-surface-variant">{doc.size || '—'}</span>
+                    <div className="flex items-center gap-1.5 flex-wrap">
+                      {parseDocumentTags(doc).map((tag) => {
+                        const cat = categoriesList.find((c) => c.name === tag);
+                        const badgeColor = getTagColorClass(cat?.color);
+                        return (
+                          <span
+                            key={tag}
+                            className={`inline-flex items-center gap-1 px-2 py-0.5 rounded text-[10px] font-semibold border ${badgeColor}`}
+                          >
+                            <span>{cat?.emoji || '📁'}</span>
+                            <span>{tag}</span>
+                          </span>
+                        );
+                      })}
+                      <span className="text-xs font-mono text-on-surface-variant ml-1">{doc.size || '—'}</span>
                     </div>
                     <h3 className="font-headline-sm text-sm text-forest-deep font-bold line-clamp-1 doc-title-text mt-0.5 truncate" title={doc.filename || doc.title}>
                       {doc.filename || doc.title}
@@ -1466,7 +1565,7 @@ export default function AdminInfoPage({ currentUser }) {
                     type="button"
                     onClick={() => openRenameModal(doc)}
                     className="btn-rename p-2 h-[38px] w-[38px] rounded-DEFAULT bg-surface-container-lowest border-2 border-border-subtle text-on-surface-variant hover:text-primary hover:border-primary transition-all flex items-center justify-center cursor-pointer"
-                    title="Renommer"
+                    title="Éditer le document (titre & étiquettes)"
                   >
                     <span className="material-symbols-outlined text-[18px]">edit</span>
                   </button>
@@ -1889,11 +1988,11 @@ export default function AdminInfoPage({ currentUser }) {
       )}
 
       {/* ========================================================================= */}
-      {/* MODAL 3 : RENOMMER LE DOCUMENT (#modal-rename)                            */}
+      {/* MODAL 3 : ÉDITER LE DOCUMENT (TITRE ET ÉTIQUETTES / TAGS) (#modal-rename) */}
       {/* ========================================================================= */}
       {isRenameModalOpen && selectedRenamingDoc && (
         <div id="modal-rename" className="fixed inset-0 z-50 bg-inverse-surface/45 backdrop-blur-xs flex items-center justify-center p-4">
-          <div className="bg-surface-container-lowest w-full max-w-md rounded-lg p-space-lg shadow-[0_20px_48px_-12px_rgba(15,23,42,0.20)] border border-border-subtle relative">
+          <div className="bg-surface-container-lowest w-full max-w-lg rounded-2xl p-space-lg shadow-[0_20px_48px_-12px_rgba(15,23,42,0.25)] border border-border-subtle relative max-h-[90vh] overflow-y-auto animate-in fade-in duration-150">
             
             {/* Modal Header */}
             <div className="flex items-center justify-between pb-space-sm border-b border-border-subtle">
@@ -1902,9 +2001,12 @@ export default function AdminInfoPage({ currentUser }) {
                   <span className="material-symbols-outlined text-[22px]">edit</span>
                 </div>
                 <div>
-                  <h3 className="font-headline-sm text-headline-sm text-forest-deep font-semibold">
-                    Renommer le document
+                  <h3 className="font-headline-sm text-base sm:text-lg text-forest-deep font-bold">
+                    Éditer le document
                   </h3>
+                  <p className="font-body-md text-xs text-on-surface-variant">
+                    Modifier le titre ou ajuster les étiquettes et badges associés
+                  </p>
                 </div>
               </div>
               <button
@@ -1918,10 +2020,10 @@ export default function AdminInfoPage({ currentUser }) {
             </div>
 
             {/* Modal Form */}
-            <form id="rename-form" onSubmit={handleRenameSubmit} className="mt-space-md flex flex-col gap-space-md">
+            <form id="rename-form" onSubmit={handleRenameSubmit} className="mt-space-md flex flex-col gap-4">
               <div>
-                <label htmlFor="rename-input" className="block font-label-md text-label-md text-on-surface mb-2 font-semibold">
-                  Nouveau nom de fichier (.pdf)
+                <label htmlFor="rename-input" className="block font-label-md text-xs font-bold text-on-surface mb-1">
+                  1. Nom de fichier / Titre du document *
                 </label>
                 <input
                   id="rename-input"
@@ -1929,7 +2031,36 @@ export default function AdminInfoPage({ currentUser }) {
                   required
                   value={renameInputValue}
                   onChange={(e) => setRenameInputValue(e.target.value)}
-                  className="w-full h-[52px] px-4 bg-surface-container-lowest border-2 border-border-subtle rounded-DEFAULT font-body-md text-body-md text-on-surface focus:outline-none focus:border-primary focus:ring-4 focus:ring-primary/10 transition-all"
+                  className="w-full h-[48px] px-4 bg-surface-container-lowest border-2 border-border-subtle rounded-DEFAULT font-body-md text-sm text-on-surface focus:outline-none focus:border-primary focus:ring-4 focus:ring-primary/10 transition-all"
+                  placeholder="Ex : Facture EDF 022025"
+                />
+              </div>
+
+              <div>
+                <div className="flex items-center justify-between mb-1">
+                  <label htmlFor="rename-tags-select" className="block font-label-md text-xs font-bold text-on-surface">
+                    2. Étiquettes &amp; Badges associés (Multi-Tags)
+                  </label>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      handleOpenEditCategoryModal();
+                    }}
+                    className="text-xs text-primary hover:text-forest-deep font-bold inline-flex items-center gap-1 cursor-pointer"
+                  >
+                    <span className="material-symbols-outlined text-[15px]">palette</span>
+                    <span>Gérer les étiquettes</span>
+                  </button>
+                </div>
+
+                <TagMultiSelect
+                  id="rename-tags-select"
+                  selectedTags={renameDocTags}
+                  onChange={(newTags) => setRenameDocTags(newTags)}
+                  availableCategories={categoriesList}
+                  onOpenCreateCategory={() => handleOpenEditCategoryModal()}
+                  onOpenEditCategory={(catName) => handleOpenEditCategoryModal(catName)}
+                  placeholder="Ajouter des étiquettes au document..."
                 />
               </div>
 
@@ -1938,16 +2069,16 @@ export default function AdminInfoPage({ currentUser }) {
                   id="btn-cancel-rename"
                   type="button"
                   onClick={() => setIsRenameModalOpen(false)}
-                  className="h-[52px] px-5 rounded-DEFAULT bg-surface-container-lowest border-2 border-border-subtle text-on-surface font-label-lg text-label-lg hover:bg-canvas-slate transition-all cursor-pointer"
+                  className="h-[48px] px-5 rounded-DEFAULT bg-surface-container-lowest border-2 border-border-subtle text-on-surface font-label-lg text-sm hover:bg-canvas-slate transition-all cursor-pointer"
                 >
                   Annuler
                 </button>
                 <button
                   type="submit"
-                  className="h-[52px] px-6 rounded-DEFAULT bg-surface-container-lowest border-2 border-primary text-primary font-label-lg text-label-lg hover:bg-sage-soft transition-all flex items-center gap-1.5 cursor-pointer"
+                  className="h-[48px] px-6 rounded-DEFAULT bg-primary text-white font-label-lg text-sm font-bold hover:bg-forest-deep transition-all flex items-center gap-2 cursor-pointer shadow-xs"
                 >
                   <span className="material-symbols-outlined text-[20px]">check</span>
-                  <span>Confirmer</span>
+                  <span>Enregistrer les modifications</span>
                 </button>
               </div>
             </form>

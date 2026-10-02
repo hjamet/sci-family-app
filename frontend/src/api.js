@@ -1655,7 +1655,9 @@ export async function fetchMemberSettings(memberIdOrName = 'current') {
     notif_task_chat_activity: false,
     notif_vote_chat_activity: false,
     notif_thermal_changes: false,
-    notify_thermal_changes: false
+    notify_thermal_changes: false,
+    notif_new_invoices: true,
+    notif_calls_for_funds: true
   };
 
   const cacheKey = `sci_settings_${memberIdOrName}`;
@@ -1855,6 +1857,81 @@ export async function fetchOnboardingHistory() {
   return res.json();
 }
 
+// ==============================================================================
+// APPELS DE FONDS, DECOMPTE DE COTISATIONS & DÉPENSES MEMBRES
+// ==============================================================================
 
+export async function fetchCallForFundsPreview(year = null, month = null) {
+  const params = new URLSearchParams();
+  if (year) params.append('year', year);
+  if (month) params.append('month', month);
+  const qs = params.toString() ? `?${params.toString()}` : '';
+  const res = await fetch(`${API_BASE}/finances/calls-for-funds/preview${qs}`, {
+    headers: getAuthHeaders()
+  });
+  if (!res.ok) throw new Error('Erreur lors du calcul de prévisualisation des cotisations.');
+  return res.json();
+}
 
+export async function generateCallsForFunds(year, month, sendNotifications = false) {
+  const res = await fetch(`${API_BASE}/finances/calls-for-funds/generate`, {
+    method: 'POST',
+    headers: getAuthJsonHeaders(),
+    body: JSON.stringify({ year, month, send_notifications: sendNotifications })
+  });
+  if (!res.ok) throw new Error('Erreur lors de la génération des avis d\'appel de fonds.');
+  return res.json();
+}
 
+export async function fetchCallsForFunds(filters = {}) {
+  const params = new URLSearchParams();
+  if (filters.year) params.append('year', filters.year);
+  if (filters.month) params.append('month', filters.month);
+  if (filters.member_id) params.append('member_id', filters.member_id);
+  if (filters.status) params.append('status', filters.status);
+  const qs = params.toString() ? `?${params.toString()}` : '';
+  const res = await fetch(`${API_BASE}/finances/calls-for-funds${qs}`, {
+    headers: getAuthHeaders()
+  });
+  if (!res.ok) throw new Error('Erreur lors du chargement des avis d\'appel de fonds.');
+  return res.json();
+}
+
+export async function fetchCallForFundsDetail(callId) {
+  const res = await fetch(`${API_BASE}/finances/calls-for-funds/${callId}`, {
+    headers: getAuthHeaders()
+  });
+  if (!res.ok) throw new Error('Avis d\'appel de fonds introuvable.');
+  return res.json();
+}
+
+export function getCallForFundsPdfDownloadUrl(filename) {
+  return `${API_BASE}/finances/calls-for-funds/download/${encodeURIComponent(filename)}`;
+}
+
+export async function createMemberExpense(formData) {
+  const res = await fetch(`${API_BASE}/finances/expenses`, {
+    method: 'POST',
+    headers: getAuthHeaders(),
+    body: formData
+  });
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({}));
+    throw new Error(err.detail || 'Erreur lors de l\'enregistrement de l\'avance de frais.');
+  }
+  return res.json();
+}
+
+export async function fetchMemberExpenses(filters = {}) {
+  const params = new URLSearchParams();
+  if (filters.member_id) params.append('member_id', filters.member_id);
+  if (filters.year) params.append('year', filters.year);
+  if (filters.month) params.append('month', filters.month);
+  if (filters.status) params.append('status', filters.status);
+  const qs = params.toString() ? `?${params.toString()}` : '';
+  const res = await fetch(`${API_BASE}/finances/expenses${qs}`, {
+    headers: getAuthHeaders()
+  });
+  if (!res.ok) throw new Error('Erreur lors du chargement des dépenses membres.');
+  return res.json();
+}

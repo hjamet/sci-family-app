@@ -25,7 +25,8 @@ from .models import (
     ProjectVote, ProjectComment, AdminDocument, DocumentCategory, MemberAvailability,
     VademecumItem, MaintenanceTask, StayTaskAssignment, Task, TaskComment, Log,
     BankAccount, BankTransaction, BankAuthSession, MemberSettings, ThermalSettings,
-    Notification, AppRelease, MemberReleaseView
+    Notification, AppRelease, MemberReleaseView,
+    CallForFunds, MemberExpense
 )
 from .schemas import (
     LoginRequest, PropertyResponse, UserResponse, MemberResponse, TokenResponse,
@@ -52,7 +53,10 @@ from .schemas import (
     BankAccountResponse, BankTransactionResponse, BankSyncResponse, BankStatusResponse,
     ProfileUpdateRequest, ChangePasswordRequest, MemberSettingsResponse, MemberSettingsUpdate,
     VoteSubmissionRequest, ForgotPasswordRequest, NotificationResponse,
-    OnboardingResponse, OnboardingAcknowledgeRequest, OnboardingHistoryItem
+    OnboardingResponse, OnboardingAcknowledgeRequest, OnboardingHistoryItem,
+    MemberExpenseCreate, MemberExpenseResponse,
+    CallForFundsResponse, CallForFundsCalculationResult,
+    CallForFundsGenerateRequest, CallForFundsSummaryResponse
 )
 from .onboarding_service import (
     run_onboarding_migrations, seed_initial_onboarding,
@@ -94,8 +98,23 @@ from .services.email_service import (
     RECENT_DISPATCHED_EMAILS,
     APP_BASE_URL,
     is_email_disabled,
-    is_test_mode
+    is_test_mode,
+    send_call_for_funds_email
 )
+try:
+    from .services.call_for_funds_service import (
+        is_bank_account_active,
+        calculate_member_call_for_funds,
+        generate_and_save_monthly_call,
+        get_official_bank_info,
+        DOCUMENTS_DIR as CFF_DOCUMENTS_DIR
+    )
+except ImportError:
+    is_bank_account_active = lambda *args, **kwargs: False
+    calculate_member_call_for_funds = None
+    generate_and_save_monthly_call = None
+    get_official_bank_info = None
+    CFF_DOCUMENTS_DIR = None
 from .migrate_notifications import migrate_engine
 from dotenv import load_dotenv
 load_dotenv()
@@ -143,6 +162,15 @@ app.add_middleware(
     allow_headers=["*"],
     expose_headers=["*"]
 )
+
+@app.exception_handler(Exception)
+async def global_exception_handler(request: Request, exc: Exception):
+    logger.error(f"[GLOBAL UNHANDLED ERROR] {request.method} {request.url.path}: {exc}", exc_info=True)
+    from fastapi.responses import JSONResponse
+    return JSONResponse(
+        status_code=500,
+        content={"detail": "Une erreur interne est survenue sur le serveur.", "error": str(exc)}
+    )
 
 @app.get("/api/emails/recent", tags=["Emails"])
 def get_recent_emails():
@@ -278,13 +306,19 @@ def format_notification_response(notif: Notification) -> dict:
         except Exception:
             email_data = None
 
+    member_obj = None
+    try:
+        member_obj = getattr(notif, "member", None)
+    except Exception as mem_err:
+        logger.warning(f"Impossible de charger le membre associé à la notification {getattr(notif, 'id', None)}: {mem_err}")
+
     if not email_data or not isinstance(email_data, dict) or not email_data.get("html_content"):
         email_data = synthesize_email_entry_for_notification(
             title=notif.title,
             description=notif.description or "",
             notif_type=notif.type or "info",
             link_path=notif.link_path,
-            member=getattr(notif, "member", None)
+            member=member_obj
         )
 
     # Assure la présence de to / recipients et du flag is_simulated
@@ -410,7 +444,7 @@ def list_notifications(
     - Diffusion ciblée pour l'utilisateur connecté ou le member_id fourni
     """
     try:
-        query = db.query(Notification)
+        query = db.query(Notification).options(joinedload(Notification.member))
         target_member_id = member_id or (current_user.id if current_user else None)
         if target_member_id:
             query = query.filter(or_(Notification.member_id.is_(None), Notification.member_id == target_member_id))
@@ -418,7 +452,28 @@ def list_notifications(
             query = query.filter(Notification.member_id.is_(None))
         
         notifs = query.order_by(Notification.created_at.desc()).limit(60).all()
-        return [format_notification_response(n) for n in notifs]
+        result = []
+        for n in notifs:
+            try:
+                result.append(format_notification_response(n))
+            except Exception as format_err:
+                logger.error(f"[NOTIFICATION FORMAT ERROR] Notification {getattr(n, 'id', None)}: {format_err}")
+                result.append({
+                    "id": getattr(n, "id", None),
+                    "member_id": getattr(n, "member_id", None),
+                    "title": getattr(n, "title", "Notification"),
+                    "description": getattr(n, "description", ""),
+                    "type": getattr(n, "type", "info") or "info",
+                    "link_path": getattr(n, "link_path", None),
+                    "link_id": getattr(n, "link_id", None),
+                    "task_id": None,
+                    "project_id": None,
+                    "email_entry": None,
+                    "email": None,
+                    "is_read": bool(getattr(n, "is_read", False)),
+                    "created_at": n.created_at.isoformat() if getattr(n, "created_at", None) else None
+                })
+        return result
     except Exception as e:
         logger.error(f"[NOTIFICATION API ERROR] Erreur listing notifications: {e}")
         return []
@@ -563,7 +618,10 @@ async def security_and_rate_limit_middleware(request: Request, call_next):
     return response
 
 # Static Uploads directory (Vercel Serverless Read-Only Filesystem Fix F10)
-UPLOAD_DIR = os.path.join(os.path.dirname(__file__), "uploads")
+if is_vercel:
+    UPLOAD_DIR = "/tmp/uploads"
+else:
+    UPLOAD_DIR = os.path.join(os.path.dirname(__file__), "uploads")
 DOCUMENTS_DIR = os.path.join(UPLOAD_DIR, "documents")
 try:
     os.makedirs(UPLOAD_DIR, exist_ok=True)
@@ -685,12 +743,15 @@ def run_document_migrations():
                         conn.execute(text("ALTER TABLE admin_documents ADD COLUMN task_id INTEGER"))
                     if "file_hash" not in column_names:
                         conn.execute(text("ALTER TABLE admin_documents ADD COLUMN file_hash VARCHAR(64)"))
+                    if "tags" not in column_names:
+                        conn.execute(text("ALTER TABLE admin_documents ADD COLUMN tags TEXT"))
                     conn.commit()
             else:
                 conn.execute(text("ALTER TABLE admin_documents ADD COLUMN IF NOT EXISTS drive_file_id VARCHAR(255);"))
                 conn.execute(text("ALTER TABLE admin_documents ADD COLUMN IF NOT EXISTS file_data BYTEA;"))
                 conn.execute(text("ALTER TABLE admin_documents ADD COLUMN IF NOT EXISTS task_id INTEGER;"))
                 conn.execute(text("ALTER TABLE admin_documents ADD COLUMN IF NOT EXISTS file_hash VARCHAR(64);"))
+                conn.execute(text("ALTER TABLE admin_documents ADD COLUMN IF NOT EXISTS tags TEXT;"))
                 conn.commit()
     except Exception as e:
         logger.warning(f"Notice: run_document_migrations: {e}")
@@ -1564,6 +1625,9 @@ def get_member_settings(
         "notify_vote_creation": getattr(member, "notify_vote_creation", False),
         "notify_vote_arbitration": getattr(member, "notify_vote_arbitration", False),
         "notify_mention_all": getattr(member, "notify_mention_all", True),
+        "notif_new_invoices": getattr(member, "notif_new_invoices", True),
+        "notif_calls_for_funds": getattr(member, "notif_new_invoices", True),
+        "monthly_contribution": getattr(member, "monthly_contribution", 50.0),
         "is_coordinator": getattr(member, "is_coordinator", False),
     }
 
@@ -1669,6 +1733,14 @@ def update_member_settings(
     if data.notify_mention_all is not None:
         member.notify_mention_all = data.notify_mention_all
 
+    if data.notif_new_invoices is not None:
+        member.notif_new_invoices = data.notif_new_invoices
+    elif data.notif_calls_for_funds is not None:
+        member.notif_new_invoices = data.notif_calls_for_funds
+
+    if data.monthly_contribution is not None:
+        member.monthly_contribution = data.monthly_contribution
+
     # Sync MemberSettings table if present
     try:
         with db.begin_nested():
@@ -1698,6 +1770,10 @@ def update_member_settings(
                     ms.notif_heating_start = data.notif_heating_start
                 if data.notif_heating_stop is not None:
                     ms.notif_heating_stop = data.notif_heating_stop
+                if data.notif_new_invoices is not None:
+                    ms.notif_new_invoices = data.notif_new_invoices
+                elif data.notif_calls_for_funds is not None:
+                    ms.notif_new_invoices = data.notif_calls_for_funds
     except Exception as ms_err:
         logger.debug(f"[MEMBER SETTINGS SYNC NOTICE] Optional settings sync skipped: {ms_err}")
 
@@ -1732,6 +1808,9 @@ def update_member_settings(
         "notify_final_decision": getattr(member, "notif_vote_closed", True),
         "notify_new_stay": getattr(member, "notif_stay_booked", True),
         "notify_thermal_changes": getattr(member, "notif_thermal_changes", False),
+        "notif_new_invoices": getattr(member, "notif_new_invoices", True),
+        "notif_calls_for_funds": getattr(member, "notif_new_invoices", True),
+        "monthly_contribution": getattr(member, "monthly_contribution", 50.0),
         "is_coordinator": getattr(member, "is_coordinator", False),
     }
 
@@ -5764,7 +5843,25 @@ def list_documents(
         created_at_iso = created_at.isoformat() if hasattr(created_at, "isoformat") else str(created_at)
         doc_title = getattr(doc, "title", "Document") or "Document"
         doc_filename = getattr(doc, "file_name", None) or (os.path.basename(doc.file_url) if getattr(doc, "file_url", None) else doc_title)
-        doc_cat = getattr(doc, "category", "Actes & Statuts") or "Actes & Statuts"
+        
+        # Résolution universelle multi-tags
+        raw_tags = getattr(doc, "tags", None)
+        tags_list = []
+        if raw_tags:
+            try:
+                parsed = json.loads(raw_tags)
+                if isinstance(parsed, list):
+                    tags_list = [str(t).strip() for t in parsed if str(t).strip()]
+            except Exception:
+                tags_list = [t.strip() for t in str(raw_tags).split(",") if t.strip()]
+
+        if not tags_list and getattr(doc, "category", None):
+            tags_list = [t.strip() for t in str(doc.category).split(",") if t.strip()]
+
+        if not tags_list:
+            tags_list = ["Autre"]
+
+        doc_cat = getattr(doc, "category", None) or (", ".join(tags_list) if tags_list else "Autre")
         doc_type = getattr(doc, "file_type", None)
         if not doc_type or doc_type in ("application/pdf", "application/octet-stream"):
             guessed_type, _ = mimetypes.guess_type(doc_filename)
@@ -5775,6 +5872,7 @@ def list_documents(
             "title": doc_title,
             "name": doc_title,
             "category": doc_cat,
+            "tags": tags_list,
             "file_url": download_url,
             "url": download_url,
             "file_name": doc_filename,
@@ -5805,7 +5903,8 @@ async def upload_document_canonical(
     file: UploadFile = File(...),
     organisme: str = Form(...),
     title: str = Form(...),
-    category: str = Form(...),
+    category: Optional[str] = Form(None),
+    tags: Optional[str] = Form(None),
     task_id: Optional[int] = Form(None),
     project_id: Optional[int] = Form(None),
     uploaded_by: Optional[str] = Form("Henri Jamet"),
@@ -5895,9 +5994,28 @@ async def upload_document_canonical(
     effective_source_type = "PROJECT" if project_id else ("TASK" if task_id else "MANUAL")
     effective_source_id = project_id if project_id else task_id
 
+    # Résolution multi-tags
+    tags_list = []
+    if tags:
+        try:
+            parsed = json.loads(tags)
+            if isinstance(parsed, list):
+                tags_list = [str(t).strip() for t in parsed if str(t).strip()]
+        except Exception:
+            tags_list = [t.strip() for t in str(tags).split(",") if t.strip()]
+
+    if not tags_list and category:
+        tags_list = [t.strip() for t in str(category).split(",") if t.strip()]
+
+    if not tags_list:
+        tags_list = ["Travaux & Chantiers"]
+
+    primary_category = ", ".join(tags_list)
+
     db_doc = AdminDocument(
         title=clean_title,
-        category=category,
+        category=primary_category,
+        tags=json.dumps(tags_list),
         file_url=f"/api/documents/drive/{drive_file_id}" if drive_file_id else "/api/documents/temp",
         file_name=canonical_filename,
         file_type=mimetype,
@@ -5997,6 +6115,7 @@ async def upload_document_canonical(
         "id": db_doc.id,
         "title": db_doc.title,
         "category": db_doc.category,
+        "tags": tags_list,
         "file_url": download_url,
         "file_name": db_doc.file_name,
         "file_type": db_doc.file_type,
@@ -6351,31 +6470,87 @@ def rename_document(
         new_filename = new_title
         new_title = os.path.splitext(new_title)[0]
 
-    # 1. Renommage sur Google Drive si drive_file_id présent
+    # 1. Renommage sur Google Drive si drive_file_id présent (avec tolérance et robustesse)
+    drive_renamed = False
+    drive_error = None
     if doc.drive_file_id:
-        drive_res = drive_jail_service.rename_file(doc.drive_file_id, new_filename)
-        logger.info(f"Document renommé sur Google Drive: {drive_res.get('name')}")
+        try:
+            drive_res = drive_jail_service.rename_file(doc.drive_file_id, new_filename)
+            logger.info(f"Document renommé sur Google Drive: {drive_res.get('name')}")
+            drive_renamed = True
+        except Exception as drive_err:
+            drive_error = str(drive_err)
+            logger.warning(f"Avertissement renommage Google Drive ({doc.drive_file_id}): {drive_err}")
 
     # 2. Renommage fichier local dans DOCUMENTS_DIR si existant
     if doc.file_name:
-        old_fpath = os.path.join(DOCUMENTS_DIR, doc.file_name)
-        new_fpath = os.path.join(DOCUMENTS_DIR, new_filename)
-        if os.path.exists(old_fpath) and old_fpath != new_fpath:
-            try:
+        try:
+            old_fpath = os.path.join(DOCUMENTS_DIR, doc.file_name)
+            new_fpath = os.path.join(DOCUMENTS_DIR, new_filename)
+            if os.path.exists(old_fpath) and old_fpath != new_fpath:
                 os.rename(old_fpath, new_fpath)
-            except Exception as e:
-                logger.warning(f"Erreur renommage fichier local: {e}")
+        except OSError as e:
+            logger.warning(f"Notice renommage fichier local (normal sur Vercel serverless éphémère): {e}")
 
-    # 3. Mise à jour en base de données
+    # 3. Mise à jour en base de données (Supabase PostgreSQL / SQLite)
     doc.title = new_title
     doc.file_name = new_filename
-    if payload.category:
-        doc.category = payload.category
-    if payload.notes:
+
+    clean_tags = None
+    if payload.tags is not None:
+        if isinstance(payload.tags, list):
+            clean_tags = [str(t).strip() for t in payload.tags if str(t).strip()]
+        else:
+            try:
+                parsed = json.loads(payload.tags)
+                clean_tags = [str(t).strip() for t in parsed if str(t).strip()] if isinstance(parsed, list) else [str(payload.tags).strip()]
+            except Exception:
+                clean_tags = [t.strip() for t in str(payload.tags).split(",") if t.strip()]
+        doc.tags = json.dumps(clean_tags)
+        if not payload.category:
+            doc.category = ", ".join(clean_tags) if clean_tags else "Autre"
+
+    if payload.category is not None:
+        doc.category = payload.category.strip()
+        if payload.tags is None:
+            cat_tags = [t.strip() for t in doc.category.split(",") if t.strip()]
+            doc.tags = json.dumps(cat_tags)
+            clean_tags = cat_tags
+
+    if payload.notes is not None:
         doc.notes = payload.notes
 
     db.commit()
     db.refresh(doc)
+
+    # 4. Synchronisation miroir vers SQLite local si présent
+    try:
+        from .database import is_sqlite
+        if not is_sqlite:
+            base_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+            for sq_path in [os.path.join(base_dir, "sci_family.db"), os.path.join(os.path.dirname(base_dir), "sci_family.db")]:
+                if os.path.exists(sq_path):
+                    import sqlite3
+                    conn_sq = sqlite3.connect(sq_path)
+                    cur = conn_sq.cursor()
+                    cur.execute(
+                        "UPDATE admin_documents SET title = ?, file_name = ?, category = ?, notes = ? WHERE id = ? OR drive_file_id = ?",
+                        (doc.title, doc.file_name, doc.category, doc.notes, doc.id, doc.drive_file_id)
+                    )
+                    conn_sq.commit()
+                    conn_sq.close()
+    except Exception as sq_sync_err:
+        logger.warning(f"Notice synchronisation SQLite locale: {sq_sync_err}")
+
+    # Résolution des tags pour le retour
+    ret_tags = []
+    if doc.tags:
+        try:
+            ret_tags = json.loads(doc.tags)
+        except Exception:
+            ret_tags = [t.strip() for t in str(doc.tags).split(",") if t.strip()]
+    elif doc.category:
+        ret_tags = [t.strip() for t in str(doc.category).split(",") if t.strip()]
 
     download_url = f"/api/documents/{doc.id}/download"
     return {
@@ -6383,20 +6558,22 @@ def rename_document(
         "title": doc.title,
         "name": doc.title,
         "category": doc.category,
+        "tags": ret_tags,
         "file_url": download_url,
         "url": download_url,
         "file_name": doc.file_name,
         "filename": doc.file_name,
-        "file_type": doc.file_type,
-        "mime_type": doc.file_type,
+        "file_type": doc.file_type or "application/pdf",
+        "mime_type": doc.file_type or "application/pdf",
         "file_size": doc.file_size,
         "size": f"{round((doc.file_size or 0) / 1024, 1)} Ko" if doc.file_size else "—",
         "drive_file_id": doc.drive_file_id,
         "uploaded_by": doc.uploaded_by,
         "notes": doc.notes,
-        "created_at": doc.created_at,
+        "created_at": doc.created_at.isoformat() if doc.created_at else None,
         "upload_date": doc.created_at.strftime("%d/%m/%Y") if doc.created_at else "",
-        "message": "Document renommé avec succès sur Google Drive et en base de données."
+        "drive_renamed": drive_renamed,
+        "message": "Document renommé avec succès sur Google Drive et en base de données." if drive_renamed else "Document renommé avec succès en base de données."
     }
 
 @app.post("/api/admin-documents", response_model=AdminDocumentResponse, status_code=status.HTTP_201_CREATED, tags=["Documents"])
@@ -7869,6 +8046,328 @@ async def create_accounting_transaction(
             "file_size": db_doc.file_size
         }
     }
+
+
+# ==============================================================================
+# SECTION APPELS DE FONDS, COMPENSATION & DÉPENSES MEMBRES (SCI HELLENVILLIERS)
+# ==============================================================================
+
+@app.get("/api/finances/calls-for-funds/preview", response_model=Dict[str, Any], tags=["Appels de Fonds"])
+def preview_calls_for_funds(
+    year: Optional[int] = Query(None, description="Année (ex: 2026)"),
+    month: Optional[int] = Query(None, description="Mois (1-12)"),
+    db: Session = Depends(get_db)
+):
+    """
+    Prévisualise la simulation et le calcul de compensation des quotes-parts mensuelles pour tous les associés.
+    RÈGLES D'OR APPLIQUÉES :
+    - Quote-part mensuelle théorique : 50 €/mois pour les enfants, 1 000 €/mois pour Frédéric (configurable par membre).
+    - Déduction intégrale des dépenses avancées enregistrées pour le mois.
+    - Solde net = Quote-part - Dépenses validées.
+    - Si solde net <= 0 € : AUCUN avis d'appel de fonds émis, AUCUNE notification.
+    - Garde-fou bancaire : Tant que l'IBAN Swan n'est pas validé, statut 'En attente de validation IBAN Swan'.
+    """
+    now = datetime.utcnow()
+    y = year or now.year
+    m = month or now.month
+    if m < 1 or m > 12:
+        raise HTTPException(status_code=400, detail="Mois invalide (doit être entre 1 et 12).")
+
+    bank_active = is_bank_account_active(db)
+    bank_info = get_official_bank_info(db)
+    members = db.query(Member).order_by(Member.id.asc()).all()
+
+    items = []
+    total_theoretical = 0.0
+    total_expenses_deducted = 0.0
+    total_net_payable = 0.0
+    issued_count = 0
+    neutralized_count = 0
+    pending_iban_count = 0
+
+    for mem in members:
+        res = calculate_member_call_for_funds(db, mem, y, m)
+        items.append(res)
+        total_theoretical += res["theoretical_contribution"]
+        total_expenses_deducted += res["approved_expenses_total"]
+        total_net_payable += res["net_amount"]
+
+        if not res["should_issue"]:
+            neutralized_count += 1
+        elif res["status"] == "PENDING_SWAN_IBAN":
+            pending_iban_count += 1
+        else:
+            issued_count += 1
+
+    return {
+        "year": y,
+        "month": m,
+        "period_label": f"{y}-{m:02d}",
+        "is_bank_account_active": bank_active,
+        "bank_iban": bank_info.get("iban"),
+        "bank_aspsp": bank_info.get("bank_name"),
+        "bank_status_notice": "Coordonnées bancaires opérationnelles" if bank_active else "En attente de validation IBAN Swan. Zéro e-mail envoyé.",
+        "total_theoretical": round(total_theoretical, 2),
+        "total_expenses_deducted": round(total_expenses_deducted, 2),
+        "total_net_payable": round(total_net_payable, 2),
+        "total_members": len(members),
+        "issued_count": issued_count,
+        "neutralized_count": neutralized_count,
+        "pending_iban_count": pending_iban_count,
+        "items": items
+    }
+
+
+@app.post("/api/finances/calls-for-funds/generate", response_model=Dict[str, Any], tags=["Appels de Fonds"])
+def generate_calls_for_funds(
+    request_data: CallForFundsGenerateRequest,
+    current_user: Optional[User] = Depends(get_optional_current_user),
+    db: Session = Depends(get_db)
+):
+    """
+    Génère officiellement les avis d'appel de fonds mensuels et leurs PDFs avec QR code SEPA EPC.
+    Garde-fous stricts :
+    - Si solde net <= 0 € : AUCUN avis émis, AUCUNE notification.
+    - Si l'IBAN Swan n'est pas actif (IS_BANK_ACCOUNT_ACTIVE=false), les avis sont générés avec le statut
+      'En attente de validation IBAN Swan' et l'envoi d'e-mails est formellement bloqué. Zéro e-mail envoyé.
+    """
+    y = request_data.year
+    m = request_data.month
+    if m < 1 or m > 12:
+        raise HTTPException(status_code=400, detail="Mois invalide (doit être compris entre 1 et 12).")
+
+    bank_active = is_bank_account_active(db)
+    members = db.query(Member).order_by(Member.id.asc()).all()
+    results = []
+    notifications_sent = 0
+    notifications_blocked = 0
+
+    for mem in members:
+        call_obj = generate_and_save_monthly_call(db, mem, y, m)
+
+        # Gestion des notifications e-mails
+        if request_data.send_notifications and call_obj.status == "EMIS":
+            if bank_active and mem.notif_new_invoices and call_obj.net_amount > 0:
+                call_data = {
+                    "reference": call_obj.reference,
+                    "period_label": call_obj.period_label,
+                    "theoretical_contribution": call_obj.theoretical_contribution,
+                    "approved_expenses_total": call_obj.approved_expenses_total,
+                    "net_amount": call_obj.net_amount,
+                    "payment_reference": call_obj.payment_reference,
+                    "deducted_expenses": json.loads(call_obj.details_json) if call_obj.details_json else []
+                }
+                email_res = send_call_for_funds_email(mem, call_data, actually_send=True, db=db)
+                if email_res.get("status") in ("sent", "simulated"):
+                    call_obj.notification_sent = True
+                    call_obj.notification_sent_at = datetime.utcnow()
+                    db.commit()
+                    notifications_sent += 1
+            else:
+                notifications_blocked += 1
+        elif request_data.send_notifications and call_obj.status == "PENDING_SWAN_IBAN":
+            notifications_blocked += 1
+
+        results.append({
+            "id": call_obj.id,
+            "reference": call_obj.reference,
+            "member_id": call_obj.member_id,
+            "member_name": call_obj.member_name,
+            "year": call_obj.year,
+            "month": call_obj.month,
+            "period_label": call_obj.period_label,
+            "theoretical_contribution": call_obj.theoretical_contribution,
+            "approved_expenses_total": call_obj.approved_expenses_total,
+            "net_amount": call_obj.net_amount,
+            "status": call_obj.status,
+            "pdf_url": call_obj.pdf_url,
+            "pdf_filename": call_obj.pdf_filename,
+            "payment_reference": call_obj.payment_reference,
+            "notification_sent": call_obj.notification_sent
+        })
+
+    return {
+        "success": True,
+        "message": f"Génération des avis achevée pour {y}-{m:02d}.",
+        "year": y,
+        "month": m,
+        "is_bank_account_active": bank_active,
+        "notifications_sent": notifications_sent,
+        "notifications_blocked": notifications_blocked,
+        "total_generated": len(results),
+        "calls": results
+    }
+
+
+@app.get("/api/finances/calls-for-funds", response_model=List[CallForFundsResponse], tags=["Appels de Fonds"])
+def list_calls_for_funds(
+    year: Optional[int] = Query(None),
+    month: Optional[int] = Query(None),
+    member_id: Optional[int] = Query(None),
+    status: Optional[str] = Query(None),
+    db: Session = Depends(get_db)
+):
+    """Liste tous les avis d'appel de fonds enregistrés en base."""
+    query = db.query(CallForFunds)
+    if year is not None:
+        query = query.filter(CallForFunds.year == year)
+    if month is not None:
+        query = query.filter(CallForFunds.month == month)
+    if member_id is not None:
+        query = query.filter(CallForFunds.member_id == member_id)
+    if status is not None:
+        query = query.filter(CallForFunds.status == status)
+
+    return query.order_by(CallForFunds.year.desc(), CallForFunds.month.desc(), CallForFunds.member_id.asc()).all()
+
+
+@app.get("/api/finances/calls-for-funds/{call_id}", response_model=CallForFundsResponse, tags=["Appels de Fonds"])
+def get_call_for_funds(call_id: int, db: Session = Depends(get_db)):
+    """Détail d'un avis d'appel de fonds."""
+    call_obj = db.query(CallForFunds).filter(CallForFunds.id == call_id).first()
+    if not call_obj:
+        raise HTTPException(status_code=404, detail="Avis d'appel de fonds introuvable.")
+    return call_obj
+
+
+@app.get("/api/finances/calls-for-funds/download/{filename}", tags=["Appels de Fonds"])
+def download_call_for_funds_pdf(filename: str):
+    """Télécharge le document PDF généré d'un avis d'appel de fonds."""
+    # Sécurisation contre la traversée de répertoires
+    safe_name = os.path.basename(filename)
+    if not safe_name.endswith(".pdf"):
+        raise HTTPException(status_code=400, detail="Fichier PDF attendu.")
+
+    file_path = os.path.join(CFF_DOCUMENTS_DIR, safe_name)
+    if not os.path.exists(file_path):
+        raise HTTPException(status_code=404, detail=f"Document PDF '{safe_name}' introuvable.")
+
+    return FileResponse(
+        path=file_path,
+        media_type="application/pdf",
+        filename=safe_name
+    )
+
+
+# --- Dépenses Avancées par les Membres ---
+
+@app.post("/api/finances/expenses", status_code=status.HTTP_201_CREATED, response_model=MemberExpenseResponse, tags=["Dépenses Membres"])
+async def create_member_expense(
+    member_id: int = Form(..., description="ID de l'associé ayant avancé les fonds"),
+    title: str = Form(..., description="Libellé de la dépense"),
+    amount: float = Form(..., description="Montant avancé (€)"),
+    expense_date: Optional[str] = Form(None, description="Date de la facture YYYY-MM-DD"),
+    category: Optional[str] = Form("Entretien & Fournitures", description="Catégorie de la dépense"),
+    document_id: Optional[int] = Form(None, description="ID d'un document existant dans admin_documents"),
+    file: Optional[UploadFile] = File(None, description="Justificatif ou facture téléversé"),
+    notes: Optional[str] = Form(None, description="Notes explicatives"),
+    db: Session = Depends(get_db)
+):
+    """
+    Enregistre une avance de frais réalisée par un membre pour la SCI.
+    Cette dépense sera déduite de sa quote-part mensuelle lors du prochain appel de fonds.
+    """
+    member = db.query(Member).filter(Member.id == member_id).first()
+    if not member:
+        raise HTTPException(status_code=404, detail="Associé introuvable.")
+
+    if amount <= 0:
+        raise HTTPException(status_code=400, detail="Le montant de la dépense doit être strictement positif.")
+
+    clean_title = title.strip()
+    if not clean_title:
+        raise HTTPException(status_code=400, detail="Le libellé de la dépense est obligatoire.")
+
+    now = datetime.utcnow()
+    clean_date = (expense_date or "").strip() or now.strftime("%Y-%m-%d")
+
+    doc_id = document_id
+    doc_url = None
+    doc_filename = None
+
+    if file and file.filename:
+        file_bytes = await file.read()
+        _, ext = os.path.splitext(file.filename)
+        safe_ext = ext if ext else ".pdf"
+        safe_name = f"SCI {now.strftime('%m%Y')} Avance {member.prenom} {clean_title[:30]}{safe_ext}"
+        dest_path = os.path.join(CFF_DOCUMENTS_DIR, safe_name)
+        try:
+            with open(dest_path, "wb") as f:
+                f.write(file_bytes)
+        except Exception as e:
+            logger.warning(f"Notice sauvegarde justificatif local: {e}")
+
+        # Enregistrement dans AdminDocument pour indexation permanente
+        new_doc = AdminDocument(
+            title=f"Avance {member.prenom} - {clean_title}",
+            category="Travaux & Factures",
+            file_url=f"/api/documents/temp",
+            file_name=safe_name,
+            file_type=file.content_type or "application/pdf",
+            file_size=len(file_bytes),
+            file_data=file_bytes,
+            source_type="EXPENSE",
+            uploaded_by=member.name,
+            notes=f"Avance de frais membre : {amount:.2f} €"
+        )
+        db.add(new_doc)
+        db.commit()
+        db.refresh(new_doc)
+        new_doc.file_url = f"/api/documents/{new_doc.id}/download"
+        db.commit()
+        db.refresh(new_doc)
+
+        doc_id = new_doc.id
+        doc_url = new_doc.file_url
+        doc_filename = new_doc.file_name
+    elif document_id:
+        existing_doc = db.query(AdminDocument).filter(AdminDocument.id == document_id).first()
+        if existing_doc:
+            doc_url = existing_doc.file_url
+            doc_filename = existing_doc.file_name
+
+    expense = MemberExpense(
+        member_id=member.id,
+        member_prenom=member.prenom,
+        title=clean_title,
+        amount=amount,
+        expense_date=clean_date,
+        category=category or "Entretien & Fournitures",
+        status="VALIDATED",
+        document_id=doc_id,
+        document_url=doc_url,
+        document_filename=doc_filename,
+        notes=notes
+    )
+    db.add(expense)
+    db.commit()
+    db.refresh(expense)
+
+    return expense
+
+
+@app.get("/api/finances/expenses", response_model=List[MemberExpenseResponse], tags=["Dépenses Membres"])
+def list_member_expenses(
+    member_id: Optional[int] = Query(None),
+    year: Optional[int] = Query(None),
+    month: Optional[int] = Query(None),
+    status: Optional[str] = Query(None),
+    db: Session = Depends(get_db)
+):
+    """Liste les dépenses avancées par les membres."""
+    query = db.query(MemberExpense)
+    if member_id is not None:
+        query = query.filter(MemberExpense.member_id == member_id)
+    if year is not None and month is not None:
+        prefix = f"{year}-{month:02d}"
+        query = query.filter(MemberExpense.expense_date.like(f"{prefix}%"))
+    elif year is not None:
+        query = query.filter(MemberExpense.expense_date.like(f"{year}-%"))
+    if status is not None:
+        query = query.filter(MemberExpense.status == status)
+
+    return query.order_by(MemberExpense.expense_date.desc(), MemberExpense.id.desc()).all()
+
 
 
 # --- Serve Frontend Production Build (Single Combined FastAPI server) ---

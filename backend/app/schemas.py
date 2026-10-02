@@ -54,6 +54,9 @@ class MemberBase(BaseModel):
     notify_vote_creation: bool = False
     notify_vote_arbitration: bool = False
     notify_mention_all: bool = True
+    notif_new_invoices: bool = True
+    notif_calls_for_funds: Optional[bool] = None
+    monthly_contribution: float = 50.0
 
 class MemberCreate(MemberBase):
     password: str = "pass123"
@@ -79,6 +82,9 @@ class MemberUpdate(BaseModel):
     notify_vote_creation: Optional[bool] = None
     notify_vote_arbitration: Optional[bool] = None
     notify_mention_all: Optional[bool] = None
+    notif_new_invoices: Optional[bool] = None
+    notif_calls_for_funds: Optional[bool] = None
+    monthly_contribution: Optional[float] = None
 
 class MemberResponse(MemberBase):
     id: int
@@ -113,6 +119,9 @@ class MemberSettingsResponse(BaseModel):
     notify_vote_creation: bool = False
     notify_vote_arbitration: bool = False
     notify_mention_all: bool = True
+    notif_new_invoices: bool = True
+    notif_calls_for_funds: Optional[bool] = None
+    monthly_contribution: Optional[float] = 50.0
     is_coordinator: Optional[bool] = False
 
     class Config:
@@ -138,6 +147,9 @@ class MemberSettingsUpdate(BaseModel):
     notify_vote_creation: Optional[bool] = None
     notify_vote_arbitration: Optional[bool] = None
     notify_mention_all: Optional[bool] = None
+    notif_new_invoices: Optional[bool] = None
+    notif_calls_for_funds: Optional[bool] = None
+    monthly_contribution: Optional[float] = None
 
 class ChangePasswordRequest(BaseModel):
     old_password: str
@@ -216,6 +228,7 @@ class IssueCommentResponse(BaseModel):
 class AdminDocumentCreate(BaseModel):
     title: str
     category: str = "Documents de Fin de Tâche / Réparation"
+    tags: Optional[Union[List[str], str]] = None
     file_url: str
     file_name: Optional[str] = None
     file_type: Optional[str] = None
@@ -231,12 +244,14 @@ class AdminDocumentUpdate(BaseModel):
     title: Optional[str] = None
     name: Optional[str] = None
     category: Optional[str] = None
+    tags: Optional[Union[List[str], str]] = None
     notes: Optional[str] = None
 
 class AdminDocumentResponse(BaseModel):
     id: int
     title: str
     category: str
+    tags: Optional[Union[List[str], str]] = None
     file_url: str
     file_name: Optional[str] = None
     file_type: Optional[str] = None
@@ -1194,6 +1209,9 @@ class MemberSettingsResponse(BaseModel):
     notify_vote_creation: bool = False
     notify_vote_arbitration: bool = False
     notify_mention_all: bool = True
+    notif_new_invoices: bool = True
+    notif_calls_for_funds: Optional[bool] = None
+    monthly_contribution: Optional[float] = 50.0
     is_coordinator: Optional[bool] = False
     # Aliases for legacy compatibility
     notify_new_task: bool = True
@@ -1231,6 +1249,9 @@ class MemberSettingsUpdate(BaseModel):
     notify_final_decision: Optional[bool] = None
     notify_new_stay: Optional[bool] = None
     notify_thermal_changes: Optional[bool] = None
+    notif_new_invoices: Optional[bool] = None
+    notif_calls_for_funds: Optional[bool] = None
+    monthly_contribution: Optional[float] = None
 
 
 class HeatingSettingsRequest(BaseModel):
@@ -1338,4 +1359,103 @@ class OnboardingHistoryItem(BaseModel):
 
     class Config:
         from_attributes = True
+
+
+# --- Appels de Fonds & Dépenses Membres ---
+
+class MemberExpenseCreate(BaseModel):
+    member_id: int
+    title: str
+    amount: float
+    expense_date: Optional[str] = None  # YYYY-MM-DD
+    category: Optional[str] = "Entretien & Fournitures"
+    document_id: Optional[int] = None
+    notes: Optional[str] = None
+
+
+class MemberExpenseResponse(BaseModel):
+    id: int
+    member_id: int
+    member_prenom: str
+    title: str
+    amount: float
+    expense_date: str
+    category: str
+    status: str
+    document_id: Optional[int] = None
+    document_url: Optional[str] = None
+    document_filename: Optional[str] = None
+    call_for_funds_id: Optional[int] = None
+    notes: Optional[str] = None
+    created_at: Optional[datetime] = None
+
+    class Config:
+        from_attributes = True
+
+
+class CallForFundsResponse(BaseModel):
+    id: int
+    reference: str
+    member_id: int
+    member_name: str
+    year: int
+    month: int
+    period_label: str
+    theoretical_contribution: float
+    approved_expenses_total: float
+    net_amount: float
+    status: str
+    iban: Optional[str] = None
+    bic: Optional[str] = None
+    payment_reference: str
+    pdf_filename: Optional[str] = None
+    pdf_url: Optional[str] = None
+    details_json: Optional[str] = None
+    notification_sent: bool = False
+    notification_sent_at: Optional[datetime] = None
+    created_at: Optional[datetime] = None
+    updated_at: Optional[datetime] = None
+
+    class Config:
+        from_attributes = True
+
+
+class CallForFundsCalculationResult(BaseModel):
+    member_id: int
+    member_name: str
+    prenom: str
+    year: int
+    month: int
+    period_label: str
+    theoretical_contribution: float
+    approved_expenses_total: float
+    net_amount: float
+    should_issue: bool
+    status: str
+    status_label: str
+    deducted_expenses: List[Dict[str, Any]] = []
+    reason: Optional[str] = None
+
+
+class CallForFundsGenerateRequest(BaseModel):
+    year: int
+    month: int
+    send_notifications: Optional[bool] = False
+
+
+class CallForFundsSummaryResponse(BaseModel):
+    year: int
+    month: int
+    period_label: str
+    is_bank_account_active: bool
+    bank_iban: Optional[str] = None
+    bank_aspsp: Optional[str] = None
+    total_theoretical: float
+    total_expenses_deducted: float
+    total_net_payable: float
+    calls_count: int
+    issued_count: int
+    neutralized_count: int
+    pending_iban_count: int
+    items: List[CallForFundsResponse] = []
 

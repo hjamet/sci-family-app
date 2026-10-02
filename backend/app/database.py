@@ -95,6 +95,13 @@ def init_db(target_engine=None):
         import logging
         logging.getLogger("sci_api").warning(f"Notice auto-migration database.py (onboarding): {exc}")
 
+    try:
+        from .migrate_notifications import migrate_engine
+        migrate_engine(eng)
+    except Exception as exc:
+        import logging
+        logging.getLogger("sci_api").warning(f"Notice auto-migration database.py (notifications/members): {exc}")
+
 # Auto-migration au chargement du module
 try:
     init_db(engine)

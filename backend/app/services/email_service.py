@@ -1519,3 +1519,167 @@ def send_vote_chat_activity_email(
     return res
 
 
+def send_call_for_funds_email(
+    member: Any,
+    call_data: Dict[str, Any],
+    actually_send: bool = True,
+    db: Optional[Any] = None
+) -> dict:
+    """
+    Template 10: APPEL DE FONDS & AVIS DE COTISATION MENSUELLE
+    Envoie l'avis récapitulatif mensuel et le QR-code de virement dès que la quote-part nette est émise.
+    
+    RÈGLES D'OR STRICTES :
+    1. RÈGLE ABSOLUE DU SOLDE NET <= 0 € :
+       Si le solde net <= 0 € (dépenses supérieures ou égales à la cotisation),
+       AUCUN avis n'est émis et AUCUNE notification e-mail n'est envoyée.
+    2. GARDE-FOU BANCAIRE STRICT :
+       Tant que l'IBAN officiel Indy / Swan n'est pas renseigné et validé (IS_BANK_ACCOUNT_ACTIVE=false),
+       la génération des avis bancaires réels et les envois d'emails sont bloqués avec le statut
+       « En attente de validation IBAN Swan ». Zéro e-mail envoyé.
+    3. PRÉFÉRENCE DE NOTIFICATION :
+       Vérifie que member.notif_new_invoices (ou notif_calls_for_funds) est actif (True par défaut).
+    """
+    # Import paresseux pour éviter les cycles
+    from .call_for_funds_service import is_bank_account_active, get_official_bank_info
+
+    # 1. RÈGLE ABSOLUE : Solde net <= 0 € -> ZÉRO ÉMISSION & ZÉRO NOTIFICATION
+    net_amount = float(call_data.get("net_amount", 0.0))
+    should_issue = call_data.get("should_issue", True)
+    if net_amount <= 0.0 or not should_issue:
+        logger.info(
+            f"[NEUTRALISATION] Aucun e-mail d'appel de fonds envoyé à {getattr(member, 'name', '')} : "
+            f"solde net <= 0 € ({net_amount:.2f} €). Compensation totale par dépenses."
+        )
+        return {
+            "status": "neutralized_no_email",
+            "message": "Solde net ≤ 0 € : aucun avis ni notification émis (règle absolue de compensation)."
+        }
+
+    # 2. GARDE-FOU BANCAIRE STRICT : IBAN Swan non validé -> ZÉRO E-MAIL ENVOYÉ
+    if not is_bank_account_active(db):
+        log_msg = (
+            f"[GARDE-FOU IBAN] Avis d'appel de fonds pour {getattr(member, 'name', '')} non expédié : "
+            "IBAN Swan officiel non validé (IS_BANK_ACCOUNT_ACTIVE=false). Statut : En attente de validation IBAN Swan."
+        )
+        logger.warning(log_msg)
+        return {
+            "status": "blocked_pending_iban",
+            "message": "En attente de validation IBAN Swan. Zéro e-mail envoyé."
+        }
+
+    # 3. Vérification de la préférence de notification de l'associé
+    notif_pref = getattr(member, "notif_new_invoices", True)
+    if not notif_pref:
+        logger.info(f"[PRÉFÉRENCE DÉSACTIVÉE] {getattr(member, 'name', '')} a désactivé les notifications d'appels de fonds.")
+        return {
+            "status": "preference_disabled",
+            "message": f"Notifications d'appels de fonds désactivées par {getattr(member, 'prenom', 'le membre')}."
+        }
+
+    to_email = getattr(member, "email", None)
+    if not to_email:
+        return {"status": "skipped_no_email", "message": "Aucune adresse e-mail renseignée pour cet associé."}
+
+    prenom = getattr(member, "prenom", "Associé")
+    period_label = call_data.get("period_label", "Mois en cours")
+    theoretical = float(call_data.get("theoretical_contribution", 50.0))
+    expenses_total = float(call_data.get("approved_expenses_total", 0.0))
+    payment_ref = call_data.get("payment_reference", f"Apport CCA - {prenom}")
+    reference = call_data.get("reference", "AF")
+    bank_info = get_official_bank_info(db)
+    iban_val = bank_info.get("iban", "")
+    bic_val = bank_info.get("bic", "SWNBFR22")
+
+    subject = f"🏛️ SCI Hellenvilliers — Appel de fonds {period_label} ({net_amount:.2f} €)"
+    preheader = f"Votre avis d'appel de fonds pour {period_label} est disponible : {net_amount:.2f} € à régler."
+
+    # Lignes du tableau des dépenses
+    deducted = call_data.get("deducted_expenses") or []
+    expenses_rows_html = ""
+    if deducted:
+        for exp in deducted:
+            expenses_rows_html += f"""
+            <tr>
+                <td style="padding: 6px 10px; border-bottom: 1px solid #f1f5f9; color: #475569;">Déduction avance : {exp.get('title', 'Dépense')}</td>
+                <td style="padding: 6px 10px; border-bottom: 1px solid #f1f5f9; text-align: right; color: #b91c1c; font-weight: 600;">-{exp.get('amount', 0):.2f} €</td>
+            </tr>
+            """
+    else:
+        expenses_rows_html = """
+        <tr>
+            <td style="padding: 6px 10px; border-bottom: 1px solid #f1f5f9; color: #94a3b8; font-style: italic;">Aucune avance de frais enregistrée</td>
+            <td style="padding: 6px 10px; border-bottom: 1px solid #f1f5f9; text-align: right; color: #94a3b8;">0,00 €</td>
+        </tr>
+        """
+
+    content_html = f"""
+    <p>Bonjour {prenom},</p>
+    <p>Votre avis d'appel de fonds pour le mois de <strong>{period_label}</strong> a été établi pour la SCI Hellenvilliers :</p>
+
+    <div style="background-color: #f8fafc; border: 1px solid #e2e8f0; border-left: 4px solid #064e3b; border-radius: 8px; padding: 18px; margin: 20px 0;">
+        <div style="font-size: 16px; font-weight: bold; color: #064e3b; margin-bottom: 12px;">
+            📋 Décompte de la quote-part — {period_label}
+        </div>
+        <table role="presentation" border="0" cellpadding="0" cellspacing="0" width="100%" style="font-size: 13.5px; line-height: 1.6;">
+            <tr>
+                <td style="padding: 6px 10px; border-bottom: 1px solid #f1f5f9;">Quote-part mensuelle théorique :</td>
+                <td style="padding: 6px 10px; border-bottom: 1px solid #f1f5f9; text-align: right; font-weight: bold; color: #1e293b;">+{theoretical:.2f} €</td>
+            </tr>
+            {expenses_rows_html}
+            <tr style="background-color: #ecfdf5;">
+                <td style="padding: 10px; font-size: 15px; font-weight: bold; color: #064e3b;">Solde net à régler :</td>
+                <td style="padding: 10px; font-size: 16px; font-weight: bold; text-align: right; color: #064e3b;">{net_amount:.2f} €</td>
+            </tr>
+        </table>
+    </div>
+
+    <div style="background-color: #f0fdf4; border: 1px solid #bbf7d0; border-radius: 8px; padding: 16px; margin: 20px 0;">
+        <div style="font-size: 14px; font-weight: bold; color: #166534; margin-bottom: 8px;">
+            🏦 Coordonnées pour virement bancaire SEPA
+        </div>
+        <p style="font-size: 13px; color: #1e293b; margin: 4px 0;">
+            • Titulaire : <strong>SCI HELLENVILLIERS</strong><br/>
+            • IBAN : <code style="font-family: monospace; font-size: 13px; background: #ffffff; padding: 2px 6px; border-radius: 4px; border: 1px solid #cbd5e1;">{iban_val}</code><br/>
+            • BIC : <code style="font-family: monospace;">{bic_val}</code><br/>
+            • <strong>Motif impératif :</strong> <strong style="color: #064e3b;">{payment_ref}</strong>
+        </p>
+        <p style="font-size: 12px; color: #475569; margin-top: 8px;">
+            📱 <em>Un QR-Code SEPA EPC standard est intégré dans l'avis PDF téléchargeable sur la plateforme pour pré-remplir le virement en un scan dans votre application bancaire.</em>
+        </p>
+    </div>
+
+    <p style="font-size: 12px; color: #64748b; margin-top: 24px; border-top: 1px solid #e2e8f0; padding-top: 12px;">
+        💡 <em>Vous pouvez consulter vos factures et gérer vos préférences à tout moment dans vos <a href="{APP_BASE_URL}/#settings" style="color: #064e3b; text-decoration: underline;">Paramètres</a>.</em>
+    </p>
+    """
+
+    action_url = f"{APP_BASE_URL}/#admin"
+    html_body = render_email_layout(
+        title="Appel de fonds mensuel",
+        preheader=preheader,
+        content_html=content_html,
+        action_url=action_url,
+        action_label="Consulter l'avis & télécharger le PDF"
+    )
+
+    names = [prenom]
+    email_entry = record_dispatched_email(
+        trigger_action="call_for_funds",
+        subject=subject,
+        recipients=to_email,
+        html_content=html_body,
+        recipients_names=names,
+        status="sent" if (actually_send and not is_email_disabled() and not is_test_mode()) else "simulated"
+    )
+
+    if actually_send and not is_email_disabled() and not is_test_mode():
+        res = send_email(to_email=to_email, subject=subject, html_content=html_body)
+    else:
+        res = {"status": "simulated", "id": email_entry["id"]}
+
+    if isinstance(res, dict):
+        res["_email_dispatched"] = email_entry
+    return res
+
+
