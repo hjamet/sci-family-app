@@ -22,9 +22,10 @@ def test_full_google_drive_documents_crud_and_jail():
     print(f"Dossier autorise (Strict Drive Jail): {ALLOWED_FOLDER_ID}")
     print("=======================================================\n")
 
-    test_content = b"%PDF-1.4 - Zero-Trust Google Drive End-to-End Certification Document"
+    import uuid
+    test_content = f"%PDF-1.4 - Zero-Trust Google Drive End-to-End Certification Document - {uuid.uuid4()}".encode()
     organisme_test = "SCI"
-    titre_initial = "Test Certification E2E Integration"
+    titre_initial = f"Test Certification E2E Integration {uuid.uuid4().hex[:6]}"
     categorie_test = "Actes & Statuts"
 
     # -------------------------------------------------------------------------
@@ -64,7 +65,7 @@ def test_full_google_drive_documents_crud_and_jail():
     # 2. TEST TELECHARGEMENT / DOWNLOAD DEPUIS GOOGLE DRIVE
     # -------------------------------------------------------------------------
     print("\n[ETAPE 2/5] Test GET /api/documents/{id}/download depuis Google Drive...")
-    download_res = client.get(f"/api/documents/{doc_id}/download")
+    download_res = client.get(f"/api/documents/{doc_id}/download?download=true")
     assert download_res.status_code == 200, f"Echec telechargement: {download_res.status_code}"
     assert download_res.content == test_content, "Integrite binaire alteree lors du telechargement"
     assert "attachment" in download_res.headers.get("content-disposition", "")

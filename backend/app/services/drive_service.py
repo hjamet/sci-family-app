@@ -34,12 +34,8 @@ except ImportError as _import_err:
     HttpError = Exception
     GOOGLE_DRIVE_AVAILABLE = False
 
-# Strict Drive Jail Invariant (Dossier Admin historique + Dossier Hellenvilliers SCI téléversement)
-DEFAULT_ALLOWED_FOLDER_IDS = [
-    "1712huYEQ_7IYa4eUCQtcnXy3Zdd3S3zu",  # Dossier Admin (où résident tous les documents et factures historiques)
-    "14RcQbUF7WQb5kmVlfhdHmieV1OA0Pk-J",  # Dossier Hellenvilliers SCI (téléversements directs Henri Jamet)
-]
-
+# Strict Drive Jail Invariant
+ALLOWED_FOLDER_ID = os.getenv("GOOGLE_DRIVE_FOLDER_ID", "14RcQbUF7WQb5kmVlfhdHmieV1OA0Pk-J")
 SCOPES = ["https://www.googleapis.com/auth/drive"]
 
 class SecurityException(HTTPException):
@@ -50,19 +46,11 @@ class SecurityException(HTTPException):
 
 class GoogleDriveJailService:
     """Service de gestion sécurisée Google Drive avec confinement strict (Strict Drive Jail).
-    Garantit qu'aucun fichier ne peut être créé, lu, listé ou supprimé en dehors des dossiers autorisés.
+    Garantit qu'aucun fichier ne peut être créé, lu, listé ou supprimé en dehors de ALLOWED_FOLDER_ID.
     """
 
     def __init__(self, folder_id: Optional[str] = None):
-        self.folder_id = folder_id or os.getenv("GOOGLE_DRIVE_FOLDER_ID", "14RcQbUF7WQb5kmVlfhdHmieV1OA0Pk-J")
-        self.allowed_folder_ids = set(DEFAULT_ALLOWED_FOLDER_IDS)
-        if self.folder_id:
-            self.allowed_folder_ids.add(self.folder_id)
-        env_extra = os.getenv("GOOGLE_DRIVE_FOLDER_IDS")
-        if env_extra:
-            for fid in env_extra.split(","):
-                if fid.strip():
-                    self.allowed_folder_ids.add(fid.strip())
+        self.folder_id = folder_id or ALLOWED_FOLDER_ID
         self._service: Optional[Resource] = None
 
     def is_configured(self) -> bool:
@@ -129,7 +117,7 @@ class GoogleDriveJailService:
                 from sqlalchemy import text
                 with engine.connect() as db_conn:
                     rows = db_conn.execute(
-                        text("SELECT key, value FROM system_settings WHERE key IN ('GOOGLE_DRIVE_CLIENT_ID', 'GOOGLE_DRIVE_CLIENT_SECRET', 'GOOGLE_DRIVE_REFRESH_TOKEN', 'GOOGLE_DRIVE_FOLDER_ID', 'GOOGLE_DRIVE_FOLDER_IDS')")
+                        text("SELECT key, value FROM system_settings WHERE key IN ('GOOGLE_DRIVE_CLIENT_ID', 'GOOGLE_DRIVE_CLIENT_SECRET', 'GOOGLE_DRIVE_REFRESH_TOKEN', 'GOOGLE_DRIVE_FOLDER_ID')")
                     ).fetchall()
                     for r_key, r_val in rows:
                         if r_key == "GOOGLE_DRIVE_CLIENT_ID" and not client_id:
@@ -140,11 +128,6 @@ class GoogleDriveJailService:
                             refresh_token = r_val
                         elif r_key == "GOOGLE_DRIVE_FOLDER_ID" and not self.folder_id:
                             self.folder_id = r_val
-                            self.allowed_folder_ids.add(r_val)
-                        elif r_key == "GOOGLE_DRIVE_FOLDER_IDS" and r_val:
-                            for fid in r_val.split(","):
-                                if fid.strip():
-                                    self.allowed_folder_ids.add(fid.strip())
             except Exception as db_err:
                 logger.warning(f"Impossible de lire system_settings depuis la base de données: {db_err}")
 
@@ -199,11 +182,10 @@ class GoogleDriveJailService:
 
         service = self._get_client()
 
-        # CONFINEMENT STRICT : Téléversement prioritaire dans le dossier Hellenvilliers SCI (droits d'écriture)
-        upload_parent = "14RcQbUF7WQb5kmVlfhdHmieV1OA0Pk-J" if "14RcQbUF7WQb5kmVlfhdHmieV1OA0Pk-J" in self.allowed_folder_ids else self.folder_id
+        # CONFINEMENT STRICT : Interdiction absolue de créer hors du dossier autorisé
         file_metadata: Dict[str, Any] = {
             "name": os.path.basename(filename),
-            "parents": [upload_parent],
+            "parents": [self.folder_id],
         }
         if description:
             file_metadata["description"] = description
@@ -216,7 +198,7 @@ class GoogleDriveJailService:
                 media_body=media,
                 fields="id, name, parents, mimeType, size, createdTime, modifiedTime, webViewLink, webContentLink"
             ).execute()
-            logger.info(f"Fichier créé avec succès dans le dossier {upload_parent} : {file.get('id')} ({filename})")
+            logger.info(f"Fichier créé avec succès dans le dossier {self.folder_id} : {file.get('id')} ({filename})")
             self.clear_cache()
             return file
         except HttpError as err:
@@ -224,13 +206,12 @@ class GoogleDriveJailService:
             raise HTTPException(status_code=err.resp.status, detail=f"Google Drive Error: {err._get_reason()}")
 
     def list_files(self, query_filter: Optional[str] = None, page_size: int = 100, force_refresh: bool = False) -> List[Dict[str, Any]]:
-        """Liste uniquement les fichiers présents dans les dossiers autorisés (ALLOWED_FOLDER_IDS).
-        Clause de confinement obligatoire : ('{fid1}' in parents or '{fid2}' in parents) and trashed = false.
+        """Liste uniquement les fichiers présents dans ALLOWED_FOLDER_ID.
+        Clause de confinement obligatoire : '{ALLOWED_FOLDER_ID}' in parents and trashed = false.
         Maintient un cache en mémoire TTL de 120s avec verrou thread-safe.
         """
         global _DRIVE_FILES_CACHE, _DRIVE_FILES_CACHE_TIMESTAMP
-        folders_key = "_".join(sorted(self.allowed_folder_ids))
-        cache_key = f"{folders_key}_{query_filter or ''}_{page_size}"
+        cache_key = f"{self.folder_id}_{query_filter or ''}_{page_size}"
         now = time.time()
 
         if not force_refresh and (cache_key in _DRIVE_FILES_CACHE) and (now - _DRIVE_FILES_CACHE_TIMESTAMP < DRIVE_FILES_CACHE_TTL):
@@ -243,9 +224,8 @@ class GoogleDriveJailService:
 
             service = self._get_client()
 
-            # CONFINEMENT STRICT : La condition d'appartenance aux dossiers autorisés est inviolable
-            folder_clauses = [f"'{fid}' in parents" for fid in self.allowed_folder_ids]
-            jail_clause = f"({' or '.join(folder_clauses)}) and trashed = false"
+            # CONFINEMENT STRICT : La condition d'appartenance au dossier est inviolable
+            jail_clause = f"'{self.folder_id}' in parents and trashed = false"
             if query_filter:
                 q = f"{jail_clause} and ({query_filter})"
             else:
@@ -286,8 +266,8 @@ class GoogleDriveJailService:
 
         # CONFINEMENT STRICT : Vérification immédiate des parents
         parents = file.get("parents", [])
-        if not any(pid in self.allowed_folder_ids for pid in parents):
-            logger.warning(f"ALERTE SÉCURITÉ : Tentative d'accès au fichier {file_id} hors des dossiers autorisés {self.allowed_folder_ids} (parents: {parents})")
+        if self.folder_id not in parents:
+            logger.warning(f"ALERTE SÉCURITÉ : Tentative d'accès au fichier {file_id} hors du dossier autorisé {self.folder_id} (parents: {parents})")
             raise SecurityException("Accès refusé : fichier hors du dossier Hellenvilliers SCI")
 
         return file
