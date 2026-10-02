@@ -58,6 +58,8 @@ export default function EmailDispatchedToast({ onViewEmail }) {
     ? email.recipients_names
     : (email.recipients || []);
 
+  const isSent = (email.status === 'sent' && !email.is_simulated) || Boolean(email.delivered);
+
   const handleDismiss = () => {
     if (timerRef.current) clearTimeout(timerRef.current);
     setCurrentToast(null);
@@ -87,9 +89,15 @@ export default function EmailDispatchedToast({ onViewEmail }) {
             <span className="text-xs font-bold uppercase tracking-wider text-emerald-400">
               Notification e-mail
             </span>
-            <span className="bg-emerald-950/80 text-emerald-300 border border-emerald-500/40 text-[10px] font-bold px-2 py-0.5 rounded-full uppercase tracking-wider">
-              Simulé
-            </span>
+            {isSent ? (
+              <span className="bg-emerald-950/80 text-emerald-300 border border-emerald-500/40 text-[10px] font-bold px-2 py-0.5 rounded-full uppercase tracking-wider">
+                Envoyé
+              </span>
+            ) : (
+              <span className="bg-amber-950/80 text-amber-300 border border-amber-500/40 text-[10px] font-bold px-2 py-0.5 rounded-full uppercase tracking-wider">
+                Simulé
+              </span>
+            )}
           </div>
           <button
             type="button"
@@ -131,7 +139,7 @@ export default function EmailDispatchedToast({ onViewEmail }) {
         {/* Bouton d'action et timer */}
         <div className="flex items-center justify-between pt-2 border-t border-slate-800/80 mt-1">
           <span className="text-[11px] text-slate-400">
-            Coupe-circuit de sécurité actif
+            {isSent ? 'Transmis via Resend' : 'Mode simulation actif (coupe-circuit)'}
           </span>
           <button
             type="button"

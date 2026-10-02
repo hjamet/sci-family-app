@@ -92,7 +92,9 @@ from .services.email_service import (
     record_dispatched_email,
     render_email_layout,
     RECENT_DISPATCHED_EMAILS,
-    APP_BASE_URL
+    APP_BASE_URL,
+    is_email_disabled,
+    is_test_mode
 )
 from .migrate_notifications import migrate_engine
 from dotenv import load_dotenv
@@ -157,7 +159,9 @@ def synthesize_email_entry_for_notification(
     description: str,
     notif_type: str = "info",
     link_path: Optional[str] = None,
-    member: Optional[Member] = None
+    member: Optional[Member] = None,
+    status: Optional[str] = None,
+    is_simulated: Optional[bool] = None
 ) -> dict:
     """
     Annotation 13:
@@ -196,6 +200,9 @@ def synthesize_email_entry_for_notification(
     recips = [member.email] if (member and getattr(member, 'email', None)) else ["hellenvillierssci@gmail.com"]
     names = [member.name or member.prenom] if (member and (getattr(member, 'name', None) or getattr(member, 'prenom', None))) else ["Famille Hellenvilliers"]
 
+    is_sim = (is_email_disabled() or is_test_mode()) if is_simulated is None else bool(is_simulated)
+    email_status = ("simulated" if is_sim else "sent") if status is None else status
+
     return {
         "id": str(uuid.uuid4()),
         "created_at": datetime.utcnow().isoformat() + "Z",
@@ -205,8 +212,8 @@ def synthesize_email_entry_for_notification(
         "to": recips,
         "recipients_names": names,
         "html_content": html_body,
-        "status": "simulated",
-        "is_simulated": True
+        "status": email_status,
+        "is_simulated": is_sim
     }
 
 
@@ -6749,16 +6756,112 @@ def get_heating_status(
 @app.post("/api/heating/mode", response_model=HeatingStatusResponse)
 @app.post("/api/heating/set-mode", response_model=HeatingStatusResponse)
 @app.post("/api/heating/vicare/mode", response_model=HeatingStatusResponse)
-def set_heating_mode(req: HeatingModeRequest):
-    return ViCareService.set_mode(req.mode)
+def set_heating_mode(req: HeatingModeRequest, db: Session = Depends(get_db)):
+    res = ViCareService.set_mode(req.mode)
+    author = getattr(req, "author_name", None) or "Système"
+    try:
+        details = f"Mode de chauffage ViCare réglé sur : {req.mode}"
+        db.add(Log(
+            action="HEATING_MODE_UPDATE",
+            user_name=author,
+            details=details
+        ))
+        setting = db.query(ThermalSettings).filter(ThermalSettings.equipment_type == "heating").first()
+        if not setting:
+            setting = ThermalSettings(equipment_type="heating")
+            db.add(setting)
+        setting.mode = req.mode
+        setting.updated_by = author
+        setting.updated_at = datetime.utcnow()
+        db.commit()
+
+        subscribed_members = db.query(Member).filter(
+            Member.notif_thermal_changes == True,
+            Member.email.isnot(None)
+        ).all()
+        target_emails = [m.email for m in subscribed_members if m.email]
+
+        dispatched_email = None
+        if target_emails:
+            try:
+                send_res = send_thermal_change_email(
+                    target_emails=target_emails,
+                    author_name=author,
+                    equipment_type="Chauffage ViCare (Presbytère)",
+                    details=details
+                )
+                if isinstance(send_res, dict) and "_email_dispatched" in send_res:
+                    dispatched_email = send_res["_email_dispatched"]
+            except Exception as email_err:
+                logger.error(f"[HEATING MODE] Erreur lors de l'envoi d'e-mail: {email_err}")
+
+        create_internal_notification(
+            db=db,
+            title="Commande manuelle : Mode chauffage",
+            description=f"{details} (par {author})",
+            notif_type="thermal",
+            link_path="/sejour",
+            email_entry=dispatched_email
+        )
+    except Exception as e:
+        logger.warning(f"[HEATING] Log/Notif mode non bloquant: {e}")
+    return res
 
 @app.post("/api/vicare/temperature", response_model=HeatingStatusResponse)
 @app.post("/api/heating/temperature", response_model=HeatingStatusResponse)
 @app.post("/api/heating/set-temperature", response_model=HeatingStatusResponse)
 @app.post("/api/heating/vicare/temperature", response_model=HeatingStatusResponse)
-def set_heating_temperature(req: HeatingTemperatureRequest):
+def set_heating_temperature(req: HeatingTemperatureRequest, db: Session = Depends(get_db)):
     program = req.program or "comfort"
-    return ViCareService.set_temperature(req.target_temperature, program=program)
+    res = ViCareService.set_temperature(req.target_temperature, program=program)
+    author = getattr(req, "author_name", None) or "Système"
+    try:
+        details = f"Température de consigne chauffage réglée sur {req.target_temperature:.1f}°C (programme: {program})"
+        db.add(Log(
+            action="HEATING_TEMP_UPDATE",
+            user_name=author,
+            details=details
+        ))
+        setting = db.query(ThermalSettings).filter(ThermalSettings.equipment_type == "heating").first()
+        if not setting:
+            setting = ThermalSettings(equipment_type="heating")
+            db.add(setting)
+        setting.target_temperature = req.target_temperature
+        setting.updated_by = author
+        setting.updated_at = datetime.utcnow()
+        db.commit()
+
+        subscribed_members = db.query(Member).filter(
+            Member.notif_thermal_changes == True,
+            Member.email.isnot(None)
+        ).all()
+        target_emails = [m.email for m in subscribed_members if m.email]
+
+        dispatched_email = None
+        if target_emails:
+            try:
+                send_res = send_thermal_change_email(
+                    target_emails=target_emails,
+                    author_name=author,
+                    equipment_type="Chauffage ViCare (Presbytère)",
+                    details=details
+                )
+                if isinstance(send_res, dict) and "_email_dispatched" in send_res:
+                    dispatched_email = send_res["_email_dispatched"]
+            except Exception as email_err:
+                logger.error(f"[HEATING TEMP] Erreur lors de l'envoi d'e-mail: {email_err}")
+
+        create_internal_notification(
+            db=db,
+            title="Commande manuelle : Température chauffage",
+            description=f"{details} (par {author})",
+            notif_type="thermal",
+            link_path="/sejour",
+            email_entry=dispatched_email
+        )
+    except Exception as e:
+        logger.warning(f"[HEATING] Log/Notif temp non bloquant: {e}")
+    return res
 
 @app.post("/api/heating/dhw/mode", response_model=HeatingStatusResponse)
 @app.post("/api/heating/dhw-mode", response_model=HeatingStatusResponse)
@@ -6811,22 +6914,53 @@ def set_pool_pump_mode(req: PoolPumpModeRequest, db: Session = Depends(get_db)):
     """
     active_input = req.active if req.active is not None else req.is_active
     result = KlereoService.set_pump_mode(mode=req.mode, active=active_input)
+    author = req.author_name or "Système"
     try:
         active_val = result.get("is_pump_active", False)
         mode_val = result.get("pump_mode") or req.mode or ("on" if active_val else "off")
+        details = f"Pompe filtration piscine réglée sur : {mode_val} (active={active_val})"
         db.add(Log(
             action="POOL_PUMP_MODE_UPDATE",
-            user_name=req.author_name or "Système",
-            details=f"Pompe filtration piscine réglée sur : {mode_val} (active={active_val})"
+            user_name=author,
+            details=details
         ))
         setting = db.query(ThermalSettings).filter(ThermalSettings.equipment_type == "pool").first()
         if not setting:
             setting = ThermalSettings(equipment_type="pool")
             db.add(setting)
         setting.filtration_mode = "marche" if active_val else "arret"
-        setting.updated_by = req.author_name or "Système"
+        setting.updated_by = author
         setting.updated_at = datetime.utcnow()
         db.commit()
+
+        subscribed_members = db.query(Member).filter(
+            Member.notif_thermal_changes == True,
+            Member.email.isnot(None)
+        ).all()
+        target_emails = [m.email for m in subscribed_members if m.email]
+
+        dispatched_email = None
+        if target_emails:
+            try:
+                send_res = send_thermal_change_email(
+                    target_emails=target_emails,
+                    author_name=author,
+                    equipment_type="Pompe de Filtration Piscine (Villa Rosing)",
+                    details=details
+                )
+                if isinstance(send_res, dict) and "_email_dispatched" in send_res:
+                    dispatched_email = send_res["_email_dispatched"]
+            except Exception as email_err:
+                logger.error(f"[POOL PUMP] Erreur lors de l'envoi d'e-mail: {email_err}")
+
+        create_internal_notification(
+            db=db,
+            title="Commande manuelle : Pompe filtration piscine",
+            description=f"{details} (par {author})",
+            notif_type="thermal",
+            link_path="/sejour",
+            email_entry=dispatched_email
+        )
     except Exception as e:
         logger.warning(f"[POOL] Log DB pompe non bloquant: {e}")
     return PiscineStatusResponse(**result)
@@ -6842,22 +6976,53 @@ def set_pool_heating_mode(req: PoolHeatingModeRequest, db: Session = Depends(get
     """
     active_input = req.active if req.active is not None else req.is_active
     result = KlereoService.set_heating_mode(mode=req.mode, active=active_input)
+    author = req.author_name or "Système"
     try:
         active_val = result.get("is_heating_active", False)
         mode_val = result.get("heating_mode") or req.mode or ("on" if active_val else "off")
+        details = f"Chauffage PAC piscine réglé sur : {mode_val} (active={active_val})"
         db.add(Log(
             action="POOL_HEATING_MODE_UPDATE",
-            user_name=req.author_name or "Système",
-            details=f"Chauffage PAC piscine réglé sur : {mode_val} (active={active_val})"
+            user_name=author,
+            details=details
         ))
         setting = db.query(ThermalSettings).filter(ThermalSettings.equipment_type == "pool").first()
         if not setting:
             setting = ThermalSettings(equipment_type="pool")
             db.add(setting)
         setting.mode = "confort" if active_val else "standby"
-        setting.updated_by = req.author_name or "Système"
+        setting.updated_by = author
         setting.updated_at = datetime.utcnow()
         db.commit()
+
+        subscribed_members = db.query(Member).filter(
+            Member.notif_thermal_changes == True,
+            Member.email.isnot(None)
+        ).all()
+        target_emails = [m.email for m in subscribed_members if m.email]
+
+        dispatched_email = None
+        if target_emails:
+            try:
+                send_res = send_thermal_change_email(
+                    target_emails=target_emails,
+                    author_name=author,
+                    equipment_type="Chauffage PAC Piscine Inopac 20 kW (Villa Rosing)",
+                    details=details
+                )
+                if isinstance(send_res, dict) and "_email_dispatched" in send_res:
+                    dispatched_email = send_res["_email_dispatched"]
+            except Exception as email_err:
+                logger.error(f"[POOL HEATING] Erreur lors de l'envoi d'e-mail: {email_err}")
+
+        create_internal_notification(
+            db=db,
+            title="Commande manuelle : Chauffage PAC piscine",
+            description=f"{details} (par {author})",
+            notif_type="thermal",
+            link_path="/sejour",
+            email_entry=dispatched_email
+        )
     except Exception as e:
         logger.warning(f"[POOL] Log DB PAC non bloquant: {e}")
     return PiscineStatusResponse(**result)
@@ -7077,6 +7242,35 @@ def update_heating_settings(
     mode_str = setting.mode or "dhwAndHeating"
     details = req.details or f"Température de consigne passée à {temp_str} (Mode: {mode_str})"
 
+    # Enrichir le détail du courriel pour mentionner le nom ou les dates du séjour si applicable
+    stay_mention = ""
+    try:
+        stay = None
+        target_res_id = getattr(req, "reservation_id", None) or getattr(req, "stay_id", None)
+        if target_res_id:
+            stay = db.query(Reservation).filter(Reservation.id == target_res_id).first()
+        if not stay:
+            today_str = datetime.utcnow().strftime("%Y-%m-%d")
+            stay = db.query(Reservation).filter(
+                Reservation.status.in_(["Confirmée", "Demande en attente"]),
+                Reservation.start_date <= today_str,
+                Reservation.end_date >= today_str
+            ).first()
+            if not stay:
+                future_limit = (datetime.utcnow() + timedelta(days=7)).strftime("%Y-%m-%d")
+                stay = db.query(Reservation).filter(
+                    Reservation.status.in_(["Confirmée", "Demande en attente"]),
+                    Reservation.start_date >= today_str,
+                    Reservation.start_date <= future_limit
+                ).order_by(Reservation.start_date.asc()).first()
+        if stay:
+            stay_mention = f" — Séjour de {stay.user_name} ({stay.start_date} au {stay.end_date})"
+    except Exception as stay_err:
+        logger.warning(f"Impossible de résoudre le séjour pour les consignes thermiques: {stay_err}")
+
+    if stay_mention and stay_mention not in details:
+        details = f"{details}{stay_mention}"
+
     # 3. Log action
     db.add(Log(
         action="HEATING_SETTINGS_UPDATE",
@@ -7197,6 +7391,35 @@ def update_pool_settings(
     temp_str = f"{setting.target_temperature:.1f}°C" if setting.target_temperature is not None else "14.0°C"
     filt_str = setting.filtration_mode or "auto"
     details = req.details or f"Filtration piscine réglée sur '{filt_str}' (Consigne: {temp_str}, Mode: {setting.mode})"
+
+    # Enrichir le détail du courriel pour mentionner le nom ou les dates du séjour si applicable
+    stay_mention = ""
+    try:
+        stay = None
+        target_res_id = getattr(req, "reservation_id", None) or getattr(req, "stay_id", None)
+        if target_res_id:
+            stay = db.query(Reservation).filter(Reservation.id == target_res_id).first()
+        if not stay:
+            today_str = datetime.utcnow().strftime("%Y-%m-%d")
+            stay = db.query(Reservation).filter(
+                Reservation.status.in_(["Confirmée", "Demande en attente"]),
+                Reservation.start_date <= today_str,
+                Reservation.end_date >= today_str
+            ).first()
+            if not stay:
+                future_limit = (datetime.utcnow() + timedelta(days=7)).strftime("%Y-%m-%d")
+                stay = db.query(Reservation).filter(
+                    Reservation.status.in_(["Confirmée", "Demande en attente"]),
+                    Reservation.start_date >= today_str,
+                    Reservation.start_date <= future_limit
+                ).order_by(Reservation.start_date.asc()).first()
+        if stay:
+            stay_mention = f" — Séjour de {stay.user_name} ({stay.start_date} au {stay.end_date})"
+    except Exception as stay_err:
+        logger.warning(f"Impossible de résoudre le séjour pour les consignes piscine: {stay_err}")
+
+    if stay_mention and stay_mention not in details:
+        details = f"{details}{stay_mention}"
 
     # 3. Log action
     db.add(Log(

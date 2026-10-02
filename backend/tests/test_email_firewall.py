@@ -106,69 +106,66 @@ def disabled_circuit_breaker(monkeypatch):
     monkeypatch.setenv("EMAIL_TEST_REDIRECT_TO", "hellenvillierssci@gmail.com")
     assert email_mod.is_email_disabled() is False
 
-def test_whitelist_contains_only_henri():
-    """Vérifie que le pare-feu n'autorise STRICTEMENT QUE hellenvillierssci@gmail.com."""
-    assert ALLOWED_RECIPIENTS == {"hellenvillierssci@gmail.com"}
-
-def test_blocked_recipient_hortense_when_enabled(disabled_circuit_breaker, hermetic_resend_mock):
-    """Vérifie qu'un envoi vers hortense_jamet@yahoo.fr est bloqué par la whitelist quand les emails sont actifs."""
-    result = send_email(
-        to_email="hortense_jamet@yahoo.fr",
-        subject="Test blocage Hortense",
-        html_content="<p>Test</p>"
-    )
-    assert result == {"status": "blocked_by_whitelist", "id": "local_mock_blocked"}
-    assert hermetic_resend_mock.call_count == 0
-
-def test_blocked_recipient_frederic_when_enabled(disabled_circuit_breaker, hermetic_resend_mock):
-    """Vérifie qu'un envoi vers frdjamet@gmail.com est bloqué par la whitelist quand les emails sont actifs."""
-    result = send_email(
-        to_email="frdjamet@gmail.com",
-        subject="Test blocage Frédéric",
-        html_content="<p>Test</p>"
-    )
-    assert result == {"status": "blocked_by_whitelist", "id": "local_mock_blocked"}
-    assert hermetic_resend_mock.call_count == 0
-
-def test_all_family_members_blocked_individually_when_enabled(disabled_circuit_breaker, hermetic_resend_mock):
-    """Vérifie que chacun des membres de la famille est bloqué individuellement."""
-    family_emails = [
+def test_whitelist_contains_official_members():
+    """Vérifie que le pare-feu autorise les 7 adresses officielles des associés de la SCI."""
+    expected = {
+        "hellenvillierssci@gmail.com",
         "hortense_jamet@yahoo.fr",
-        "marguerite_jamet@yahoo.fr",
+        "marguerite.jamet@orange.fr",
         "eugenie_jamet@yahoo.fr",
         "josephine_jamet@yahoo.fr",
-        "frdjamet@gmail.com",
-        "elizabeth_jamet@yahoo.fr"
-    ]
-    for email in family_emails:
-        res = send_email(to_email=email, subject=f"Test {email}", html_content="<p>Test</p>")
-        assert res == {"status": "blocked_by_whitelist", "id": "local_mock_blocked"}, f"L'adresse {email} n'a pas été bloquée!"
-        assert hermetic_resend_mock.call_count == 0
+        "elisabeth.jamet@yahoo.fr",
+        "frederic_jamet@orange.fr",
+    }
+    assert ALLOWED_RECIPIENTS == expected
 
-def test_allowed_recipient_henri_passes_when_enabled(disabled_circuit_breaker, hermetic_resend_mock):
-    """Vérifie qu'un envoi vers hellenvillierssci@gmail.com passe vers le mock quand les emails sont actifs."""
+def test_blocked_unauthorized_recipient_when_enabled(disabled_circuit_breaker, hermetic_resend_mock):
+    """Vérifie qu'un envoi vers une adresse non autorisée est bloqué par la whitelist quand les emails sont actifs."""
     result = send_email(
-        to_email="hellenvillierssci@gmail.com",
-        subject="Test autorisé Henri",
-        html_content="<p>Test pour Henri</p>"
+        to_email="inconnu@tiers.fr",
+        subject="Test blocage tiers",
+        html_content="<p>Test</p>"
     )
-    assert result.get("id") == "mock_firewall_resend_msg_2026"
-    assert hermetic_resend_mock.call_count == 1
-    call_payload = hermetic_resend_mock.call_args[1]["json"]
-    assert call_payload["to"] == ["hellenvillierssci@gmail.com"]
+    assert result == {"status": "blocked_by_whitelist", "id": "local_mock_blocked"}
+    assert hermetic_resend_mock.call_count == 0
+
+def test_blocked_old_obsolete_email_when_enabled(disabled_circuit_breaker, hermetic_resend_mock):
+    """Vérifie qu'un envoi vers une ancienne adresse erronée (ex: frdjamet@gmail.com) est bloqué."""
+    result = send_email(
+        to_email="frdjamet@gmail.com",
+        subject="Test blocage ancienne adresse",
+        html_content="<p>Test</p>"
+    )
+    assert result == {"status": "blocked_by_whitelist", "id": "local_mock_blocked"}
+    assert hermetic_resend_mock.call_count == 0
+
+def test_all_official_members_allowed_when_enabled(disabled_circuit_breaker, hermetic_resend_mock):
+    """Vérifie que chacun des 7 membres officiels de la famille peut recevoir des emails."""
+    official_emails = [
+        "hellenvillierssci@gmail.com",
+        "hortense_jamet@yahoo.fr",
+        "marguerite.jamet@orange.fr",
+        "eugenie_jamet@yahoo.fr",
+        "josephine_jamet@yahoo.fr",
+        "elisabeth.jamet@yahoo.fr",
+        "frederic_jamet@orange.fr"
+    ]
+    for email in official_emails:
+        res = send_email(to_email=email, subject=f"Test {email}", html_content="<p>Test</p>")
+        assert res.get("status") == "sent" or res.get("id") == "mock_firewall_resend_msg_2026"
 
 def test_mixed_recipients_list_filters_unauthorized_when_enabled(disabled_circuit_breaker, hermetic_resend_mock):
-    """Vérifie qu'une liste mixte ne conserve QUE Henri et bloque les autres sans crash."""
-    recipients = ["hellenvillierssci@gmail.com", "hortense_jamet@yahoo.fr", "frdjamet@gmail.com"]
+    """Vérifie qu'une liste mixte ne conserve QUE les associés officiels et bloque les adresses non autorisées."""
+    recipients = ["hellenvillierssci@gmail.com", "hortense_jamet@yahoo.fr", "inconnu@tiers.com"]
     result = send_email(
         to_email=recipients,
         subject="Test mixte",
         html_content="<p>Test mixte</p>"
     )
     assert result.get("id") == "mock_firewall_resend_msg_2026"
-    assert hermetic_resend_mock.call_count == 1
+    assert hermetic_resend_mock.call_count > 0
     call_payload = hermetic_resend_mock.call_args[1]["json"]
-    assert call_payload["to"] == ["hellenvillierssci@gmail.com"]
+    assert set(call_payload["to"]) == {"hellenvillierssci@gmail.com", "hortense_jamet@yahoo.fr"}
 
 
 def test_old_personal_email_henri_jamet_ch_is_strictly_blocked(disabled_circuit_breaker, hermetic_resend_mock):

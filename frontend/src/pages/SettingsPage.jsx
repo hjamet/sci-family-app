@@ -1135,6 +1135,36 @@ export default function SettingsPage({ currentUser }) {
                   </div>
                 </div>
               </div>
+
+              {/* Item 4 : Modifications des consignes thermiques & commandes manuelles */}
+              <div
+                id="toggle-notif-thermal-changes"
+                onClick={() => handleToggleNotification('notif_thermal_changes')}
+                className={`flex items-start justify-between gap-3.5 p-3.5 sm:p-4 rounded-xl border transition-all cursor-pointer select-none ${
+                  notifications.notif_thermal_changes
+                    ? 'border-emerald-300/80 bg-white hover:bg-emerald-50/20 shadow-xs'
+                    : 'border-slate-200 bg-white/70 hover:bg-slate-100/60'
+                }`}
+              >
+                <div className="flex items-start gap-3">
+                  <div className="w-8 h-8 rounded-xl bg-amber-100 text-amber-800 flex items-center justify-center shrink-0 mt-0.5 border border-amber-200 shadow-2xs">
+                    <span className="material-symbols-outlined text-[18px]">thermostat</span>
+                  </div>
+                  <div>
+                    <span className="text-sm font-bold text-slate-900 block leading-snug">
+                      Modifications des consignes thermiques &amp; commandes manuelles
+                    </span>
+                    <p className="text-xs text-slate-600 mt-1 leading-relaxed">
+                      Recevoir un e-mail dès qu'un associé modifie les températures de consigne (générales ou par séjour) ou actionne le chauffage / la piscine.
+                    </p>
+                  </div>
+                </div>
+                <div className="shrink-0 pt-1">
+                  <div className={`w-11 h-6 flex items-center rounded-full p-1 duration-300 ease-in-out ${notifications.notif_thermal_changes ? 'bg-primary' : 'bg-slate-300'}`}>
+                    <div className={`bg-white w-4 h-4 rounded-full shadow-md transform duration-300 ease-in-out ${notifications.notif_thermal_changes ? 'translate-x-5' : 'translate-x-0'}`} />
+                  </div>
+                </div>
+              </div>
             </div>
           </div>
 

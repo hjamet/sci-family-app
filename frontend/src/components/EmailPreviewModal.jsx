@@ -29,7 +29,8 @@ export default function EmailPreviewModal({ isOpen, onClose, email }) {
     ? email.recipients_names
     : recipientsList;
 
-  const isSimulated = Boolean(
+  const isReal = (email.status === 'sent' && !email.is_simulated) || Boolean(email.delivered);
+  const isSimulated = !isReal && Boolean(
     email.is_simulated ||
     email.test_mode ||
     email.status === 'simulated' ||

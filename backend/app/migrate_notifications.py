@@ -72,15 +72,9 @@ def migrate_sqlite_db(db_path: str = None):
                     logger.info(f"[MIGRATION SQLite] Adding column {col_name} to members in {target}.")
                     cursor.execute(f"ALTER TABLE members ADD COLUMN {col_name} {col_def}")
 
-                # Set FALSE by default where NULL
+                # Set FALSE (0) by default for ALL members without exception
                 cursor.execute(f"UPDATE members SET {col_name} = 0 WHERE {col_name} IS NULL")
-
-                # Activate TRUE (1) for Henri Jamet (Coordinateur / Gérant)
-                cursor.execute(
-                    f"UPDATE members SET {col_name} = 1 WHERE "
-                    "LOWER(prenom) = 'henri' OR LOWER(name) LIKE '%henri%' "
-                    "OR LOWER(role) LIKE '%coordinateur g%' OR LOWER(role) LIKE '%gérant%'"
-                )
+                logger.info(f"[MIGRATION SQLite] {col_name} initialized to 0 (default off) for all members.")
 
                 # 2bis. Coordinator vote columns
                 for col_name, col_def in COORDINATOR_VOTE_COLUMNS:
@@ -192,20 +186,8 @@ def migrate_engine(engine):
                 col_name, col_def = THERMAL_NOTIFICATION_COLUMN
                 if col_name not in existing_cols:
                     conn.execute(text(f"ALTER TABLE members ADD COLUMN {col_name} {col_def}"))
+                # Invariant : notif_thermal_changes est désactivé par défaut (0) pour TOUS les associés sans exception
                 conn.execute(text(f"UPDATE members SET {col_name} = 0 WHERE {col_name} IS NULL"))
-
-                # Activate TRUE for Henri Jamet and Coordinatrice Adjointe
-                conn.execute(text(
-                    f"UPDATE members SET {col_name} = 1 WHERE "
-                    "LOWER(prenom) = 'henri' OR LOWER(name) LIKE '%henri%' "
-                    "OR LOWER(role) LIKE '%coordinateur g%' OR LOWER(role) LIKE '%gérant%'"
-                ))
-                conn.execute(text(
-                    f"UPDATE members SET {col_name} = 1 WHERE "
-                    "LOWER(prenom) LIKE 'jos%' "
-                    "OR LOWER(role) LIKE '%coordinatrice adjointe%' "
-                    "OR (LOWER(prenom) IN ('hortense', 'marguerite') AND LOWER(role) LIKE '%coordinat%')"
-                ))
 
                 for col_name, col_def in COORDINATOR_VOTE_COLUMNS:
                     if col_name not in existing_cols:
@@ -284,18 +266,8 @@ def migrate_engine(engine):
                     conn.execute(text(f"ALTER TABLE members ADD COLUMN IF NOT EXISTS {col_name} {col_def};"))
                     conn.execute(text(f"UPDATE members SET {col_name} = FALSE WHERE {col_name} IS NULL;"))
 
-                # Activate TRUE for Henri Jamet and Coordinatrice Adjointe
-                conn.execute(text(
-                    f"UPDATE members SET {col_name} = TRUE WHERE "
-                    "LOWER(prenom) = 'henri' OR LOWER(name) LIKE '%henri%' "
-                    "OR LOWER(role) LIKE '%coordinateur g%' OR LOWER(role) LIKE '%gérant%';"
-                ))
-                conn.execute(text(
-                    f"UPDATE members SET {col_name} = TRUE WHERE "
-                    "LOWER(prenom) LIKE 'jos%' "
-                    "OR LOWER(role) LIKE '%coordinatrice adjointe%' "
-                    "OR (LOWER(prenom) IN ('hortense', 'marguerite') AND LOWER(role) LIKE '%coordinat%');"
-                ))
+                # Invariant : notif_thermal_changes est désactivé par défaut (FALSE) pour TOUS les associés sans exception
+                conn.execute(text(f"UPDATE members SET {col_name} = FALSE WHERE {col_name} IS NULL;"))
 
                 # thermal_settings table in Postgres
                 conn.execute(text("""

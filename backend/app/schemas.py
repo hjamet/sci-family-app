@@ -763,10 +763,12 @@ class HeatingStatusResponse(BaseModel):
 class HeatingModeRequest(BaseModel):
     mode: str
     program: Optional[str] = None
+    author_name: Optional[str] = None
 
 class HeatingTemperatureRequest(BaseModel):
     target_temperature: float
     program: Optional[str] = "comfort"
+    author_name: Optional[str] = None
 
 class DhwModeRequest(BaseModel):
     is_active: bool
@@ -1242,6 +1244,8 @@ class HeatingSettingsRequest(BaseModel):
     mode: Optional[str] = None
     author_name: Optional[str] = None
     details: Optional[str] = None
+    reservation_id: Optional[int] = None
+    stay_id: Optional[int] = None
 
 
 class HeatingSettingsResponse(BaseModel):
@@ -1265,6 +1269,8 @@ class PoolSettingsRequest(BaseModel):
     mode: Optional[str] = None
     author_name: Optional[str] = None
     details: Optional[str] = None
+    reservation_id: Optional[int] = None
+    stay_id: Optional[int] = None
 
 
 class PoolSettingsResponse(BaseModel):

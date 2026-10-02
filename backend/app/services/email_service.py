@@ -77,26 +77,33 @@ def get_circuit_breaker_response() -> dict:
     print(log_msg)
     return {"status": "disabled", "id": "mock_emergency_off"}
 
-# PARE-FEU STRICT DE PROTECTION FAMILIALE
-# Tant que l'envoi global n'a pas été formellement débloqué par Henri en production :
-# SEULE l'adresse hellenvillierssci@gmail.com est autorisée à recevoir des e-mails.
-# Tout envoi vers une boîte personnelle (ex: henri.jamet.ch@gmail.com ou famille) est STRICTEMENT INTERCEPTÉ, SANS AUCUN APPEL RÉSEAU RESEND.
-ALLOWED_RECIPIENTS: Set[str] = {"hellenvillierssci@gmail.com"}
+# PARE-FEU DE PRODUCTION : LISTE BLANCHE DES 7 ASSOCIÉS OFFICIELS DE LA SCI
+# Seules les adresses e-mails officielles des 7 associés de la SCI Hellenvilliers sont autorisées.
+# Toute adresse externe ou non autorisée (ex: henri.jamet.ch@gmail.com, spam) est STRICTEMENT INTERCEPTÉE.
+ALLOWED_RECIPIENTS: Set[str] = {
+    "hellenvillierssci@gmail.com",
+    "hortense_jamet@yahoo.fr",
+    "marguerite.jamet@orange.fr",
+    "eugenie_jamet@yahoo.fr",
+    "josephine_jamet@yahoo.fr",
+    "elisabeth.jamet@yahoo.fr",
+    "frederic_jamet@orange.fr",
+}
 
 # Circuit Breaker / Hermetic Test Mode
 EMAIL_TEST_MODE: bool = os.getenv("EMAIL_TEST_MODE", "true").lower() in ("true", "1", "yes")
 EMAIL_TEST_REDIRECT_TO: str = os.getenv("EMAIL_TEST_REDIRECT_TO", "hellenvillierssci@gmail.com").strip() or "hellenvillierssci@gmail.com"
 
-ALLOWED_TEST_RECIPIENTS: Set[str] = {"hellenvillierssci@gmail.com"}
+ALLOWED_TEST_RECIPIENTS: Set[str] = set(ALLOWED_RECIPIENTS)
 
 DEFAULT_MEMBER_EMAILS: List[str] = [
     "hellenvillierssci@gmail.com",
     "hortense_jamet@yahoo.fr",
-    "marguerite_jamet@yahoo.fr",
+    "marguerite.jamet@orange.fr",
     "eugenie_jamet@yahoo.fr",
     "josephine_jamet@yahoo.fr",
-    "frdjamet@gmail.com",
-    "elizabeth_jamet@yahoo.fr"
+    "elisabeth.jamet@yahoo.fr",
+    "frederic_jamet@orange.fr",
 ]
 
 # ==============================================================================
@@ -153,7 +160,7 @@ def check_firewall(to_email: Union[str, List[str]]) -> Optional[dict]:
     if isinstance(to_email, str):
         clean = to_email.strip().lower()
         if clean not in allowed_whitelist:
-            log_msg = f"[FIREWALL] Envoi vers {to_email} bloqué (seul hellenvillierssci@gmail.com est autorisé)"
+            log_msg = f"[FIREWALL] Envoi vers {to_email} bloqué (non autorisé par le pare-feu SCI)"
             logger.warning(log_msg)
             print(log_msg)
             return {"status": "blocked_by_whitelist", "id": "local_mock_blocked"}
@@ -161,7 +168,7 @@ def check_firewall(to_email: Union[str, List[str]]) -> Optional[dict]:
         has_allowed = any(str(r).strip().lower() in allowed_whitelist for r in to_email)
         if not has_allowed:
             for r in to_email:
-                log_msg = f"[FIREWALL] Envoi vers {r} bloqué (seul hellenvillierssci@gmail.com est autorisé)"
+                log_msg = f"[FIREWALL] Envoi vers {r} bloqué (non autorisé par le pare-feu SCI)"
                 logger.warning(log_msg)
                 print(log_msg)
             return {"status": "blocked_by_whitelist", "id": "local_mock_blocked"}
@@ -282,7 +289,7 @@ def send_email(
     if isinstance(to_email, str):
         clean_email = to_email.strip().lower()
         if clean_email not in allowed_whitelist:
-            log_msg = f"[FIREWALL] Envoi vers {to_email} bloqué (seul hellenvillierssci@gmail.com est autorisé)"
+            log_msg = f"[FIREWALL] Envoi vers {to_email} bloqué (non autorisé par le pare-feu SCI)"
             logger.warning(log_msg)
             print(log_msg)
             return {"status": "blocked_by_whitelist", "id": "local_mock_blocked"}
@@ -294,7 +301,7 @@ def send_email(
             if r_str.lower() in allowed_whitelist:
                 allowed.append(r_str)
             else:
-                log_msg = f"[FIREWALL] Envoi vers {r} bloqué (seul hellenvillierssci@gmail.com est autorisé)"
+                log_msg = f"[FIREWALL] Envoi vers {r} bloqué (non autorisé par le pare-feu SCI)"
                 logger.warning(log_msg)
                 print(log_msg)
         if not allowed:
@@ -303,7 +310,7 @@ def send_email(
     else:
         clean_email = str(to_email).strip().lower()
         if clean_email not in allowed_whitelist:
-            log_msg = f"[FIREWALL] Envoi vers {to_email} bloqué (seul hellenvillierssci@gmail.com est autorisé)"
+            log_msg = f"[FIREWALL] Envoi vers {to_email} bloqué (non autorisé par le pare-feu SCI)"
             logger.warning(log_msg)
             print(log_msg)
             return {"status": "blocked_by_whitelist", "id": "local_mock_blocked"}
@@ -380,11 +387,14 @@ def send_email(
 
                 if resp.status_code in (200, 201):
                     result = resp.json()
+                    if isinstance(result, dict):
+                        result["status"] = "sent"
+                        result["status_code"] = resp.status_code
                     logger.info(f"[EMAIL SERVICE] Email sent successfully via Resend to {final_recipients}: {result}")
                     return result
                 else:
                     logger.error(f"[EMAIL SERVICE] Resend HTTP Error {resp.status_code}: {resp.text}")
-                    return {"error": resp.text, "status_code": resp.status_code}
+                    return {"error": resp.text, "status_code": resp.status_code, "status": "error"}
         else:
             # Fallback direct urllib si httpx non installé
             data_bytes = json.dumps(payload).encode("utf-8")
@@ -393,15 +403,18 @@ def send_email(
                 with urllib.request.urlopen(req, timeout=10.0) as resp:
                     resp_text = resp.read().decode("utf-8")
                     result = json.loads(resp_text) if resp_text else {}
+                    if isinstance(result, dict):
+                        result["status"] = "sent"
+                        result["status_code"] = 200
                     logger.info(f"[EMAIL SERVICE (urllib)] Email sent successfully via Resend to {final_recipients}: {result}")
                     return result
             except urllib.error.HTTPError as he:
                 err_text = he.read().decode("utf-8")
                 logger.error(f"[EMAIL SERVICE (urllib)] Resend HTTP Error {he.code}: {err_text}")
-                return {"error": err_text, "status_code": he.code}
+                return {"error": err_text, "status_code": he.code, "status": "error"}
     except Exception as e:
         logger.error(f"[EMAIL SERVICE] Network error calling Resend API: {e}")
-        return {"error": str(e)}
+        return {"error": str(e), "status": "error"}
 
 
 # ==============================================================================
