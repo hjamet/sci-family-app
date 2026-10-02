@@ -1063,6 +1063,16 @@ def format_project_response(project: Project) -> dict:
     if not isinstance(external_links_list, list):
         external_links_list = []
 
+    raw_key_values = getattr(project, "key_values", None)
+    key_values_list = []
+    if raw_key_values:
+        try:
+            key_values_list = json.loads(raw_key_values) if isinstance(raw_key_values, str) else list(raw_key_values)
+        except Exception:
+            key_values_list = []
+    if not isinstance(key_values_list, list):
+        key_values_list = []
+
     options_counts = {}
     for opt in options_list:
         count = 0
@@ -1114,6 +1124,7 @@ def format_project_response(project: Project) -> dict:
         "linked_documents": getattr(project, "linked_documents", None),
         "document_urls": doc_urls_list,
         "external_links": external_links_list,
+        "key_values": key_values_list,
         "supplier_info": getattr(project, "supplier_info", None),
         "submitted_by": project.submitted_by,
         "responsible": project.responsible,
@@ -2656,6 +2667,7 @@ def create_project(proj: ProjectCreate, db: Session = Depends(get_db)):
     doc_urls_str = json.dumps(proj.document_urls) if proj.document_urls else None
     options_str = json.dumps(proj.options) if proj.options else None
     external_links_str = json.dumps(proj.external_links) if proj.external_links else None
+    key_values_str = json.dumps(proj.key_values) if proj.key_values else None
 
     # Cycle de vie calqué sur les tâches (Annotations 8, 9 & 10) :
     # Si aucun statut n'est fourni ou s'il est par défaut ("SOUMIS"), initialiser impérativement status = "PROPOSED"
@@ -2681,6 +2693,7 @@ def create_project(proj: ProjectCreate, db: Session = Depends(get_db)):
         linked_documents=proj.linked_documents,
         document_urls=doc_urls_str,
         external_links=external_links_str,
+        key_values=key_values_str,
         supplier_info=proj.supplier_info,
         submitted_by=proj.submitted_by,
         responsible=proj.responsible,
@@ -3141,6 +3154,8 @@ def review_project(project_id: int, review: ProjectReview, db: Session = Depends
         db_proj.allow_multiple_choices = bool(review.allow_multiple_choices)
     if review.external_links is not None:
         db_proj.external_links = json.dumps(review.external_links) if not isinstance(review.external_links, str) else review.external_links
+    if review.key_values is not None:
+        db_proj.key_values = json.dumps(review.key_values) if not isinstance(review.key_values, str) else review.key_values
 
     # Invalidation étendue et réinitialisation des votes si titre, description, options, multi ou docs modifiés (Annotation 6)
     votes_count = db.query(ProjectVote).filter(ProjectVote.project_id == project_id).count()
@@ -4171,6 +4186,15 @@ def format_task_response(task: Task, include_comments: bool = False) -> dict:
     if not isinstance(external_links, list):
         external_links = []
 
+    key_values = []
+    if getattr(task, "key_values", None):
+        try:
+            key_values = json.loads(task.key_values) if isinstance(task.key_values, str) else list(task.key_values)
+        except Exception:
+            key_values = []
+    if not isinstance(key_values, list):
+        key_values = []
+
     comments_list = [format_comment_response(c) for c in task.comments] if task.comments else []
 
     data = {
@@ -4197,6 +4221,7 @@ def format_task_response(task: Task, include_comments: bool = False) -> dict:
         "checklist": checklist,
         "documents": documents,
         "external_links": external_links,
+        "key_values": key_values,
         "completion_notes": task.completion_notes,
         "completion_docs": completion_docs,
         "created_by": task.created_by,
@@ -4420,6 +4445,9 @@ def create_task(
     raw_external_links = payload.get("external_links")
     external_links_json = json.dumps(raw_external_links) if isinstance(raw_external_links, list) else (str(raw_external_links) if raw_external_links else None)
 
+    raw_key_values = payload.get("key_values")
+    key_values_json = json.dumps(raw_key_values) if isinstance(raw_key_values, list) else (str(raw_key_values) if raw_key_values else None)
+
     ref = payload.get("ref")
     if not ref:
         last_task = db.query(Task).order_by(Task.id.desc()).first()
@@ -4452,6 +4480,7 @@ def create_task(
         checklist=checklist,
         documents=documents_json,
         external_links=external_links_json,
+        key_values=key_values_json,
         created_by=created_by
     )
     db.add(db_task)
@@ -4791,6 +4820,10 @@ def update_task(
     if "external_links" in payload and payload["external_links"] is not None:
         val = payload["external_links"]
         task.external_links = json.dumps(val) if isinstance(val, list) else str(val)
+
+    if "key_values" in payload and payload["key_values"] is not None:
+        val = payload["key_values"]
+        task.key_values = json.dumps(val) if isinstance(val, list) else str(val)
 
     if "completion_notes" in payload and payload["completion_notes"] is not None:
         task.completion_notes = payload["completion_notes"]

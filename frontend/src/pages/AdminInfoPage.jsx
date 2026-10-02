@@ -1390,8 +1390,9 @@ export default function AdminInfoPage({ currentUser }) {
         <div id="documents-container" className="mt-space-md grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-gutter transition-opacity duration-200">
           {filteredDocuments.map((doc) => {
             const docExt = (doc.filename || doc.file_name || doc.file_url || '').split('.').pop()?.toUpperCase() || 'PDF';
-            const catObj = categoriesList.find((c) => c.name === doc.category);
-            const badgeColorClass = COLOR_OPTIONS.find((c) => c.id === catObj?.color)?.badgeBg || 'bg-slate-100 text-slate-800 border-slate-200';
+            const docTags = parseDocumentTags(doc);
+            const firstTag = docTags.length > 0 ? docTags[0] : (doc.category || 'Général');
+            const firstCatObj = categoriesList.find((c) => c.name === firstTag);
 
             return (
               <div
@@ -1414,16 +1415,38 @@ export default function AdminInfoPage({ currentUser }) {
                       </span>
                     </div>
 
-                    {/* Stamp & Category Center */}
+                    {/* Stamp & Category Center (Mosaïque d'icônes si multi-tags) */}
                     <div className="flex flex-col items-center justify-center my-auto text-center px-2">
-                      <div className="w-12 h-12 rounded-full flex items-center justify-center mb-1 bg-sage-soft text-primary">
-                        <span className="text-2xl">{catObj?.emoji || '📁'}</span>
-                      </div>
+                      {docTags.length > 1 ? (
+                        <div className="flex items-center justify-center gap-1.5 mb-1.5 flex-wrap max-w-full">
+                          {docTags.slice(0, 3).map((tag) => {
+                            const cat = categoriesList.find((c) => c.name === tag);
+                            return (
+                              <div
+                                key={tag}
+                                className="w-9 h-9 rounded-full flex items-center justify-center bg-sage-soft text-primary shadow-2xs border border-border-subtle"
+                                title={tag}
+                              >
+                                <span className="text-lg">{cat?.emoji || '📁'}</span>
+                              </div>
+                            );
+                          })}
+                          {docTags.length > 3 && (
+                            <span className="text-[10px] font-bold text-on-surface-variant bg-surface-container px-1.5 py-0.5 rounded-full">
+                              +{docTags.length - 3}
+                            </span>
+                          )}
+                        </div>
+                      ) : (
+                        <div className="w-12 h-12 rounded-full flex items-center justify-center mb-1 bg-sage-soft text-primary">
+                          <span className="text-2xl">{firstCatObj?.emoji || '📁'}</span>
+                        </div>
+                      )}
                       <span className="font-headline-sm text-xs font-bold text-forest-deep line-clamp-1" title={doc.title || doc.name}>
                         {doc.title || doc.name}
                       </span>
                       <span className="text-[11px] text-on-surface-variant font-label-sm truncate max-w-full">
-                        {doc.notes ? `Org : ${doc.notes}` : doc.category}
+                        {doc.notes ? `Org : ${doc.notes}` : (docTags.length > 0 ? docTags.join(' • ') : (doc.category || 'Général'))}
                       </span>
                     </div>
 
@@ -1434,22 +1457,29 @@ export default function AdminInfoPage({ currentUser }) {
                     </div>
                   </div>
 
-                  {/* Document Metadata & Multi-Tags */}
+                  {/* Document Metadata & Multi-Tags Mosaïque (Annotation 3) */}
                   <div className="mt-3">
-                    <div className="flex items-center gap-1 flex-wrap mb-1.5 min-h-[22px]">
-                      {parseDocumentTags(doc).map((tag) => {
-                        const cat = categoriesList.find((c) => c.name === tag);
-                        const badgeColor = getTagColorClass(cat?.color);
-                        return (
-                          <span
-                            key={tag}
-                            className={`inline-flex items-center gap-1 px-2 py-0.5 rounded text-[10px] font-semibold border ${badgeColor}`}
-                          >
-                            <span>{cat?.emoji || '📁'}</span>
-                            <span>{tag}</span>
-                          </span>
-                        );
-                      })}
+                    <div className="doc-tags-mosaic flex items-center gap-1.5 flex-wrap mb-2 min-h-[26px]">
+                      {docTags.length > 0 ? (
+                        docTags.map((tag) => {
+                          const cat = categoriesList.find((c) => c.name === tag);
+                          const badgeColor = getTagColorClass(cat?.color);
+                          return (
+                            <span
+                              key={tag}
+                              className={`doc-tag-badge inline-flex items-center gap-1 px-2.5 py-0.5 rounded text-xs font-semibold border ${badgeColor} shadow-2xs`}
+                            >
+                              <span>{cat?.emoji || '📁'}</span>
+                              <span>{tag}</span>
+                            </span>
+                          );
+                        })
+                      ) : (
+                        <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded text-[10px] font-semibold border bg-slate-100 text-slate-700 border-slate-200">
+                          <span>📁</span>
+                          <span>Sans étiquette</span>
+                        </span>
+                      )}
                     </div>
                     <h3
                       className="font-headline-sm text-sm text-forest-deep font-bold line-clamp-2 leading-tight doc-title-text"
@@ -1480,6 +1510,7 @@ export default function AdminInfoPage({ currentUser }) {
                   </button>
 
                   <button
+                    id={`btn-edit-doc-${doc.id || doc.filename}`}
                     type="button"
                     onClick={() => openRenameModal(doc)}
                     className="btn-rename p-2 h-[40px] w-[40px] rounded-DEFAULT bg-surface-container-lowest border-2 border-border-subtle text-on-surface-variant hover:text-primary hover:border-primary transition-all flex items-center justify-center cursor-pointer shrink-0"
@@ -1505,8 +1536,9 @@ export default function AdminInfoPage({ currentUser }) {
         /* List Layout */
         <div id="documents-container" className="mt-space-md flex flex-col gap-3 transition-opacity duration-200">
           {filteredDocuments.map((doc) => {
-            const catObj = categoriesList.find((c) => c.name === doc.category);
-            const badgeColorClass = COLOR_OPTIONS.find((c) => c.id === catObj?.color)?.badgeBg || 'bg-slate-100 text-slate-800 border-slate-200';
+            const docTags = parseDocumentTags(doc);
+            const firstTag = docTags.length > 0 ? docTags[0] : (doc.category || 'Général');
+            const firstCatObj = categoriesList.find((c) => c.name === firstTag);
 
             return (
               <div
@@ -1518,30 +1550,54 @@ export default function AdminInfoPage({ currentUser }) {
                   className="flex items-center gap-3 cursor-pointer group-hover:opacity-95 transition-opacity flex-1 min-w-0"
                   title="Cliquer pour consulter ce document"
                 >
-                  <div className="w-10 h-10 rounded-full flex items-center justify-center shrink-0 bg-sage-soft text-primary text-xl">
-                    {catObj?.emoji || '📁'}
-                  </div>
-                  <div className="min-w-0">
-                    <div className="flex items-center gap-1.5 flex-wrap">
-                      {parseDocumentTags(doc).map((tag) => {
+                  {docTags.length > 1 ? (
+                    <div className="flex items-center -space-x-2 shrink-0">
+                      {docTags.slice(0, 3).map((tag) => {
                         const cat = categoriesList.find((c) => c.name === tag);
-                        const badgeColor = getTagColorClass(cat?.color);
                         return (
-                          <span
+                          <div
                             key={tag}
-                            className={`inline-flex items-center gap-1 px-2 py-0.5 rounded text-[10px] font-semibold border ${badgeColor}`}
+                            className="w-10 h-10 rounded-full flex items-center justify-center bg-sage-soft text-primary border-2 border-white shadow-2xs text-lg"
+                            title={tag}
                           >
-                            <span>{cat?.emoji || '📁'}</span>
-                            <span>{tag}</span>
-                          </span>
+                            {cat?.emoji || '📁'}
+                          </div>
                         );
                       })}
+                    </div>
+                  ) : (
+                    <div className="w-10 h-10 rounded-full flex items-center justify-center shrink-0 bg-sage-soft text-primary text-xl">
+                      {firstCatObj?.emoji || '📁'}
+                    </div>
+                  )}
+                  <div className="min-w-0">
+                    <div className="doc-tags-mosaic flex items-center gap-1.5 flex-wrap">
+                      {docTags.length > 0 ? (
+                        docTags.map((tag) => {
+                          const cat = categoriesList.find((c) => c.name === tag);
+                          const badgeColor = getTagColorClass(cat?.color);
+                          return (
+                            <span
+                              key={tag}
+                              className={`doc-tag-badge inline-flex items-center gap-1 px-2.5 py-0.5 rounded text-[11px] font-semibold border ${badgeColor} shadow-2xs`}
+                            >
+                              <span>{cat?.emoji || '📁'}</span>
+                              <span>{tag}</span>
+                            </span>
+                          );
+                        })
+                      ) : (
+                        <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded text-[10px] font-semibold border bg-slate-100 text-slate-700 border-slate-200">
+                          <span>📁</span>
+                          <span>Sans étiquette</span>
+                        </span>
+                      )}
                       <span className="text-xs font-mono text-on-surface-variant ml-1">{doc.size || '—'}</span>
                     </div>
-                    <h3 className="font-headline-sm text-sm text-forest-deep font-bold line-clamp-1 doc-title-text mt-0.5 truncate" title={doc.filename || doc.title}>
+                    <h3 className="font-headline-sm text-sm text-forest-deep font-bold line-clamp-1 doc-title-text mt-1 truncate" title={doc.filename || doc.title}>
                       {doc.filename || doc.title}
                     </h3>
-                    <p className="font-body-md text-xs text-on-surface-variant truncate">
+                    <p className="font-body-md text-xs text-on-surface-variant truncate mt-0.5">
                       {doc.upload_date || 'Date'} • Déposant : {doc.uploaded_by || 'Henri Jamet'} {doc.notes ? `• Org : ${doc.notes}` : ''}
                     </p>
                   </div>
@@ -1562,6 +1618,7 @@ export default function AdminInfoPage({ currentUser }) {
                     <span>Consulter</span>
                   </button>
                   <button
+                    id={`btn-edit-doc-list-${doc.id || doc.filename}`}
                     type="button"
                     onClick={() => openRenameModal(doc)}
                     className="btn-rename p-2 h-[38px] w-[38px] rounded-DEFAULT bg-surface-container-lowest border-2 border-border-subtle text-on-surface-variant hover:text-primary hover:border-primary transition-all flex items-center justify-center cursor-pointer"
@@ -2074,6 +2131,7 @@ export default function AdminInfoPage({ currentUser }) {
                   Annuler
                 </button>
                 <button
+                  id="btn-submit-rename"
                   type="submit"
                   className="h-[48px] px-6 rounded-DEFAULT bg-primary text-white font-label-lg text-sm font-bold hover:bg-forest-deep transition-all flex items-center gap-2 cursor-pointer shadow-xs"
                 >

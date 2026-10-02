@@ -477,3 +477,102 @@ def test_annotation_1_stay_confirmation_dispatches_to_all_participants():
         db.close()
 
 
+def test_key_values_persistence_tasks_and_projects():
+    """Vérifie la persistance et la restitution unifiée des clés-valeurs (Annotation 5) sur Tâches et Projets (Votes)."""
+    # 1. Test sur les Tâches
+    initial_kv = [
+        {"key": "Entreprise", "value": "Toiture Pro SARL"},
+        {"key": "Téléphone", "value": "0601020304"},
+        {"key": "Email", "value": "contact@toiturepro.fr"}
+    ]
+    task_res = client.post("/api/tasks", json={
+        "title": "Mission Test Clés Valeurs",
+        "subject": "Presbytère",
+        "status": "EN_COURS",
+        "created_by": "Henri Jamet",
+        "key_values": initial_kv
+    })
+    assert task_res.status_code == 201, f"Échec création tâche: {task_res.text}"
+    task_data = task_res.json()
+    task_id = task_data["id"]
+
+    try:
+        # Vérification retour création tâche
+        assert "key_values" in task_data
+        assert len(task_data["key_values"]) == 3
+        assert task_data["key_values"][0]["key"] == "Entreprise"
+        assert task_data["key_values"][0]["value"] == "Toiture Pro SARL"
+
+        # Vérification GET /api/tasks/{id}
+        get_res = client.get(f"/api/tasks/{task_id}")
+        assert get_res.status_code == 200
+        get_data = get_res.json()
+        assert len(get_data["key_values"]) == 3
+
+        # Mise à jour des clés-valeurs via PUT /api/tasks/{id}
+        updated_kv = [
+            {"key": "Entreprise", "value": "Toiture Pro SARL"},
+            {"key": "Contact", "value": "M. Robert"},
+            {"key": "SIRET", "value": "98765432100019"}
+        ]
+        patch_res = client.put(f"/api/tasks/{task_id}", json={
+            "key_values": updated_kv
+        })
+        assert patch_res.status_code == 200
+        patch_data = patch_res.json()
+        assert len(patch_data["key_values"]) == 3
+        assert patch_data["key_values"][1]["key"] == "Contact"
+        assert patch_data["key_values"][2]["key"] == "SIRET"
+
+    finally:
+        client.delete(f"/api/tasks/{task_id}")
+
+    # 2. Test sur les Projets (Scrutins de vote)
+    proj_kv = [
+        {"key": "Artisan", "value": "Menuiserie Bois & Charpente"},
+        {"key": "Téléphone", "value": "0473001122"},
+        {"key": "Devis Réf", "value": "DEV-2026-042"}
+    ]
+    proj_res = client.post("/api/projects", json={
+        "property_id": 1,
+        "title": "Vote Clés Valeurs Test",
+        "description": "Scrutin avec coordonnées prestataire jointes",
+        "category": "Presbytère",
+        "status": "OPEN",
+        "submitted_by": "Henri Jamet",
+        "key_values": proj_kv
+    })
+    assert proj_res.status_code == 201, f"Échec création projet: {proj_res.text}"
+    proj_data = proj_res.json()
+    proj_id = proj_data["id"]
+
+    try:
+        assert "key_values" in proj_data
+        assert len(proj_data["key_values"]) == 3
+        assert proj_data["key_values"][0]["key"] == "Artisan"
+
+        # Vérification GET /api/projects
+        list_res = client.get(f"/api/projects?status=OPEN")
+        assert list_res.status_code == 200
+        matching = [p for p in list_res.json() if p["id"] == proj_id]
+        assert len(matching) == 1
+        assert len(matching[0]["key_values"]) == 3
+
+        # Mise à jour via PATCH /api/projects/{id}/review
+        review_kv = [
+            {"key": "Artisan", "value": "Menuiserie Bois & Charpente"},
+            {"key": "IBAN", "value": "FR7630004000000000000000000"}
+        ]
+        rev_res = client.patch(f"/api/projects/{proj_id}/review", json={
+            "key_values": review_kv
+        })
+        assert rev_res.status_code == 200
+        rev_data = rev_res.json()
+        assert len(rev_data["key_values"]) == 2
+        assert rev_data["key_values"][1]["key"] == "IBAN"
+
+    finally:
+        client.delete(f"/api/projects/{proj_id}")
+
+
+

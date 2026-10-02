@@ -35,6 +35,8 @@ import UploadDocumentModal from './UploadDocumentModal';
 import SelectExistingDocumentModal from './SelectExistingDocumentModal';
 import FamilyChat from './common/FamilyChat';
 import ExternalLinksSection from './common/ExternalLinksSection';
+import { MarkdownContent } from './common/RichTextEditor';
+import KeyValueAttachmentList, { parseKeyValues } from './common/KeyValueAttachmentList';
 
 const SUBJECTS = [
   'Presbytère',
@@ -192,6 +194,7 @@ export default function TaskDetailModal({
     if (editChecklist.length !== parseChecklistItems(task?.checklist).length) return true;
     if (editDocuments.length !== parseTaskDocuments(task?.documents || task?.completion_docs).length) return true;
     if (editExternalLinks.length !== (Array.isArray(task?.external_links) ? task.external_links.length : 0)) return true;
+    if (JSON.stringify(editKeyValues) !== JSON.stringify(parseKeyValues(task?.key_values))) return true;
     return false;
   };
 
@@ -283,6 +286,7 @@ export default function TaskDetailModal({
   const [editVoteOptions, setEditVoteOptions] = useState([]);
   const [editDocuments, setEditDocuments] = useState([]);
   const [editExternalLinks, setEditExternalLinks] = useState([]);
+  const [editKeyValues, setEditKeyValues] = useState([]);
   const [editOnsitePresence, setEditOnsitePresence] = useState(isBugReportEffective ? false : (initialTask?.onsite_presence !== undefined ? initialTask.onsite_presence !== false : true));
   const [editIsRecurring, setEditIsRecurring] = useState(false);
   const [editRecurrenceInterval, setEditRecurrenceInterval] = useState(1);
@@ -628,6 +632,7 @@ export default function TaskDetailModal({
     setEditChecklist(isNew ? [] : parseChecklistItems(t.checklist));
     setEditDocuments(parseTaskDocuments(t.documents || t.completion_docs || t.document_urls));
     setEditExternalLinks(Array.isArray(t.external_links) ? t.external_links : []);
+    setEditKeyValues(parseKeyValues(t.key_values));
     setEditOnsitePresence(isBugReportEffective ? false : (t.onsite_presence !== undefined ? t.onsite_presence !== false : true));
     setEditIsRecurring(Boolean(t.is_recurring));
     setEditRecurrenceInterval(t.recurrence_interval || 1);
@@ -694,6 +699,7 @@ export default function TaskDetailModal({
         options: cleanOptions,
         documents: editDocuments,
         external_links: editExternalLinks,
+        key_values: editKeyValues,
         onsite_presence: editOnsitePresence,
         subject: editSubject,
         category: editSubject,
@@ -738,6 +744,7 @@ export default function TaskDetailModal({
               document_urls: editDocuments.map((d) => d.file_url || d.url || d.filename),
               linked_documents: editDocuments.map((d) => d.name || d.filename).join(', '),
               external_links: editExternalLinks,
+              key_values: editKeyValues,
             });
             invalidateApiCache('projects');
             invalidateApiCache('/api/projects');
@@ -1356,7 +1363,7 @@ export default function TaskDetailModal({
                   </div>
 
                   <div className="p-4 bg-canvas-slate rounded-2xl font-body-lg text-xs sm:text-sm text-on-surface leading-relaxed shadow-sm border border-slate-200/60">
-                    <p>{task.description || (isVoteInitiative ? "Consultation des associés pour engagement de travaux." : "Aucune description détaillée renseignée.")}</p>
+                    <MarkdownContent content={task.description || (isVoteInitiative ? "Consultation des associés pour engagement de travaux." : "")} />
                   </div>
                 </div>
 
@@ -1424,9 +1431,9 @@ export default function TaskDetailModal({
                   </div>
 
                   <div className="flex flex-col gap-2">
-                    {parseTaskDocuments(task?.documents || task?.completion_docs).length === 0 && (!task?.external_links || task.external_links.length === 0) ? (
+                    {parseTaskDocuments(task?.documents || task?.completion_docs).length === 0 && (!task?.external_links || task.external_links.length === 0) && (!task?.key_values || parseKeyValues(task.key_values).length === 0) ? (
                       <p className="text-xs text-on-surface-variant italic py-2">
-                        Aucun document ou lien web joint pour cette mission.
+                        Aucun document, lien web ou information clé joint pour cette mission.
                       </p>
                     ) : (
                       <>
@@ -1518,6 +1525,13 @@ export default function TaskDetailModal({
                             </div>
                           );
                         })}
+
+                        {/* Annotation 5 : Clés-valeurs rattachées (contacts, entreprises, emails, téléphones...) */}
+                        <KeyValueAttachmentList
+                          items={task?.key_values}
+                          isEditing={false}
+                          title="Informations clés & Coordonnées"
+                        />
                       </>
                     )}
                   </div>
@@ -2029,7 +2043,7 @@ export default function TaskDetailModal({
                       value={editDescription}
                       onChange={(e) => setEditDescription(e.target.value)}
                       placeholder={isVoteInitiative ? "Expliquez l'urgence, le contexte, l'impact sur la propriété et l'intérêt pour la SCI..." : "Description..."}
-                      className="bg-white dark:bg-slate-800 rounded-lg px-3.5 py-2.5 text-xs sm:text-sm border border-slate-300 dark:border-slate-700 focus:outline-none focus:ring-2 focus:ring-primary leading-relaxed resize-none"
+                      className="bg-white dark:bg-slate-800 rounded-lg px-3.5 py-2.5 text-xs sm:text-sm border border-slate-300 dark:border-slate-700 focus:outline-none focus:ring-2 focus:ring-primary leading-relaxed resize-y min-h-[120px]"
                     />
                   </div>
 
@@ -2204,8 +2218,8 @@ export default function TaskDetailModal({
                     </div>
                   </div>
 
-                  {/* Liste des documents attachés et des liens web fusionnés (Annotation 14) */}
-                  {(editDocuments.length > 0 || editExternalLinks.length > 0) && (
+                  {/* Liste des documents attachés, liens web et clés-valeurs fusionnés (Annotations 14 & 5) */}
+                  {(editDocuments.length > 0 || editExternalLinks.length > 0 || editKeyValues.length > 0) && (
                     <div className="flex flex-col gap-2 pt-1">
                       {editDocuments.map((docItem, idx) => {
                         const norm = normalizeDocItem(docItem, idx);
@@ -2317,6 +2331,18 @@ export default function TaskDetailModal({
                           </div>
                         );
                       })}
+
+                      {/* Clés-valeurs fusionnées (Annotation 5) */}
+                      {editKeyValues.length > 0 && (
+                        <KeyValueAttachmentList
+                          items={editKeyValues}
+                          onChange={setEditKeyValues}
+                          isEditing={true}
+                          hideForm={true}
+                          hideList={false}
+                          title="Informations clés & Coordonnées attachées"
+                        />
+                      )}
                     </div>
                   )}
 
@@ -2328,6 +2354,17 @@ export default function TaskDetailModal({
                       isEditing={true}
                       hideList={true}
                       title="Ajouter un lien web ou ressource en ligne"
+                    />
+                  </div>
+
+                  {/* Formulaire d'ajout de clé-valeur (Annotation 5 : DRY Tâches & Votes) */}
+                  <div className="pt-3 border-t border-slate-100">
+                    <KeyValueAttachmentList
+                      items={editKeyValues}
+                      onChange={setEditKeyValues}
+                      isEditing={true}
+                      hideList={true}
+                      title="Ajouter une information clé (Entreprise, téléphone, email...)"
                     />
                   </div>
                 </section>

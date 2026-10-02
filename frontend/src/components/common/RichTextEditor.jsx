@@ -12,17 +12,20 @@ export function MarkdownContent({ content }) {
     return <p className="text-slate-400 italic text-xs">Aucune description saisie.</p>;
   }
 
-  // Découpage par lignes pour gérer les blocs (titres, listes, citations)
+  // Découpage par lignes pour gérer les blocs (titres, listes, citations, code fences)
   const lines = content.split('\n');
   const elements = [];
   let currentList = null;
   let listType = null; // 'ul' | 'ol'
+  let inCodeBlock = false;
+  let codeLines = [];
+  let codeLanguage = '';
 
   const flushList = () => {
     if (currentList && currentList.length > 0) {
       if (listType === 'ol') {
         elements.push(
-          <ol key={`ol-${elements.length}`} className="list-decimal list-inside space-y-1 my-2 text-slate-700 text-xs sm:text-sm pl-1">
+          <ol key={`ol-${elements.length}`} className="list-decimal list-inside space-y-1 my-2 text-slate-700 dark:text-slate-200 text-xs sm:text-sm pl-1">
             {currentList.map((item, i) => (
               <li key={i} className="leading-relaxed">{parseInlineMarkdown(item)}</li>
             ))}
@@ -30,7 +33,7 @@ export function MarkdownContent({ content }) {
         );
       } else {
         elements.push(
-          <ul key={`ul-${elements.length}`} className="list-disc list-inside space-y-1 my-2 text-slate-700 text-xs sm:text-sm pl-1">
+          <ul key={`ul-${elements.length}`} className="list-disc list-inside space-y-1 my-2 text-slate-700 dark:text-slate-200 text-xs sm:text-sm pl-1">
             {currentList.map((item, i) => (
               <li key={i} className="leading-relaxed">{parseInlineMarkdown(item)}</li>
             ))}
@@ -46,12 +49,11 @@ export function MarkdownContent({ content }) {
   function parseInlineMarkdown(text) {
     if (!text) return null;
     
-    // Remplacement simple par regex
     const parts = [];
     let remaining = text;
     let keyIdx = 0;
 
-    // Pattern combiné pour liens [label](url), gras **text**, italique *text*
+    // Pattern combiné pour liens [label](url), gras **text**, italique *text*, code `text`
     const combinedRegex = /(\[([^\]]+)\]\(([^)]+)\)|\*\*([^*]+)\*\*|\*([^*]+)\*|`([^`]+)`)/;
 
     while (remaining) {
@@ -81,14 +83,14 @@ export function MarkdownContent({ content }) {
         );
       } else if (match[4]) {
         // Gras **texte**
-        parts.push(<strong key={keyIdx++} className="font-bold text-slate-900">{match[4]}</strong>);
+        parts.push(<strong key={keyIdx++} className="font-bold text-slate-900 dark:text-slate-100">{match[4]}</strong>);
       } else if (match[5]) {
         // Italique *texte*
-        parts.push(<em key={keyIdx++} className="italic text-slate-800">{match[5]}</em>);
+        parts.push(<em key={keyIdx++} className="italic text-slate-800 dark:text-slate-300">{match[5]}</em>);
       } else if (match[6]) {
         // Code `texte`
         parts.push(
-          <code key={keyIdx++} className="px-1.5 py-0.5 bg-slate-100 text-slate-800 rounded font-mono text-[11px]">
+          <code key={keyIdx++} className="px-1.5 py-0.5 bg-slate-100 dark:bg-slate-800 text-slate-800 dark:text-slate-200 rounded font-mono text-[11px] border border-slate-200 dark:border-slate-700">
             {match[6]}
           </code>
         );
@@ -101,6 +103,38 @@ export function MarkdownContent({ content }) {
   }
 
   lines.forEach((rawLine, idx) => {
+    // Gestion des blocs de code multi-lignes ```
+    if (rawLine.trim().startsWith('```')) {
+      if (!inCodeBlock) {
+        flushList();
+        inCodeBlock = true;
+        codeLanguage = rawLine.trim().slice(3).trim();
+        codeLines = [];
+      } else {
+        inCodeBlock = false;
+        elements.push(
+          <div key={`code-${idx}`} className="my-2.5 rounded-xl overflow-hidden border border-slate-700/80 bg-slate-900 shadow-xs">
+            {codeLanguage && (
+              <div className="px-3 py-1 bg-slate-800 text-[10px] uppercase font-mono font-bold tracking-wider text-slate-400 border-b border-slate-700">
+                {codeLanguage}
+              </div>
+            )}
+            <pre className="p-3 overflow-x-auto text-xs font-mono text-emerald-300 leading-relaxed">
+              <code>{codeLines.join('\n')}</code>
+            </pre>
+          </div>
+        );
+        codeLines = [];
+        codeLanguage = '';
+      }
+      return;
+    }
+
+    if (inCodeBlock) {
+      codeLines.push(rawLine);
+      return;
+    }
+
     const line = rawLine.trimEnd();
 
     // Ligne vide
@@ -114,7 +148,7 @@ export function MarkdownContent({ content }) {
     if (line.startsWith('# ')) {
       flushList();
       elements.push(
-        <h3 key={`h1-${idx}`} className="font-bold text-base sm:text-lg text-slate-900 mt-3 mb-1.5 pb-1 border-b border-slate-200">
+        <h3 key={`h1-${idx}`} className="font-bold text-base sm:text-lg text-slate-900 dark:text-slate-100 mt-3 mb-1.5 pb-1 border-b border-slate-200 dark:border-slate-700">
           {parseInlineMarkdown(line.slice(2))}
         </h3>
       );
@@ -125,7 +159,7 @@ export function MarkdownContent({ content }) {
     if (line.startsWith('## ')) {
       flushList();
       elements.push(
-        <h4 key={`h2-${idx}`} className="font-bold text-sm sm:text-base text-forest-deep mt-2.5 mb-1">
+        <h4 key={`h2-${idx}`} className="font-bold text-sm sm:text-base text-forest-deep dark:text-emerald-400 mt-2.5 mb-1">
           {parseInlineMarkdown(line.slice(3))}
         </h4>
       );
@@ -136,7 +170,7 @@ export function MarkdownContent({ content }) {
     if (line.startsWith('### ')) {
       flushList();
       elements.push(
-        <h5 key={`h3-${idx}`} className="font-bold text-xs sm:text-sm text-slate-800 mt-2 mb-1">
+        <h5 key={`h3-${idx}`} className="font-bold text-xs sm:text-sm text-slate-800 dark:text-slate-200 mt-2 mb-1">
           {parseInlineMarkdown(line.slice(4))}
         </h5>
       );
@@ -146,7 +180,7 @@ export function MarkdownContent({ content }) {
     // Séparateur horizontal : --- ou ***
     if (/^(\*\*\*|---|___)$/.test(line.trim())) {
       flushList();
-      elements.push(<hr key={`hr-${idx}`} className="my-3 border-t border-slate-200" />);
+      elements.push(<hr key={`hr-${idx}`} className="my-3 border-t border-slate-200 dark:border-slate-700" />);
       return;
     }
 
@@ -154,7 +188,7 @@ export function MarkdownContent({ content }) {
     if (line.startsWith('>')) {
       flushList();
       elements.push(
-        <blockquote key={`quote-${idx}`} className="border-l-4 border-amber-400 bg-amber-50/60 pl-3 py-1.5 my-2 rounded-r-lg text-slate-700 italic text-xs sm:text-sm">
+        <blockquote key={`quote-${idx}`} className="border-l-4 border-amber-400 bg-amber-50/60 dark:bg-amber-950/30 pl-3 py-1.5 my-2 rounded-r-lg text-slate-700 dark:text-slate-300 italic text-xs sm:text-sm">
           {parseInlineMarkdown(line.replace(/^>\s*/, ''))}
         </blockquote>
       );
@@ -186,11 +220,26 @@ export function MarkdownContent({ content }) {
     // Paragraphe classique
     flushList();
     elements.push(
-      <p key={`p-${idx}`} className="text-slate-700 text-xs sm:text-sm leading-relaxed my-1">
+      <p key={`p-${idx}`} className="text-slate-700 dark:text-slate-300 text-xs sm:text-sm leading-relaxed my-1">
         {parseInlineMarkdown(line)}
       </p>
     );
   });
+
+  if (inCodeBlock && codeLines.length > 0) {
+    elements.push(
+      <div key={`code-end`} className="my-2.5 rounded-xl overflow-hidden border border-slate-700/80 bg-slate-900 shadow-xs">
+        {codeLanguage && (
+          <div className="px-3 py-1 bg-slate-800 text-[10px] uppercase font-mono font-bold tracking-wider text-slate-400 border-b border-slate-700">
+            {codeLanguage}
+          </div>
+        )}
+        <pre className="p-3 overflow-x-auto text-xs font-mono text-emerald-300 leading-relaxed">
+          <code>{codeLines.join('\n')}</code>
+        </pre>
+      </div>
+    );
+  }
 
   flushList();
 

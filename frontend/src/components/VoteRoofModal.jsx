@@ -4,6 +4,7 @@ import DocumentViewerModal from './DocumentViewerModal';
 import UploadDocumentModal from './UploadDocumentModal';
 import SelectExistingDocumentModal from './SelectExistingDocumentModal';
 import ExternalLinksSection from './common/ExternalLinksSection';
+import KeyValueAttachmentList, { parseKeyValues } from './common/KeyValueAttachmentList';
 import FamilyChat from './common/FamilyChat';
 import WhatsAppPollView, { STATUTORY_ASSOCIATES, parseVotesArray, hasVotedForOption } from './common/WhatsAppPollView';
 import CustomSelect from './CustomSelect';
@@ -376,6 +377,10 @@ function VoteRoofModalInner({
   const [editExternalLinks, setEditExternalLinks] = useState(() => parseExternalLinks(activeProject?.external_links));
   const activeExternalLinks = useMemo(() => parseExternalLinks(activeProject?.external_links), [activeProject?.external_links]);
 
+  // Clés-valeurs et coordonnées en mode édition et consultation (Annotation 5 : DRY Tâches & Votes)
+  const [editKeyValues, setEditKeyValues] = useState(() => parseKeyValues(activeProject?.key_values));
+  const activeKeyValues = useMemo(() => parseKeyValues(activeProject?.key_values), [activeProject?.key_values]);
+
   // Annotation 8 : Préservation des champs de saisie en évitant l'écrasement sur ajout de doc/lien
   const lastLoadedProjectIdRef = useRef(null);
 
@@ -392,6 +397,7 @@ function VoteRoofModalInner({
       setEditDescription(activeProject.description || '');
       setEditCategory(activeProject.category || activeProject.subject || 'Presbytère');
       setEditExternalLinks(parseExternalLinks(activeProject?.external_links));
+      setEditKeyValues(parseKeyValues(activeProject?.key_values));
       const opts = (() => {
         if (Array.isArray(activeProject.options) && activeProject.options.length > 0) return activeProject.options;
         if (typeof activeProject.options === 'string' && activeProject.options.trim()) {
@@ -438,6 +444,7 @@ function VoteRoofModalInner({
           allow_multiple_choices: Boolean(editAllowMultipleChoices),
           docsCount: (editDocuments || []).length,
           linksCount: (editExternalLinks || []).length,
+          keyValuesCount: (editKeyValues || []).length,
         };
       }
     } else {
@@ -450,7 +457,7 @@ function VoteRoofModalInner({
     const base = initialFormSnapshotRef.current;
     if (!base) {
       if (isNewProject) {
-        return Boolean(editTitle.trim() || editDescription.trim() || editDocuments.length > 0 || editExternalLinks.length > 0);
+        return Boolean(editTitle.trim() || editDescription.trim() || editDocuments.length > 0 || editExternalLinks.length > 0 || editKeyValues.length > 0);
       }
       return false;
     }
@@ -461,6 +468,7 @@ function VoteRoofModalInner({
     if (Boolean(editAllowMultipleChoices) !== Boolean(base.allow_multiple_choices)) return true;
     if (editDocuments.length !== base.docsCount) return true;
     if (editExternalLinks.length !== base.linksCount) return true;
+    if (editKeyValues.length !== base.keyValuesCount) return true;
     return false;
   }, [
     isEditing,
@@ -471,7 +479,8 @@ function VoteRoofModalInner({
     editOptions,
     editAllowMultipleChoices,
     editDocuments.length,
-    editExternalLinks.length
+    editExternalLinks.length,
+    editKeyValues.length
   ]);
 
   const handleSafeClose = () => {
@@ -494,6 +503,8 @@ function VoteRoofModalInner({
     } else {
       setEditTitle(activeProject.title || '');
       setEditDescription(activeProject.description || '');
+      setEditExternalLinks(parseExternalLinks(activeProject?.external_links));
+      setEditKeyValues(parseKeyValues(activeProject?.key_values));
       const rawCat = activeProject.category || activeProject.subject || 'Presbytère';
       const cleanRawCat = rawCat.toLowerCase().trim();
       const matchedCat = FIXED_PLACES_CATEGORIES.find(c => {
@@ -1048,7 +1059,8 @@ function VoteRoofModalInner({
           options: editOptions.filter(Boolean).length > 0 ? editOptions.filter(Boolean) : ['Approuver le projet', 'Rejeter le projet'],
           allow_multiple_choices: editAllowMultipleChoices,
           document_urls: cleanDocs,
-          external_links: editExternalLinks
+          external_links: editExternalLinks,
+          key_values: editKeyValues
         };
         const created = await createProject(newPayload);
         const newProject = created && created.id ? { ...created, status: created.status || 'PROPOSED' } : { ...newPayload, id: Date.now() };
@@ -1074,7 +1086,8 @@ function VoteRoofModalInner({
           options: editOptions.filter(Boolean),
           allow_multiple_choices: editAllowMultipleChoices,
           document_urls: cleanDocs,
-          external_links: editExternalLinks
+          external_links: editExternalLinks,
+          key_values: editKeyValues
         };
         const updated = await updateProject(activeProject.id, payload);
         invalidateCache('/api/projects');
@@ -1331,7 +1344,7 @@ function VoteRoofModalInner({
                     value={editDescription}
                     onChange={(e) => setEditDescription(e.target.value)}
                     placeholder="Précisez le contexte, les devis et les arbitrages soumis au vote..."
-                    className="w-full px-3.5 py-2 text-xs sm:text-sm rounded-lg border border-slate-300 dark:border-slate-700 bg-white dark:bg-slate-800 focus:ring-2 focus:ring-emerald-500 font-normal leading-relaxed"
+                    className="w-full px-3.5 py-2 text-xs sm:text-sm rounded-lg border border-slate-300 dark:border-slate-700 bg-white dark:bg-slate-800 focus:ring-2 focus:ring-emerald-500 font-normal leading-relaxed resize-y min-h-[120px]"
                   />
                 </div>
 
@@ -1547,6 +1560,18 @@ function VoteRoofModalInner({
                           </div>
                         );
                       })}
+
+                      {/* 3. Clés-valeurs rattachées (Annotation 5 : DRY Tâches & Votes) */}
+                      {editKeyValues.length > 0 && (
+                        <KeyValueAttachmentList
+                          items={editKeyValues}
+                          onChange={setEditKeyValues}
+                          isEditing={true}
+                          hideForm={true}
+                          hideList={false}
+                          title="Informations clés & Coordonnées rattachées"
+                        />
+                      )}
                     </div>
                   )}
 
@@ -1558,6 +1583,17 @@ function VoteRoofModalInner({
                       isEditing={true}
                       hideList={true}
                       title="Ajouter un lien web ou une source externe"
+                    />
+                  </div>
+
+                  {/* Formulaire d'ajout rapide de clés-valeurs (Annotation 5 : DRY Tâches & Votes) */}
+                  <div className="pt-2">
+                    <KeyValueAttachmentList
+                      items={editKeyValues}
+                      onChange={setEditKeyValues}
+                      isEditing={true}
+                      hideList={true}
+                      title="Ajouter une information clé ou coordonnée (Entreprise, téléphone, email...)"
                     />
                   </div>
                 </div>
@@ -1675,12 +1711,12 @@ function VoteRoofModalInner({
                       Documents justificatifs &amp; Liens rattachés
                     </h2>
                     <span className="text-xs text-on-surface-variant font-medium">
-                      {documentsList.length + activeExternalLinks.length} ressource{(documentsList.length + activeExternalLinks.length) > 1 ? 's' : ''}
+                      {documentsList.length + activeExternalLinks.length + activeKeyValues.length} ressource{(documentsList.length + activeExternalLinks.length + activeKeyValues.length) > 1 ? 's' : ''}
                     </span>
                   </div>
 
                   <div className="flex flex-col gap-2">
-                    {documentsList.length === 0 && activeExternalLinks.length === 0 ? (
+                    {documentsList.length === 0 && activeExternalLinks.length === 0 && activeKeyValues.length === 0 ? (
                       <div className="p-3.5 bg-canvas-slate dark:bg-slate-900/40 rounded-xl text-center text-xs text-on-surface-variant border border-dashed border-border-subtle">
                         Aucune pièce jointe ou ressource liée pour ce projet.
                       </div>
@@ -1774,6 +1810,13 @@ function VoteRoofModalInner({
                             </div>
                           );
                         })}
+
+                        {/* 3. Informations clés & Coordonnées (Annotation 5 : DRY Tâches & Votes) */}
+                        <KeyValueAttachmentList
+                          items={activeKeyValues}
+                          isEditing={false}
+                          title="Informations clés & Coordonnées rattachées"
+                        />
                       </>
                     )}
                   </div>

@@ -117,6 +117,7 @@ export default function UploadDocumentModal({
       setNewCatEmoji('📁');
       setNewCatColor('slate');
       setSelectedCategoryToEdit(null);
+      setUploadTags(defaultCategory ? [defaultCategory] : (categoriesList[0] ? [categoriesList[0].name] : []));
     }
   }, [isOpen]);
 
@@ -374,11 +375,11 @@ export default function UploadDocumentModal({
             </div>
           </div>
 
-          {/* Sélecteur de Catégorie & Création de Catégorie */}
+          {/* Sélecteur Multi-Tags & Création de Catégorie (Annotation 2) */}
           <div>
             <div className="flex items-center justify-between mb-1.5">
-              <label htmlFor="modal-doc-category-select" className="font-label-md text-xs font-bold text-on-surface">
-                Catégorie d'archive *
+              <label htmlFor="modal-doc-tags-select" className="font-label-md text-xs font-bold text-on-surface">
+                Étiquettes &amp; Catégories d'archive (Multi-Tags) *
               </label>
               <button
                 type="button"
@@ -498,7 +499,7 @@ export default function UploadDocumentModal({
                 setSelectedCategoryToEdit(targetCat);
                 setIsEditCategoryModalOpen(true);
               }}
-              placeholder="Sélectionnez un ou plusieurs tags..."
+              placeholder="Sélectionnez une ou plusieurs étiquettes..."
             />
           </div>
 
