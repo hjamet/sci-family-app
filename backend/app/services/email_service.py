@@ -30,45 +30,48 @@ FALLBACK_FROM_EMAIL = "SCI Familiale Hellenvilliers <notifications@henri-jamet.c
 SANDBOX_FROM_EMAIL = "SCI Familiale Hellenvilliers <onboarding@resend.dev>"
 
 # ==============================================================================
-# GOUVERNANCE PRODUCTION & COUPE-CIRCUIT D'URGENCE
+# GOUVERNANCE PRODUCTION & COUPE-CIRCUIT D'URGENCE (SECURE BY DEFAULT)
 # ==============================================================================
-# Conformément à la directive formelle de passage en production d'Henri :
-# L'envoi d'e-mails est activé en production réelle.
-# Le pare-feu strict de protection familiale reste actif (hellenvillierssci@gmail.com).
-# Pour forcer le coupe-circuit hermétique en test automatisé : DISABLE_ALL_EMAILS=true ou EMAIL_FORCE_REAL_MODE=false.
-DISABLE_ALL_EMAILS: bool = False
+# Par défaut absolu, TOUT envoi d'e-mail réel est INTERDIT en environnement local / test.
+# L'envoi physique réel via Resend est STRICTEMENT réservé à la production certifiée (Vercel)
+# où EMAIL_FORCE_REAL_MODE=true, DISABLE_ALL_EMAILS=false et EMAIL_TEST_MODE=false sont configurés.
+# En local ou dans tout script de test/scratch, le coupe-circuit et le mode simulation sont actifs.
+DISABLE_ALL_EMAILS: bool = True
 
 def is_email_disabled() -> bool:
     """
-    Coupe-circuit d'urgence global :
-    En production réelle (directive formelle d'Henri), les emails sont réactivés.
-    Le coupe-circuit peut être réarmé d'urgence via DISABLE_ALL_EMAILS=true.
+    Coupe-circuit d'urgence global & Verrou Hermétique par Défaut :
+    Par défaut, tout envoi d'email est DÉSACTIVÉ (Secure by default).
+    L'envoi n'est actif QUE si :
+      - EMAIL_FORCE_REAL_MODE est explicitement 'true'
+      - ET DISABLE_ALL_EMAILS n'est pas 'true'
+    En local ou test sans configuration explicite de production, 0 appel réseau ne peut sortir.
     """
-    if os.getenv("EMAIL_FORCE_REAL_MODE", "true").strip().lower() in ("true", "1", "yes"):
+    if os.getenv("DISABLE_ALL_EMAILS", "").strip().lower() in ("true", "1", "yes"):
+        return True
+    if os.getenv("EMAIL_FORCE_REAL_MODE", "false").strip().lower() in ("true", "1", "yes"):
         env_val = os.getenv("DISABLE_ALL_EMAILS", "false").strip().lower()
         return env_val in ("true", "1", "yes")
-    env_val = os.getenv("DISABLE_ALL_EMAILS", "").strip().lower()
+    env_val = os.getenv("DISABLE_ALL_EMAILS", "true").strip().lower()
     if env_val in ("false", "0", "no"):
         return False
-    if env_val in ("true", "1", "yes"):
-        return True
-    return DISABLE_ALL_EMAILS
+    return True
 
 def is_test_mode() -> bool:
     """
     Mode test hermétique :
-    Si EMAIL_TEST_MODE est actif (ex: 'true' dans conftest.py), AUCUN e-mail physique ne sort via Resend.
-    En production réelle, EMAIL_TEST_MODE=False permet la délivrance effective des courriels.
+    Par défaut (Secure by default), tout envoi est simulé in-memory.
+    Pour activer l'envoi physique réel via Resend (en production Vercel) :
+      - EMAIL_FORCE_REAL_MODE=true
+      - EMAIL_TEST_MODE=false
+    Dans tous les autres cas (dev, test, script scratch local), retourne True.
     """
-    if os.getenv("EMAIL_FORCE_REAL_MODE", "true").strip().lower() in ("true", "1", "yes"):
+    if os.getenv("EMAIL_TEST_MODE", "").strip().lower() in ("true", "1", "yes"):
+        return True
+    if os.getenv("EMAIL_FORCE_REAL_MODE", "false").strip().lower() in ("true", "1", "yes"):
         env_val = os.getenv("EMAIL_TEST_MODE", "false").strip().lower()
         return env_val in ("true", "1", "yes")
-    env_val = os.getenv("EMAIL_TEST_MODE", "").strip().lower()
-    if env_val in ("false", "0", "no"):
-        return False
-    if env_val in ("true", "1", "yes"):
-        return True
-    return False
+    return True
 
 def get_circuit_breaker_response() -> dict:
     """Retour standardisé du coupe-circuit d'urgence."""
