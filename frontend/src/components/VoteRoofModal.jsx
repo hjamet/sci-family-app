@@ -504,7 +504,7 @@ function VoteRoofModalInner({
       setEditTitle(activeProject.title || '');
       setEditDescription(activeProject.description || '');
       setEditExternalLinks(parseExternalLinks(activeProject?.external_links));
-      setEditKeyValues(parseKeyValues(activeProject?.key_values));
+      setEditKeyValues(parseKeyValues(activeProject?.key_values || activeProject?.custom_fields));
       const rawCat = activeProject.category || activeProject.subject || 'Presbytère';
       const cleanRawCat = rawCat.toLowerCase().trim();
       const matchedCat = FIXED_PLACES_CATEGORIES.find(c => {
@@ -1060,7 +1060,8 @@ function VoteRoofModalInner({
           allow_multiple_choices: editAllowMultipleChoices,
           document_urls: cleanDocs,
           external_links: editExternalLinks,
-          key_values: editKeyValues
+          key_values: editKeyValues,
+          custom_fields: editKeyValues
         };
         const created = await createProject(newPayload);
         const newProject = created && created.id ? { ...created, status: created.status || 'PROPOSED' } : { ...newPayload, id: Date.now() };
@@ -1087,7 +1088,8 @@ function VoteRoofModalInner({
           allow_multiple_choices: editAllowMultipleChoices,
           document_urls: cleanDocs,
           external_links: editExternalLinks,
-          key_values: editKeyValues
+          key_values: editKeyValues,
+          custom_fields: editKeyValues
         };
         const updated = await updateProject(activeProject.id, payload);
         invalidateCache('/api/projects');

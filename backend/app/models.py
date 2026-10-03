@@ -237,6 +237,7 @@ class Project(Base):
     allow_multiple_choices = Column(Boolean, default=False, nullable=True)
     external_links = Column(Text, nullable=True)  # JSON array: [{"url": "https://...", "title": "Doc Klereo"}]
     key_values = Column(Text, nullable=True)  # JSON array: [{"key": "Entreprise", "value": "EURL Bompais"}, ...]
+    custom_fields = Column(Text, nullable=True, default="[]")  # Alias JSON array: [{"key": "...", "value": "..."}]
     created_at = Column(DateTime, default=datetime.utcnow)
     updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
 
@@ -325,6 +326,7 @@ class Task(Base):
     documents = Column(Text, nullable=True)  # JSON array: [{"name": "...", "url": "...", "type": "PDF", "size": "1.2 Mo"}]
     external_links = Column(Text, nullable=True)  # JSON array: [{"url": "https://...", "title": "Doc Klereo"}]
     key_values = Column(Text, nullable=True)  # JSON array: [{"key": "Entreprise", "value": "EURL Bompais"}, ...]
+    custom_fields = Column(Text, nullable=True, default="[]")  # Alias JSON array: [{"key": "...", "value": "..."}]
     completion_notes = Column(Text, nullable=True)  # Mandatory synthesis note on closure
     completion_docs = Column(Text, nullable=True)  # JSON or comma-separated document URLs
     created_by = Column(String(100), nullable=False)

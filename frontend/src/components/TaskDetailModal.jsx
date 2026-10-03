@@ -302,6 +302,67 @@ export default function TaskDetailModal({
   ]);
   const [loadingRecs, setLoadingRecs] = useState(false);
 
+  // Annotation 3 : Tous les 7 associés triés selon le calcul d'équité de charge
+  const sortedAssociatesByEquity = React.useMemo(() => {
+    const recList = Array.isArray(recommendations) ? recommendations : [];
+    const ordered = [];
+    const seen = new Set();
+
+    recList.forEach((rec, idx) => {
+      const recName = rec.name || rec.member_name || rec.prenom || '';
+      const match = ALL_MEMBERS.find((m) => m.toLowerCase().includes(recName.toLowerCase()) || recName.toLowerCase().includes(m.toLowerCase()));
+      const finalName = match || recName;
+      if (finalName && !seen.has(finalName)) {
+        seen.add(finalName);
+        ordered.push({
+          name: finalName,
+          rank: idx + 1,
+          reason: rec.reason || (idx === 0 ? "Charge la plus équitable" : "Disponible"),
+          score_usage: rec.score_usage,
+          ratio: rec.ratio,
+        });
+      }
+    });
+
+    ALL_MEMBERS.forEach((m) => {
+      if (!seen.has(m)) {
+        seen.add(m);
+        ordered.push({
+          name: m,
+          rank: ordered.length + 1,
+          reason: "",
+        });
+      }
+    });
+
+    return ordered;
+  }, [recommendations]);
+
+  // Annotation 3 : Multi-sélection des membres pour l'arbitrage / approbation de mission
+  const [selectedValidationMembers, setSelectedValidationMembers] = useState([]);
+
+  useEffect(() => {
+    if (!isOpen) return;
+    const taskMembers = Array.isArray(task?.assigned_members) && task.assigned_members.length > 0
+      ? task.assigned_members
+      : (task?.assignee ? [task.assignee] : []);
+    if (taskMembers.length > 0) {
+      setSelectedValidationMembers(taskMembers);
+    } else if (sortedAssociatesByEquity.length > 0) {
+      setSelectedValidationMembers([sortedAssociatesByEquity[0].name]);
+    }
+  }, [isOpen, task?.id, task?.assigned_members, task?.assignee, sortedAssociatesByEquity]);
+
+  const handleToggleValidationMember = (memberName) => {
+    setSelectedValidationMembers((prev) => {
+      if (prev.includes(memberName)) {
+        return prev.filter((m) => m !== memberName);
+      } else {
+        return [...prev, memberName];
+      }
+    });
+  };
+
   useEffect(() => {
     if (!isOpen) return;
     let isMounted = true;
@@ -315,7 +376,8 @@ export default function TaskDetailModal({
           subject: currentDomain,
           category: currentDomain,
           complexity: currentComplexity,
-          taskId: task?.id
+          taskId: task?.id,
+          limit: 7
         });
         if (isMounted && res && Array.isArray(res.recommendations) && res.recommendations.length > 0) {
           setRecommendations(res.recommendations);
@@ -632,7 +694,7 @@ export default function TaskDetailModal({
     setEditChecklist(isNew ? [] : parseChecklistItems(t.checklist));
     setEditDocuments(parseTaskDocuments(t.documents || t.completion_docs || t.document_urls));
     setEditExternalLinks(Array.isArray(t.external_links) ? t.external_links : []);
-    setEditKeyValues(parseKeyValues(t.key_values));
+    setEditKeyValues(parseKeyValues(t.key_values || t.custom_fields));
     setEditOnsitePresence(isBugReportEffective ? false : (t.onsite_presence !== undefined ? t.onsite_presence !== false : true));
     setEditIsRecurring(Boolean(t.is_recurring));
     setEditRecurrenceInterval(t.recurrence_interval || 1);
@@ -700,6 +762,7 @@ export default function TaskDetailModal({
         documents: editDocuments,
         external_links: editExternalLinks,
         key_values: editKeyValues,
+        custom_fields: editKeyValues,
         onsite_presence: editOnsitePresence,
         subject: editSubject,
         category: editSubject,
@@ -745,6 +808,7 @@ export default function TaskDetailModal({
               linked_documents: editDocuments.map((d) => d.name || d.filename).join(', '),
               external_links: editExternalLinks,
               key_values: editKeyValues,
+              custom_fields: editKeyValues,
             });
             invalidateApiCache('projects');
             invalidateApiCache('/api/projects');
@@ -914,22 +978,14 @@ export default function TaskDetailModal({
       task?.assignment_mode === 'auto'
     );
 
-    let currentMembers = Array.isArray(task?.assigned_members) && task.assigned_members.length > 0
-      ? task.assigned_members
-      : (task?.assignee ? [task.assignee] : (Array.isArray(editMembers) && editMembers.length > 0 ? editMembers : []));
-
-    // Annotation 4 : Si la tâche est en mode "Attribution automatique" et aucun membre n'est encore assigné,
-    // on sélectionne immédiatement le membre le plus équitable (Top 1 recommandé) sans bloquer !
-    if ((!currentMembers || currentMembers.length === 0) && isAutoAssign) {
-      const topMember = (recommendations && recommendations.length > 0)
-        ? (recommendations[0].name || recommendations[0].member_name || recommendations[0].prenom)
-        : 'Joséphine Jamet';
-      currentMembers = [topMember];
-    }
+    let currentMembers = selectedValidationMembers && selectedValidationMembers.length > 0
+      ? selectedValidationMembers
+      : (Array.isArray(task?.assigned_members) && task.assigned_members.length > 0
+          ? task.assigned_members
+          : (task?.assignee ? [task.assignee] : (Array.isArray(editMembers) && editMembers.length > 0 ? editMembers : [])));
 
     if (!currentMembers || currentMembers.length === 0) {
-      alert("Impossible d'accepter la tâche : aucun membre n'est assigné. Veuillez désigner au moins un responsable avant d'accepter la mission.");
-      setMode('edit');
+      alert("Impossible d'approuver la tâche : aucun membre n'est sélectionné. Veuillez sélectionner au moins un responsable avant de valider la mission.");
       return;
     }
 
@@ -1600,47 +1656,90 @@ export default function TaskDetailModal({
                         : "Vous êtes l'associé en charge de cette mission. Une fois vos travaux achevés et vos justificatifs joints, validez la mission pour la soumettre à l'arbitrage des coordinateurs."}
                     </p>
 
-                    {/* Bloc d'auto-attribution en consultation pour le coordinateur (Annotation 4 & 5) */}
-                    {isProposed && isCoordinator && (task?.auto_assign_by_workload || !task?.assigned_members || (Array.isArray(task?.assigned_members) && task.assigned_members.length === 0)) && (
-                      <div className="p-3.5 bg-white/90 dark:bg-slate-900/80 rounded-xl border border-emerald-300 dark:border-emerald-700/60 text-xs space-y-2.5">
-                        <div className="flex items-center justify-between font-bold text-forest-deep dark:text-emerald-300">
+                    {/* Bloc d'attribution équitable & multi-sélection des membres (Annotation 3) */}
+                    {isProposed && isCoordinator && (
+                      <div className="p-3.5 bg-white/90 dark:bg-slate-900/80 rounded-xl border border-emerald-300 dark:border-emerald-700/60 text-xs space-y-3">
+                        <div className="flex flex-wrap items-center justify-between gap-2 font-bold text-forest-deep dark:text-emerald-300">
                           <span className="flex items-center gap-1.5">
-                            <span>🎯</span>
-                            <span>Top 3 des membres recommandés pour cette mission :</span>
+                            <span>⚖️</span>
+                            <span>Attribution de la mission — Membres associés (triés par équité de charge) :</span>
                           </span>
-                          <span className="px-2 py-0.5 rounded-full text-[10px] bg-purple-100 text-purple-800 font-semibold border border-purple-200">
-                            Auto-attribution équitable
+                          <span className="px-2 py-0.5 rounded-full text-[10px] bg-emerald-100 text-emerald-800 dark:bg-emerald-950/70 dark:text-emerald-300 font-semibold border border-emerald-300">
+                            {selectedValidationMembers.length} sélectionné{selectedValidationMembers.length > 1 ? 's' : ''} sur 7
                           </span>
                         </div>
-                        <div className="grid grid-cols-1 sm:grid-cols-3 gap-2">
-                          {recommendations.slice(0, 3).map((rec, idx) => (
-                            <div
-                              key={rec.name || idx}
-                              className={`p-2 rounded-lg border flex flex-col gap-0.5 ${
-                                idx === 0
-                                  ? 'bg-emerald-50/80 border-emerald-400 font-semibold shadow-xs ring-1 ring-emerald-400/20'
-                                  : 'bg-canvas-slate/60 border-slate-200'
-                              }`}
-                            >
-                              <div className="flex items-center gap-1.5">
-                                <span className={`w-4 h-4 rounded-full flex items-center justify-center text-[10px] shrink-0 ${
-                                  idx === 0 ? 'bg-emerald-700 text-white font-bold' : 'bg-slate-300 text-slate-700'
-                                }`}>
-                                  {idx + 1}
-                                </span>
-                                <span className="truncate">{rec.name}</span>
-                              </div>
-                              {rec.reason && (
-                                <span className="text-[10px] text-on-surface-variant font-normal truncate">
-                                  ({rec.reason})
-                                </span>
-                              )}
-                            </div>
-                          ))}
-                        </div>
-                        <p className="text-[11px] text-emerald-900/90 dark:text-emerald-300/90">
-                          ℹ️ En approuvant cette tâche, <strong>{recommendations[0]?.name || 'Joséphine Jamet'}</strong> sera automatiquement désigné(e) responsable selon le modèle d'équité.
+
+                        <p className="text-[11px] text-on-surface-variant">
+                          Cochez un ou plusieurs associés en charge de cette mission. Les associés sont classés par priorité d'équité selon l'occupation et les corvées accomplies.
                         </p>
+
+                        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-2">
+                          {sortedAssociatesByEquity.map((associate, idx) => {
+                            const isSelected = selectedValidationMembers.includes(associate.name);
+                            const isTop1 = idx === 0;
+
+                            return (
+                              <button
+                                key={`assoc-${associate.name}`}
+                                type="button"
+                                onClick={() => handleToggleValidationMember(associate.name)}
+                                className={`p-2.5 rounded-xl border text-left flex items-center justify-between gap-2.5 transition-all cursor-pointer select-none ${
+                                  isSelected
+                                    ? 'bg-emerald-50 dark:bg-emerald-950/50 border-emerald-500 shadow-xs ring-1 ring-emerald-500/30'
+                                    : 'bg-canvas-slate/60 dark:bg-slate-900/50 border-slate-200 dark:border-slate-800 hover:border-slate-300'
+                                }`}
+                              >
+                                <div className="flex items-center gap-2 min-w-0">
+                                  {/* Checkbox stylée */}
+                                  <div className={`w-4 h-4 rounded flex items-center justify-center shrink-0 border transition-colors ${
+                                    isSelected
+                                      ? 'bg-emerald-600 border-emerald-600 text-white'
+                                      : 'border-slate-400 bg-white dark:bg-slate-800'
+                                  }`}>
+                                    {isSelected && (
+                                      <span className="material-symbols-outlined text-[14px]">check</span>
+                                    )}
+                                  </div>
+
+                                  <div className="min-w-0 flex flex-col">
+                                    <div className="flex items-center gap-1.5">
+                                      <span className={`w-4 h-4 rounded-full flex items-center justify-center text-[10px] shrink-0 font-bold ${
+                                        isTop1 ? 'bg-emerald-700 text-white' : 'bg-slate-200 dark:bg-slate-700 text-slate-700 dark:text-slate-300'
+                                      }`}>
+                                        {idx + 1}
+                                      </span>
+                                      <span className="font-semibold text-on-surface dark:text-slate-100 truncate text-xs">
+                                        {associate.name}
+                                      </span>
+                                    </div>
+                                    {associate.reason && (
+                                      <span className="text-[10px] text-on-surface-variant truncate pl-5">
+                                        {associate.reason}
+                                      </span>
+                                    )}
+                                  </div>
+                                </div>
+
+                                {isTop1 && (
+                                  <span className="px-1.5 py-0.5 rounded text-[9px] font-bold bg-purple-100 text-purple-800 dark:bg-purple-950/60 dark:text-purple-300 shrink-0">
+                                    Top 1
+                                  </span>
+                                )}
+                              </button>
+                            );
+                          })}
+                        </div>
+
+                        {selectedValidationMembers.length === 0 ? (
+                          <p className="text-[11px] text-rose-600 dark:text-rose-400 font-medium flex items-center gap-1">
+                            <span className="material-symbols-outlined text-[14px]">warning</span>
+                            <span>Veuillez sélectionner au moins un membre associé pour pouvoir approuver cette tâche.</span>
+                          </p>
+                        ) : (
+                          <p className="text-[11px] text-emerald-900/90 dark:text-emerald-300/90">
+                            ℹ️ La tâche sera assignée à : <strong>{selectedValidationMembers.join(', ')}</strong>.
+                          </p>
+                        )}
                       </div>
                     )}
 
@@ -1650,11 +1749,12 @@ export default function TaskDetailModal({
                         <>
                           <button
                             type="button"
+                            disabled={selectedValidationMembers.length === 0}
                             onClick={handleAcceptModalTask}
-                            className="inline-flex items-center gap-2 px-5 py-2.5 rounded-xl bg-emerald-600 hover:bg-emerald-700 text-white font-bold text-xs sm:text-sm shadow-md transition-all cursor-pointer"
+                            className="inline-flex items-center gap-2 px-5 py-2.5 rounded-xl bg-emerald-600 hover:bg-emerald-700 disabled:opacity-40 disabled:cursor-not-allowed text-white font-bold text-xs sm:text-sm shadow-md transition-all cursor-pointer"
                           >
                             <span className="material-symbols-outlined text-[18px]">check</span>
-                            <span>Approuver la tâche</span>
+                            <span>Approuver la tâche{selectedValidationMembers.length > 0 ? ` (${selectedValidationMembers.length})` : ''}</span>
                           </button>
                           <button
                             type="button"

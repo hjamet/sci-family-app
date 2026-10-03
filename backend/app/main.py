@@ -1125,6 +1125,7 @@ def format_project_response(project: Project) -> dict:
         "document_urls": doc_urls_list,
         "external_links": external_links_list,
         "key_values": key_values_list,
+        "custom_fields": key_values_list,
         "supplier_info": getattr(project, "supplier_info", None),
         "submitted_by": project.submitted_by,
         "responsible": project.responsible,
@@ -2667,7 +2668,8 @@ def create_project(proj: ProjectCreate, db: Session = Depends(get_db)):
     doc_urls_str = json.dumps(proj.document_urls) if proj.document_urls else None
     options_str = json.dumps(proj.options) if proj.options else None
     external_links_str = json.dumps(proj.external_links) if proj.external_links else None
-    key_values_str = json.dumps(proj.key_values) if proj.key_values else None
+    raw_kv = proj.key_values if proj.key_values else proj.custom_fields
+    key_values_str = json.dumps(raw_kv) if raw_kv else None
 
     # Cycle de vie calqué sur les tâches (Annotations 8, 9 & 10) :
     # Si aucun statut n'est fourni ou s'il est par défaut ("SOUMIS"), initialiser impérativement status = "PROPOSED"
@@ -2694,6 +2696,7 @@ def create_project(proj: ProjectCreate, db: Session = Depends(get_db)):
         document_urls=doc_urls_str,
         external_links=external_links_str,
         key_values=key_values_str,
+        custom_fields=key_values_str,
         supplier_info=proj.supplier_info,
         submitted_by=proj.submitted_by,
         responsible=proj.responsible,
@@ -3154,8 +3157,11 @@ def review_project(project_id: int, review: ProjectReview, db: Session = Depends
         db_proj.allow_multiple_choices = bool(review.allow_multiple_choices)
     if review.external_links is not None:
         db_proj.external_links = json.dumps(review.external_links) if not isinstance(review.external_links, str) else review.external_links
-    if review.key_values is not None:
-        db_proj.key_values = json.dumps(review.key_values) if not isinstance(review.key_values, str) else review.key_values
+    if review.key_values is not None or review.custom_fields is not None:
+        target_kv = review.key_values if review.key_values is not None else review.custom_fields
+        val_str = json.dumps(target_kv) if not isinstance(target_kv, str) else target_kv
+        db_proj.key_values = val_str
+        db_proj.custom_fields = val_str
 
     # Invalidation étendue et réinitialisation des votes si titre, description, options, multi ou docs modifiés (Annotation 6)
     votes_count = db.query(ProjectVote).filter(ProjectVote.project_id == project_id).count()
@@ -4222,6 +4228,7 @@ def format_task_response(task: Task, include_comments: bool = False) -> dict:
         "documents": documents,
         "external_links": external_links,
         "key_values": key_values,
+        "custom_fields": key_values,
         "completion_notes": task.completion_notes,
         "completion_docs": completion_docs,
         "created_by": task.created_by,
@@ -4445,7 +4452,7 @@ def create_task(
     raw_external_links = payload.get("external_links")
     external_links_json = json.dumps(raw_external_links) if isinstance(raw_external_links, list) else (str(raw_external_links) if raw_external_links else None)
 
-    raw_key_values = payload.get("key_values")
+    raw_key_values = payload.get("key_values") if payload.get("key_values") is not None else payload.get("custom_fields")
     key_values_json = json.dumps(raw_key_values) if isinstance(raw_key_values, list) else (str(raw_key_values) if raw_key_values else None)
 
     ref = payload.get("ref")
@@ -4481,6 +4488,7 @@ def create_task(
         documents=documents_json,
         external_links=external_links_json,
         key_values=key_values_json,
+        custom_fields=key_values_json,
         created_by=created_by
     )
     db.add(db_task)
@@ -4608,11 +4616,12 @@ def get_task_recommendations_endpoint(
     category: Optional[str] = Query(None),
     complexity: Optional[str] = Query(None),
     task_id: Optional[str] = Query(None),
+    limit: Optional[int] = Query(7),
     db: Session = Depends(get_db)
 ):
     """
-    Annotation 5 :
-    Retourne le Top 3 des membres les plus recommandés pour une tâche
+    Annotation 3 & 5 :
+    Retourne les membres les plus recommandés pour une tâche (jusqu'à 7 associés)
     selon le sujet/domaine/lieu et les scores de charge actuels.
     """
     target_subject = subject or category
@@ -4639,7 +4648,7 @@ def get_task_recommendations_endpoint(
         subject=target_subject,
         category=target_subject,
         complexity=target_complexity,
-        limit=3
+        limit=limit if (limit is not None and limit > 0) else 7
     )
 
     return {
@@ -4821,9 +4830,11 @@ def update_task(
         val = payload["external_links"]
         task.external_links = json.dumps(val) if isinstance(val, list) else str(val)
 
-    if "key_values" in payload and payload["key_values"] is not None:
-        val = payload["key_values"]
-        task.key_values = json.dumps(val) if isinstance(val, list) else str(val)
+    if ("key_values" in payload and payload["key_values"] is not None) or ("custom_fields" in payload and payload["custom_fields"] is not None):
+        val = payload.get("key_values") if payload.get("key_values") is not None else payload.get("custom_fields")
+        val_str = json.dumps(val) if isinstance(val, list) else str(val)
+        task.key_values = val_str
+        task.custom_fields = val_str
 
     if "completion_notes" in payload and payload["completion_notes"] is not None:
         task.completion_notes = payload["completion_notes"]
@@ -5024,6 +5035,14 @@ def accept_task_proposal(
             task.assigned_members = json.dumps(raw_members) if isinstance(raw_members, list) else str(raw_members)
         if "auto_assign_by_workload" in payload and payload["auto_assign_by_workload"] is not None:
             task.auto_assign_by_workload = bool(payload["auto_assign_by_workload"])
+        if "key_values" in payload and payload["key_values"] is not None:
+            raw_kv = payload["key_values"]
+            task.key_values = json.dumps(raw_kv) if isinstance(raw_kv, list) else str(raw_kv)
+            task.custom_fields = task.key_values
+        elif "custom_fields" in payload and payload["custom_fields"] is not None:
+            raw_cf = payload["custom_fields"]
+            task.custom_fields = json.dumps(raw_cf) if isinstance(raw_cf, list) else str(raw_cf)
+            task.key_values = task.custom_fields
 
     # 2. Vérification obligatoire de l'assignation ou exécution de l'attribution automatique (Annotation 4)
     has_assignee = False

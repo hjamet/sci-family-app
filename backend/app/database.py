@@ -82,6 +82,9 @@ def init_db(target_engine=None):
                     if "key_values" not in existing_cols:
                         conn.execute(text("ALTER TABLE tasks ADD COLUMN key_values TEXT;"))
                         conn.commit()
+                    if "custom_fields" not in existing_cols:
+                        conn.execute(text("ALTER TABLE tasks ADD COLUMN custom_fields TEXT DEFAULT '[]';"))
+                        conn.commit()
 
                 check_projects = conn.execute(text("SELECT name FROM sqlite_master WHERE type='table' AND name='projects'")).fetchone()
                 if check_projects:
@@ -90,12 +93,17 @@ def init_db(target_engine=None):
                     if "key_values" not in existing_proj_cols:
                         conn.execute(text("ALTER TABLE projects ADD COLUMN key_values TEXT;"))
                         conn.commit()
+                    if "custom_fields" not in existing_proj_cols:
+                        conn.execute(text("ALTER TABLE projects ADD COLUMN custom_fields TEXT DEFAULT '[]';"))
+                        conn.commit()
             else:
                 # PostgreSQL (Supabase)
                 conn.execute(text("ALTER TABLE tasks ADD COLUMN IF NOT EXISTS charge_points INTEGER DEFAULT 3;"))
                 conn.execute(text("UPDATE tasks SET charge_points = 3 WHERE charge_points IS NULL;"))
                 conn.execute(text("ALTER TABLE tasks ADD COLUMN IF NOT EXISTS key_values TEXT;"))
                 conn.execute(text("ALTER TABLE projects ADD COLUMN IF NOT EXISTS key_values TEXT;"))
+                conn.execute(text("ALTER TABLE tasks ADD COLUMN IF NOT EXISTS custom_fields TEXT DEFAULT '[]';"))
+                conn.execute(text("ALTER TABLE projects ADD COLUMN IF NOT EXISTS custom_fields TEXT DEFAULT '[]';"))
                 conn.commit()
     except Exception as exc:
         import logging

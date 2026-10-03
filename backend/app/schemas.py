@@ -481,6 +481,7 @@ class ProjectCreate(BaseModel):
     allow_multiple_choices: Optional[bool] = False
     external_links: Optional[List[Any]] = []
     key_values: Optional[List[Any]] = []
+    custom_fields: Optional[List[Any]] = []
 
 class ProjectApprove(BaseModel):
     estimated_cost: Optional[float] = 0.0
@@ -507,6 +508,7 @@ class ProjectReview(BaseModel):
     documents: Optional[List[Any]] = None
     external_links: Optional[List[Any]] = None
     key_values: Optional[List[Any]] = None
+    custom_fields: Optional[List[Any]] = None
     supplier_info: Optional[str] = None
     coordinator_notes: Optional[str] = None
     estimated_cost: Optional[float] = None
@@ -561,6 +563,7 @@ class ProjectResponse(BaseModel):
     allow_multiple_choices: Optional[bool] = False
     external_links: Optional[List[Dict[str, Any]]] = None
     key_values: Optional[List[Dict[str, Any]]] = None
+    custom_fields: Optional[List[Dict[str, Any]]] = None
     created_at: datetime
     updated_at: datetime
     property: Optional[PropertyResponse] = None
@@ -570,7 +573,7 @@ class ProjectResponse(BaseModel):
     _email_dispatched: Optional[Dict[str, Any]] = None
     email_dispatched: Optional[Dict[str, Any]] = None
 
-    @field_validator("document_urls", "completion_docs", "external_links", "key_values", mode="before")
+    @field_validator("document_urls", "completion_docs", "external_links", "key_values", "custom_fields", mode="before")
     @classmethod
     def parse_json_lists(cls, v):
         if isinstance(v, str):
@@ -905,6 +908,7 @@ class TaskBase(BaseModel):
     attachments: Optional[List[Any]] = None
     external_links: Optional[List[Any]] = []
     key_values: Optional[List[Any]] = []
+    custom_fields: Optional[List[Any]] = []
     completion_notes: Optional[str] = None
     completion_docs: Optional[List[str]] = []
     created_by: Optional[str] = "Henri"
@@ -939,6 +943,7 @@ class TaskUpdate(BaseModel):
     attachments: Optional[List[Any]] = None
     external_links: Optional[List[Any]] = None
     key_values: Optional[List[Any]] = None
+    custom_fields: Optional[List[Any]] = None
     completion_notes: Optional[str] = None
     completion_docs: Optional[List[str]] = None
 
@@ -1034,7 +1039,7 @@ class TaskResponse(TaskBase):
     _email_dispatched: Optional[Dict[str, Any]] = None
     email_dispatched: Optional[Dict[str, Any]] = None
 
-    @field_validator("assigned_members", "checklist", "documents", "completion_docs", "external_links", "key_values", mode="before")
+    @field_validator("assigned_members", "checklist", "documents", "completion_docs", "external_links", "key_values", "custom_fields", mode="before")
     @classmethod
     def parse_task_json_fields(cls, v):
         if isinstance(v, str):

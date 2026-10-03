@@ -1283,6 +1283,7 @@ export async function fetchTaskRecommendations(params = {}) {
   if (params.category) query.append('category', params.category);
   if (params.complexity) query.append('complexity', params.complexity);
   if (params.taskId || params.task_id) query.append('task_id', params.taskId || params.task_id);
+  if (params.limit) query.append('limit', params.limit);
   const qs = query.toString();
   const url = `${API_BASE}/tasks/recommendations${qs ? `?${qs}` : ''}`;
   const res = await fetch(url, {

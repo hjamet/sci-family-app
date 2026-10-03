@@ -165,9 +165,10 @@ export default function KeyValueAttachmentList({
   const [newKey, setNewKey] = useState('');
   const [newValue, setNewValue] = useState('');
   const [inputError, setInputError] = useState('');
-  const [copiedIndex, setCopiedIndex] = useState(null);
+  const [copiedKeyIndex, setCopiedKeyIndex] = useState(null);
+  const [copiedValueIndex, setCopiedValueIndex] = useState(null);
 
-  const handleCopy = useCallback((textToCopy, index) => {
+  const copyToClipboard = useCallback((textToCopy, isKey, index) => {
     if (!textToCopy) return;
     try {
       if (navigator?.clipboard?.writeText) {
@@ -180,10 +181,13 @@ export default function KeyValueAttachmentList({
         document.execCommand('copy');
         document.body.removeChild(textArea);
       }
-      setCopiedIndex(index);
-      setTimeout(() => {
-        setCopiedIndex(null);
-      }, 2000);
+      if (isKey) {
+        setCopiedKeyIndex(index);
+        setTimeout(() => setCopiedKeyIndex(null), 2000);
+      } else {
+        setCopiedValueIndex(index);
+        setTimeout(() => setCopiedValueIndex(null), 2000);
+      }
     } catch (err) {
       console.warn("Échec de la copie dans le presse-papier:", err);
     }
@@ -274,6 +278,22 @@ export default function KeyValueAttachmentList({
                       <p className="font-label-md text-xs font-bold text-on-surface truncate">
                         {item.key}
                       </p>
+                      <button
+                        type="button"
+                        onClick={() => copyToClipboard(item.key, true, idx)}
+                        className={`h-5 px-1.5 rounded text-[10px] font-semibold flex items-center gap-0.5 transition-all cursor-pointer ${
+                          copiedKeyIndex === idx
+                            ? 'bg-emerald-600 text-white shadow-2xs'
+                            : 'bg-white dark:bg-slate-800 text-slate-500 hover:text-emerald-700 border border-slate-200 dark:border-slate-700'
+                        }`}
+                        title="Copier le libellé de la clé"
+                        aria-label={`Copier la clé ${item.key}`}
+                      >
+                        <span className="material-symbols-outlined text-[11px]">
+                          {copiedKeyIndex === idx ? 'check' : 'content_copy'}
+                        </span>
+                        <span>{copiedKeyIndex === idx ? 'Clé copiée !' : 'Clé'}</span>
+                      </button>
                       <span className={`px-2 py-0.5 rounded-full text-[10px] font-bold shrink-0 border ${meta.badgeColor}`}>
                         Clé-valeur
                       </span>
@@ -324,9 +344,9 @@ export default function KeyValueAttachmentList({
                   {/* Bouton de copie en 1 clic pour la valeur */}
                   <button
                     type="button"
-                    onClick={() => handleCopy(item.value, idx)}
+                    onClick={() => copyToClipboard(item.value, false, idx)}
                     className={`h-8 px-2.5 rounded-lg border text-xs font-semibold transition-all flex items-center gap-1 cursor-pointer shadow-xs ${
-                      isCopied
+                      copiedValueIndex === idx
                         ? 'bg-emerald-50 dark:bg-emerald-950/60 border-emerald-400 text-emerald-800 dark:text-emerald-200 scale-102'
                         : 'bg-surface-container-lowest border-slate-300 dark:border-slate-700 text-slate-700 dark:text-slate-300 hover:bg-slate-100 dark:hover:bg-slate-800'
                     }`}
@@ -334,10 +354,10 @@ export default function KeyValueAttachmentList({
                     aria-label={`Copier ${item.value}`}
                   >
                     <span className="material-symbols-outlined text-[15px] text-primary">
-                      {isCopied ? 'check' : 'content_copy'}
+                      {copiedValueIndex === idx ? 'check' : 'content_copy'}
                     </span>
                     <span className="hidden sm:inline">
-                      {isCopied ? 'Copié !' : 'Copier'}
+                      {copiedValueIndex === idx ? 'Copié !' : 'Copier'}
                     </span>
                   </button>
 
