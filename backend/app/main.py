@@ -6227,6 +6227,22 @@ async def init_resumable_upload(
         )
     except Exception as exc:
         logger.error(f"Erreur initialisation Google Drive Resumable: {exc}")
+        user_name = (req.uploaded_by or "").strip().lower()
+        is_coordinator = "henri" in user_name
+        detail_msg = str(getattr(exc, "detail", exc))
+        is_drive_auth_err = "invalid_grant" in detail_msg.lower() or "expir" in detail_msg.lower() or "jeton" in detail_msg.lower()
+
+        if is_drive_auth_err:
+            if is_coordinator:
+                raise HTTPException(
+                    status_code=503,
+                    detail="Le jeton Google Drive a expiré. Veuillez cliquer sur 'Reconnecter Google Drive' dans l'onglet Administratif pour réactiver le stockage cloud."
+                )
+            else:
+                raise HTTPException(
+                    status_code=503,
+                    detail="Envoi momentanément indisponible pour les pièces volumineuses. Henri a été prévenu pour réactiver le stockage."
+                )
         if isinstance(exc, HTTPException):
             raise exc
         raise HTTPException(
@@ -7008,6 +7024,56 @@ def delete_admin_document(doc_id: str, db: Session = Depends(get_db)):
 
 
 # --- Google Drive Confined Storage (Strict Drive Jail) ---
+@app.get("/api/drive/status", tags=["Google Drive"])
+def get_drive_status(db: Session = Depends(get_db)):
+    """Contrôle la validité de la connexion Google Drive sans repli masquant (Fail-Loud)."""
+    return drive_jail_service.check_connection_status(db)
+
+
+@app.get("/api/drive/oauth/url", tags=["Google Drive"])
+def get_drive_oauth_url(request: Request, db: Session = Depends(get_db)):
+    """Génère l'URL d'autorisation Google OAuth2 pour reconnexion in-app par Henri."""
+    if "hellenvilliers.henri-jamet.com" in request.headers.get("host", ""):
+        redirect_uri = "https://hellenvilliers.henri-jamet.com/api/drive/oauth/callback"
+    else:
+        base = str(request.base_url).rstrip("/")
+        redirect_uri = f"{base}/api/drive/oauth/callback"
+    auth_url = drive_jail_service.get_oauth_authorization_url(redirect_uri=redirect_uri)
+    return {"auth_url": auth_url, "redirect_uri": redirect_uri}
+
+
+@app.get("/api/drive/oauth/callback", tags=["Google Drive"])
+def drive_oauth_callback(
+    request: Request,
+    code: Optional[str] = Query(None),
+    error: Optional[str] = Query(None),
+    db: Session = Depends(get_db)
+):
+    """Callback de réception du code Google OAuth, échange et stockage du refresh token."""
+    from fastapi.responses import RedirectResponse
+    import urllib.parse
+    base = "https://hellenvilliers.henri-jamet.com" if "hellenvilliers.henri-jamet.com" in request.headers.get("host", "") else str(request.base_url).rstrip("/")
+    
+    if error:
+        logger.error(f"Erreur reçue lors du callback OAuth Google: {error}")
+        return RedirectResponse(url=f"{base}/admin?drive_error={error}", status_code=status.HTTP_303_SEE_OTHER)
+    
+    if not code:
+        return RedirectResponse(url=f"{base}/admin?drive_error=code_manquant", status_code=status.HTTP_303_SEE_OTHER)
+
+    if "hellenvilliers.henri-jamet.com" in request.headers.get("host", ""):
+        redirect_uri = "https://hellenvilliers.henri-jamet.com/api/drive/oauth/callback"
+    else:
+        redirect_uri = f"{base}/api/drive/oauth/callback"
+
+    try:
+        drive_jail_service.exchange_code_and_save_token(code=code, redirect_uri=redirect_uri, db=db)
+        return RedirectResponse(url=f"{base}/admin?drive_connected=true", status_code=status.HTTP_303_SEE_OTHER)
+    except Exception as e:
+        logger.error(f"Échec enregistrement jeton OAuth Drive: {e}")
+        return RedirectResponse(url=f"{base}/admin?drive_error={urllib.parse.quote(str(e))}", status_code=status.HTTP_303_SEE_OTHER)
+
+
 @app.get("/api/drive/files", tags=["Google Drive"])
 def list_drive_files(query: Optional[str] = None, page_size: int = 100):
     """Liste exclusivement les fichiers situés dans le dossier confiné Hellenvilliers SCI."""

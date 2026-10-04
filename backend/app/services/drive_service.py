@@ -460,6 +460,140 @@ class GoogleDriveJailService:
             _DRIVE_FILES_CACHE.clear()
             _DRIVE_FILES_CACHE_TIMESTAMP = 0.0
 
+    def get_oauth_credentials_info(self, db: Optional[Any] = None) -> Tuple[Optional[str], Optional[str], Optional[str]]:
+        """Récupère client_id, client_secret et refresh_token depuis l'env ou system_settings."""
+        client_id = os.getenv("GOOGLE_DRIVE_CLIENT_ID")
+        client_secret = os.getenv("GOOGLE_DRIVE_CLIENT_SECRET")
+        refresh_token = os.getenv("GOOGLE_DRIVE_REFRESH_TOKEN")
+
+        if not client_id or not client_secret or not refresh_token:
+            try:
+                from app.database import engine
+                from sqlalchemy import text
+                conn = db.connection() if db and hasattr(db, 'connection') else engine.connect()
+                try:
+                    rows = conn.execute(
+                        text("SELECT key, value FROM system_settings WHERE key IN ('GOOGLE_DRIVE_CLIENT_ID', 'GOOGLE_DRIVE_CLIENT_SECRET', 'GOOGLE_DRIVE_REFRESH_TOKEN')")
+                    ).fetchall()
+                    for r_key, r_val in rows:
+                        if r_key == "GOOGLE_DRIVE_CLIENT_ID" and not client_id:
+                            client_id = r_val
+                        elif r_key == "GOOGLE_DRIVE_CLIENT_SECRET" and not client_secret:
+                            client_secret = r_val
+                        elif r_key == "GOOGLE_DRIVE_REFRESH_TOKEN" and not refresh_token:
+                            refresh_token = r_val
+                finally:
+                    if not db or not hasattr(db, 'connection'):
+                        conn.close()
+            except Exception as e:
+                logger.warning(f"Erreur lecture credentials DB: {e}")
+
+        return client_id, client_secret, refresh_token
+
+    def get_oauth_authorization_url(self, redirect_uri: str, state: Optional[str] = None) -> str:
+        """Construit l'URL d'autorisation Google OAuth2 pour reconnexion in-app par le coordinateur."""
+        client_id, _, _ = self.get_oauth_credentials_info()
+        if not client_id:
+            raise HTTPException(status_code=500, detail="GOOGLE_DRIVE_CLIENT_ID non configuré.")
+
+        import urllib.parse
+        scope = "https://www.googleapis.com/auth/drive"
+        params = {
+            "client_id": client_id,
+            "redirect_uri": redirect_uri,
+            "response_type": "code",
+            "scope": scope,
+            "access_type": "offline",
+            "prompt": "consent",
+            "include_granted_scopes": "true",
+        }
+        if state:
+            params["state"] = state
+        return f"https://accounts.google.com/o/oauth2/v2/auth?{urllib.parse.urlencode(params)}"
+
+    def exchange_code_and_save_token(self, code: str, redirect_uri: str, db: Any) -> Dict[str, Any]:
+        """Échange le code d'autorisation contre un refresh_token et l'enregistre en base."""
+        client_id, client_secret, _ = self.get_oauth_credentials_info(db)
+        if not client_id or not client_secret:
+            raise HTTPException(status_code=500, detail="Identifiants client Google OAuth manquants.")
+
+        token_url = "https://oauth2.googleapis.com/token"
+        payload = {
+            "code": code,
+            "client_id": client_id,
+            "client_secret": client_secret,
+            "redirect_uri": redirect_uri,
+            "grant_type": "authorization_code",
+        }
+
+        resp = requests.post(token_url, data=payload, timeout=15)
+        if resp.status_code != 200:
+            logger.error(f"Échec échange code Google OAuth: {resp.status_code} {resp.text}")
+            raise HTTPException(
+                status_code=502,
+                detail=f"Erreur échange OAuth Google ({resp.status_code}): {resp.text}"
+            )
+
+        data = resp.json()
+        new_refresh = data.get("refresh_token")
+        if not new_refresh:
+            logger.warning("Google n'a pas renvoyé de refresh_token (prompt=consent requis).")
+
+        from sqlalchemy import text
+        if new_refresh:
+            try:
+                # Tentative syntaxe Postgres avec ON CONFLICT
+                db.execute(
+                    text("""
+                        INSERT INTO system_settings (key, value)
+                        VALUES ('GOOGLE_DRIVE_REFRESH_TOKEN', :tok)
+                        ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value
+                    """),
+                    {"tok": new_refresh}
+                )
+                db.commit()
+            except Exception:
+                db.rollback()
+                # Repli SQLite / standard
+                db.execute(
+                    text("DELETE FROM system_settings WHERE key = 'GOOGLE_DRIVE_REFRESH_TOKEN'")
+                )
+                db.execute(
+                    text("INSERT INTO system_settings (key, value) VALUES ('GOOGLE_DRIVE_REFRESH_TOKEN', :tok)"),
+                    {"tok": new_refresh}
+                )
+                db.commit()
+            logger.info("Nouveau GOOGLE_DRIVE_REFRESH_TOKEN enregistré avec succès en base de données.")
+
+        # Réinitialiser le client et le cache pour prise en compte immédiate
+        self._service = None
+        self._credentials = None
+        self.clear_cache()
+
+        return {
+            "status": "success",
+            "has_refresh_token": bool(new_refresh),
+            "access_token_present": bool(data.get("access_token"))
+        }
+
+    def check_connection_status(self, db: Optional[Any] = None) -> Dict[str, Any]:
+        """Contrôle la validité de la connexion Google Drive sans repli masquant."""
+        try:
+            token = self.get_access_token()
+            return {
+                "connected": True,
+                "status": "ok",
+                "message": "Connexion Google Drive active et opérationnelle."
+            }
+        except Exception as e:
+            err_msg = str(e)
+            is_expired = "invalid_grant" in err_msg.lower() or "expiré" in err_msg.lower()
+            return {
+                "connected": False,
+                "status": "expired" if is_expired else "error",
+                "message": "Le jeton Google Drive a expiré ou est invalide. Reconnexion requise." if is_expired else f"Erreur Google Drive: {err_msg}"
+            }
+
 
 
 # Instance singleton exportée pour l'application

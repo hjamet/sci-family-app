@@ -1,7 +1,8 @@
 import React, { useState, useEffect, useRef, useMemo } from 'react';
 import {
   fetchDocumentCategories,
-  createDocumentCategory
+  createDocumentCategory,
+  fetchDriveStatus
 } from '../api';
 import { uploadUniversalDocument, friendlyErrorMessage } from '../utils/fileUpload';
 import CustomSelect from './CustomSelect';
@@ -62,6 +63,7 @@ export default function UploadDocumentModal({
   // Édition / suppression d'une catégorie existante (Annotation 1)
   const [isEditCategoryModalOpen, setIsEditCategoryModalOpen] = useState(false);
   const [selectedCategoryToEdit, setSelectedCategoryToEdit] = useState(null);
+  const [driveStatus, setDriveStatus] = useState(null);
 
   const fileDropInputRef = useRef(null);
 
@@ -82,9 +84,19 @@ export default function UploadDocumentModal({
     }
   };
 
+  const checkDriveStatus = async () => {
+    try {
+      const status = await fetchDriveStatus();
+      setDriveStatus(status);
+    } catch {
+      // Ignorer silencieusement si API inaccessible
+    }
+  };
+
   useEffect(() => {
     if (isOpen) {
       loadCategories();
+      checkDriveStatus();
     }
   }, [isOpen]);
 
@@ -338,6 +350,24 @@ export default function UploadDocumentModal({
                 }}
               />
             </div>
+
+            {/* Avertissement / Info sur fichiers volumineux */}
+            {uploadFile && uploadFile.size > 3.5 * 1024 * 1024 && (
+              driveStatus && !driveStatus.connected ? (
+                <div className="mt-2.5 p-3 bg-amber-50 border border-amber-300 rounded-xl text-xs text-amber-950 flex items-start gap-2.5">
+                  <span className="material-symbols-outlined text-[18px] text-amber-700 shrink-0 mt-0.5">warning</span>
+                  <div className="leading-relaxed">
+                    <span className="font-bold">Stockage volumineux : </span>
+                    Ce document fait {(uploadFile.size / (1024 * 1024)).toFixed(1)} Mo. Le stockage Google Drive est temporairement déconnecté (jeton expiré). Henri peut le reconnecter en 1 clic dans l'onglet Administratif.
+                  </div>
+                </div>
+              ) : (
+                <div className="mt-2.5 p-2.5 bg-emerald-50 border border-emerald-200 rounded-xl text-xs text-emerald-900 flex items-center gap-2">
+                  <span className="material-symbols-outlined text-[18px] text-emerald-600 shrink-0">cloud_done</span>
+                  <span>Fichier volumineux ({(uploadFile.size / (1024 * 1024)).toFixed(1)} Mo) pris en charge par le relais Google Drive.</span>
+                </div>
+              )
+            )}
           </div>
 
           {/* Champ 1 : Organisme */}

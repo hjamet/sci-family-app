@@ -131,3 +131,66 @@ def test_resumable_upload_complete_and_download():
 
         # Nettoyage
         client.delete(f"/api/documents/{doc_id}")
+
+
+def test_drive_status_endpoint():
+    """Vérifie que l'endpoint GET /api/drive/status retourne le statut de connexion."""
+    with patch.object(drive_jail_service, "check_connection_status") as mock_status:
+        mock_status.return_value = {
+            "connected": True,
+            "status": "ok",
+            "message": "Connexion Google Drive active et opérationnelle."
+        }
+        res = client.get("/api/drive/status")
+        assert res.status_code == 200
+        data = res.json()
+        assert data["connected"] is True
+        assert data["status"] == "ok"
+
+
+def test_drive_oauth_url_endpoint():
+    """Vérifie que l'endpoint GET /api/drive/oauth/url renvoie l'URL Google OAuth."""
+    with patch.object(drive_jail_service, "get_oauth_authorization_url") as mock_auth:
+        mock_auth.return_value = "https://accounts.google.com/o/oauth2/v2/auth?client_id=fake&response_type=code"
+        res = client.get("/api/drive/oauth/url")
+        assert res.status_code == 200
+        data = res.json()
+        assert "auth_url" in data
+        assert "https://accounts.google.com" in data["auth_url"]
+        assert "redirect_uri" in data
+
+
+def test_drive_expired_token_fail_loud():
+    """Vérifie le message fail-loud clair lorsque le jeton Google Drive est expiré."""
+    with patch.object(drive_jail_service, "init_resumable_upload") as mock_init:
+        mock_init.side_effect = Exception("invalid_grant: Token has been expired or revoked.")
+
+        # Cas 1 : Henri (coordinateur) -> Invitation explicite à reconnecter
+        res_henri = client.post(
+            "/api/documents/upload/resumable/init",
+            json={
+                "filename": "gros_fichier.pdf",
+                "total_size": 10000000,
+                "mimetype": "application/pdf",
+                "organisme": "SCI",
+                "title": "Document",
+                "uploaded_by": "Henri Jamet"
+            }
+        )
+        assert res_henri.status_code == 503
+        assert "Reconnecter Google Drive" in res_henri.json()["detail"]
+
+        # Cas 2 : Autre membre -> Message rassurant sans jargon
+        res_membre = client.post(
+            "/api/documents/upload/resumable/init",
+            json={
+                "filename": "gros_fichier.pdf",
+                "total_size": 10000000,
+                "mimetype": "application/pdf",
+                "organisme": "SCI",
+                "title": "Document",
+                "uploaded_by": "Anne Jamet"
+            }
+        )
+        assert res_membre.status_code == 503
+        assert "Henri a été prévenu" in res_membre.json()["detail"]

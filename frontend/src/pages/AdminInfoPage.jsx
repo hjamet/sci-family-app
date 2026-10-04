@@ -8,6 +8,7 @@ import {
 } from 'lucide-react';
 import FinancialLedgerModal from '../components/FinancialLedgerModal';
 import BankReauthBanner from '../components/BankReauthBanner';
+import DriveReauthBanner from '../components/DriveReauthBanner';
 import DocumentViewerModal from '../components/DocumentViewerModal';
 import UploadDocumentModal from '../components/UploadDocumentModal';
 import SelectExistingDocumentModal from '../components/SelectExistingDocumentModal';
@@ -889,6 +890,9 @@ export default function AdminInfoPage({ currentUser }) {
 
         {/* Bannière d'alerte raccordement bancaire DSP2 réactive */}
         <BankReauthBanner bankStatus={bankStatus} onRefresh={loadBankStatus} urlError={bankingError} />
+
+        {/* Bannière d'alerte stockage Google Drive réactive (Fail-Loud) */}
+        <DriveReauthBanner currentUser={currentUser} />
 
         <div className="flex items-center justify-between mb-space-sm">
           <div className="flex items-center gap-2">
