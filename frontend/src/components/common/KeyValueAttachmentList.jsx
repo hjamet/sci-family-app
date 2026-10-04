@@ -257,7 +257,7 @@ export default function KeyValueAttachmentList({
         <div className="flex flex-col gap-2">
           {safeItems.map((item, idx) => {
             const meta = resolveKeyValueMeta(item.key, item.value);
-            const isCopied = copiedIndex === idx;
+            const isCopied = copiedValueIndex === idx || copiedKeyIndex === idx;
 
             return (
               <div
