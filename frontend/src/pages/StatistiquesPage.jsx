@@ -190,7 +190,7 @@ function StatistiquesPageInner({ currentUser, onOpenOnboardingModal }) {
 
         {/* Modern Period Selector (Annotation 9) */}
         <div className="flex items-center gap-1.5 self-start md:self-auto bg-surface-container-lowest p-1.5 rounded-2xl border border-border-subtle shadow-xs">
-          <span className="text-xs font-bold text-on-surface-variant px-2.5">Période :</span>
+          <span className="text-xs font-bold text-on-surface-variant px-2.5 whitespace-nowrap">Période&nbsp;:</span>
           {PERIOD_OPTIONS.map((opt) => (
             <button
               key={opt.id}

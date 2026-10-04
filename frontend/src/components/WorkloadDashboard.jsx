@@ -157,12 +157,12 @@ function WorkloadDashboardInner({ currentUser, period: propPeriod = 'all' }) {
       // 1. Score d'utilisation / occupation (jours réels passés au domaine)
       const score_usage = daysByMember[member.prenom] || 0;
 
-      // 2. Score de corvées / tâches accomplies (tâches validées)
+      // 2. Score de missions / tâches accomplies (tâches validées)
       const score_taches = completedTasks.length;
 
-      // 3. Algorithme de tri d'équité gamifié (Annotation 10) :
+      // 3. Algorithme d'équilibre participatif :
       // ratio = (score_taches + 0.5) / (score_usage + 0.5)
-      // Robustesse sans division par zéro. Si tâches > 0 et usage == 0 -> ratio maximal !
+      // Robustesse sans division par zéro.
       const ratio = (score_taches + 0.5) / (score_usage + 0.5);
 
       return {
@@ -175,20 +175,31 @@ function WorkloadDashboardInner({ currentUser, period: propPeriod = 'all' }) {
       };
     });
 
-    // Tri DÉCROISSANT selon le ratio d'implication :
-    // Le premier de la liste est celui qui fait le plus et vient le moins !
-    list.sort((a, b) => {
-      if (b.ratio !== a.ratio) {
-        return b.ratio - a.ratio;
-      }
-      if (b.score_taches !== a.score_taches) {
-        return b.score_taches - a.score_taches;
-      }
-      if (a.score_usage !== b.score_usage) {
-        return a.score_usage - b.score_usage;
-      }
-      return a.prenom.localeCompare(b.prenom);
-    });
+    // Détection d'égalité globale des scores et ratios
+    const allEqual = list.length > 0 && list.every(
+      (m) => Math.abs(m.ratio - list[0].ratio) < 0.001 &&
+             m.score_taches === list[0].score_taches &&
+             m.score_usage === list[0].score_usage
+    );
+
+    if (allEqual) {
+      // En cas d'égalité totale : ordre alphabétique neutre, aucun classement arbitraire
+      list.sort((a, b) => a.prenom.localeCompare(b.prenom));
+    } else {
+      // Tri décroissant selon le ratio d'implication
+      list.sort((a, b) => {
+        if (Math.abs(b.ratio - a.ratio) > 0.001) {
+          return b.ratio - a.ratio;
+        }
+        if (b.score_taches !== a.score_taches) {
+          return b.score_taches - a.score_taches;
+        }
+        if (a.score_usage !== b.score_usage) {
+          return a.score_usage - b.score_usage;
+        }
+        return a.prenom.localeCompare(b.prenom);
+      });
+    }
 
     return list;
   }, [selectedPeriod, reservations, realTasks]);
@@ -219,7 +230,7 @@ function WorkloadDashboardInner({ currentUser, period: propPeriod = 'all' }) {
               </h2>
             </div>
             <p className="text-xs text-slate-500">
-              Classement gamifié par ratio d'implication : <em>« Celui qui fait le plus et vient le moins »</em>
+              Indicateur d'engagement : équilibre des missions accomplies et de la présence au domaine
             </p>
           </div>
         </div>
@@ -258,12 +269,12 @@ function WorkloadDashboardInner({ currentUser, period: propPeriod = 'all' }) {
       <div className="p-3.5 sm:p-4 rounded-2xl bg-gradient-to-r from-amber-50/80 via-indigo-50/50 to-emerald-50/80 border border-amber-200/70 text-slate-700 text-xs flex items-start gap-3 shadow-2xs">
         <Sparkles className="w-5 h-5 text-amber-600 shrink-0 mt-0.5" />
         <div className="leading-relaxed">
-          <strong className="text-slate-900 font-bold">Règle de justice contributive :</strong>{' '}
-          Le classement d'équité calcule le ratio{' '}
+          <strong className="text-slate-900 font-bold">Équilibre de participation :</strong>{' '}
+          Cet indicateur met en regard le nombre de missions réalisées et le temps passé au domaine :{' '}
           <code className="px-1.5 py-0.5 bg-white/90 border border-slate-200 rounded font-mono font-bold text-indigo-700">
-            (tâches validées + 0.5) / (séjours + 0.5)
+            (missions validées + 0.5) / (séjours + 0.5)
           </code>
-          . Un associé qui accomplit des corvées utiles tout en occupant peu le domaine est propulsé en tête de podium !
+          . Il permet de valoriser les contributions de chacun dans un esprit d'entraide familiale.
         </div>
       </div>
 
@@ -301,103 +312,112 @@ function WorkloadDashboardInner({ currentUser, period: propPeriod = 'all' }) {
         <>
           {/* Members List sorted descending by implication ratio */}
           <div className="space-y-4 pt-1">
-            {processedMembers.map((member, index) => {
-              const isFirst = index === 0;
-              const isSecond = index === 1;
-              const isThird = index === 2;
+            {(() => {
+              const allEqual = processedMembers.length > 0 && processedMembers.every(
+                (m) => Math.abs(m.ratio - processedMembers[0].ratio) < 0.001 &&
+                       m.score_taches === processedMembers[0].score_taches &&
+                       m.score_usage === processedMembers[0].score_usage
+              );
 
-              const medal = isFirst ? '🥇' : isSecond ? '🥈' : isThird ? '🥉' : null;
-              const rankLabel = isFirst
-                ? '#1 Champion d\'implication'
-                : isSecond
-                ? '#2'
-                : isThird
-                ? '#3'
-                : `#${index + 1}`;
+              return processedMembers.map((member, index) => {
+                const isFirst = !allEqual && index === 0;
+                const isSecond = !allEqual && index === 1;
+                const isThird = !allEqual && index === 2;
 
-              const pctUsage = member.score_usage > 0
-                ? Math.min(100, Math.round((member.score_usage / maxUsage) * 100))
-                : 0;
+                const medal = allEqual ? null : isFirst ? '🥇' : isSecond ? '🥈' : isThird ? '🥉' : null;
+                const rankLabel = allEqual
+                  ? 'Ex-æquo'
+                  : isFirst
+                  ? '#1 Premier contributeur'
+                  : isSecond
+                  ? '#2'
+                  : isThird
+                  ? '#3'
+                  : `#${index + 1}`;
 
-              const pctTasks = member.score_taches > 0
-                ? Math.min(100, Math.round((member.score_taches / maxTasks) * 100))
-                : 0;
+                const pctUsage = member.score_usage > 0
+                  ? Math.min(100, Math.round((member.score_usage / maxUsage) * 100))
+                  : 0;
 
-              return (
-                <div
-                  key={member.prenom}
-                  className={`p-4 sm:p-5 rounded-2xl border transition-all shadow-xs ${
-                    isFirst
-                      ? 'bg-gradient-to-r from-amber-50/70 via-white to-amber-50/30 border-amber-300 ring-2 ring-amber-400/20 shadow-sm'
-                      : 'bg-slate-50/80 border-slate-200/80 hover:border-indigo-300'
-                  }`}
-                >
-                  {/* Member Card Header */}
-                  <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 pb-3 border-b border-slate-200/60">
-                    <div className="flex items-center space-x-3">
-                      <div className="relative shrink-0">
-                        <div
-                          className={`w-11 h-11 rounded-2xl bg-gradient-to-br ${member.color} text-white flex items-center justify-center font-black text-sm shadow-sm`}
-                        >
-                          {member.prenom[0]}
-                        </div>
-                        {medal && (
-                          <span
-                            className="absolute -top-1.5 -right-1.5 text-base drop-shadow-xs"
-                            title={`Podium ${rankLabel}`}
+                const pctTasks = member.score_taches > 0
+                  ? Math.min(100, Math.round((member.score_taches / maxTasks) * 100))
+                  : 0;
+
+                return (
+                  <div
+                    key={member.prenom}
+                    className={`p-4 sm:p-5 rounded-2xl border transition-all shadow-xs ${
+                      isFirst
+                        ? 'bg-gradient-to-r from-amber-50/70 via-white to-amber-50/30 border-amber-300 ring-2 ring-amber-400/20 shadow-sm'
+                        : 'bg-slate-50/80 border-slate-200/80 hover:border-indigo-300'
+                    }`}
+                  >
+                    {/* Member Card Header */}
+                    <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 pb-3 border-b border-slate-200/60">
+                      <div className="flex items-center space-x-3">
+                        <div className="relative shrink-0">
+                          <div
+                            className={`w-11 h-11 rounded-2xl bg-gradient-to-br ${member.color} text-white flex items-center justify-center font-black text-sm shadow-sm`}
                           >
-                            {medal}
-                          </span>
-                        )}
+                            {member.prenom[0]}
+                          </div>
+                          {medal && (
+                            <span
+                              className="absolute -top-1.5 -right-1.5 text-base drop-shadow-xs"
+                              title={`Podium ${rankLabel}`}
+                            >
+                              {medal}
+                            </span>
+                          )}
+                        </div>
+
+                        <div>
+                          <div className="flex items-center gap-2">
+                            <h4 className="text-sm font-extrabold text-slate-900">{member.fullName}</h4>
+                            <span
+                              className={`text-[10px] font-black px-2 py-0.5 rounded-full border ${
+                                isFirst
+                                  ? 'bg-amber-100 text-amber-900 border-amber-300'
+                                  : 'bg-slate-200 text-slate-700 border-slate-300'
+                              }`}
+                            >
+                              {rankLabel}
+                            </span>
+                          </div>
+                          <p className="text-[11px] text-slate-500 font-medium">
+                            {member.role}
+                          </p>
+                        </div>
                       </div>
 
-                      <div>
-                        <div className="flex items-center gap-2">
-                          <h4 className="text-sm font-extrabold text-slate-900">{member.fullName}</h4>
-                          <span
-                            className={`text-[10px] font-black px-2 py-0.5 rounded-full border ${
-                              isFirst
-                                ? 'bg-amber-100 text-amber-900 border-amber-300'
-                                : 'bg-slate-200 text-slate-700 border-slate-300'
-                            }`}
-                          >
-                            {rankLabel}
-                          </span>
+                      {/* Implication Ratio Badge */}
+                      <div className="flex items-center gap-2 self-start sm:self-auto">
+                        <div className="text-right">
+                          <div className="flex items-center gap-1.5 justify-end">
+                            <span className="text-[11px] font-bold text-slate-500 uppercase tracking-wider">
+                              Ratio d'implication :
+                            </span>
+                            <span
+                              className={`text-sm sm:text-base font-black px-2 py-0.5 rounded-xl border ${
+                                member.ratio >= 2.0
+                                  ? 'bg-emerald-100 text-emerald-900 border-emerald-300'
+                                  : member.ratio >= 1.0
+                                  ? 'bg-indigo-100 text-indigo-900 border-indigo-300'
+                                  : 'bg-slate-100 text-slate-800 border-slate-200'
+                              }`}
+                              title={`Formule: (${member.score_taches} + 0.5) / (${member.score_usage} + 0.5)`}
+                            >
+                              {member.ratio.toFixed(2)}
+                            </span>
+                          </div>
+                          {isFirst && (
+                            <span className="text-[10px] font-extrabold text-amber-700 block">
+                              ✨ Première contribution
+                            </span>
+                          )}
                         </div>
-                        <p className="text-[11px] text-slate-500 font-medium">
-                          {member.role}
-                        </p>
                       </div>
                     </div>
-
-                    {/* Implication Ratio Badge */}
-                    <div className="flex items-center gap-2 self-start sm:self-auto">
-                      <div className="text-right">
-                        <div className="flex items-center gap-1.5 justify-end">
-                          <span className="text-[11px] font-bold text-slate-500 uppercase tracking-wider">
-                            Ratio d'implication :
-                          </span>
-                          <span
-                            className={`text-sm sm:text-base font-black px-2 py-0.5 rounded-xl border ${
-                              member.ratio >= 2.0
-                                ? 'bg-emerald-100 text-emerald-900 border-emerald-300'
-                                : member.ratio >= 1.0
-                                ? 'bg-indigo-100 text-indigo-900 border-indigo-300'
-                                : 'bg-slate-100 text-slate-800 border-slate-200'
-                            }`}
-                            title={`Formule: (${member.score_taches} + 0.5) / (${member.score_usage} + 0.5)`}
-                          >
-                            {member.ratio.toFixed(2)}
-                          </span>
-                        </div>
-                        {isFirst && (
-                          <span className="text-[10px] font-extrabold text-amber-700 block">
-                            ✨ Fait le plus &amp; vient le moins !
-                          </span>
-                        )}
-                      </div>
-                    </div>
-                  </div>
 
                   {/* DOUBLE BARRES DISTINCTES ET ÉLÉGANTES (Annotation 10) */}
                   <div className="grid grid-cols-1 md:grid-cols-2 gap-4 pt-3">
@@ -448,7 +468,7 @@ function WorkloadDashboardInner({ currentUser, period: propPeriod = 'all' }) {
                       </div>
 
                       <div className="flex justify-between items-center text-[10px] text-slate-400">
-                        <span>Corvées validées &amp; clôturées</span>
+                        <span>Missions validées &amp; clôturées</span>
                         <span>{pctTasks}% relative</span>
                       </div>
                     </div>
@@ -508,7 +528,8 @@ function WorkloadDashboardInner({ currentUser, period: propPeriod = 'all' }) {
                   </div>
                 </div>
               );
-            })}
+            });
+          })()}
           </div>
         </>
       )}
