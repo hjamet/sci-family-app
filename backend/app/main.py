@@ -8802,10 +8802,16 @@ async def create_member_expense(
     henri = db.query(Member).filter(func.lower(Member.prenom) == "henri").first()
     henri_id = henri.id if henri else 1
 
+    amount_fr = f"{amount:.2f}".replace(".", ",")
+    clean_date_fr = clean_date
+    if clean_date and len(clean_date) == 10 and clean_date[4] == "-" and clean_date[7] == "-":
+        parts = clean_date.split("-")
+        clean_date_fr = f"{parts[2]}/{parts[1]}/{parts[0]}"
+
     key_values_list = [
         {"key": "Membre", "value": member.name or f"{member.prenom} Jamet"},
-        {"key": "Montant", "value": f"{amount:.2f} €"},
-        {"key": "Date", "value": clean_date},
+        {"key": "Montant", "value": f"{amount_fr} €"},
+        {"key": "Date", "value": clean_date_fr},
         {"key": "Motif", "value": clean_title},
         {"key": "expense_id", "value": str(expense.id)}
     ]
@@ -8821,8 +8827,8 @@ async def create_member_expense(
         })
 
     validation_task = Task(
-        title=f"Validation avance de frais : {member.prenom} - {clean_title} ({amount:.2f} €)",
-        description=f"Avance de frais déclarée par {member.name or member.prenom} pour la SCI Hellenvilliers.\nMontant avancé : {amount:.2f} €\nMotif : {clean_title}\nDate : {clean_date}",
+        title=f"Validation avance de frais : {member.prenom} - {clean_title} ({amount_fr} €)",
+        description=f"Avance de frais déclarée par {member.name or member.prenom} pour la SCI Hellenvilliers.\nMontant avancé : {amount_fr} €\nMotif : {clean_title}\nDate : {clean_date_fr}",
         category="Finances & Trésorerie",
         status="TODO",
         charge_points=1,

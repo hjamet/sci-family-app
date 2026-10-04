@@ -148,6 +148,7 @@ export default function TaskDetailModal({
   const [task, setTask] = useState(initialTask || {});
   const [mode, setMode] = useState(isNewTask ? 'edit' : (initialMode || 'view')); // 'view' | 'edit'
   const [isArbitratingExpense, setIsArbitratingExpense] = useState(false);
+  const [isMobileChatOpen, setIsMobileChatOpen] = useState(false);
 
   // Gestion Zero-Leak des documents temporaires et contrôle d'invalidation / suppression
   const isSavedRef = useRef(false);
@@ -668,12 +669,24 @@ export default function TaskDetailModal({
   const rawAmount = expenseAmountKv?.value ?? (titleAmountMatch ? titleAmountMatch[1] : null) ?? (descAmountMatch ? descAmountMatch[1] : null) ?? (task?.budget && task.budget > 0 ? task.budget : null);
   const expenseAmount = formatFrenchCurrency(rawAmount);
 
+  // Formatage de date français strict (ex: 04/10/2026)
+  const formatFrenchDate = (val) => {
+    if (!val) return '';
+    const str = String(val).trim();
+    if (/^\d{4}-\d{2}-\d{2}/.test(str)) {
+      const [year, month, day] = str.slice(0, 10).split('-');
+      return `${day}/${month}/${year}`;
+    }
+    return str;
+  };
+
   // Résolution stricte du nom du demandeur (zéro ID numérique brut comme '1')
   const titleMemberMatch = task?.title ? task.title.match(/Validation avance(?: de frais)?\s*:\s*([A-Za-zÀ-ÿ]+)/i) : null;
   const rawMember = expenseMemberKv?.value || (titleMemberMatch ? titleMemberMatch[1] : null) || task?.created_by;
   const expenseMemberName = resolveMemberDisplayName(rawMember) || 'Henri Jamet';
 
-  const expenseDate = expenseDateKv ? expenseDateKv.value : null;
+  const rawExpenseDate = expenseDateKv ? expenseDateKv.value : null;
+  const expenseDate = formatFrenchDate(rawExpenseDate);
   const expenseMotif = expenseMotifKv ? expenseMotifKv.value : null;
   const isExpenseValidationTask = Boolean(
     (task?.title && task.title.toLowerCase().includes('validation avance')) ||
@@ -700,6 +713,7 @@ export default function TaskDetailModal({
 
   useEffect(() => {
     if (!isOpen) return;
+    setIsMobileChatOpen(false);
     const isNew = !initialTask || !initialTask.id || isEditing || initialMode === 'edit';
     const taskObj = initialTask && initialTask.id ? initialTask : {
       title: initialTask?.title || '',
@@ -1418,8 +1432,8 @@ export default function TaskDetailModal({
                   </span>
                 )
               ) : (
-                /* 2. Tâche En Cours (Bleu) : Bouton 'Valider la mission' STRICTEMENT réservé à l'associé en charge (Annotation 12) */
-                isOpenTask && isAssignedToCurrentUser && (
+                /* 2. Tâche En Cours (Bleu) : Bouton 'Valider la mission' STRICTEMENT réservé à l'associé en charge (Annotation 12) - Masqué pour tâches d'avance */
+                isOpenTask && isAssignedToCurrentUser && !isExpenseValidationTask && (
                   <button
                     type="button"
                     onClick={handleRequestValidation}
@@ -1461,12 +1475,12 @@ export default function TaskDetailModal({
         {/* ========================================== */}
         {/* 2. MAIN 2-COLUMN BODY (SCROLLABLE & UNIFIÉ) */}
         {/* ========================================== */}
-        <div className="grid grid-cols-1 lg:grid-cols-12 gap-0 overflow-hidden flex-1 divide-y lg:divide-y-0 lg:divide-x divide-border-subtle min-h-0">
+        <div className="flex flex-col lg:grid lg:grid-cols-12 gap-0 overflow-y-auto lg:overflow-hidden flex-1 divide-y lg:divide-y-0 lg:divide-x divide-border-subtle min-h-0">
           
           {/* ========================================== */}
           {/* COLONNE GAUCHE (7 cols) : TÂCHE & ÉDITION  */}
           {/* ========================================== */}
-          <section className="lg:col-span-7 p-5 sm:p-7 flex flex-col gap-6 bg-surface-container-lowest overflow-y-auto">
+          <section className="w-full lg:col-span-7 p-4 sm:p-7 flex flex-col gap-5 sm:gap-6 bg-surface-container-lowest shrink-0 lg:shrink lg:overflow-y-auto">
             
             {/* MODE CONSULTATION */}
             {mode === 'view' && (
@@ -1837,8 +1851,8 @@ export default function TaskDetailModal({
                   </div>
                 </div>
 
-                {/* Section Validation & Arbitrage de la Mission (#section-task-validation - Annotation 12 & 19) */}
-                {!isNewTask && (
+                {/* Section Validation & Arbitrage de la Mission (#section-task-validation - Annotation 12 & 19) - Masquée pour les tâches d'avance de trésorerie */}
+                {!isExpenseValidationTask && !isNewTask && (
                   (isOpenTask && !isPendingValidation && !isProposed && isAssignedToCurrentUser) ||
                   (isPendingValidation && (isCoordinator || isAssignedToCurrentUser)) ||
                   (isProposed && (isCoordinator || isAuthor))
@@ -2751,21 +2765,44 @@ export default function TaskDetailModal({
           {/* COLONNE DROITE (5 cols) : FIL DE DISCUSSION UNIFIÉ (CHAT)  */}
           {/* Toujours présent, même lors de la rédaction d'initiative  */}
           {/* ========================================================= */}
-          <section className="lg:col-span-5 bg-canvas-slate flex flex-col h-full min-h-0">
-            <FamilyChat
-              messages={comments}
-              onSendMessage={handleSendCommentText}
-              onAddReaction={handleEmojiReact}
-              currentUser={currentUser}
-              title="Fil de discussion familial"
-              placeholder="Votre message à la famille..."
-              onRetryMessage={handleRetryComment}
-              onAttachClick={() => {
-                setDroppedFileForUpload(null);
-                setIsUploadDocModalOpen(true);
-              }}
-              className="h-full"
-            />
+          <section className="w-full lg:col-span-5 bg-canvas-slate flex flex-col shrink-0 lg:shrink lg:h-full min-h-0">
+            {/* Header accordéon sur mobile uniquement */}
+            <button
+              type="button"
+              onClick={() => setIsMobileChatOpen((prev) => !prev)}
+              className="lg:hidden w-full px-4 py-3 bg-surface-container-high flex items-center justify-between border-t border-b border-border-subtle text-xs font-bold text-on-surface cursor-pointer select-none"
+            >
+              <div className="flex items-center gap-2">
+                <span className="material-symbols-outlined text-[18px] text-primary">forum</span>
+                <span>Fil de discussion familial</span>
+                {comments && comments.length > 0 && (
+                  <span className="px-2 py-0.5 rounded-full text-[10px] bg-primary/10 text-primary font-bold">
+                    {comments.length}
+                  </span>
+                )}
+              </div>
+              <span className="material-symbols-outlined text-[18px]">
+                {isMobileChatOpen ? 'expand_less' : 'expand_more'}
+              </span>
+            </button>
+
+            {/* Conteneur chat : replié par défaut sur mobile, toujours ouvert sur desktop */}
+            <div className={`${isMobileChatOpen ? 'flex h-[420px]' : 'hidden'} lg:flex lg:h-full flex-col min-h-0`}>
+              <FamilyChat
+                messages={comments}
+                onSendMessage={handleSendCommentText}
+                onAddReaction={handleEmojiReact}
+                currentUser={currentUser}
+                title="Fil de discussion familial"
+                placeholder="Votre message à la famille..."
+                onRetryMessage={handleRetryComment}
+                onAttachClick={() => {
+                  setDroppedFileForUpload(null);
+                  setIsUploadDocModalOpen(true);
+                }}
+                className="h-full"
+              />
+            </div>
           </section>
 
         </div>
