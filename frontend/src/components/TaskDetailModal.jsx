@@ -19,6 +19,8 @@ import {
   invalidateCache,
   invalidateApiCache,
   fetchTaskRecommendations,
+  validateMemberExpense,
+  rejectMemberExpense,
 } from '../api';
 import {
   isTaskPendingValidation,
@@ -144,6 +146,7 @@ export default function TaskDetailModal({
   const isNewTask = !initialTask || !initialTask.id || isEditing || initialMode === 'edit';
   const [task, setTask] = useState(initialTask || {});
   const [mode, setMode] = useState(isNewTask ? 'edit' : (initialMode || 'view')); // 'view' | 'edit'
+  const [isArbitratingExpense, setIsArbitratingExpense] = useState(false);
 
   // Gestion Zero-Leak des documents temporaires et contrôle d'invalidation / suppression
   const isSavedRef = useRef(false);
@@ -625,6 +628,22 @@ export default function TaskDetailModal({
   const isProposed = isTaskProposed(task);
   const isOpenTask = isTaskOpen(task);
 
+  const keyValuesList = parseKeyValues(task?.key_values);
+  const expenseIdKv = keyValuesList.find((kv) => (kv.key || '').toLowerCase() === 'expense_id');
+  const expenseAmountKv = keyValuesList.find((kv) => (kv.key || '').toLowerCase() === 'montant');
+  const expenseMemberKv = keyValuesList.find((kv) => (kv.key || '').toLowerCase() === 'membre');
+  const expenseDateKv = keyValuesList.find((kv) => (kv.key || '').toLowerCase() === 'date');
+  const expenseMotifKv = keyValuesList.find((kv) => (kv.key || '').toLowerCase() === 'motif');
+  const expenseId = expenseIdKv ? parseInt(expenseIdKv.value, 10) : null;
+  const expenseAmount = expenseAmountKv ? expenseAmountKv.value : null;
+  const expenseMemberName = expenseMemberKv ? expenseMemberKv.value : null;
+  const expenseDate = expenseDateKv ? expenseDateKv.value : null;
+  const expenseMotif = expenseMotifKv ? expenseMotifKv.value : null;
+  const isExpenseValidationTask = Boolean(
+    (task?.title && task.title.toLowerCase().includes('validation avance')) || expenseId
+  );
+  const expenseDocs = parseTaskDocuments(task?.documents || task?.completion_docs);
+
   useEffect(() => {
     if (!isOpen) return;
     const isNew = !initialTask || !initialTask.id || isEditing || initialMode === 'edit';
@@ -1049,8 +1068,55 @@ export default function TaskDetailModal({
     }
   };
 
+  const handleValidateExpenseAction = async () => {
+    if (!expenseId) {
+      await handleValidateModalTask();
+      return;
+    }
+    setIsArbitratingExpense(true);
+    try {
+      await validateMemberExpense(expenseId);
+      const refreshed = { ...task, status: 'DONE' };
+      setTask(refreshed);
+      invalidateApiCache('tasks');
+      invalidateApiCache('/api/tasks');
+      invalidateApiCache('/api/finances/expenses');
+      invalidateApiCache('/api/finances/treasury');
+      if (onTaskUpdated) onTaskUpdated(refreshed);
+      onClose();
+    } catch (err) {
+      console.error('Erreur validation avance:', err);
+      alert(err.message || "Erreur lors de la validation de l'avance.");
+    } finally {
+      setIsArbitratingExpense(false);
+    }
+  };
 
-  // Background server sync for Optimistic Chat (Annotation 5)
+  const handleRejectExpenseAction = async () => {
+    if (!expenseId) {
+      await handleInvalidateModalTask();
+      return;
+    }
+    const reason = window.prompt("Motif de refus de l'avance :", "Justificatif non conforme");
+    if (reason === null) return;
+    setIsArbitratingExpense(true);
+    try {
+      await rejectMemberExpense(expenseId, reason);
+      const refreshed = { ...task, status: 'REJECTED' };
+      setTask(refreshed);
+      invalidateApiCache('tasks');
+      invalidateApiCache('/api/tasks');
+      invalidateApiCache('/api/finances/expenses');
+      if (onTaskUpdated) onTaskUpdated(refreshed);
+      onClose();
+    } catch (err) {
+      console.error('Erreur refus avance:', err);
+      alert(err.message || "Erreur lors du refus de l'avance.");
+    } finally {
+      setIsArbitratingExpense(false);
+    }
+  };
+
   const sendCommentToServer = async (tempId, textToSend, authorName) => {
     const targetTaskId = task?.id || initialTask?.id;
     try {
@@ -1408,6 +1474,105 @@ export default function TaskDetailModal({
                     )}
                   </div>
                 </div>
+
+                {/* Section Spécifique : Arbitrage d'Avance de Frais (Trésorerie SCI) */}
+                {isExpenseValidationTask && !isNewTask && (
+                  <div className="p-5 rounded-2xl border-2 border-emerald-400 bg-emerald-50/80 dark:bg-emerald-950/40 shadow-sm space-y-4">
+                    <div className="flex items-center justify-between flex-wrap gap-2">
+                      <div className="flex items-center gap-2">
+                        <span className="material-symbols-outlined text-[24px] text-emerald-700 dark:text-emerald-400">
+                          account_balance_wallet
+                        </span>
+                        <h3 className="font-headline-sm text-sm sm:text-base font-bold text-forest-deep dark:text-slate-100">
+                          Arbitrage Avance de Frais — SCI Hellenvilliers
+                        </h3>
+                      </div>
+                      <span className={`inline-flex items-center gap-1.5 px-3 py-1 rounded-full text-xs font-bold ${
+                        task?.status === 'TERMINEE' || task?.status === 'DONE'
+                          ? 'bg-emerald-200 text-emerald-900 border border-emerald-400'
+                          : task?.status === 'REJECTED'
+                          ? 'bg-rose-200 text-rose-900 border border-rose-400'
+                          : 'bg-amber-100 text-amber-900 border border-amber-300'
+                      }`}>
+                        {task?.status === 'TERMINEE' || task?.status === 'DONE' ? 'Avance Validée' : task?.status === 'REJECTED' ? 'Avance Refusée' : 'En attente d\'arbitrage'}
+                      </span>
+                    </div>
+
+                    <div className="bg-white/95 dark:bg-slate-900/90 rounded-xl p-4 border border-emerald-200 dark:border-emerald-800/60 space-y-3">
+                      <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 text-xs sm:text-sm">
+                        <div>
+                          <span className="text-slate-500 font-medium">Demandeur : </span>
+                          <span className="font-bold text-slate-900 dark:text-slate-100">{expenseMemberName || task?.created_by || 'Membre'}</span>
+                        </div>
+                        <div>
+                          <span className="text-slate-500 font-medium">Montant avancé : </span>
+                          <span className="font-bold text-emerald-700 dark:text-emerald-400 text-base">{expenseAmount || ''}</span>
+                        </div>
+                        {expenseDate && (
+                          <div>
+                            <span className="text-slate-500 font-medium">Date de facture : </span>
+                            <span className="font-semibold text-slate-800 dark:text-slate-200">{expenseDate}</span>
+                          </div>
+                        )}
+                        {expenseMotif && (
+                          <div>
+                            <span className="text-slate-500 font-medium">Motif : </span>
+                            <span className="font-semibold text-slate-800 dark:text-slate-200">{expenseMotif}</span>
+                          </div>
+                        )}
+                      </div>
+
+                      {expenseDocs && expenseDocs.length > 0 && (
+                        <div className="pt-3 border-t border-slate-100 dark:border-slate-800">
+                          <span className="text-xs font-semibold text-slate-500 uppercase tracking-wider block mb-2">
+                            Justificatif / Facture jointe
+                          </span>
+                          <div className="flex flex-wrap gap-2">
+                            {expenseDocs.map((docItem, idx) => {
+                              const norm = normalizeDocItem(docItem, idx);
+                              return (
+                                <a
+                                  key={norm?.id || idx}
+                                  href={norm?.file_url || norm?.url}
+                                  target="_blank"
+                                  rel="noopener noreferrer"
+                                  className="inline-flex items-center gap-2 px-3 py-1.5 rounded-lg bg-emerald-50 hover:bg-emerald-100 text-emerald-900 text-xs font-semibold border border-emerald-300 transition-colors shadow-xs"
+                                >
+                                  <span className="material-symbols-outlined text-[16px] text-emerald-700">description</span>
+                                  <span className="truncate max-w-[220px]">{norm?.filename || norm?.name || 'Facture'}</span>
+                                  <span className="material-symbols-outlined text-[14px] text-slate-400">open_in_new</span>
+                                </a>
+                              );
+                            })}
+                          </div>
+                        </div>
+                      )}
+                    </div>
+
+                    {isCoordinator && task?.status !== 'TERMINEE' && task?.status !== 'DONE' && task?.status !== 'REJECTED' && (
+                      <div className="flex items-center gap-3 pt-1 flex-wrap">
+                        <button
+                          type="button"
+                          onClick={handleValidateExpenseAction}
+                          disabled={isArbitratingExpense}
+                          className="inline-flex items-center gap-2 px-5 py-2.5 rounded-xl bg-emerald-700 hover:bg-emerald-800 text-white font-bold text-xs sm:text-sm shadow-md transition-all cursor-pointer active:scale-95 disabled:opacity-50"
+                        >
+                          <span className="material-symbols-outlined text-[18px]">verified</span>
+                          <span>Valider l'avance {expenseAmount ? `(${expenseAmount})` : ''}</span>
+                        </button>
+                        <button
+                          type="button"
+                          onClick={handleRejectExpenseAction}
+                          disabled={isArbitratingExpense}
+                          className="inline-flex items-center gap-2 px-4 py-2.5 rounded-xl bg-white hover:bg-rose-50 text-rose-700 border-2 border-rose-300 font-bold text-xs sm:text-sm shadow-sm transition-all cursor-pointer disabled:opacity-50"
+                        >
+                          <span className="material-symbols-outlined text-[18px]">close</span>
+                          <span>Refuser l'avance</span>
+                        </button>
+                      </div>
+                    )}
+                  </div>
+                )}
 
                 {/* Description & Objectives */}
                 <div className="space-y-2">

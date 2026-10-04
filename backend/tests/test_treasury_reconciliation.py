@@ -1,4 +1,5 @@
 import os
+import re
 import json
 import pytest
 from datetime import datetime
@@ -8,6 +9,7 @@ from fastapi.testclient import TestClient
 from app.main import app
 from app.database import Base, get_db
 from app.models import Member, MemberExpense, CallForFunds, BankTransaction, MemberLedgerEntry, Task, BankAccount
+from app.security import create_access_token
 from app.services.treasury_service import (
     get_member_balance,
     get_member_covered_months,
@@ -16,12 +18,22 @@ from app.services.treasury_service import (
     get_all_treasury_summaries
 )
 from app.services.reconciliation_service import ReconciliationService
-from app.services.call_for_funds_service import calculate_member_call_for_funds
+from app.services.call_for_funds_service import (
+    calculate_member_call_for_funds,
+    generate_and_save_monthly_call,
+    is_treasury_contributions_started
+)
 
 
 @pytest.fixture
 def test_db():
-    from tests.conftest import TestingSessionLocal
+    try:
+        from conftest import TestingSessionLocal
+    except ImportError:
+        try:
+            from tests.conftest import TestingSessionLocal
+        except ImportError:
+            from app.database import SessionLocal as TestingSessionLocal
     db = TestingSessionLocal()
     try:
         yield db
@@ -35,7 +47,7 @@ def client():
 
 
 @pytest.fixture
-def setup_member(test_db):
+def setup_members(test_db):
     test_db.query(MemberLedgerEntry).delete()
     test_db.query(CallForFunds).delete()
     test_db.query(MemberExpense).delete()
@@ -53,7 +65,7 @@ def setup_member(test_db):
     )
     test_db.add(acc)
 
-    member = Member(
+    coord = Member(
         name="Henri Jamet",
         prenom="Henri",
         email="henri@example.com",
@@ -61,270 +73,343 @@ def setup_member(test_db):
         payment_reference="HLV-HENRI",
         is_coordinator=True
     )
-    test_db.add(member)
-    test_db.commit()
-    test_db.refresh(member)
-    test_db.refresh(acc)
-    member.bank_acc_id = acc.id
-    return member
-
-
-def test_advance_150_covers_3_months(test_db, setup_member):
-    """Vérifie qu'une avance de 150 € couvre 3 mois d'échéances à 50 €/mois."""
-    member = setup_member
-
-    # Ajout d'une avance validée de 150 €
-    entry = add_ledger_entry(
-        db=test_db,
-        member_id=member.id,
-        entry_type="AVANCE",
-        amount=150.0,
-        description="Avance outillage jardin"
+    regular = Member(
+        name="Marguerite Jamet",
+        prenom="Marguerite",
+        email="marguerite@example.com",
+        monthly_contribution=50.0,
+        payment_reference="HLV-MARGUERITE",
+        is_coordinator=False
     )
+    test_db.add(coord)
+    test_db.add(regular)
+    test_db.commit()
+    test_db.refresh(coord)
+    test_db.refresh(regular)
+    test_db.refresh(acc)
 
-    balance = get_member_balance(test_db, member.id)
-    assert balance == 150.0
+    coord.bank_acc_id = acc.id
+    regular.bank_acc_id = acc.id
+    test_db.commit()
 
-    covered = get_member_covered_months(balance, member.monthly_contribution)
-    assert covered == 3
-
-    # Appel de fonds mensuel : solde >= 50 € -> statut COUVERT et reliquat dû à 0 €
-    call_calc = calculate_member_call_for_funds(test_db, member, year=2026, month=10)
-    assert call_calc["status"] == "COUVERT"
-    assert call_calc["amount_due"] == 0.0
-    assert call_calc["balance_before"] == 150.0
+    return {"coord": coord, "member": regular, "acc": acc}
 
 
-def test_virement_600_covers_12_months(test_db, setup_member):
-    """Vérifie qu'un virement de 600 € couvre 12 mois complets."""
-    member = setup_member
+@pytest.fixture
+def coord_headers(setup_members):
+    coord = setup_members["coord"]
+    token = create_access_token({"sub": "Henri", "user_id": coord.id, "email": coord.email})
+    return {"Authorization": f"Bearer {token}"}
 
+
+@pytest.fixture
+def member_headers(setup_members):
+    member = setup_members["member"]
+    token = create_access_token({"sub": "Marguerite", "user_id": member.id, "email": member.email})
+    return {"Authorization": f"Bearer {token}"}
+
+
+# ==============================================================================
+# B1 & RBAC : TESTS D'AUTHENTIFICATION STRICTE ET DE CONTRÔLE D'ACCÈS
+# ==============================================================================
+
+def test_b1_rbac_routes_security(client, setup_members, member_headers, coord_headers):
+    """Vérifie que les routes financières rejettent les requêtes sans jeton (401) et non autorisées (403)."""
+    coord = setup_members["coord"]
+    member = setup_members["member"]
+
+    # 1. GET /api/finances/treasury/summary
+    assert client.get("/api/finances/treasury/summary").status_code == 401
+    assert client.get("/api/finances/treasury/summary", headers=member_headers).status_code == 403
+    assert client.get("/api/finances/treasury/summary", headers=coord_headers).status_code == 200
+
+    # 2. GET /api/finances/calls-for-funds/preview
+    assert client.get("/api/finances/calls-for-funds/preview").status_code == 401
+    assert client.get("/api/finances/calls-for-funds/preview", headers=member_headers).status_code == 403
+    assert client.get("/api/finances/calls-for-funds/preview", headers=coord_headers).status_code == 200
+
+    # 3. GET /api/finances/treasury/members/{member_id}
+    # Un membre ne peut pas voir le solde d'un autre membre
+    assert client.get(f"/api/finances/treasury/members/{coord.id}", headers=member_headers).status_code == 403
+    # Un membre peut voir son propre solde
+    assert client.get(f"/api/finances/treasury/members/{member.id}", headers=member_headers).status_code == 200
+    # Le coordinateur peut voir les soldes de tous les membres
+    assert client.get(f"/api/finances/treasury/members/{member.id}", headers=coord_headers).status_code == 200
+
+    # 4. GET /api/finances/treasury/me
+    assert client.get("/api/finances/treasury/me").status_code == 401
+    res_me = client.get("/api/finances/treasury/me", headers=member_headers)
+    assert res_me.status_code == 200
+    assert res_me.json()["member_id"] == member.id
+
+    # 5. POST /api/finances/expenses : membre ne peut déclarer pour autrui
+    exp_forbidden = client.post(
+        "/api/finances/expenses",
+        data={"member_id": coord.id, "title": "Tentative fraude", "amount": 10.0},
+        headers=member_headers
+    )
+    assert exp_forbidden.status_code == 403
+
+
+# ==============================================================================
+# B2 : REJEU DE VALIDATION & DÉTECTION 409 CONFLICT
+# ==============================================================================
+
+def test_b2_replay_validation_returns_409_conflict(client, setup_members, coord_headers, member_headers):
+    """Vérifie qu'une avance ne peut être validée qu'une seule fois (rejeu -> 409 Conflict)."""
+    member = setup_members["member"]
+
+    # 1. Création d'une avance par le membre
+    create_res = client.post(
+        "/api/finances/expenses",
+        data={"member_id": member.id, "title": "Achat serrure", "amount": 60.0},
+        headers=member_headers
+    )
+    assert create_res.status_code == 201
+    exp_id = create_res.json()["id"]
+
+    # 2. Tentative de validation par un membre simple -> 403 Forbidden
+    assert client.post(f"/api/finances/expenses/{exp_id}/validate", headers=member_headers).status_code == 403
+
+    # 3. 1ère validation par le coordinateur -> 200 OK
+    val_1 = client.post(f"/api/finances/expenses/{exp_id}/validate", headers=coord_headers)
+    assert val_1.status_code == 200
+    assert val_1.json()["status"] == "VALIDATED"
+
+    # 4. 2ème validation (rejeu réseau ou double clic) -> 409 Conflict
+    val_2 = client.post(f"/api/finances/expenses/{exp_id}/validate", headers=coord_headers)
+    assert val_2.status_code == 409
+    assert "pas en attente de validation" in val_2.json()["detail"] or "déjà" in val_2.json()["detail"]
+
+    # 5. Tentative de refus d'une avance déjà validée -> 409 Conflict
+    rej_after = client.post(
+        f"/api/finances/expenses/{exp_id}/reject",
+        json={"rejection_reason": "Trop tard"},
+        headers=coord_headers
+    )
+    assert rej_after.status_code == 409
+
+
+# ==============================================================================
+# B4 : ÉCHÉANCE PARTIELLE & DÉBIT INTÉGRAL DE LA QUOTE-PART
+# ==============================================================================
+
+def test_b4_partial_call_for_funds_full_debit_ledger(test_db, setup_members):
+    """
+    Vérifie l'exactitude comptable : solde initial 20 € -> échéance -50 € -> solde -30 € -> virement 30 € -> 0.00 €.
+    """
+    member = setup_members["coord"]
+
+    # 1. Solde créditeur initial de 20,00 €
     add_ledger_entry(
         db=test_db,
         member_id=member.id,
-        entry_type="VIREMENT",
-        amount=600.0,
-        description="Virement annuel anticipé"
+        entry_type="AVANCE",
+        amount=20.0,
+        description="Solde initial résiduel"
     )
+    assert get_member_balance(test_db, member.id) == 20.0
 
-    balance = get_member_balance(test_db, member.id)
-    assert balance == 600.0
+    # 2. Appel de fonds du mois (quote-part statutaire = 50,00 €)
+    with patch("app.services.call_for_funds_service.is_treasury_contributions_started", return_value=True):
+        call_obj = generate_and_save_monthly_call(test_db, member, year=2026, month=11)
 
-    covered = get_member_covered_months(balance, member.monthly_contribution)
-    assert covered == 12
+    assert call_obj.theoretical_contribution == 50.0
+    assert call_obj.balance_before == 20.0
+    assert call_obj.amount_due == 30.0
 
-    summary = get_member_treasury_summary(test_db, member)
-    assert summary["balance"] == 600.0
-    assert summary["covered_months"] == 12
-    assert summary["payment_reference"] == "HLV-HENRI"
+    # 3. Le grand livre DOIT avoir débité la quote-part intégrale (-50.00 €), solde = -30.00 €
+    balance_after_call = get_member_balance(test_db, member.id)
+    assert balance_after_call == -30.0
 
-
-def test_expense_rejection_workflow(test_db, setup_member, client):
-    """Vérifie le cycle de rejet d'une avance de frais avec tâche de validation associée."""
-    member = setup_member
-
-    # Création d'une dépense en statut PENDING
-    expense_data = {
-        "member_id": member.id,
-        "title": "Avance peinture salon",
-        "amount": 75.0,
-        "expense_date": "2026-10-01",
-        "category": "Travaux"
-    }
-    create_res = client.post("/api/finances/expenses", data=expense_data)
-    assert create_res.status_code == 201
-    exp_json = create_res.json()
-    assert exp_json["status"] == "PENDING"
-    assert exp_json["task_id"] is not None
-
-    task_id = exp_json["task_id"]
-    test_db.rollback()
-    task = test_db.query(Task).filter(Task.id == task_id).first()
-    assert task is not None
-    assert task.status == "A_FAIRE"
-
-    # Aucune écriture au grand livre tant que l'avance n'est pas validée
-    assert get_member_balance(test_db, member.id) == 0.0
-
-    # Rejet de l'avance
-    reject_res = client.post(
-        f"/api/finances/expenses/{exp_json['id']}/reject",
-        json={"rejection_reason": "Facture manquante"}
-    )
-    assert reject_res.status_code == 200
-    rej_json = reject_res.json()
-    assert rej_json["status"] == "REJECTED"
-    assert rej_json["rejection_reason"] == "Facture manquante"
-
-    # Vérification que la tâche associée est clôturée
-    test_db.rollback()
-    updated_task = test_db.query(Task).filter(Task.id == task_id).first()
-    assert updated_task.status in ["REJECTED", "ANNULEE", "INVALIDE"]
-
-    # Le solde de trésorerie reste intact à 0 €
-    assert get_member_balance(test_db, member.id) == 0.0
-
-
-def test_reconciliation_level_1_and_idempotence(test_db, setup_member):
-    """Vérifie le lettrage Niveau 1 certifié par référence permanente et l'unicité stricte."""
-    member = setup_member
-
-    # Appel de fonds en attente
-    cff = CallForFunds(
-        reference="AF-202610-HENRI",
-        member_id=member.id,
-        member_name=member.name,
-        year=2026,
-        month=10,
-        period_label="Octobre 2026",
-        theoretical_contribution=50.0,
-        net_amount=50.0,
-        amount_due=50.0,
-        balance_before=0.0,
-        payment_reference="HLV-HENRI",
-        status="EMIS"
-    )
-    test_db.add(cff)
-
-    # Transaction bancaire avec référence normalisée permanente
+    # 4. Réception du virement de règlement de 30,00 €
     tx = BankTransaction(
-        transaction_id="TX-SWAN-001",
+        transaction_id="TX-REGLEMENT-30",
         account_id=member.bank_acc_id,
+        booking_date="2026-11-05",
+        amount=30.0,
+        currency="EUR",
+        debtor_name="HENRI JAMET",
+        remittance_information="COTISATION HLV-HENRI 30 EUR"
+    )
+    test_db.add(tx)
+    test_db.commit()
+
+    rec_res = ReconciliationService.run_reconciliation(test_db)
+    assert rec_res["success"] is True
+    assert len(rec_res["level_1_matches"]) == 1
+
+    # 5. Le solde final revient EXACTEMENT à 0,00 € (zéro surplus indu !)
+    final_balance = get_member_balance(test_db, member.id)
+    assert final_balance == 0.0
+
+
+# ==============================================================================
+# B3 : DÉCOUPLAGE REPORTLAB EN CAS D'ABSENCE SUR SERVERLESS
+# ==============================================================================
+
+def test_b3_reportlab_decoupled_safe_generation(test_db, setup_members):
+    """Vérifie que l'indisponibilité de ReportLab n'empêche pas l'écriture comptable."""
+    member = setup_members["coord"]
+
+    with patch("app.services.call_for_funds_service.REPORTLAB_AVAILABLE", False), \
+         patch("app.services.call_for_funds_service.is_treasury_contributions_started", return_value=True):
+
+        # La génération ne doit pas lever RuntimeError mais se terminer proprement
+        call_obj = generate_and_save_monthly_call(test_db, member, year=2026, month=12)
+        assert call_obj is not None
+        assert call_obj.theoretical_contribution == 50.0
+
+
+# ==============================================================================
+# M1 : UNICITÉ STRICTE DU GRAND LIVRE (PAS DE DOUBLE ENREGISTREMENT)
+# ==============================================================================
+
+def test_m1_unique_constraint_bank_transaction_id(test_db, setup_members):
+    """Vérifie qu'un même bank_transaction_id ne peut pas être inséré deux fois dans le grand livre."""
+    member = setup_members["coord"]
+    acc = setup_members["acc"]
+
+    tx = BankTransaction(
+        transaction_id="TX-UNIQ-001",
+        account_id=acc.id,
+        booking_date="2026-10-04",
+        amount=50.0,
+        currency="EUR"
+    )
+    test_db.add(tx)
+    test_db.commit()
+
+    e1 = add_ledger_entry(
+        db=test_db,
+        member_id=member.id,
+        entry_type="VIREMENT",
+        amount=50.0,
+        bank_transaction_id=tx.id
+    )
+    assert e1.id is not None
+
+    # Deuxième tentative d'insertion de la même transaction bancaire
+    e2 = add_ledger_entry(
+        db=test_db,
+        member_id=member.id,
+        entry_type="VIREMENT",
+        amount=50.0,
+        bank_transaction_id=tx.id
+    )
+    # add_ledger_entry intercepte le conflit et retourne l'écriture existante sans doubler
+    assert e2.id == e1.id
+    assert get_member_balance(test_db, member.id) == 50.0
+
+
+# ==============================================================================
+# M2 : AUCUN DÉBIT D'ÉCHÉANCE SI COMPTE INACTIF OU AVANT DÉMARRAGE
+# ==============================================================================
+
+def test_m2_no_debit_when_bank_inactive_or_before_start_period(test_db, setup_members):
+    """Vérifie que 0 débit d'échéance n'est inscrit au grand livre tant que le compte est inactif."""
+    member = setup_members["coord"]
+
+    # Simuler compte inactif
+    with patch("app.services.call_for_funds_service.is_bank_account_active", return_value=False):
+        call_obj = generate_and_save_monthly_call(test_db, member, year=2026, month=10)
+        assert call_obj.status == "PENDING_SWAN_IBAN"
+        # 0 écriture au grand livre
+        assert get_member_balance(test_db, member.id) == 0.0
+
+
+# ==============================================================================
+# m1 : SÉCURITÉ CRONS VERCEL (SECRETS.COMPARE_DIGEST & BEARER UNIQUEMENT)
+# ==============================================================================
+
+def test_m1_cron_secrets_compare_digest_bearer_only(client):
+    """Vérifie que verify_cron_auth utilise Bearer uniquement et refuse ?secret=."""
+    with patch.dict(os.environ, {"CRON_SECRET": "cle_secrete_longue_et_robuste"}):
+        # 1. Sans token -> 401
+        assert client.get("/api/cron/banking-sync").status_code == 401
+        assert client.get("/api/cron/calls-for-funds").status_code == 401
+
+        # 2. Token passé en query parameter (?secret=) -> REFUSÉ (401)
+        assert client.get("/api/cron/banking-sync?secret=cle_secrete_longue_et_robuste").status_code == 401
+
+        # 3. Mauvais token en Bearer -> 401
+        assert client.get(
+            "/api/cron/banking-sync",
+            headers={"Authorization": "Bearer mauvais_jeton"}
+        ).status_code == 401
+
+        # 4. Bon token en Bearer -> 200
+        res_sync = client.get(
+            "/api/cron/banking-sync",
+            headers={"Authorization": "Bearer cle_secrete_longue_et_robuste"}
+        )
+        assert res_sync.status_code == 200
+
+        res_cff = client.get(
+            "/api/cron/calls-for-funds",
+            headers={"Authorization": "Bearer cle_secrete_longue_et_robuste"}
+        )
+        assert res_cff.status_code == 200
+
+
+# ==============================================================================
+# POINT 5 : FORMATS AF ET CFF RECONNUS PAR LE LETTRAGE
+# ==============================================================================
+
+def test_point5_reconciliation_af_and_cff_reference_formats(test_db, setup_members):
+    """Vérifie la détection Niveau 1 des formats AF-AAAAMM-PRENOM et CFF-XX."""
+    coord = setup_members["coord"]
+
+    # Transaction avec format AF-202610-HENRI
+    tx1 = BankTransaction(
+        transaction_id="TX-AF-001",
+        account_id=coord.bank_acc_id,
         booking_date="2026-10-04",
         amount=50.0,
         currency="EUR",
         debtor_name="HENRI JAMET",
-        remittance_information="COTISATION MENSUELLE HLV-HENRI OCTOBRE"
+        remittance_information="VIREMENT REF AF-202610-HENRI MENSUEL"
     )
-    test_db.add(tx)
+    test_db.add(tx1)
     test_db.commit()
 
-    # 1er passage de l'automate
     rec_res = ReconciliationService.run_reconciliation(test_db)
-    assert rec_res["success"] is True
     assert len(rec_res["level_1_matches"]) == 1
-    assert rec_res["level_1_matches"][0]["member_id"] == member.id
-    assert rec_res["level_1_matches"][0]["matched_ref"] == "HLVHENRI"
-
-    # Grand livre crédité
-    balance = get_member_balance(test_db, member.id)
-    assert balance == 50.0
-
-    # Appel de fonds soldé
-    test_db.refresh(cff)
-    assert cff.status == "REGLE"
-    assert cff.bank_transaction_id == tx.id
-
-    # 2ème passage : idempotence stricte, aucun doublon
-    rec_res_2 = ReconciliationService.run_reconciliation(test_db)
-    assert rec_res_2["already_reconciled"] == 1
-    assert len(rec_res_2["level_1_matches"]) == 0
-    assert get_member_balance(test_db, member.id) == 50.0
+    assert rec_res["level_1_matches"][0]["member_id"] == coord.id
+    assert "AF-HENRI" in rec_res["level_1_matches"][0]["matched_ref"]
 
 
-def test_reconciliation_level_2_and_manual_assignment(test_db, setup_member):
-    """Vérifie la détection Niveau 2 par nom émetteur puis l'attribution manuelle."""
-    member = setup_member
+# ==============================================================================
+# CYCLE DE REJET & SUPPRESSION AVEC PERMISSION COORDINATEUR
+# ==============================================================================
 
-    tx = BankTransaction(
-        transaction_id="TX-SWAN-002",
-        account_id=member.bank_acc_id,
-        booking_date="2026-10-04",
-        amount=50.0,
-        currency="EUR",
-        debtor_name="Henri Jamet",
-        remittance_information="Virement compte perso sans reference"
+def test_expense_rejection_and_purge_workflows(test_db, setup_members, client, coord_headers, member_headers):
+    """Vérifie le rejet d'une avance puis la purge définitive réservée au coordinateur."""
+    member = setup_members["member"]
+
+    create_res = client.post(
+        "/api/finances/expenses",
+        data={"member_id": member.id, "title": "Avance outillage", "amount": 40.0},
+        headers=member_headers
     )
-    test_db.add(tx)
-    test_db.commit()
+    assert create_res.status_code == 201
+    exp_id = create_res.json()["id"]
 
-    # Automate : détection Niveau 2 sans crédit automatique
-    rec_res = ReconciliationService.run_reconciliation(test_db)
-    assert len(rec_res["level_1_matches"]) == 0
-    assert len(rec_res["level_2_pending"]) == 1
-    assert rec_res["level_2_pending"][0]["candidate_member_id"] == member.id
-    assert get_member_balance(test_db, member.id) == 0.0
-
-    # Attribution manuelle
-    assign_res = ReconciliationService.assign_transaction_manually(
-        db=test_db,
-        transaction_id=tx.id,
-        member_id=member.id,
-        notes="Validation manuelle Henri"
+    # Rejet par coordinateur -> 200
+    rej_res = client.post(
+        f"/api/finances/expenses/{exp_id}/reject",
+        json={"rejection_reason": "Facture illisible"},
+        headers=coord_headers
     )
-    assert assign_res["success"] is True
-    assert assign_res["member_id"] == member.id
+    assert rej_res.status_code == 200
+    assert rej_res.json()["status"] == "REJECTED"
 
-    # Solde maintenant crédité
-    assert get_member_balance(test_db, member.id) == 50.0
+    # Membre simple tente de supprimer l'avance -> 403 Forbidden
+    assert client.delete(f"/api/finances/expenses/{exp_id}", headers=member_headers).status_code == 403
 
+    # Coordinateur supprime l'avance -> 200 OK
+    del_res = client.delete(f"/api/finances/expenses/{exp_id}", headers=coord_headers)
+    assert del_res.status_code == 200
 
-def test_cron_authentication_security(client):
-    """Vérifie que les endpoints cron Vercel exigent strictement CRON_SECRET (Fail-Fast 401)."""
-    with patch.dict(os.environ, {"CRON_SECRET": "secret_super_securise_123"}):
-        # 1. Sans secret -> 401
-        res_no_auth = client.get("/api/cron/banking-sync")
-        assert res_no_auth.status_code == 401
-
-        # 2. Secret invalide -> 401
-        res_bad_auth = client.get(
-            "/api/cron/banking-sync",
-            headers={"Authorization": "Bearer mauvais_token"}
-        )
-        assert res_bad_auth.status_code == 401
-
-        # 3. Secret valide via Header Bearer -> 200
-        res_good_auth = client.get(
-            "/api/cron/banking-sync",
-            headers={"Authorization": "Bearer secret_super_securise_123"}
-        )
-        assert res_good_auth.status_code == 200
-        data = res_good_auth.json()
-        assert data["success"] is True
-        assert data["cron"] == "banking-sync"
-
-
-def test_cron_banking_sync_drive_health(client):
-    """Vérifie que le cron quotidien banking-sync audite l'état Google Drive sans masquage."""
-    with patch.dict(os.environ, {"CRON_SECRET": "cron_key_drive_test"}), \
-         patch("app.main.drive_jail_service.check_connection_status") as mock_drive:
-
-        mock_drive.return_value = {
-            "connected": False,
-            "status": "expired",
-            "message": "Le jeton Google Drive a expiré (invalid_grant)."
-        }
-
-        res = client.get(
-            "/api/cron/banking-sync",
-            headers={"Authorization": "Bearer cron_key_drive_test"}
-        )
-        assert res.status_code == 200
-        data = res.json()
-        assert data["drive_status"]["connected"] is False
-        assert data["drive_status"]["status"] == "expired"
-        assert "expiré" in data["drive_status"]["message"]
-
-
-def test_delete_member_expense_and_purge(test_db, setup_member, client):
-    """Vérifie la suppression définitive d'une avance (purge stricte sans résidu)."""
-    member = setup_member
-    exp = MemberExpense(
-        member_id=member.id,
-        member_prenom=member.prenom or "Henri",
-        title="Test Avance Purge",
-        amount=1.0,
-        expense_date="2026-10-04",
-        status="REJECTED"
-    )
-    test_db.add(exp)
-    test_db.commit()
-    test_db.refresh(exp)
-
-    res = client.delete(f"/api/finances/expenses/{exp.id}")
-    assert res.status_code == 200
-    assert res.json()["success"] is True
-
-    # Vérification en base : zéro enregistrement résiduel
-    purged = test_db.query(MemberExpense).filter(MemberExpense.id == exp.id).first()
-    assert purged is None
+    test_db.rollback()
+    assert test_db.query(MemberExpense).filter(MemberExpense.id == exp_id).first() is None

@@ -3,6 +3,7 @@ from datetime import datetime
 from typing import Dict, Any, List, Optional
 from sqlalchemy.orm import Session
 from sqlalchemy import func
+from sqlalchemy.exc import IntegrityError
 
 from ..models import Member, MemberLedgerEntry, BankAccount
 from .call_for_funds_service import is_bank_account_active, get_official_bank_info
@@ -64,9 +65,24 @@ def add_ledger_entry(
         call_for_funds_id=call_for_funds_id,
         entry_date=entry_date or datetime.utcnow()
     )
-    db.add(entry)
-    db.commit()
-    db.refresh(entry)
+    try:
+        db.add(entry)
+        db.commit()
+        db.refresh(entry)
+    except IntegrityError as ie:
+        db.rollback()
+        logger.warning(
+            f"[TREASURY CONFLICT] Contrainte d'unicité violée lors de l'enregistrement de l'écriture {entry_type}: {ie}"
+        )
+        if bank_transaction_id:
+            existing = db.query(MemberLedgerEntry).filter(MemberLedgerEntry.bank_transaction_id == bank_transaction_id).first()
+            if existing:
+                return existing
+        if expense_id:
+            existing = db.query(MemberLedgerEntry).filter(MemberLedgerEntry.expense_id == expense_id).first()
+            if existing:
+                return existing
+        raise
     logger.info(
         f"[TREASURY] Membre #{member_id} | {entry_type} | Montant: {amount:+.2f} € | Nouveau solde: {new_balance:.2f} €"
     )

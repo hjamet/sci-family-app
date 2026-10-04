@@ -117,6 +117,10 @@ def init_db(target_engine=None):
                     """))
                     conn.commit()
 
+                conn.execute(text("CREATE UNIQUE INDEX IF NOT EXISTS uq_member_ledger_entries_bank_tx ON member_ledger_entries (bank_transaction_id) WHERE bank_transaction_id IS NOT NULL;"))
+                conn.execute(text("CREATE UNIQUE INDEX IF NOT EXISTS uq_member_ledger_entries_expense_id ON member_ledger_entries (expense_id) WHERE expense_id IS NOT NULL;"))
+                conn.commit()
+
                 check_expenses = conn.execute(text("SELECT name FROM sqlite_master WHERE type='table' AND name='member_expenses'")).fetchone()
                 if check_expenses:
                     cursor_exp = conn.execute(text("PRAGMA table_info(member_expenses)"))
@@ -181,6 +185,8 @@ def init_db(target_engine=None):
                 conn.execute(text("CREATE INDEX IF NOT EXISTS ix_member_ledger_entries_member_id ON member_ledger_entries (member_id);"))
                 conn.execute(text("CREATE INDEX IF NOT EXISTS ix_member_ledger_entries_bank_tx ON member_ledger_entries (bank_transaction_id);"))
                 conn.execute(text("CREATE INDEX IF NOT EXISTS ix_member_ledger_entries_call ON member_ledger_entries (call_for_funds_id);"))
+                conn.execute(text("CREATE UNIQUE INDEX IF NOT EXISTS uq_member_ledger_entries_bank_tx ON member_ledger_entries (bank_transaction_id) WHERE bank_transaction_id IS NOT NULL;"))
+                conn.execute(text("CREATE UNIQUE INDEX IF NOT EXISTS uq_member_ledger_entries_expense_id ON member_ledger_entries (expense_id) WHERE expense_id IS NOT NULL;"))
 
                 conn.execute(text("ALTER TABLE member_expenses ADD COLUMN IF NOT EXISTS task_id INTEGER REFERENCES tasks(id) ON DELETE SET NULL;"))
                 conn.execute(text("ALTER TABLE member_expenses ADD COLUMN IF NOT EXISTS rejection_reason TEXT;"))

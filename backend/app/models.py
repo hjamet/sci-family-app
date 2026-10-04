@@ -579,6 +579,10 @@ class MemberExpense(Base):
 
 class MemberLedgerEntry(Base):
     __tablename__ = "member_ledger_entries"
+    __table_args__ = (
+        UniqueConstraint("bank_transaction_id", name="uq_member_ledger_entries_bank_tx"),
+        UniqueConstraint("expense_id", name="uq_member_ledger_entries_expense_id"),
+    )
 
     id = Column(Integer, primary_key=True, index=True)
     member_id = Column(Integer, ForeignKey("members.id", ondelete="CASCADE"), nullable=False, index=True)

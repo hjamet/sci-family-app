@@ -8592,10 +8592,27 @@ async def create_accounting_transaction(
 # SECTION APPELS DE FONDS, COMPENSATION & DÉPENSES MEMBRES (SCI HELLENVILLIERS)
 # ==============================================================================
 
+def check_coordinator_permission(user: Optional[User]):
+    """Vérifie que l'utilisateur est coordinateur ou Henri Jamet, sinon lève 403 Forbidden."""
+    if not user:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Authentification requise pour cette action."
+        )
+    is_coord = bool(getattr(user, "is_coordinator", False))
+    prenom = (getattr(user, "prenom", None) or "").strip().lower()
+    if not is_coord and prenom != "henri":
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Action réservée aux coordinateurs de la SCI (is_coordinator requis)."
+        )
+
+
 @app.get("/api/finances/calls-for-funds/preview", response_model=Dict[str, Any], tags=["Appels de Fonds"])
 def preview_calls_for_funds(
     year: Optional[int] = Query(None, description="Année (ex: 2026)"),
     month: Optional[int] = Query(None, description="Mois (1-12)"),
+    current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db)
 ):
     """
@@ -8607,6 +8624,7 @@ def preview_calls_for_funds(
     - Si solde net <= 0 € : AUCUN avis d'appel de fonds émis, AUCUNE notification.
     - Garde-fou bancaire : Tant que l'IBAN Swan n'est pas validé, statut 'En attente de validation IBAN Swan'.
     """
+    check_coordinator_permission(current_user)
     now = datetime.utcnow()
     y = year or now.year
     m = month or now.month
@@ -8661,7 +8679,7 @@ def preview_calls_for_funds(
 @app.post("/api/finances/calls-for-funds/generate", response_model=Dict[str, Any], tags=["Appels de Fonds"])
 def generate_calls_for_funds(
     request_data: CallForFundsGenerateRequest,
-    current_user: Optional[User] = Depends(get_optional_current_user),
+    current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db)
 ):
     """
@@ -8671,6 +8689,7 @@ def generate_calls_for_funds(
     - Si l'IBAN Swan n'est pas actif (IS_BANK_ACCOUNT_ACTIVE=false), les avis sont générés avec le statut
       'En attente de validation IBAN Swan' et l'envoi d'e-mails est formellement bloqué. Zéro e-mail envoyé.
     """
+    check_coordinator_permission(current_user)
     y = request_data.year
     m = request_data.month
     if m < 1 or m > 12:
@@ -8745,16 +8764,20 @@ def list_calls_for_funds(
     month: Optional[int] = Query(None),
     member_id: Optional[int] = Query(None),
     status: Optional[str] = Query(None),
+    current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db)
 ):
     """Liste tous les avis d'appel de fonds enregistrés en base."""
+    is_coord = bool(getattr(current_user, "is_coordinator", False)) or (getattr(current_user, "prenom", "") or "").lower() == "henri"
     query = db.query(CallForFunds)
+    if not is_coord:
+        query = query.filter(CallForFunds.member_id == current_user.id)
+    elif member_id is not None:
+        query = query.filter(CallForFunds.member_id == member_id)
     if year is not None:
         query = query.filter(CallForFunds.year == year)
     if month is not None:
         query = query.filter(CallForFunds.month == month)
-    if member_id is not None:
-        query = query.filter(CallForFunds.member_id == member_id)
     if status is not None:
         query = query.filter(CallForFunds.status == status)
 
@@ -8762,21 +8785,38 @@ def list_calls_for_funds(
 
 
 @app.get("/api/finances/calls-for-funds/{call_id}", response_model=CallForFundsResponse, tags=["Appels de Fonds"])
-def get_call_for_funds(call_id: int, db: Session = Depends(get_db)):
+def get_call_for_funds(
+    call_id: int,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db)
+):
     """Détail d'un avis d'appel de fonds."""
     call_obj = db.query(CallForFunds).filter(CallForFunds.id == call_id).first()
     if not call_obj:
         raise HTTPException(status_code=404, detail="Avis d'appel de fonds introuvable.")
+    is_coord = bool(getattr(current_user, "is_coordinator", False)) or (getattr(current_user, "prenom", "") or "").lower() == "henri"
+    if not is_coord and call_obj.member_id != current_user.id:
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Accès interdit à l'avis d'appel de fonds d'un autre membre.")
     return call_obj
 
 
 @app.get("/api/finances/calls-for-funds/download/{filename}", tags=["Appels de Fonds"])
-def download_call_for_funds_pdf(filename: str):
+def download_call_for_funds_pdf(
+    filename: str,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db)
+):
     """Télécharge le document PDF généré d'un avis d'appel de fonds."""
     # Sécurisation contre la traversée de répertoires
     safe_name = os.path.basename(filename)
     if not safe_name.endswith(".pdf"):
         raise HTTPException(status_code=400, detail="Fichier PDF attendu.")
+
+    is_coord = bool(getattr(current_user, "is_coordinator", False)) or (getattr(current_user, "prenom", "") or "").lower() == "henri"
+    if not is_coord:
+        call_obj = db.query(CallForFunds).filter(CallForFunds.pdf_filename == safe_name).first()
+        if call_obj and call_obj.member_id != current_user.id:
+            raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Accès interdit au document d'un autre membre.")
 
     file_path = os.path.join(CFF_DOCUMENTS_DIR, safe_name)
     if not os.path.exists(file_path):
@@ -8801,12 +8841,17 @@ async def create_member_expense(
     document_id: Optional[int] = Form(None, description="ID d'un document existant dans admin_documents"),
     file: Optional[UploadFile] = File(None, description="Justificatif ou facture téléversé"),
     notes: Optional[str] = Form(None, description="Notes explicatives"),
+    current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db)
 ):
     """
     Enregistre une avance de frais réalisée par un membre pour la SCI.
     Cette dépense sera déduite de sa quote-part mensuelle lors du prochain appel de fonds.
     """
+    is_coord = bool(getattr(current_user, "is_coordinator", False)) or (getattr(current_user, "prenom", "") or "").lower() == "henri"
+    if not is_coord and current_user.id != member_id:
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Un membre ne peut déclarer une avance que pour son propre compte.")
+
     member = db.query(Member).filter(Member.id == member_id).first()
     if not member:
         raise HTTPException(status_code=404, detail="Associé introuvable.")
@@ -8891,7 +8936,8 @@ async def create_member_expense(
         {"key": "Membre", "value": member.prenom},
         {"key": "Montant", "value": f"{amount:.2f} €"},
         {"key": "Date", "value": clean_date},
-        {"key": "Motif", "value": clean_title}
+        {"key": "Motif", "value": clean_title},
+        {"key": "expense_id", "value": str(expense.id)}
     ]
     task_docs = []
     if doc_id:
@@ -8953,11 +8999,15 @@ def list_member_expenses(
     year: Optional[int] = Query(None),
     month: Optional[int] = Query(None),
     status: Optional[str] = Query(None),
+    current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db)
 ):
     """Liste les dépenses avancées par les membres."""
+    is_coord = bool(getattr(current_user, "is_coordinator", False)) or (getattr(current_user, "prenom", "") or "").lower() == "henri"
     query = db.query(MemberExpense)
-    if member_id is not None:
+    if not is_coord:
+        query = query.filter(MemberExpense.member_id == current_user.id)
+    elif member_id is not None:
         query = query.filter(MemberExpense.member_id == member_id)
     if year is not None and month is not None:
         prefix = f"{year}-{month:02d}"
@@ -8973,13 +9023,30 @@ def list_member_expenses(
 @app.post("/api/finances/expenses/{expense_id}/validate", response_model=MemberExpenseResponse, tags=["Dépenses Membres"])
 def validate_member_expense_endpoint(
     expense_id: int,
-    current_user: Optional[User] = Depends(get_optional_current_user),
+    current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db)
 ):
     """Valide officiellement une avance de frais, synchronise sa tâche et crédite la trésorerie du membre."""
+    check_coordinator_permission(current_user)
     expense = db.query(MemberExpense).filter(MemberExpense.id == expense_id).first()
     if not expense:
         raise HTTPException(status_code=404, detail="Avance introuvable.")
+
+    if expense.status != "PENDING":
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail=f"Cette avance n'est pas en attente de validation (statut actuel : {expense.status})."
+        )
+
+    existing_ledger = db.query(MemberLedgerEntry).filter(
+        MemberLedgerEntry.expense_id == expense.id,
+        MemberLedgerEntry.entry_type == "AVANCE"
+    ).first()
+    if existing_ledger:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="Une écriture au grand livre existe déjà pour cette avance."
+        )
 
     expense.status = "VALIDATED"
     if expense.task_id:
@@ -9008,13 +9075,20 @@ def validate_member_expense_endpoint(
 def reject_member_expense_endpoint(
     expense_id: int,
     payload: ExpenseRejectRequest,
-    current_user: Optional[User] = Depends(get_optional_current_user),
+    current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db)
 ):
     """Refuse une avance de frais avec motif, synchronise sa tâche et n'inscrit aucun crédit."""
+    check_coordinator_permission(current_user)
     expense = db.query(MemberExpense).filter(MemberExpense.id == expense_id).first()
     if not expense:
         raise HTTPException(status_code=404, detail="Avance introuvable.")
+
+    if expense.status != "PENDING":
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail=f"Cette avance n'est pas en attente de validation (statut actuel : {expense.status})."
+        )
 
     reason = payload.rejection_reason.strip() if payload and payload.rejection_reason else "Non justifié"
     expense.status = "REJECTED"
@@ -9032,10 +9106,11 @@ def reject_member_expense_endpoint(
 @app.delete("/api/finances/expenses/{expense_id}", status_code=status.HTTP_200_OK, tags=["Dépenses Membres"])
 def delete_member_expense_endpoint(
     expense_id: int,
-    current_user: Optional[User] = Depends(get_optional_current_user),
+    current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db)
 ):
     """Supprime définitivement une avance de frais (notamment pour purge de tests ou annulation)."""
+    check_coordinator_permission(current_user)
     expense = db.query(MemberExpense).filter(MemberExpense.id == expense_id).first()
     if not expense:
         raise HTTPException(status_code=404, detail="Avance introuvable.")
@@ -9066,10 +9141,13 @@ def get_my_treasury_summary(
 @app.get("/api/finances/treasury/members/{member_id}", response_model=MemberTreasurySummaryResponse, tags=["Trésorerie"])
 def get_member_treasury_endpoint(
     member_id: int,
-    current_user: Optional[User] = Depends(get_optional_current_user),
+    current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db)
 ):
     """Retourne l'état de trésorerie pour un associé spécifique."""
+    is_coord = bool(getattr(current_user, "is_coordinator", False)) or (getattr(current_user, "prenom", "") or "").lower() == "henri"
+    if not is_coord and current_user.id != member_id:
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Accès interdit à la trésorerie d'un autre membre.")
     from .services.treasury_service import get_member_treasury_summary
     member = db.query(Member).filter(Member.id == member_id).first()
     if not member:
@@ -9079,10 +9157,11 @@ def get_member_treasury_endpoint(
 
 @app.get("/api/finances/treasury/summary", tags=["Trésorerie"])
 def get_all_treasury_endpoint(
-    current_user: Optional[User] = Depends(get_optional_current_user),
+    current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db)
 ):
     """Vue administrative globale de la trésorerie de tous les associés."""
+    check_coordinator_permission(current_user)
     from .services.treasury_service import get_all_treasury_summaries
     return get_all_treasury_summaries(db)
 
@@ -9093,20 +9172,22 @@ def get_all_treasury_endpoint(
 
 @app.post("/api/finances/reconciliation/run", tags=["Lettrage & Rapprochement"])
 def run_reconciliation_endpoint(
-    current_user: Optional[User] = Depends(get_optional_current_user),
+    current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db)
 ):
     """Lance manuellement l'automate de lettrage bancaire (Niveau 1 certifié, Niveau 2 à vérifier)."""
+    check_coordinator_permission(current_user)
     from .services.reconciliation_service import ReconciliationService
     return ReconciliationService.run_reconciliation(db)
 
 
 @app.get("/api/finances/reconciliation/unmatched", tags=["Lettrage & Rapprochement"])
 def get_unmatched_reconciliation_endpoint(
-    current_user: Optional[User] = Depends(get_optional_current_user),
+    current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db)
 ):
     """Retourne la liste des virements non lettrés et la file de vérification Niveau 2."""
+    check_coordinator_permission(current_user)
     from .services.reconciliation_service import ReconciliationService
     return ReconciliationService.get_unmatched_and_pending_transactions(db)
 
@@ -9115,10 +9196,11 @@ def get_unmatched_reconciliation_endpoint(
 def assign_reconciliation_endpoint(
     transaction_id: int,
     payload: ReconciliationAssignRequest,
-    current_user: Optional[User] = Depends(get_optional_current_user),
+    current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db)
 ):
     """Attribution manuelle certifiée d'un virement à un membre par Henri."""
+    check_coordinator_permission(current_user)
     from .services.reconciliation_service import ReconciliationService
     try:
         res = ReconciliationService.assign_transaction_manually(
@@ -9147,10 +9229,8 @@ def verify_cron_auth(request: Request):
     token = None
     if auth_header.startswith("Bearer "):
         token = auth_header.replace("Bearer ", "", 1).strip()
-    elif "secret" in request.query_params:
-        token = request.query_params["secret"]
 
-    if token != expected_secret:
+    if not token or not secrets.compare_digest(token, expected_secret):
         raise HTTPException(status_code=401, detail="Non autorisé : jeton cron invalide.")
 
 

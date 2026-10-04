@@ -98,17 +98,31 @@ class ReconciliationService:
                     matched_ref = m_info["norm_pref"]
                     break
 
-            # 1.2 Recherche par référence mensuelle canonique (ex: AF-202610-HENRI -> AF202610HENRI)
+            # 1.2 Recherche par référence mensuelle canonique (ex: AF-202610-HENRI, AF-102026-HENRI, AF-HENRI)
             if not matched_member:
                 for m_id, m_info in member_lookup.items():
                     prenom_norm = m_info["norm_prenom"]
-                    # Pattern AF + 6 chiffres + Prenom
-                    pattern = rf"AF\d{{6}}{prenom_norm}"
+                    # Pattern AF + éventuel millésime 4 ou 6 chiffres + Prénom
+                    pattern = rf"AF(?:\d{{4,6}})?{prenom_norm}"
                     if re.search(pattern, norm_combined):
                         matched_member = m_info["member"]
                         match_type = "MONTHLY_REFERENCE"
                         matched_ref = f"AF-{prenom_norm}"
                         break
+
+            # 1.3 Recherche par numéro d'avis d'appel de fonds (ex: CFF-202610-01, CFF-1)
+            if not matched_member:
+                cff_match = re.search(r"CFF(?:(\d{6}))?(\d+)", norm_combined)
+                if cff_match:
+                    try:
+                        cff_id = int(cff_match.group(2))
+                        cff_rec = db.query(CallForFunds).filter(CallForFunds.id == cff_id).first()
+                        if cff_rec and cff_rec.member_id in member_lookup:
+                            matched_member = member_lookup[cff_rec.member_id]["member"]
+                            match_type = "CALL_FOR_FUNDS_NUMBER"
+                            matched_ref = f"CFF-{cff_id}"
+                    except Exception:
+                        pass
 
             # Si match Niveau 1 certifié
             if matched_member:

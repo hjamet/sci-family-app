@@ -84,6 +84,34 @@ def is_bank_account_active(db: Optional[Session] = None) -> bool:
     return True
 
 
+def is_treasury_contributions_started(year: int, month: int, db: Optional[Session] = None) -> bool:
+    """
+    RÈGLE D'OR HENRI :
+    AUCUNE échéance n'est débitée du grand livre de trésorerie tant que :
+    1. Le compte bancaire officiel de la SCI n'est pas actif (verrou PENDING_SWAN_IBAN / is_bank_account_active).
+    2. La période (year, month) n'a pas atteint la date de début paramétrable (TREASURY_START_PERIOD).
+    Les membres ne doivent JAMAIS apparaître « Débiteur » avant de pouvoir payer sur le compte actif.
+    """
+    if not is_bank_account_active(db):
+        return False
+
+    start_env = os.getenv("TREASURY_START_PERIOD", "").strip()
+    if start_env:
+        try:
+            import re
+            parts = [int(p) for p in re.findall(r"\d+", start_env)]
+            if len(parts) >= 2:
+                start_y, start_m = parts[0], parts[1]
+                if (year, month) < (start_y, start_m):
+                    return False
+            elif len(parts) == 1 and len(str(parts[0])) == 4:
+                if year < parts[0]:
+                    return False
+        except Exception as e:
+            logger.warning(f"Erreur parsing TREASURY_START_PERIOD: {e}")
+    return True
+
+
 def get_official_bank_info(db: Optional[Session] = None) -> Dict[str, str]:
     """Récupère les coordonnées bancaires officielles ou les coordonnées en attente."""
     iban = "FR76 1694 5000 0000 0000 0000 000"
@@ -377,7 +405,8 @@ def generate_call_for_funds_pdf(
       - Bandeau de garde-fou si IBAN Swan en attente de validation.
     """
     if not REPORTLAB_AVAILABLE:
-        raise RuntimeError("La librairie reportlab n'est pas installée sur cet environnement serverless.")
+        logger.warning("[PDF] La librairie reportlab n'est pas installée sur cet environnement serverless.")
+        return None
     pdf_buffer = io.BytesIO()
 
     # Document A4 avec marges professionnelles de 36 pt (1,27 cm)
@@ -737,23 +766,27 @@ def generate_and_save_monthly_call(
     pdf_filename = None
     pdf_url = None
 
-    # Si solde net > 0, on génère le PDF officiel
+    # Si solde net > 0, on tente de générer le PDF officiel
     if calc["should_issue"]:
-        pdf_bytes = generate_call_for_funds_pdf(
-            call_data=calc,
-            member=member,
-            bank_info=bank_info,
-            is_bank_pending=is_pending
-        )
-
-        pdf_filename = f"SCI {month:02d}{year} Avis Appel de Fonds {member.prenom}.pdf"
-        dest_path = os.path.join(DOCUMENTS_DIR, pdf_filename)
         try:
-            with open(dest_path, "wb") as f:
-                f.write(pdf_bytes)
-            pdf_url = f"/api/finances/calls-for-funds/download/{pdf_filename}"
-        except Exception as e:
-            logger.warning(f"Erreur écriture PDF {pdf_filename}: {e}")
+            pdf_bytes = generate_call_for_funds_pdf(
+                call_data=calc,
+                member=member,
+                bank_info=bank_info,
+                is_bank_pending=is_pending
+            )
+            if pdf_bytes:
+                pdf_filename = f"SCI {month:02d}{year} Avis Appel de Fonds {member.prenom}.pdf"
+                dest_path = os.path.join(DOCUMENTS_DIR, pdf_filename)
+                try:
+                    with open(dest_path, "wb") as f:
+                        f.write(pdf_bytes)
+                    pdf_url = f"/api/finances/calls-for-funds/download/{pdf_filename}"
+                except Exception as e:
+                    logger.warning(f"Erreur écriture PDF {pdf_filename}: {e}")
+        except Exception as pdf_err:
+            logger.error(f"[PDF ERROR] Erreur génération avis PDF pour {member.prenom}: {pdf_err}")
+            pdf_bytes = None
 
     # Enregistrement ou mise à jour en base
     if existing:
@@ -824,17 +857,13 @@ def generate_and_save_monthly_call(
             MemberLedgerEntry.entry_type == "ECHEANCE"
         ).first()
 
-        if not existing_ledger:
-            # Calcul du débit selon couverture
-            if calc["status"] == "COUVERT":
-                debit = -calc["theoretical_contribution"]
-                desc = f"Échéance {calc['period_label']} (Couverte par avance/trésorerie)"
-            elif calc.get("balance_before", 0.0) > 0:
-                debit = -calc["balance_before"]
-                desc = f"Échéance {calc['period_label']} (Acompte trésorerie {calc['balance_before']:.2f} €)"
-            else:
-                debit = -calc["theoretical_contribution"]
-                desc = f"Échéance {calc['period_label']}"
+        # Règle d'or : AUCUNE échéance débitée si compte inactif ou avant la date de début paramétrable
+        if not is_treasury_contributions_started(year, month, db):
+            logger.info(f"[TREASURY] Compte inactif ou période antérieure au démarrage ({year}-{month:02d}) : aucun débit d'échéance inscrit au grand livre.")
+        elif not existing_ledger:
+            # L'échéance mensuelle (dette statutaire) est TOUJOURS la quote-part intégrale
+            debit = -float(calc["theoretical_contribution"])
+            desc = f"Échéance {calc['period_label']}"
 
             add_ledger_entry(
                 db=db,
