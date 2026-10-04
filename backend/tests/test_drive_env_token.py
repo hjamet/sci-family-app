@@ -69,3 +69,43 @@ def test_henri_only_visibility_logic():
     assert is_visible_to_user({"prenom": "Maman", "name": "Maman Jamet", "email": "elizabeth_jamet@yahoo.fr", "is_coordinator": False}) is False
     assert is_visible_to_user({"prenom": "Frédéric", "name": "Frédéric Jamet", "email": "frdjamet@gmail.com", "is_coordinator": False}) is False
     assert is_visible_to_user(None) is False
+
+
+def test_drive_status_unauthenticated_returns_401():
+    """Vérifie que la route /api/drive/status exige l'authentification et renvoie 401 sans jeton."""
+    res = client.get("/api/drive/status")
+    assert res.status_code == 401, f"Attendu 401 sans jeton, reçu {res.status_code}"
+
+
+def test_drive_status_authenticated_henri_vs_others():
+    """Vérifie que seul Henri accède au détail technique et que les autres reçoivent une vue restreinte."""
+    from app.main import get_current_user
+
+    class DummyUser:
+        def __init__(self, prenom, email):
+            self.prenom = prenom
+            self.email = email
+            self.id = 1
+
+    # 1. Henri
+    app.dependency_overrides[get_current_user] = lambda: DummyUser("Henri", "hellenvillierssci@gmail.com")
+    try:
+        res = client.get("/api/drive/status")
+        assert res.status_code == 200
+        data = res.json()
+        assert "connected" in data
+        assert "service" in data or "status" in data
+    finally:
+        app.dependency_overrides.pop(get_current_user, None)
+
+    # 2. Autre membre (ex: Marguerite)
+    app.dependency_overrides[get_current_user] = lambda: DummyUser("Marguerite", "marguerite@yahoo.fr")
+    try:
+        res = client.get("/api/drive/status")
+        assert res.status_code == 200
+        data = res.json()
+        assert data.get("restricted") is True
+        assert data.get("connected") is True
+    finally:
+        app.dependency_overrides.pop(get_current_user, None)
+

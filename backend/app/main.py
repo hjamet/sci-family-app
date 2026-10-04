@@ -7054,8 +7054,22 @@ def delete_admin_document(doc_id: str, db: Session = Depends(get_db)):
 
 # --- Google Drive Confined Storage (Strict Drive Jail) ---
 @app.get("/api/drive/status", tags=["Google Drive"])
-def get_drive_status(db: Session = Depends(get_db)):
-    """Contrôle la validité de la connexion Google Drive sans repli masquant (Fail-Loud)."""
+def get_drive_status(
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db)
+):
+    """Contrôle la validité de la connexion Google Drive sans repli masquant (Fail-Loud).
+    Détail d'état accessible exclusivement pour Henri (propriétaire du stockage).
+    Pour les autres associés connectés, masque le détail technique.
+    Sans authentification : 401 Unauthorized via Depends(get_current_user).
+    """
+    user_prenom = (current_user.prenom or "").lower()
+    user_email = (current_user.email or "").lower()
+    is_henri = "henri" in user_prenom or "henri" in user_email or "hellenvillierssci" in user_email
+
+    if not is_henri:
+        return {"connected": True, "status": "ok", "restricted": True}
+
     return drive_jail_service.check_connection_status(db)
 
 

@@ -134,18 +134,27 @@ def test_resumable_upload_complete_and_download():
 
 
 def test_drive_status_endpoint():
-    """Vérifie que l'endpoint GET /api/drive/status retourne le statut de connexion."""
-    with patch.object(drive_jail_service, "check_connection_status") as mock_status:
-        mock_status.return_value = {
-            "connected": True,
-            "status": "ok",
-            "message": "Connexion Google Drive active et opérationnelle."
-        }
-        res = client.get("/api/drive/status")
-        assert res.status_code == 200
-        data = res.json()
-        assert data["connected"] is True
-        assert data["status"] == "ok"
+    """Vérifie que l'endpoint GET /api/drive/status retourne le statut de connexion pour un utilisateur authentifié."""
+    from app.main import get_current_user
+    class DummyUser:
+        prenom = "Henri"
+        email = "hellenvillierssci@gmail.com"
+        id = 1
+    app.dependency_overrides[get_current_user] = lambda: DummyUser()
+    try:
+        with patch.object(drive_jail_service, "check_connection_status") as mock_status:
+            mock_status.return_value = {
+                "connected": True,
+                "status": "ok",
+                "message": "Connexion Google Drive active et opérationnelle."
+            }
+            res = client.get("/api/drive/status")
+            assert res.status_code == 200
+            data = res.json()
+            assert data["connected"] is True
+            assert data["status"] == "ok"
+    finally:
+        app.dependency_overrides.pop(get_current_user, None)
 
 
 def test_drive_oauth_routes_deleted():
@@ -159,14 +168,23 @@ def test_drive_oauth_routes_deleted():
 
 def test_drive_missing_env_token_fail_loud():
     """Vérifie le comportement fail-loud lorsque la variable GOOGLE_DRIVE_REFRESH_TOKEN est absente."""
-    # 1. Statut via GET /api/drive/status
-    with patch.dict(os.environ, {"GOOGLE_DRIVE_REFRESH_TOKEN": ""}, clear=False):
-        res = client.get("/api/drive/status")
-        assert res.status_code == 200
-        data = res.json()
-        assert data["connected"] is False
-        assert data["status"] == "missing_token"
-        assert "non configurée" in data["message"]
+    from app.main import get_current_user
+    class DummyUser:
+        prenom = "Henri"
+        email = "hellenvillierssci@gmail.com"
+        id = 1
+    app.dependency_overrides[get_current_user] = lambda: DummyUser()
+    try:
+        # 1. Statut via GET /api/drive/status
+        with patch.dict(os.environ, {"GOOGLE_DRIVE_REFRESH_TOKEN": ""}, clear=False):
+            res = client.get("/api/drive/status")
+            assert res.status_code == 200
+            data = res.json()
+            assert data["connected"] is False
+            assert data["status"] == "missing_token"
+            assert "non configurée" in data["message"]
+    finally:
+        app.dependency_overrides.pop(get_current_user, None)
 
     # 2. _get_client lève impérativement RuntimeError sans repli silencieux
     from app.services.drive_service import GoogleDriveJailService
