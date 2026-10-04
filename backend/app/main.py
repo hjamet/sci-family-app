@@ -9029,6 +9029,26 @@ def reject_member_expense_endpoint(
     return expense
 
 
+@app.delete("/api/finances/expenses/{expense_id}", status_code=status.HTTP_200_OK, tags=["Dépenses Membres"])
+def delete_member_expense_endpoint(
+    expense_id: int,
+    current_user: Optional[User] = Depends(get_optional_current_user),
+    db: Session = Depends(get_db)
+):
+    """Supprime définitivement une avance de frais (notamment pour purge de tests ou annulation)."""
+    expense = db.query(MemberExpense).filter(MemberExpense.id == expense_id).first()
+    if not expense:
+        raise HTTPException(status_code=404, detail="Avance introuvable.")
+    if expense.task_id:
+        t = db.query(Task).filter(Task.id == expense.task_id).first()
+        if t:
+            db.delete(t)
+    db.query(MemberLedgerEntry).filter(MemberLedgerEntry.expense_id == expense.id).delete()
+    db.delete(expense)
+    db.commit()
+    return {"success": True, "message": f"Dépense {expense_id} supprimée définitivement."}
+
+
 # ==============================================================================
 # SECTION TRÉSORERIE PAR MEMBRE & CODES DE VIREMENT PERMANENTS
 # ==============================================================================

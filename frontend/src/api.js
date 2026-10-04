@@ -2059,6 +2059,15 @@ export async function rejectMemberExpense(expenseId, rejectionReason) {
   return res.json();
 }
 
+export async function deleteMemberExpense(expenseId) {
+  const res = await fetch(`${API_BASE}/finances/expenses/${expenseId}`, {
+    method: 'DELETE',
+    headers: getAuthHeaders()
+  });
+  if (!res.ok) throw new Error('Erreur lors de la suppression de l\'avance.');
+  return res.json();
+}
+
 export async function fetchMyTreasury() {
   const res = await fetch(`${API_BASE}/finances/treasury/me`, {
     headers: getAuthHeaders()
