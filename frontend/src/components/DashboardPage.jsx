@@ -625,7 +625,7 @@ export default function DashboardPage({
               </span>
             </h3>
             <p className="font-body-md text-xs leading-relaxed text-blue-100/90 font-medium mt-2">
-              Factures des membres, aperçu des comptes banquaires et Documents administratifs de la SCI
+              Factures des membres, aperçu des comptes bancaires et documents administratifs de la SCI
             </p>
           </div>
         </div>
@@ -698,7 +698,7 @@ export default function DashboardPage({
               </span>
             </h3>
             <p className="font-body-md text-xs leading-relaxed text-teal-100/90 font-medium mt-2">
-              Gestion du Chauffage et de la piscine pour le séjour, tâches attribuées et Vademecum
+              Gestion du chauffage et de la piscine pour le séjour, tâches attribuées et vadémécum
             </p>
           </div>
         </div>
