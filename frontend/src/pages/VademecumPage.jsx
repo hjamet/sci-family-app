@@ -908,6 +908,16 @@ export default function VademecumPage({ properties, currentUser, reservations = 
   const [loadingDb, setLoadingDb] = useState(false);
   const [dbError, setDbError] = useState(null);
   const [copiedDbId, setCopiedDbId] = useState(null);
+  const [activeMenuId, setActiveMenuId] = useState(null);
+  const [itemToDelete, setItemToDelete] = useState(null);
+
+  // Fermeture des menus au clic extérieur
+  useEffect(() => {
+    if (!activeMenuId) return;
+    const handleCloseMenu = () => setActiveMenuId(null);
+    window.addEventListener('click', handleCloseMenu);
+    return () => window.removeEventListener('click', handleCloseMenu);
+  }, [activeMenuId]);
 
   // Dynamic Categories state : Catégories authentiques du père + personnalisées (Zéro fuite administrative)
   const [customCategories, setCustomCategories] = useState(() => {
@@ -1094,13 +1104,13 @@ export default function VademecumPage({ properties, currentUser, reservations = 
   };
 
   const handleDeleteDbItem = async (itemId) => {
-    if (!window.confirm('Voulez-vous vraiment supprimer cette fiche Vademecum ?')) return;
     try {
       await deleteVademecumItem(itemId);
-      showToast('Fiche Vademecum supprimée');
+      showToast('Fiche pratique supprimée avec succès');
       await loadVademecumDb();
     } catch (err) {
       console.error('Failed to delete item:', err);
+      showToast('Erreur lors de la suppression de la fiche', 'error');
     }
   };
 
@@ -2287,6 +2297,37 @@ export default function VademecumPage({ properties, currentUser, reservations = 
                     <span className="px-2 py-0.5 rounded-md bg-canvas-slate border border-border-subtle text-[11px] font-bold text-on-surface-variant">
                       {item.category}
                     </span>
+                    <div className="relative">
+                      <button
+                        type="button"
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          setActiveMenuId(activeMenuId === item.id ? null : item.id);
+                        }}
+                        className="w-7 h-7 rounded-lg text-slate-400 hover:text-slate-700 hover:bg-slate-100 flex items-center justify-center transition-colors cursor-pointer"
+                        title="Options de la fiche"
+                      >
+                        <span className="material-symbols-outlined text-[18px]">more_vert</span>
+                      </button>
+                      {activeMenuId === item.id && (
+                        <div
+                          onClick={(e) => e.stopPropagation()}
+                          className="absolute right-0 top-8 z-20 w-44 bg-white rounded-xl shadow-lg border border-border-subtle p-1 animate-in fade-in zoom-in-95 duration-100"
+                        >
+                          <button
+                            type="button"
+                            onClick={() => {
+                              setActiveMenuId(null);
+                              setItemToDelete(item);
+                            }}
+                            className="w-full flex items-center gap-2 px-2.5 py-1.5 rounded-lg text-xs font-semibold text-rose-600 hover:bg-rose-50 transition-colors text-left cursor-pointer"
+                          >
+                            <Trash2 className="h-3.5 w-3.5" />
+                            <span>Supprimer la fiche</span>
+                          </button>
+                        </div>
+                      )}
+                    </div>
                   </div>
 
                   <h4 className="text-sm font-bold text-on-surface mb-1">{item.title}</h4>
@@ -2312,23 +2353,52 @@ export default function VademecumPage({ properties, currentUser, reservations = 
                     </button>
                   </div>
                 )}
-
-                <div className="flex justify-end pt-2 mt-3 border-t border-border-subtle">
-                  <button
-                    onClick={() => handleDeleteDbItem(item.id)}
-                    className="text-outline hover:text-error text-xs flex items-center gap-1 transition font-medium cursor-pointer"
-                    type="button"
-                  >
-                    <Trash2 className="h-3 w-3" />
-                    <span>Supprimer</span>
-                  </button>
-                </div>
               </div>
             ))}
           </div>
         )}
 
       </section>
+
+      {/* Confirmation explicite de suppression d'une fiche vadémécum */}
+      {itemToDelete && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-900/60 backdrop-blur-sm animate-in fade-in duration-150">
+          <div className="bg-white border border-slate-200 rounded-3xl max-w-md w-full p-6 shadow-2xl space-y-4 text-on-surface">
+            <div className="flex items-center gap-3">
+              <div className="w-10 h-10 rounded-2xl bg-rose-50 text-rose-600 border border-rose-200 flex items-center justify-center shrink-0">
+                <Trash2 className="h-5 w-5" />
+              </div>
+              <div>
+                <h3 className="font-bold text-base text-slate-900">Confirmer la suppression</h3>
+                <p className="text-xs text-slate-500">Cette action est définitive et irréversible.</p>
+              </div>
+            </div>
+            <p className="text-xs text-slate-700 leading-relaxed bg-slate-50 p-3.5 rounded-xl border border-slate-200/80">
+              Êtes-vous certain de vouloir supprimer définitivement la fiche pratique <strong className="text-slate-900">« {itemToDelete.title} »</strong> ({itemToDelete.category}) ?
+            </p>
+            <div className="flex items-center justify-end gap-2.5 pt-2">
+              <button
+                type="button"
+                onClick={() => setItemToDelete(null)}
+                className="px-4 py-2 rounded-xl text-xs font-semibold text-slate-700 hover:bg-slate-100 transition-colors cursor-pointer"
+              >
+                Annuler
+              </button>
+              <button
+                type="button"
+                onClick={async () => {
+                  const id = itemToDelete.id;
+                  setItemToDelete(null);
+                  await handleDeleteDbItem(id);
+                }}
+                className="px-4 py-2 rounded-xl text-xs font-bold text-white bg-rose-600 hover:bg-rose-700 transition-colors cursor-pointer shadow-sm"
+              >
+                Supprimer définitivement
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
 
       {/* ===================================================================== */}
       {/* MODALS                                                                */}
