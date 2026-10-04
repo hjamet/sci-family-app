@@ -2024,22 +2024,6 @@ export async function fetchDriveStatus(options = {}) {
   return res.json();
 }
 
-export async function fetchDriveOAuthUrl() {
-  const res = await fetch(`${API_BASE}/drive/oauth/url`, {
-    headers: getAuthHeaders()
-  });
-  if (!res.ok) {
-    let detail = '';
-    try {
-      const err = await res.json();
-      detail = err.detail || err.message;
-    } catch {
-      try { detail = (await res.text()).slice(0, 150); } catch {}
-    }
-    throw new Error(detail || `Erreur lors de la génération de l'URL Google Drive (HTTP ${res.status})`);
-  }
-  return res.json();
-}
 export async function validateMemberExpense(expenseId) {
   const res = await fetch(`${API_BASE}/finances/expenses/${expenseId}/validate`, {
     method: 'POST',

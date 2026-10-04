@@ -26,7 +26,11 @@ backend/service_account.json
 *.crt
 backend/certs/
 certs/
-backend/scripts/
+!backend/scripts/
+backend/scripts/*
+!backend/scripts/generate_drive_refresh_token.py
+.drive_refresh_token
+backend/.drive_refresh_token
 
 # SQLite databases
 *.db
@@ -68,6 +72,7 @@ test_*.py
 !backend/tests/test_chantier1_votes_backend.py
 !backend/tests/test_chat_notifications_settings.py
 !backend/tests/test_resumable_upload.py
+!backend/tests/test_drive_env_token.py
 backend/app/uploads/
 backend/archive_scratch_tests/
 uploads/
