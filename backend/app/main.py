@@ -7030,26 +7030,124 @@ def get_drive_status(db: Session = Depends(get_db)):
     return drive_jail_service.check_connection_status(db)
 
 
+# Utilitaires de sécurité OAuth CSRF / Anti-rejeu
+_OAUTH_USED_NONCES = set()
+
+def generate_oauth_state(user_id: int) -> str:
+    """Génère un paramètre state signé HMAC (15 min de validité, nonce unique)."""
+    import hmac, hashlib, time, secrets
+    from app.security import SECRET_KEY
+    timestamp = int(time.time())
+    nonce = secrets.token_hex(16)
+    msg = f"{user_id}:{timestamp}:{nonce}"
+    sig = hmac.new(SECRET_KEY.encode(), msg.encode(), hashlib.sha256).hexdigest()
+    return f"{msg}:{sig}"
+
+def verify_oauth_state(state: Optional[str], db: Session, max_age_seconds: int = 900) -> int:
+    """Vérifie l'intégrité, la signature, la fraîcheur et l'usage unique du jeton d'état OAuth."""
+    import hmac, hashlib, time
+    from app.security import SECRET_KEY
+    if not state:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Paramètre state manquant (protection CSRF obligatoire)."
+        )
+    parts = state.split(":")
+    if len(parts) != 4:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Format de paramètre state invalide."
+        )
+    user_id_str, ts_str, nonce, sig = parts
+    try:
+        user_id = int(user_id_str)
+        ts = int(ts_str)
+    except ValueError:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Données du paramètre state corrompues."
+        )
+
+    # 1. Vérification de la signature HMAC
+    expected_sig = hmac.new(SECRET_KEY.encode(), f"{user_id}:{ts}:{nonce}".encode(), hashlib.sha256).hexdigest()
+    if not hmac.compare_digest(sig, expected_sig):
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Signature du paramètre state invalide ou falsifiée."
+        )
+
+    # 2. Vérification de la validité temporelle (15 min)
+    if time.time() - ts > max_age_seconds:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Le jeton d'état OAuth a expiré (délai maximal 15 minutes dépassé)."
+        )
+
+    # 3. Usage unique (anti-rejeu)
+    from sqlalchemy import text
+    try:
+        row = db.execute(text("SELECT value FROM system_settings WHERE key = :k"), {"k": f"oauth_nonce_{nonce}"}).fetchone()
+        if row:
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail="Ce jeton d'état OAuth a déjà été utilisé (tentative de rejeu bloquée)."
+            )
+        db.execute(text("INSERT INTO system_settings (key, value) VALUES (:k, :v)"), {"k": f"oauth_nonce_{nonce}", "v": str(int(time.time()))})
+        db.commit()
+    except HTTPException:
+        raise
+    except Exception:
+        if nonce in _OAUTH_USED_NONCES:
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail="Ce jeton d'état OAuth a déjà été utilisé (tentative de rejeu bloquée)."
+            )
+        _OAUTH_USED_NONCES.add(nonce)
+
+    # 4. Vérification que l'initiateur est bien coordinateur
+    user = db.query(Member).filter(Member.id == user_id).first()
+    if not user or not getattr(user, "is_coordinator", False):
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Action réservée aux coordinateurs (is_coordinator requis)."
+        )
+
+    return user_id
+
+
 @app.get("/api/drive/oauth/url", tags=["Google Drive"])
-def get_drive_oauth_url(request: Request, db: Session = Depends(get_db)):
-    """Génère l'URL d'autorisation Google OAuth2 pour reconnexion in-app par Henri."""
+def get_drive_oauth_url(
+    request: Request,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db)
+):
+    """Génère l'URL d'autorisation Google OAuth2 réservée au coordinateur authentifié avec state signé."""
+    if not getattr(current_user, "is_coordinator", False):
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Action réservée aux coordinateurs (is_coordinator requis)."
+        )
+
     if "hellenvilliers.henri-jamet.com" in request.headers.get("host", ""):
         redirect_uri = "https://hellenvilliers.henri-jamet.com/api/drive/oauth/callback"
     else:
         base = str(request.base_url).rstrip("/")
         redirect_uri = f"{base}/api/drive/oauth/callback"
-    auth_url = drive_jail_service.get_oauth_authorization_url(redirect_uri=redirect_uri)
-    return {"auth_url": auth_url, "redirect_uri": redirect_uri}
+
+    state = generate_oauth_state(user_id=current_user.id)
+    auth_url = drive_jail_service.get_oauth_authorization_url(redirect_uri=redirect_uri, state=state)
+    return {"auth_url": auth_url, "redirect_uri": redirect_uri, "state": state}
 
 
 @app.get("/api/drive/oauth/callback", tags=["Google Drive"])
 def drive_oauth_callback(
     request: Request,
     code: Optional[str] = Query(None),
+    state: Optional[str] = Query(None),
     error: Optional[str] = Query(None),
     db: Session = Depends(get_db)
 ):
-    """Callback de réception du code Google OAuth, échange et stockage du refresh token."""
+    """Callback de réception du code Google OAuth, vérification stricte du state et stockage du token."""
     from fastapi.responses import RedirectResponse
     import urllib.parse
     base = "https://hellenvilliers.henri-jamet.com" if "hellenvilliers.henri-jamet.com" in request.headers.get("host", "") else str(request.base_url).rstrip("/")
@@ -7058,6 +7156,9 @@ def drive_oauth_callback(
         logger.error(f"Erreur reçue lors du callback OAuth Google: {error}")
         return RedirectResponse(url=f"{base}/admin?drive_error={error}", status_code=status.HTTP_303_SEE_OTHER)
     
+    # 1. Vérification stricte du state CSRF / anti-rejeu (lève 400 ou 403 si invalide)
+    verify_oauth_state(state=state, db=db)
+
     if not code:
         return RedirectResponse(url=f"{base}/admin?drive_error=code_manquant", status_code=status.HTTP_303_SEE_OTHER)
 
@@ -7072,6 +7173,7 @@ def drive_oauth_callback(
     except Exception as e:
         logger.error(f"Échec enregistrement jeton OAuth Drive: {e}")
         return RedirectResponse(url=f"{base}/admin?drive_error={urllib.parse.quote(str(e))}", status_code=status.HTTP_303_SEE_OTHER)
+
 
 
 @app.get("/api/drive/files", tags=["Google Drive"])

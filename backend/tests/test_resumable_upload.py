@@ -148,16 +148,109 @@ def test_drive_status_endpoint():
         assert data["status"] == "ok"
 
 
-def test_drive_oauth_url_endpoint():
-    """Vérifie que l'endpoint GET /api/drive/oauth/url renvoie l'URL Google OAuth."""
-    with patch.object(drive_jail_service, "get_oauth_authorization_url") as mock_auth:
-        mock_auth.return_value = "https://accounts.google.com/o/oauth2/v2/auth?client_id=fake&response_type=code"
-        res = client.get("/api/drive/oauth/url")
-        assert res.status_code == 200
-        data = res.json()
-        assert "auth_url" in data
-        assert "https://accounts.google.com" in data["auth_url"]
-        assert "redirect_uri" in data
+def test_drive_oauth_url_security():
+    """Vérifie la sécurité stricte de /api/drive/oauth/url (401 sans token, 403 non-coordinateur, 200 coordinateur)."""
+    from app.models import Member
+    from app.security import create_access_token
+
+    # 1. Sans authentification -> 401
+    res_no_auth = client.get("/api/drive/oauth/url")
+    assert res_no_auth.status_code == 401, f"Attendu 401, reçu {res_no_auth.status_code}"
+
+    # Préparation utilisateurs de test
+    db = SessionLocal()
+    try:
+        # Membre simple (non-coordinateur)
+        member = db.query(Member).filter(Member.email == "test_simple_user@hellenvilliers.local").first()
+        if not member:
+            member = Member(prenom="SimpleTest", name="User", email="test_simple_user@hellenvilliers.local", is_coordinator=False)
+            db.add(member)
+            db.commit()
+            db.refresh(member)
+        else:
+            member.is_coordinator = False
+            db.commit()
+
+        # Coordinateur (Henri)
+        coord = db.query(Member).filter(Member.email == "test_coord_henri@hellenvilliers.local").first()
+        if not coord:
+            coord = Member(prenom="HenriTest", name="Coord", email="test_coord_henri@hellenvilliers.local", is_coordinator=True)
+            db.add(coord)
+            db.commit()
+            db.refresh(coord)
+        else:
+            coord.is_coordinator = True
+            db.commit()
+
+        token_member = create_access_token({"sub": member.prenom, "user_id": member.id, "email": member.email})
+        token_coord = create_access_token({"sub": coord.prenom, "user_id": coord.id, "email": coord.email})
+
+        # 2. Utilisateur non-coordinateur -> 403 Forbidden
+        res_forbidden = client.get(
+            "/api/drive/oauth/url",
+            headers={"Authorization": f"Bearer {token_member}"}
+        )
+        assert res_forbidden.status_code == 403, f"Attendu 403, reçu {res_forbidden.status_code}"
+
+        # 3. Coordinateur authentifié -> 200 OK avec state signé, access_type=offline, prompt=consent
+        with patch.object(drive_jail_service, "get_oauth_credentials_info") as mock_creds:
+            mock_creds.return_value = ("fake_client_id.apps.googleusercontent.com", "fake_secret", "fake_refresh")
+            res_coord = client.get(
+                "/api/drive/oauth/url",
+                headers={"Authorization": f"Bearer {token_coord}"}
+            )
+            assert res_coord.status_code == 200
+            data = res_coord.json()
+            assert "auth_url" in data
+            assert "access_type=offline" in data["auth_url"]
+            assert "prompt=consent" in data["auth_url"]
+            assert "state" in data
+            import urllib.parse
+            assert urllib.parse.quote(data["state"], safe="") in data["auth_url"]
+    finally:
+        db.close()
+
+
+def test_drive_oauth_callback_security():
+    """Vérifie le filtrage du callback OAuth (400 si state manquant, 403 si falsifié ou rejeu, 303 si valide)."""
+    from app.models import Member
+    from app.main import generate_oauth_state
+
+    db = SessionLocal()
+    try:
+        coord = db.query(Member).filter(Member.email == "test_coord_henri@hellenvilliers.local").first()
+        if not coord:
+            coord = Member(prenom="HenriTest", name="Coord", email="test_coord_henri@hellenvilliers.local", is_coordinator=True)
+            db.add(coord)
+            db.commit()
+            db.refresh(coord)
+        coord_id = coord.id
+    finally:
+        db.close()
+
+    # 1. State manquant -> 400 Bad Request
+    res_no_state = client.get("/api/drive/oauth/callback?code=mock_code")
+    assert res_no_state.status_code == 400, f"Attendu 400, reçu {res_no_state.status_code}"
+
+    # 2. State falsifié / signature incorrecte -> 403 Forbidden
+    res_bad_state = client.get("/api/drive/oauth/callback?code=mock_code&state=fake:timestamp:nonce:invalidsig")
+    assert res_bad_state.status_code == 403, f"Attendu 403, reçu {res_bad_state.status_code}"
+
+    # 3. State valide généré pour le coordinateur
+    valid_state = generate_oauth_state(user_id=coord_id)
+
+    with patch.object(drive_jail_service, "exchange_code_and_save_token") as mock_exchange:
+        mock_exchange.return_value = {"status": "success"}
+
+        # Premier passage -> 303 Redirect vers /admin?drive_connected=true
+        res_success = client.get(f"/api/drive/oauth/callback?code=mock_code_123&state={valid_state}", follow_redirects=False)
+        assert res_success.status_code == 303, f"Attendu 303, reçu {res_success.status_code}"
+        assert "drive_connected=true" in res_success.headers.get("location", "")
+
+        # 4. Tentative de rejeu du MÊME state -> 403 Forbidden (usage unique anti-rejeu)
+        res_replay = client.get(f"/api/drive/oauth/callback?code=mock_code_replay&state={valid_state}", follow_redirects=False)
+        assert res_replay.status_code == 403, f"Attendu 403 pour rejeu, reçu {res_replay.status_code}"
+
 
 
 def test_drive_expired_token_fail_loud():
