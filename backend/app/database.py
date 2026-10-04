@@ -241,7 +241,10 @@ def init_db(target_engine=None):
             conn.execute(text("""
                 UPDATE tasks
                 SET status = 'TODO'
-                WHERE (LOWER(title) LIKE '%validation avance%' OR LOWER(category) LIKE '%trésorerie%' OR LOWER(category) LIKE '%tresorerie%')
+                WHERE (
+                    id IN (SELECT task_id FROM member_expenses WHERE task_id IS NOT NULL)
+                    OR key_values LIKE '%"expense_id"%'
+                )
                   AND status = 'PROPOSED';
             """))
             conn.commit()

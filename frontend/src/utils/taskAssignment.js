@@ -156,14 +156,11 @@ export function isTaskProposed(task) {
   const st = rawStatus.toUpperCase();
   const normalized = stripAccents(rawStatus).toLowerCase().replace(/[_\s-]+/g, '_');
 
-  // Pare-feu strict : les tâches d'arbitrage d'avance de trésorerie sont DIRECTEMENT ACTIVES (exigence Henri)
-  const taskTitle = (task.title || '').toLowerCase();
-  const taskCat = (task.category || '').toLowerCase();
-  if (
-    taskTitle.includes('validation avance') ||
-    taskCat.includes('trésorerie') ||
-    taskCat.includes('tresorerie')
-  ) {
+  // Pare-feu strict : les tâches d'avance de frais (liées à une dépense) sont DIRECTEMENT ACTIVES (exigence Henri)
+  const taskExpenseId = task?.expense_id || task?.expenseId || (
+    Array.isArray(task?.key_values) && task.key_values.find(kv => ['expense_id', 'expenseid', 'depense_id'].includes((kv?.key || '').toLowerCase()))
+  );
+  if (taskExpenseId) {
     return false;
   }
 

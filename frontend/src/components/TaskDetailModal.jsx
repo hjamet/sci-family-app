@@ -647,7 +647,7 @@ export default function TaskDetailModal({
     ['motif', 'title', 'libelle', 'libellé', 'description'].includes((kv.key || '').toLowerCase())
   );
 
-  const expenseId = expenseIdKv ? parseInt(expenseIdKv.value, 10) : null;
+  const expenseId = task?.expense_id || task?.expenseId || (expenseIdKv ? parseInt(expenseIdKv.value, 10) : null);
 
   // Formatage monétaire français strict (ex: 45,50 €)
   const formatFrenchCurrency = (val) => {
@@ -688,12 +688,7 @@ export default function TaskDetailModal({
   const rawExpenseDate = expenseDateKv ? expenseDateKv.value : null;
   const expenseDate = formatFrenchDate(rawExpenseDate);
   const expenseMotif = expenseMotifKv ? expenseMotifKv.value : null;
-  const isExpenseValidationTask = Boolean(
-    (task?.title && task.title.toLowerCase().includes('validation avance')) ||
-    (task?.category && task.category.toLowerCase().includes('trésorerie')) ||
-    (task?.category && task.category.toLowerCase().includes('tresorerie')) ||
-    expenseId
-  );
+  const isExpenseValidationTask = Boolean(expenseId);
 
   // Pièces jointes / Justificatifs de l'avance
   const allAttachedDocs = parseTaskDocuments(task?.documents || task?.completion_docs || task?.document_urls);

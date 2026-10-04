@@ -912,6 +912,7 @@ class TaskBase(BaseModel):
     completion_notes: Optional[str] = None
     completion_docs: Optional[List[str]] = []
     created_by: Optional[str] = "Henri"
+    expense_id: Optional[int] = None
 
 
 class TaskCreate(TaskBase):
