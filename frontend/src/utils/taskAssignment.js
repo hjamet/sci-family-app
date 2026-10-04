@@ -4,7 +4,7 @@
  * une synchronisation absolue des compteurs et des filtres.
  */
 
-const CANONICAL_ASSOCIATES_MAP = {
+export const CANONICAL_ASSOCIATES_MAP = {
   henri: 1,
   hortense: 2,
   marguerite: 3,
@@ -14,6 +14,32 @@ const CANONICAL_ASSOCIATES_MAP = {
   elisabeth: 6,
   frederic: 7,
 };
+
+export const MEMBER_ID_TO_NAME = {
+  1: 'Henri Jamet',
+  2: 'Hortense Jamet',
+  3: 'Marguerite Jamet',
+  4: 'Eugénie Jamet',
+  5: 'Joséphine Jamet',
+  6: 'Élisabeth Jamet',
+  7: 'Frédéric Jamet',
+};
+
+export function resolveMemberDisplayName(val) {
+  if (val === null || val === undefined || val === '') return null;
+  const strVal = String(val).trim();
+  const numId = parseInt(strVal, 10);
+  if (!isNaN(numId) && MEMBER_ID_TO_NAME[numId]) {
+    return MEMBER_ID_TO_NAME[numId];
+  }
+  const lower = stripAccents(strVal);
+  for (const [key, id] of Object.entries(CANONICAL_ASSOCIATES_MAP)) {
+    if (lower.startsWith(key) || lower.includes(key)) {
+      return MEMBER_ID_TO_NAME[id];
+    }
+  }
+  return strVal;
+}
 
 function stripAccents(str) {
   if (!str || typeof str !== 'string') return '';
@@ -129,6 +155,17 @@ export function isTaskProposed(task) {
   const rawStatus = (task.status || '').trim();
   const st = rawStatus.toUpperCase();
   const normalized = stripAccents(rawStatus).toLowerCase().replace(/[_\s-]+/g, '_');
+
+  // Pare-feu strict : les tâches d'arbitrage d'avance de trésorerie sont DIRECTEMENT ACTIVES (exigence Henri)
+  const taskTitle = (task.title || '').toLowerCase();
+  const taskCat = (task.category || '').toLowerCase();
+  if (
+    taskTitle.includes('validation avance') ||
+    taskCat.includes('trésorerie') ||
+    taskCat.includes('tresorerie')
+  ) {
+    return false;
+  }
 
   // Pare-feu strict : une tâche active (TODO, EN_COURS, OPEN) ou déjà fermée n'est JAMAIS proposée (Annotation 14)
   if (

@@ -30,6 +30,7 @@ import {
   isTaskAssignedToUser,
   isTaskOpen,
   resolveUserMeta,
+  resolveMemberDisplayName,
 } from '../utils/taskAssignment';
 import CustomSelect from './CustomSelect';
 import DocumentViewerModal from './DocumentViewerModal';
@@ -629,20 +630,73 @@ export default function TaskDetailModal({
   const isOpenTask = isTaskOpen(task);
 
   const keyValuesList = parseKeyValues(task?.key_values);
-  const expenseIdKv = keyValuesList.find((kv) => (kv.key || '').toLowerCase() === 'expense_id');
-  const expenseAmountKv = keyValuesList.find((kv) => (kv.key || '').toLowerCase() === 'montant');
-  const expenseMemberKv = keyValuesList.find((kv) => (kv.key || '').toLowerCase() === 'membre');
-  const expenseDateKv = keyValuesList.find((kv) => (kv.key || '').toLowerCase() === 'date');
-  const expenseMotifKv = keyValuesList.find((kv) => (kv.key || '').toLowerCase() === 'motif');
+  const expenseIdKv = keyValuesList.find((kv) =>
+    ['expense_id', 'expenseid', 'id_expense', 'depense_id', 'id_depense'].includes((kv.key || '').toLowerCase())
+  );
+  const expenseAmountKv = keyValuesList.find((kv) =>
+    ['montant', 'amount', 'expense_amount', 'montant avance', 'montant_avance', 'somme', 'total'].includes((kv.key || '').toLowerCase())
+  );
+  const expenseMemberKv = keyValuesList.find((kv) =>
+    ['membre', 'member', 'demandeur', 'claimant', 'member_name', 'created_by', 'auteur'].includes((kv.key || '').toLowerCase())
+  );
+  const expenseDateKv = keyValuesList.find((kv) =>
+    ['date', 'expense_date', 'date de facture', 'date_facture'].includes((kv.key || '').toLowerCase())
+  );
+  const expenseMotifKv = keyValuesList.find((kv) =>
+    ['motif', 'title', 'libelle', 'libellé', 'description'].includes((kv.key || '').toLowerCase())
+  );
+
   const expenseId = expenseIdKv ? parseInt(expenseIdKv.value, 10) : null;
-  const expenseAmount = expenseAmountKv ? expenseAmountKv.value : null;
-  const expenseMemberName = expenseMemberKv ? expenseMemberKv.value : null;
+
+  // Formatage monétaire français strict (ex: 45,50 €)
+  const formatFrenchCurrency = (val) => {
+    if (val === null || val === undefined || val === '') return '';
+    if (typeof val === 'number') {
+      return val.toLocaleString('fr-FR', { minimumFractionDigits: 2, maximumFractionDigits: 2 }) + ' €';
+    }
+    const str = String(val).trim();
+    const cleanStr = str.replace(/[€\sEUR]/gi, '').replace(',', '.');
+    const num = parseFloat(cleanStr);
+    if (!isNaN(num)) {
+      return num.toLocaleString('fr-FR', { minimumFractionDigits: 2, maximumFractionDigits: 2 }) + ' €';
+    }
+    return str;
+  };
+
+  const titleAmountMatch = task?.title ? task.title.match(/\((\d+[.,]?\d*)\s*€\)/) : null;
+  const descAmountMatch = task?.description ? task.description.match(/Montant avancé\s*:\s*(\d+[.,]?\d*)/i) : null;
+  const rawAmount = expenseAmountKv?.value ?? (titleAmountMatch ? titleAmountMatch[1] : null) ?? (descAmountMatch ? descAmountMatch[1] : null) ?? (task?.budget && task.budget > 0 ? task.budget : null);
+  const expenseAmount = formatFrenchCurrency(rawAmount);
+
+  // Résolution stricte du nom du demandeur (zéro ID numérique brut comme '1')
+  const titleMemberMatch = task?.title ? task.title.match(/Validation avance(?: de frais)?\s*:\s*([A-Za-zÀ-ÿ]+)/i) : null;
+  const rawMember = expenseMemberKv?.value || (titleMemberMatch ? titleMemberMatch[1] : null) || task?.created_by;
+  const expenseMemberName = resolveMemberDisplayName(rawMember) || 'Henri Jamet';
+
   const expenseDate = expenseDateKv ? expenseDateKv.value : null;
   const expenseMotif = expenseMotifKv ? expenseMotifKv.value : null;
   const isExpenseValidationTask = Boolean(
-    (task?.title && task.title.toLowerCase().includes('validation avance')) || expenseId
+    (task?.title && task.title.toLowerCase().includes('validation avance')) ||
+    (task?.category && task.category.toLowerCase().includes('trésorerie')) ||
+    (task?.category && task.category.toLowerCase().includes('tresorerie')) ||
+    expenseId
   );
-  const expenseDocs = parseTaskDocuments(task?.documents || task?.completion_docs);
+
+  // Pièces jointes / Justificatifs de l'avance
+  const allAttachedDocs = parseTaskDocuments(task?.documents || task?.completion_docs || task?.document_urls);
+  const docUrlKv = keyValuesList.find((kv) =>
+    ['document_url', 'file_url', 'justificatif_url', 'justificatif', 'url'].includes((kv.key || '').toLowerCase())
+  );
+  if (docUrlKv && !allAttachedDocs.some((d) => (d.file_url === docUrlKv.value || d.url === docUrlKv.value))) {
+    allAttachedDocs.push({
+      name: 'Facture / Justificatif',
+      filename: 'Justificatif.pdf',
+      file_url: docUrlKv.value,
+      url: docUrlKv.value,
+      type: 'PDF'
+    });
+  }
+  const expenseDocs = allAttachedDocs;
 
   useEffect(() => {
     if (!isOpen) return;
@@ -1460,7 +1514,7 @@ export default function TaskDetailModal({
                   </h1>
                   <div className="flex flex-wrap items-center gap-3 pt-0.5">
                     <p className="font-body-md text-xs text-on-surface-variant">
-                      Réf. {task.ref || `${isVoteInitiative ? 'VOTE' : 'T'}-2026-${task.id || '088'}`} • Statut : <span className="font-semibold text-on-surface">{getTaskStatusMeta(task).label}</span>
+                      Réf. {task.ref || `${isVoteInitiative ? 'VOTE' : 'T'}-2026-${task.id || '088'}`} • Statut : <span className="font-semibold text-on-surface">{isExpenseValidationTask && (task?.status === 'TODO' || task?.status === 'EN_COURS' || task?.status === 'A_FAIRE') ? 'En cours' : getTaskStatusMeta(task).label}</span>
                     </p>
                     {Array.isArray(task.assigned_members) && task.assigned_members.length > 0 && (
                       <div className="flex flex-wrap items-center gap-1.5 text-xs text-on-surface-variant font-medium">
@@ -1502,11 +1556,11 @@ export default function TaskDetailModal({
                       <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 text-xs sm:text-sm">
                         <div>
                           <span className="text-slate-500 font-medium">Demandeur : </span>
-                          <span className="font-bold text-slate-900 dark:text-slate-100">{expenseMemberName || task?.created_by || 'Membre'}</span>
+                          <span className="font-bold text-slate-900 dark:text-slate-100">{expenseMemberName}</span>
                         </div>
                         <div>
                           <span className="text-slate-500 font-medium">Montant avancé : </span>
-                          <span className="font-bold text-emerald-700 dark:text-emerald-400 text-base">{expenseAmount || ''}</span>
+                          <span className="font-bold text-emerald-700 dark:text-emerald-400 text-base">{expenseAmount || 'Non précisé'}</span>
                         </div>
                         {expenseDate && (
                           <div>
@@ -1522,29 +1576,54 @@ export default function TaskDetailModal({
                         )}
                       </div>
 
-                      {expenseDocs && expenseDocs.length > 0 && (
-                        <div className="pt-3 border-t border-slate-100 dark:border-slate-800">
-                          <span className="text-xs font-semibold text-slate-500 uppercase tracking-wider block mb-2">
+                      {expenseDocs && expenseDocs.length > 0 ? (
+                        <div className="pt-3 border-t border-slate-100 dark:border-slate-800 space-y-2">
+                          <span className="text-xs font-semibold text-slate-500 uppercase tracking-wider block">
                             Justificatif / Facture jointe
                           </span>
-                          <div className="flex flex-wrap gap-2">
+                          <div className="flex flex-wrap items-center gap-3">
                             {expenseDocs.map((docItem, idx) => {
                               const norm = normalizeDocItem(docItem, idx);
+                              const isImg = norm?.type === 'Image' || (norm?.file_type && norm.file_type.startsWith('image/')) || (norm?.url && norm.url.match(/\.(png|jpe?g|webp|gif|svg)$/i));
                               return (
-                                <a
-                                  key={norm?.id || idx}
-                                  href={norm?.file_url || norm?.url}
-                                  target="_blank"
-                                  rel="noopener noreferrer"
-                                  className="inline-flex items-center gap-2 px-3 py-1.5 rounded-lg bg-emerald-50 hover:bg-emerald-100 text-emerald-900 text-xs font-semibold border border-emerald-300 transition-colors shadow-xs"
-                                >
-                                  <span className="material-symbols-outlined text-[16px] text-emerald-700">description</span>
-                                  <span className="truncate max-w-[220px]">{norm?.filename || norm?.name || 'Facture'}</span>
-                                  <span className="material-symbols-outlined text-[14px] text-slate-400">open_in_new</span>
-                                </a>
+                                <div key={norm?.id || idx} className="flex items-center gap-2 flex-wrap">
+                                  {isImg && norm?.url && (
+                                    <img
+                                      src={norm.url}
+                                      alt={norm.name || 'Justificatif'}
+                                      onClick={() => handleViewDocument(norm)}
+                                      className="w-12 h-12 object-cover rounded-lg border border-emerald-300 cursor-pointer hover:opacity-90 transition-opacity shadow-xs"
+                                      title="Cliquer pour afficher dans la visionneuse"
+                                    />
+                                  )}
+                                  <button
+                                    type="button"
+                                    onClick={() => handleViewDocument(norm)}
+                                    className="inline-flex items-center gap-2 px-3 py-1.5 rounded-lg bg-emerald-600 hover:bg-emerald-700 text-white text-xs font-bold transition-colors shadow-xs cursor-pointer"
+                                  >
+                                    <span className="material-symbols-outlined text-[18px]">visibility</span>
+                                    <span>Voir le justificatif</span>
+                                    <span className="text-[11px] font-normal opacity-85 truncate max-w-[140px]">
+                                      ({norm?.filename || norm?.name || 'Facture'})
+                                    </span>
+                                  </button>
+                                  <a
+                                    href={norm?.file_url || norm?.url}
+                                    target="_blank"
+                                    rel="noopener noreferrer"
+                                    className="inline-flex items-center p-1.5 rounded-lg bg-emerald-50 hover:bg-emerald-100 text-emerald-800 border border-emerald-200 transition-colors"
+                                    title="Ouvrir dans un nouvel onglet"
+                                  >
+                                    <span className="material-symbols-outlined text-[16px]">open_in_new</span>
+                                  </a>
+                                </div>
                               );
                             })}
                           </div>
+                        </div>
+                      ) : (
+                        <div className="pt-3 border-t border-slate-100 dark:border-slate-800 text-xs text-slate-400 italic">
+                          Aucun justificatif joint à cette avance
                         </div>
                       )}
                     </div>

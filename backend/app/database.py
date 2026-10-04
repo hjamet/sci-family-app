@@ -236,6 +236,18 @@ def init_db(target_engine=None):
         import logging
         logging.getLogger("sci_api").warning(f"Notice auto-migration database.py (notifications/members): {exc}")
 
+    try:
+        with eng.connect() as conn:
+            conn.execute(text("""
+                UPDATE tasks
+                SET status = 'TODO'
+                WHERE (LOWER(title) LIKE '%validation avance%' OR LOWER(category) LIKE '%trésorerie%' OR LOWER(category) LIKE '%tresorerie%')
+                  AND status = 'PROPOSED';
+            """))
+            conn.commit()
+    except Exception as mig_tasks_err:
+        pass
+
 # Auto-migration au chargement du module
 try:
     init_db(engine)

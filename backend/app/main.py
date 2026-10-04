@@ -8803,7 +8803,7 @@ async def create_member_expense(
     henri_id = henri.id if henri else 1
 
     key_values_list = [
-        {"key": "Membre", "value": member.prenom},
+        {"key": "Membre", "value": member.name or f"{member.prenom} Jamet"},
         {"key": "Montant", "value": f"{amount:.2f} €"},
         {"key": "Date", "value": clean_date},
         {"key": "Motif", "value": clean_title},
@@ -8822,13 +8822,13 @@ async def create_member_expense(
 
     validation_task = Task(
         title=f"Validation avance de frais : {member.prenom} - {clean_title} ({amount:.2f} €)",
-        description=f"Avance de frais déclarée par {member.name} pour la SCI Hellenvilliers.\nMontant avancé : {amount:.2f} €\nMotif : {clean_title}\nDate : {clean_date}",
+        description=f"Avance de frais déclarée par {member.name or member.prenom} pour la SCI Hellenvilliers.\nMontant avancé : {amount:.2f} €\nMotif : {clean_title}\nDate : {clean_date}",
         category="Finances & Trésorerie",
-        status="A_FAIRE",
+        status="TODO",
         charge_points=1,
         assignee_id=henri_id,
         assigned_members=json.dumps(["Henri Jamet"]),
-        created_by=member.name or "Henri Jamet",
+        created_by=member.name or f"{member.prenom} Jamet",
         key_values=json.dumps(key_values_list, ensure_ascii=False),
         documents=json.dumps(task_docs, ensure_ascii=False) if task_docs else None,
         created_at=datetime.utcnow(),
