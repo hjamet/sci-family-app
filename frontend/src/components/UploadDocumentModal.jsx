@@ -1,9 +1,9 @@
 import React, { useState, useEffect, useRef, useMemo } from 'react';
 import {
   fetchDocumentCategories,
-  createDocumentCategory,
-  uploadDocument
+  createDocumentCategory
 } from '../api';
+import { uploadUniversalDocument, friendlyErrorMessage } from '../utils/fileUpload';
 import CustomSelect from './CustomSelect';
 import CategoryManageModal from './CategoryManageModal';
 import TagMultiSelect from './TagMultiSelect';
@@ -49,6 +49,8 @@ export default function UploadDocumentModal({
   const [uploadedFileName, setUploadedFileName] = useState('');
   const [isDraggingFile, setIsDraggingFile] = useState(false);
   const [isSubmittingUpload, setIsSubmittingUpload] = useState(false);
+  const [uploadProgressText, setUploadProgressText] = useState('');
+  const [uploadPercent, setUploadPercent] = useState(0);
 
   // Création dynamique d'une nouvelle catégorie
   const [isNewCategoryOpen, setIsNewCategoryOpen] = useState(false);
@@ -118,6 +120,8 @@ export default function UploadDocumentModal({
       setNewCatColor('slate');
       setSelectedCategoryToEdit(null);
       setUploadTags(defaultCategory ? [defaultCategory] : (categoriesList[0] ? [categoriesList[0].name] : []));
+      setUploadProgressText('');
+      setUploadPercent(0);
     }
   }, [isOpen]);
 
@@ -163,7 +167,7 @@ export default function UploadDocumentModal({
     }
   };
 
-  // Soumission de l'upload universel
+  // Soumission de l'upload universel avec chunking automatique et gestion d'erreurs claire
   const handleSubmit = async (e) => {
     e.preventDefault();
     if (!uploadOrganisme.trim() || !uploadTitle.trim() || !uploadFile) {
@@ -172,6 +176,9 @@ export default function UploadDocumentModal({
     }
 
     setIsSubmittingUpload(true);
+    setUploadPercent(5);
+    setUploadProgressText("Préparation du document...");
+
     try {
       const deposant = (
         currentUser && typeof currentUser === 'object'
@@ -182,22 +189,22 @@ export default function UploadDocumentModal({
       const primaryCat = uploadTags.length > 0 ? uploadTags.join(', ') : (categoriesList[0]?.name || defaultCategory || 'Travaux & Chantiers');
       const finalTags = uploadTags.length > 0 ? uploadTags : [primaryCat];
 
-      const formData = new FormData();
-      formData.append('file', uploadFile);
-      formData.append('organisme', uploadOrganisme.trim());
-      formData.append('title', uploadTitle.trim());
-      formData.append('category', primaryCat);
-      formData.append('tags', JSON.stringify(finalTags));
-      formData.append('uploaded_by', deposant);
-
-      if (targetTaskId) {
-        formData.append('task_id', String(targetTaskId));
-      }
-      if (targetProjectId) {
-        formData.append('project_id', String(targetProjectId));
-      }
-
-      const newDoc = await uploadDocument(formData);
+      const newDoc = await uploadUniversalDocument(
+        uploadFile,
+        {
+          organisme: uploadOrganisme.trim(),
+          title: uploadTitle.trim(),
+          category: primaryCat,
+          tags: finalTags,
+          task_id: targetTaskId,
+          project_id: targetProjectId,
+          uploaded_by: deposant
+        },
+        (percent, statusText) => {
+          setUploadPercent(percent);
+          setUploadProgressText(statusText);
+        }
+      );
 
       if (onUploadSuccess) {
         await onUploadSuccess(newDoc);
@@ -206,16 +213,19 @@ export default function UploadDocumentModal({
       onClose();
     } catch (err) {
       console.error('Erreur téléversement document universel:', err);
+      const friendlyMsg = friendlyErrorMessage(err);
       window.dispatchEvent(new CustomEvent('app-error', {
         detail: {
-          message: err.message || 'Erreur lors du téléversement du document',
+          message: friendlyMsg,
           status: err.status || 500,
           endpoint: '/api/documents/upload'
         }
       }));
-      alert(err.message || 'Erreur lors du téléversement du document.');
+      alert(friendlyMsg);
     } finally {
       setIsSubmittingUpload(false);
+      setUploadProgressText('');
+      setUploadPercent(0);
     }
   };
 
@@ -313,7 +323,7 @@ export default function UploadDocumentModal({
               <input
                 ref={fileDropInputRef}
                 type="file"
-                accept=".pdf,.png,.jpg,.jpeg,.doc,.docx,.webp"
+                accept=".pdf,.png,.jpg,.jpeg,.doc,.docx,.webp,.heic,.heif,image/*"
                 className="hidden"
                 onChange={(e) => {
                   if (e.target.files && e.target.files[0]) {
@@ -502,6 +512,25 @@ export default function UploadDocumentModal({
               placeholder="Sélectionnez une ou plusieurs étiquettes..."
             />
           </div>
+
+          {/* Indicateur de progression du téléversement */}
+          {isSubmittingUpload && (
+            <div className="mt-3 p-3 bg-surface-container-low rounded-DEFAULT border border-border-subtle animate-in fade-in duration-200">
+              <div className="flex items-center justify-between text-xs font-semibold text-primary mb-1.5">
+                <span className="flex items-center gap-1.5">
+                  <span className="material-symbols-outlined text-[16px] animate-spin">sync</span>
+                  <span>{uploadProgressText || 'Téléversement en cours...'}</span>
+                </span>
+                <span>{uploadPercent}%</span>
+              </div>
+              <div className="w-full h-2 bg-slate-200 dark:bg-slate-700 rounded-full overflow-hidden">
+                <div
+                  className="h-full bg-primary transition-all duration-300 rounded-full"
+                  style={{ width: `${Math.max(5, uploadPercent)}%` }}
+                />
+              </div>
+            </div>
+          )}
 
           {/* Actions de la modale */}
           <div className="mt-2 pt-space-sm border-b-0 border-t border-border-subtle flex items-center justify-end gap-space-sm">

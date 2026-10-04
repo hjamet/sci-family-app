@@ -1,3 +1,5 @@
+import { prepareFileForUpload, friendlyErrorMessage, uploadUniversalDocument, DIRECT_UPLOAD_THRESHOLD } from './utils/fileUpload';
+
 const API_BASE = '/api';
 
 /**
@@ -435,30 +437,48 @@ export async function createIssue(data) {
 }
 
 export async function uploadPhoto(file) {
+  const preparedFile = await prepareFileForUpload(file);
   const formData = new FormData();
-  formData.append('file', file);
+  formData.append('file', preparedFile);
 
-  const res = await fetch(`${API_BASE}/issues/upload-photo`, {
-    method: 'POST',
-    headers: getAuthHeaders(),
-    body: formData,
-  });
-  if (!res.ok) throw new Error('Erreur lors de l\'envoi de la photo');
+  let res;
+  try {
+    res = await fetch(`${API_BASE}/issues/upload-photo`, {
+      method: 'POST',
+      headers: getAuthHeaders(),
+      body: formData,
+    });
+  } catch (netErr) {
+    throw new Error(friendlyErrorMessage(netErr));
+  }
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({}));
+    throw new Error(friendlyErrorMessage(err, res.status));
+  }
   return res.json();
 }
 
 export async function uploadPhotos(files) {
   const formData = new FormData();
   for (let i = 0; i < files.length; i++) {
-    formData.append('files', files[i]);
+    const prepared = await prepareFileForUpload(files[i]);
+    formData.append('files', prepared);
   }
 
-  const res = await fetch(`${API_BASE}/issues/upload-photos`, {
-    method: 'POST',
-    headers: getAuthHeaders(),
-    body: formData,
-  });
-  if (!res.ok) throw new Error('Erreur lors de l\'envoi des photos');
+  let res;
+  try {
+    res = await fetch(`${API_BASE}/issues/upload-photos`, {
+      method: 'POST',
+      headers: getAuthHeaders(),
+      body: formData,
+    });
+  } catch (netErr) {
+    throw new Error(friendlyErrorMessage(netErr));
+  }
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({}));
+    throw new Error(friendlyErrorMessage(err, res.status));
+  }
   return res.json();
 }
 
@@ -612,15 +632,24 @@ export async function updateProjectCost(projectId, estimatedCost, coordinatorNot
 export async function uploadProjectDocuments(files) {
   const formData = new FormData();
   for (let i = 0; i < files.length; i++) {
-    formData.append('files', files[i]);
+    const prepared = await prepareFileForUpload(files[i]);
+    formData.append('files', prepared);
   }
 
-  const res = await fetch(`${API_BASE}/projects/upload-documents`, {
-    method: 'POST',
-    headers: getAuthHeaders(),
-    body: formData,
-  });
-  if (!res.ok) throw new Error('Erreur lors de l\'envoi des documents');
+  let res;
+  try {
+    res = await fetch(`${API_BASE}/projects/upload-documents`, {
+      method: 'POST',
+      headers: getAuthHeaders(),
+      body: formData,
+    });
+  } catch (netErr) {
+    throw new Error(friendlyErrorMessage(netErr));
+  }
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({}));
+    throw new Error(friendlyErrorMessage(err, res.status));
+  }
   return res.json();
 }
 
@@ -845,17 +874,26 @@ export async function attachDocumentsToProject(projectId, documentIds) {
 export async function uploadTaskDocuments(files, taskId = null) {
   const formData = new FormData();
   for (let i = 0; i < files.length; i++) {
-    formData.append('files', files[i]);
+    const prepared = await prepareFileForUpload(files[i]);
+    formData.append('files', prepared);
   }
   if (taskId) {
     formData.append('task_id', String(taskId));
   }
-  const res = await fetch(`${API_BASE}/tasks/upload-documents`, {
-    method: 'POST',
-    headers: getAuthHeaders(),
-    body: formData,
-  });
-  if (!res.ok) throw new Error('Erreur lors de l\'envoi des justificatifs');
+  let res;
+  try {
+    res = await fetch(`${API_BASE}/tasks/upload-documents`, {
+      method: 'POST',
+      headers: getAuthHeaders(),
+      body: formData,
+    });
+  } catch (netErr) {
+    throw new Error(friendlyErrorMessage(netErr));
+  }
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({}));
+    throw new Error(friendlyErrorMessage(err, res.status));
+  }
   return res.json();
 }
 
@@ -943,27 +981,53 @@ export async function deleteDocumentCategory(id) {
 }
 
 export async function uploadDocument(formData) {
-  const res = await fetch(`${API_BASE}/documents/upload`, {
-    method: 'POST',
-    headers: getAuthHeaders(),
-    body: formData
-  });
+  if (formData instanceof FormData) {
+    const file = formData.get('file');
+    if (file && typeof file.size === 'number' && file.size > DIRECT_UPLOAD_THRESHOLD) {
+      const metadata = {
+        organisme: formData.get('organisme') || 'SCI',
+        title: formData.get('title') || 'Document',
+        category: formData.get('category'),
+        tags: formData.get('tags'),
+        task_id: formData.get('task_id'),
+        project_id: formData.get('project_id'),
+        uploaded_by: formData.get('uploaded_by') || 'Henri Jamet',
+      };
+      return uploadUniversalDocument(file, metadata);
+    }
+  }
+
+  let res;
+  try {
+    res = await fetch(`${API_BASE}/documents/upload`, {
+      method: 'POST',
+      headers: getAuthHeaders(),
+      body: formData
+    });
+  } catch (netErr) {
+    throw new Error(friendlyErrorMessage(netErr));
+  }
   if (!res.ok) {
     const err = await res.json().catch(() => ({}));
-    throw new Error(err.detail || 'Erreur lors du téléversement du document');
+    throw new Error(friendlyErrorMessage(err, res.status));
   }
   return res.json();
 }
 
 export async function createAccountingTransaction(formData) {
-  const res = await fetch(`${API_BASE}/accounting/transactions`, {
-    method: 'POST',
-    headers: getAuthHeaders(),
-    body: formData
-  });
+  let res;
+  try {
+    res = await fetch(`${API_BASE}/accounting/transactions`, {
+      method: 'POST',
+      headers: getAuthHeaders(),
+      body: formData
+    });
+  } catch (netErr) {
+    throw new Error(friendlyErrorMessage(netErr));
+  }
   if (!res.ok) {
     const err = await res.json().catch(() => ({}));
-    throw new Error(err.detail || 'Erreur lors de l\'enregistrement de la dépense');
+    throw new Error(friendlyErrorMessage(err, res.status));
   }
   return res.json();
 }
@@ -1911,14 +1975,19 @@ export function getCallForFundsPdfDownloadUrl(filename) {
 }
 
 export async function createMemberExpense(formData) {
-  const res = await fetch(`${API_BASE}/finances/expenses`, {
-    method: 'POST',
-    headers: getAuthHeaders(),
-    body: formData
-  });
+  let res;
+  try {
+    res = await fetch(`${API_BASE}/finances/expenses`, {
+      method: 'POST',
+      headers: getAuthHeaders(),
+      body: formData
+    });
+  } catch (netErr) {
+    throw new Error(friendlyErrorMessage(netErr));
+  }
   if (!res.ok) {
     const err = await res.json().catch(() => ({}));
-    throw new Error(err.detail || 'Erreur lors de l\'enregistrement de l\'avance de frais.');
+    throw new Error(friendlyErrorMessage(err, res.status));
   }
   return res.json();
 }

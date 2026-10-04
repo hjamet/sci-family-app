@@ -1,5 +1,5 @@
 from datetime import datetime
-from sqlalchemy import Column, Integer, String, Text, DateTime, ForeignKey, Float, UniqueConstraint, Boolean, LargeBinary
+from sqlalchemy import Column, Integer, String, Text, DateTime, ForeignKey, Float, UniqueConstraint, Boolean, LargeBinary, BigInteger
 from sqlalchemy.orm import relationship, synonym
 from .database import Base
 
@@ -566,3 +566,4 @@ class MemberExpense(Base):
     member = relationship("Member", backref="member_expenses")
     document = relationship("AdminDocument", backref="member_expense_records")
     call_for_funds = relationship("CallForFunds", back_populates="expenses")
+

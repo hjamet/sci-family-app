@@ -67,6 +67,7 @@ test_*.py
 !backend/tests/test_thermal_and_pool_controls.py
 !backend/tests/test_chantier1_votes_backend.py
 !backend/tests/test_chat_notifications_settings.py
+!backend/tests/test_resumable_upload.py
 backend/app/uploads/
 backend/archive_scratch_tests/
 uploads/

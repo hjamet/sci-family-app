@@ -166,6 +166,7 @@ class GoogleDriveJailService:
                 client_secret=client_secret,
                 scopes=SCOPES
             )
+            self._credentials = creds
             self._service = build("drive", "v3", credentials=creds, cache_discovery=False)
             return self._service
 
@@ -175,10 +176,106 @@ class GoogleDriveJailService:
         if os.path.exists(sa_path):
             logger.info(f"Initialisation Google Drive via Service Account ({sa_path})")
             creds = service_account.Credentials.from_service_account_file(sa_path, scopes=SCOPES)
+            self._credentials = creds
             self._service = build("drive", "v3", credentials=creds, cache_discovery=False)
             return self._service
 
         raise RuntimeError("Aucun identifiant Google Drive valide trouvé (ni OAuth Refresh Token, ni Service Account).")
+
+    def get_access_token(self) -> str:
+        """Récupère ou rafraîchit le Bearer access_token OAuth pour les requêtes HTTP directes."""
+        self._get_client()
+        if not getattr(self, "_credentials", None):
+            raise HTTPException(
+                status_code=503,
+                detail="Service Google Drive temporairement indisponible (identifiants non initialisés)."
+            )
+        try:
+            import google.auth.transport.requests
+            req = google.auth.transport.requests.Request()
+            self._credentials.refresh(req)
+            return self._credentials.token
+        except Exception as err:
+            logger.error(f"Erreur de rafraîchissement du jeton OAuth Google Drive: {err}")
+            raise HTTPException(
+                status_code=503,
+                detail="Le jeton d'accès Google Drive a expiré ou est invalide. Veuillez ré-authentifier la connexion Google Drive."
+            )
+
+    def init_resumable_upload(
+        self,
+        filename: str,
+        mimetype: str,
+        total_size: int,
+        description: Optional[str] = None,
+        origin: Optional[str] = None
+    ) -> str:
+        """Initialise une session Google Drive v3 Resumable Upload avec confinement Strict Drive Jail.
+        Garantit que le fichier sera créé EXCLUSIVEMENT dans self.folder_id (ALLOWED_FOLDER_ID).
+        Renvoie l'URL de session unique (Location header de Google).
+        """
+        token = self.get_access_token()
+        clean_name = os.path.basename(filename)
+
+        headers = {
+            "Authorization": f"Bearer {token}",
+            "Content-Type": "application/json; charset=UTF-8",
+            "X-Upload-Content-Type": mimetype or "application/octet-stream",
+            "X-Upload-Content-Length": str(total_size)
+        }
+        if origin:
+            headers["Origin"] = origin
+
+        # Confinement Strict Drive Jail
+        metadata = {
+            "name": clean_name,
+            "parents": [self.folder_id]
+        }
+        if description:
+            metadata["description"] = description
+
+        import requests
+        url = "https://www.googleapis.com/upload/drive/v3/files?uploadType=resumable"
+        resp = requests.post(url, headers=headers, json=metadata, timeout=30)
+        if resp.status_code not in (200, 201):
+            logger.error(f"Échec init resumable Google Drive ({resp.status_code}): {resp.text}")
+            raise HTTPException(
+                status_code=resp.status_code,
+                detail=f"Échec Google Drive Resumable Init: {resp.text}"
+            )
+
+        session_url = resp.headers.get("Location")
+        if not session_url:
+            raise HTTPException(
+                status_code=502,
+                detail="Google Drive n'a renvoyé aucun en-tête Location."
+            )
+
+        logger.info(f"Session Resumable Google Drive initiée avec succès pour {clean_name} (taille: {total_size} octets)")
+        return session_url
+
+    def relay_chunk(
+        self,
+        upload_url: str,
+        chunk_bytes: bytes,
+        content_range: str,
+        mimetype: Optional[str] = None
+    ) -> Tuple[int, Dict[str, Any], str]:
+        """Transmet un morceau binaire (<= 4 Mo) vers l'URL de session Resumable Google Drive."""
+        import requests
+        headers = {
+            "Content-Range": content_range,
+            "Content-Length": str(len(chunk_bytes)),
+            "Content-Type": mimetype or "application/octet-stream"
+        }
+        resp = requests.put(upload_url, headers=headers, data=chunk_bytes, timeout=60)
+        data = {}
+        if resp.text:
+            try:
+                data = resp.json()
+            except Exception:
+                pass
+        return resp.status_code, data, resp.text
 
     def upload_file(
         self,

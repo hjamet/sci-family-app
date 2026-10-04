@@ -56,12 +56,14 @@ from .schemas import (
     OnboardingResponse, OnboardingAcknowledgeRequest, OnboardingHistoryItem,
     MemberExpenseCreate, MemberExpenseResponse,
     CallForFundsResponse, CallForFundsCalculationResult,
-    CallForFundsGenerateRequest, CallForFundsSummaryResponse
+    CallForFundsGenerateRequest, CallForFundsSummaryResponse,
+    ResumableUploadInitRequest, ResumableUploadCompleteRequest
 )
 from .onboarding_service import (
     run_onboarding_migrations, seed_initial_onboarding,
     get_current_release, has_member_seen_release, mark_release_viewed
 )
+
 from .seed import seed_database
 from .services.workload_balancer import (
     calculate_workload_distribution,
@@ -145,7 +147,7 @@ try:
     with next(get_db()) as db:
         seed_initial_onboarding(db)
 except Exception as e:
-    logger.warning(f"Notice: onboarding migration/seed could not complete on startup: {e}")
+    logger.warning(f"Notice: migration/seed could not complete on startup: {e}")
 
 app = FastAPI(
     title="SCI Familiale Management API",
@@ -6072,7 +6074,7 @@ async def upload_document_canonical(
         file_name=canonical_filename,
         file_type=mimetype,
         file_size=file_size,
-        file_data=existing_doc.file_data if (is_reused and existing_doc.file_data) else file_bytes,
+        file_data=existing_doc.file_data if (is_reused and existing_doc.file_data) else (file_bytes if (file_size <= 2 * 1024 * 1024 or not drive_file_id) else None),
         file_hash=file_hash,
         drive_file_id=drive_file_id,
         source_type=effective_source_type,
@@ -6174,6 +6176,295 @@ async def upload_document_canonical(
         "file_size": db_doc.file_size,
         "file_hash": db_doc.file_hash,
         "reused": is_reused,
+        "drive_file_id": db_doc.drive_file_id,
+        "source_type": db_doc.source_type,
+        "source_id": db_doc.source_id,
+        "task_id": db_doc.task_id,
+        "uploaded_by": db_doc.uploaded_by,
+        "notes": db_doc.notes,
+        "created_at": db_doc.created_at,
+        "name": db_doc.title,
+        "filename": db_doc.file_name,
+        "url": download_url,
+        "type": db_doc.file_type,
+        "mime_type": db_doc.file_type,
+        "size": f"{round(file_size / 1024, 1)} Ko",
+        "upload_date": db_doc.created_at.strftime("%d/%m/%Y")
+    }
+
+@app.post("/api/documents/upload/resumable/init", tags=["Documents"])
+async def init_resumable_upload(
+    req: ResumableUploadInitRequest,
+    request: Request,
+    db: Session = Depends(get_db)
+):
+    """
+    Initialise une session de téléversement Resumable Google Drive v3 sans aucune limite de taille.
+    Confinement strict (Strict Drive Jail) dans ALLOWED_FOLDER_ID.
+    Renvoie l'URL de session directe Google Drive (Location).
+    """
+    clean_org = (req.organisme or "SCI").strip() or "SCI"
+    clean_title = (req.title or "Document").strip() or "Document"
+    now = datetime.utcnow()
+    mmaaaa = now.strftime("%m%Y")
+    _, ext = os.path.splitext(req.filename or "document.pdf")
+    if not ext:
+        ext = ".pdf"
+    canonical_filename = f"{clean_org} {mmaaaa} {clean_title}{ext}"
+    guessed_mime, _ = mimetypes.guess_type(canonical_filename)
+    mimetype = req.mimetype or guessed_mime or "application/pdf"
+
+    origin = request.headers.get("origin") or "https://hellenvilliers.henri-jamet.com"
+    description = f"SCI Hellenvilliers - {req.category or 'Document'} - Déposé par {req.uploaded_by or 'Henri Jamet'}"
+
+    try:
+        session_url = drive_jail_service.init_resumable_upload(
+            filename=canonical_filename,
+            mimetype=mimetype,
+            total_size=req.total_size,
+            description=description,
+            origin=origin
+        )
+    except Exception as exc:
+        logger.error(f"Erreur initialisation Google Drive Resumable: {exc}")
+        if isinstance(exc, HTTPException):
+            raise exc
+        raise HTTPException(
+            status_code=503,
+            detail=f"Service Google Drive indisponible : {exc}"
+        )
+
+    return {
+        "upload_url": session_url,
+        "canonical_filename": canonical_filename,
+        "mimetype": mimetype,
+        "total_size": req.total_size
+    }
+
+
+@app.put("/api/documents/upload/resumable/chunk", tags=["Documents"])
+async def relay_resumable_chunk(
+    request: Request
+):
+    """
+    Relais serverless pour les morceaux de téléversement Resumable Google Drive (< 4 Mo par morceau).
+    Contourne de manière étanche les restrictions CORS éventuelles des navigateurs web tout en respectant
+    le plafond de payload Vercel de 4.5 Mo.
+    """
+    upload_url = request.headers.get("x-upload-url") or request.query_params.get("upload_url")
+    if not upload_url:
+        raise HTTPException(status_code=400, detail="En-tête 'X-Upload-Url' manquant.")
+
+    content_range = request.headers.get("content-range")
+    if not content_range:
+        raise HTTPException(status_code=400, detail="En-tête 'Content-Range' manquant.")
+
+    content_type = request.headers.get("content-type") or "application/octet-stream"
+    chunk_bytes = await request.body()
+
+    if len(chunk_bytes) > 4 * 1024 * 1024:
+        raise HTTPException(status_code=413, detail="Le morceau dépasse la taille maximale de 4 Mo.")
+
+    try:
+        status_code, data, raw_text = drive_jail_service.relay_chunk(
+            upload_url=upload_url,
+            chunk_bytes=chunk_bytes,
+            content_range=content_range,
+            mimetype=content_type
+        )
+    except Exception as exc:
+        logger.error(f"Erreur relais chunk vers Google Drive: {exc}")
+        raise HTTPException(status_code=502, detail=f"Échec relais vers Google Drive: {exc}")
+
+    from fastapi.responses import JSONResponse
+    return JSONResponse(content=data if data else {"status": status_code, "raw": raw_text}, status_code=status_code)
+
+
+@app.post("/api/documents/upload/resumable/complete", status_code=status.HTTP_201_CREATED, tags=["Documents"])
+async def complete_resumable_upload(
+    req: ResumableUploadCompleteRequest,
+    db: Session = Depends(get_db)
+):
+    """
+    Finalise le document archivé sur Google Drive via Resumable Upload.
+    Vérifie l'existence et le confinement Strict Drive Jail du fichier sur Google Drive,
+    crée l'enregistrement pérenne AdminDocument (avec file_data=None pour préserver la base),
+    et synchronise les tâches et scrutins associés.
+    """
+    # 1. Vérification Strict Drive Jail du fichier créé sur Google Drive
+    try:
+        drive_meta = drive_jail_service.get_file_metadata(req.drive_file_id)
+    except Exception as exc:
+        logger.error(f"Fichier Drive non trouvé ou hors dossier autorisé ({req.drive_file_id}): {exc}")
+        if isinstance(exc, HTTPException):
+            raise exc
+        raise HTTPException(status_code=404, detail="Fichier non trouvé sur Google Drive.")
+
+    clean_org = (req.organisme or "SCI").strip() or "SCI"
+    clean_title = (req.title or "Document").strip() or "Document"
+    canonical_filename = req.filename or drive_meta.get("name") or f"{clean_org} {datetime.utcnow().strftime('%m%Y')} {clean_title}.pdf"
+    file_size = req.file_size or int(drive_meta.get("size") or 0)
+    mimetype = req.mimetype or drive_meta.get("mimeType") or "application/pdf"
+
+    # 2. Déduplication par drive_file_id
+    existing_doc = db.query(AdminDocument).filter(AdminDocument.drive_file_id == req.drive_file_id).first()
+    if existing_doc:
+        download_url = f"/api/documents/{existing_doc.id}/download"
+        return {
+            "id": existing_doc.id,
+            "title": existing_doc.title,
+            "category": existing_doc.category,
+            "tags": json.loads(existing_doc.tags) if existing_doc.tags else [existing_doc.category],
+            "file_url": download_url,
+            "file_name": existing_doc.file_name,
+            "file_type": existing_doc.file_type,
+            "file_size": existing_doc.file_size,
+            "file_hash": existing_doc.file_hash,
+            "reused": True,
+            "drive_file_id": existing_doc.drive_file_id,
+            "source_type": existing_doc.source_type,
+            "source_id": existing_doc.source_id,
+            "task_id": existing_doc.task_id,
+            "uploaded_by": existing_doc.uploaded_by,
+            "notes": existing_doc.notes,
+            "created_at": existing_doc.created_at,
+            "name": existing_doc.title,
+            "filename": existing_doc.file_name,
+            "url": download_url,
+            "type": existing_doc.file_type,
+            "mime_type": existing_doc.file_type,
+            "size": f"{round(file_size / 1024, 1)} Ko",
+            "upload_date": existing_doc.created_at.strftime("%d/%m/%Y")
+        }
+
+    # 3. Résolution des catégories et tags
+    tags_list = []
+    if req.tags:
+        if isinstance(req.tags, list):
+            tags_list = [str(t).strip() for t in req.tags if str(t).strip()]
+        else:
+            try:
+                parsed = json.loads(req.tags)
+                if isinstance(parsed, list):
+                    tags_list = [str(t).strip() for t in parsed if str(t).strip()]
+            except Exception:
+                tags_list = [t.strip() for t in str(req.tags).split(",") if t.strip()]
+
+    if not tags_list and req.category:
+        tags_list = [t.strip() for t in str(req.category).split(",") if t.strip()]
+    if not tags_list:
+        tags_list = ["Travaux & Chantiers"]
+
+    primary_category = ", ".join(tags_list)
+    effective_source_type = "PROJECT" if req.project_id else ("TASK" if req.task_id else "MANUAL")
+    effective_source_id = req.project_id if req.project_id else req.task_id
+
+    # 4. Enregistrement AdminDocument (file_data = None pour préserver la base de données)
+    db_doc = AdminDocument(
+        title=clean_title,
+        category=primary_category,
+        tags=json.dumps(tags_list),
+        file_url=f"/api/documents/drive/{req.drive_file_id}",
+        file_name=canonical_filename,
+        file_type=mimetype,
+        file_size=file_size,
+        file_data=None,
+        file_hash=None,
+        drive_file_id=req.drive_file_id,
+        source_type=effective_source_type,
+        source_id=effective_source_id,
+        task_id=req.task_id,
+        uploaded_by=req.uploaded_by or "Henri Jamet",
+        notes=clean_org
+    )
+    db.add(db_doc)
+    db.commit()
+    db.refresh(db_doc)
+
+    download_url = f"/api/documents/{db_doc.id}/download"
+    db_doc.file_url = download_url
+    db.commit()
+    db.refresh(db_doc)
+
+    # 5. Synchronisation tâche si task_id
+    if req.task_id:
+        try:
+            target_task = db.query(Task).filter(Task.id == req.task_id).first()
+            if target_task:
+                existing_docs = []
+                if target_task.documents:
+                    try:
+                        existing_docs = json.loads(target_task.documents) if isinstance(target_task.documents, str) else target_task.documents
+                    except Exception:
+                        existing_docs = []
+                if not isinstance(existing_docs, list):
+                    existing_docs = []
+                doc_entry = {
+                    "id": db_doc.id,
+                    "name": db_doc.title,
+                    "title": db_doc.title,
+                    "filename": db_doc.file_name,
+                    "file_url": download_url,
+                    "url": download_url,
+                    "type": "PDF" if (db_doc.file_name or "").lower().endswith(".pdf") else "Image" if (db_doc.file_type or "").startswith("image/") else "Document",
+                    "file_type": db_doc.file_type,
+                    "size": f"{round(file_size / 1024, 1)} Ko",
+                    "category": primary_category,
+                    "uploaded_by": db_doc.uploaded_by,
+                    "created_at": db_doc.created_at.isoformat() if hasattr(db_doc.created_at, "isoformat") else str(db_doc.created_at)
+                }
+                if not any(d.get("id") == db_doc.id or d.get("url") == download_url for d in existing_docs if isinstance(d, dict)):
+                    existing_docs.append(doc_entry)
+                    target_task.documents = json.dumps(existing_docs)
+                    db.commit()
+        except Exception as sync_err:
+            logger.warning(f"Notice: Erreur synchronisation task.documents: {sync_err}")
+
+    # 6. Synchronisation projet si project_id
+    if req.project_id:
+        try:
+            target_proj = db.query(Project).filter(Project.id == req.project_id).first()
+            if target_proj:
+                existing_proj_docs = []
+                if target_proj.document_urls:
+                    try:
+                        existing_proj_docs = json.loads(target_proj.document_urls) if isinstance(target_proj.document_urls, str) else target_proj.document_urls
+                    except Exception:
+                        existing_proj_docs = []
+                if not isinstance(existing_proj_docs, list):
+                    existing_proj_docs = []
+                proj_doc_entry = {
+                    "id": db_doc.id,
+                    "name": db_doc.title,
+                    "title": db_doc.title,
+                    "filename": db_doc.file_name,
+                    "file_url": download_url,
+                    "url": download_url,
+                    "type": "PDF" if (db_doc.file_name or "").lower().endswith(".pdf") else "Image" if (db_doc.file_type or "").startswith("image/") else "Document",
+                    "file_type": db_doc.file_type,
+                    "size": f"{round(file_size / 1024, 1)} Ko",
+                    "category": primary_category,
+                    "uploaded_by": db_doc.uploaded_by,
+                    "created_at": db_doc.created_at.isoformat() if hasattr(db_doc.created_at, "isoformat") else str(db_doc.created_at)
+                }
+                if not any(d.get("id") == db_doc.id or d.get("url") == download_url for d in existing_proj_docs if isinstance(d, dict)):
+                    existing_proj_docs.append(proj_doc_entry)
+                    target_proj.document_urls = json.dumps(existing_proj_docs)
+                    db.commit()
+        except Exception as sync_proj_err:
+            logger.warning(f"Notice: Erreur synchronisation project.document_urls: {sync_proj_err}")
+
+    return {
+        "id": db_doc.id,
+        "title": db_doc.title,
+        "category": db_doc.category,
+        "tags": tags_list,
+        "file_url": download_url,
+        "file_name": db_doc.file_name,
+        "file_type": db_doc.file_type,
+        "file_size": db_doc.file_size,
+        "file_hash": None,
+        "reused": False,
         "drive_file_id": db_doc.drive_file_id,
         "source_type": db_doc.source_type,
         "source_id": db_doc.source_id,

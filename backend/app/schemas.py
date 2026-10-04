@@ -1465,7 +1465,33 @@ class CallForFundsSummaryResponse(BaseModel):
     total_net_payable: float
     calls_count: int
     issued_count: int
-    neutralized_count: int
-    pending_iban_count: int
     items: List[CallForFundsResponse] = []
+
+
+class ResumableUploadInitRequest(BaseModel):
+    filename: str
+    total_size: int
+    mimetype: Optional[str] = "application/pdf"
+    organisme: Optional[str] = "SCI"
+    title: Optional[str] = "Document"
+    category: Optional[str] = None
+    tags: Optional[Union[str, List[str]]] = None
+    task_id: Optional[int] = None
+    project_id: Optional[int] = None
+    uploaded_by: Optional[str] = "Henri Jamet"
+
+
+class ResumableUploadCompleteRequest(BaseModel):
+    drive_file_id: str
+    filename: str
+    file_size: int
+    mimetype: Optional[str] = "application/pdf"
+    organisme: Optional[str] = "SCI"
+    title: Optional[str] = "Document"
+    category: Optional[str] = None
+    tags: Optional[Union[str, List[str]]] = None
+    task_id: Optional[int] = None
+    project_id: Optional[int] = None
+    uploaded_by: Optional[str] = "Henri Jamet"
+
 
