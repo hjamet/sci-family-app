@@ -1,0 +1,5 @@
+# Dépendances locales de développement et renouvellement manuel des jetons Google Drive
+# Non incluses dans le bundle de production Vercel
+google-auth-oauthlib>=1.2.0
+pytest>=8.0.0
+pytest-timeout>=2.3.0
