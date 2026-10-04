@@ -4,6 +4,7 @@ import json
 import time
 import threading
 import logging
+import requests
 from typing import Optional, List, Tuple, Dict, Any
 from fastapi import HTTPException
 
