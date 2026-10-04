@@ -571,8 +571,8 @@ def generate_call_for_funds_pdf(
             Paragraph(
                 "<b>ASSOCIÉ CONCERNÉ :</b><br/>"
                 f"<font size=10 color='#064e3b'><b>{member.name}</b></font><br/>"
-                f"<font size=8.5 color='#475569'>Rôle statutaire : {member.role or 'Membre Associé'}</font><br/>"
-                f"<font size=8.5 color='#64748b'>E-mail de notification : {member.email or 'Non renseigné'}</font>",
+                f"<font size=8.5 color='#475569'>Rôle statutaire : {getattr(member, 'role', None) or 'Membre Associé'}</font><br/>"
+                f"<font size=8.5 color='#64748b'>E-mail de notification : {getattr(member, 'email', None) or 'Non renseigné'}</font>",
                 style_body
             ),
             Paragraph(
@@ -611,7 +611,7 @@ def generate_call_for_funds_pdf(
         [
             Paragraph(f"Quote-part mensuelle théorique ({member.prenom})", style_body),
             Paragraph("Statuts SCI", style_body),
-            Paragraph(f"01/{call_data.get('month'):02d}/{call_data.get('year')}", style_body),
+            Paragraph(f"01/{int(call_data.get('month') or 1):02d}/{call_data.get('year') or 2026}", style_body),
             Paragraph(f"<b>+{call_data.get('theoretical_contribution'):.2f} €</b>", style_body_bold),
         ]
     ]
@@ -767,6 +767,7 @@ def generate_and_save_monthly_call(
     pdf_url = None
 
     # Si solde net > 0, on tente de générer le PDF officiel
+    pdf_error_msg = None
     if calc["should_issue"]:
         try:
             pdf_bytes = generate_call_for_funds_pdf(
@@ -784,9 +785,19 @@ def generate_and_save_monthly_call(
                     pdf_url = f"/api/finances/calls-for-funds/download/{pdf_filename}"
                 except Exception as e:
                     logger.warning(f"Erreur écriture PDF {pdf_filename}: {e}")
+            else:
+                pdf_error_msg = "Génération PDF retournée vide (reportlab indisponible)"
         except Exception as pdf_err:
             logger.error(f"[PDF ERROR] Erreur génération avis PDF pour {member.prenom}: {pdf_err}")
             pdf_bytes = None
+            pdf_error_msg = str(pdf_err)
+
+    # Préparation du rapport d'audit et déductions dans details_json
+    details_dict = {
+        "deducted_expenses": calc["deducted_expenses"],
+        "pdf_status": "GENERATED" if pdf_filename else ("ERROR: " + (pdf_error_msg or "Non requis"))
+    }
+    details_str = json.dumps(details_dict, ensure_ascii=False)
 
     # Enregistrement ou mise à jour en base
     if existing:
@@ -800,7 +811,7 @@ def generate_and_save_monthly_call(
         call_obj.iban = bank_info.get("iban")
         call_obj.bic = bank_info.get("bic")
         call_obj.payment_reference = calc["payment_reference"]
-        call_obj.details_json = json.dumps(calc["deducted_expenses"], ensure_ascii=False)
+        call_obj.details_json = details_str
         if pdf_filename:
             call_obj.pdf_filename = pdf_filename
             call_obj.pdf_url = pdf_url
@@ -824,7 +835,7 @@ def generate_and_save_monthly_call(
             payment_reference=calc["payment_reference"],
             pdf_filename=pdf_filename,
             pdf_url=pdf_url,
-            details_json=json.dumps(calc["deducted_expenses"], ensure_ascii=False),
+            details_json=details_str,
             notification_sent=False
         )
         db.add(call_obj)
@@ -836,7 +847,9 @@ def generate_and_save_monthly_call(
     if calc["should_issue"] and pdf_bytes:
         try:
             from .drive_service import GoogleDriveJailService
-            drive_svc = GoogleDriveJailService()
+            # Sous-dossier privé / admin pour les avis d'appels de fonds
+            calls_folder_id = os.getenv("GOOGLE_DRIVE_CALLS_FOR_FUNDS_FOLDER_ID", "1712huYEQ_7IYa4eUCQtcnXy3Zdd3S3zu")
+            drive_svc = GoogleDriveJailService(folder_id=calls_folder_id)
             if drive_svc.is_configured():
                 drive_file = drive_svc.upload_file(
                     content=pdf_bytes,
@@ -844,7 +857,7 @@ def generate_and_save_monthly_call(
                     mimetype="application/pdf",
                     description=f"Avis Appel de Fonds - {member.name} - {calc['period_label']}"
                 )
-                logger.info(f"Avis PDF téléversé sur Google Drive : {drive_file.get('id')}")
+                logger.info(f"Avis PDF téléversé sur Google Drive dans dossier privé {calls_folder_id} : {drive_file.get('id')}")
         except Exception as drive_err:
             logger.error(f"[DRIVE UPLOAD ERROR] Échec explicite upload Google Drive pour avis {pdf_filename}: {drive_err}")
 

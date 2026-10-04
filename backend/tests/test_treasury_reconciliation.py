@@ -413,3 +413,43 @@ def test_expense_rejection_and_purge_workflows(test_db, setup_members, client, c
 
     test_db.rollback()
     assert test_db.query(MemberExpense).filter(MemberExpense.id == exp_id).first() is None
+
+
+def test_b3_reportlab_and_qrcode_importable_and_available():
+    """Vérifie que reportlab et qrcode sont importables et que la génération PDF est active."""
+    import reportlab
+    import qrcode
+    from app.services.call_for_funds_service import REPORTLAB_AVAILABLE, generate_call_for_funds_pdf
+    
+    assert REPORTLAB_AVAILABLE is True
+    
+    # Test génération PDF réel sur données nominales
+    dummy_call_data = {
+        "reference": "TEST-PDF-001",
+        "year": 2026,
+        "month": 10,
+        "period_label": "Octobre 2026",
+        "theoretical_contribution": 50.0,
+        "approved_expenses_total": 0.0,
+        "net_amount": 50.0,
+        "amount_due": 50.0,
+        "balance_before": 0.0,
+        "status": "EMIS",
+        "payment_reference": "HLV-HENRI",
+        "deducted_expenses": []
+    }
+    class DummyMember:
+        name = "Henri Jamet"
+        prenom = "Henri"
+        role = "Coordinateur"
+        email = "henri.jamet@example.com"
+    
+    pdf_bytes = generate_call_for_funds_pdf(
+        call_data=dummy_call_data,
+        member=DummyMember(),
+        bank_info={"iban": "FR7612345678901234567890189", "bic": "SWNBFR22"},
+        is_bank_pending=False
+    )
+    assert pdf_bytes is not None
+    assert pdf_bytes.startswith(b"%PDF")
+
