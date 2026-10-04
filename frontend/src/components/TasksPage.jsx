@@ -66,8 +66,8 @@ export default function TasksPage({ currentUser = 'Henri Jamet' }) {
   const [selectedSubject, setSelectedSubject] = useState('all');
   const [selectedCategory, setSelectedCategory] = useState('all');
   const [selectedPriority, setSelectedPriority] = useState('Toutes');
-  const [workflowFilter, setWorkflowFilter] = useState('OPEN'); // 'ALL' | 'PROPOSED' | 'OPEN' | 'PENDING_VALIDATION' | 'ARCHIVED'
-  const [voteFilter, setVoteFilter] = useState('OPEN'); // 'ALL' | 'PROPOSED' | 'OPEN' | 'PENDING_VALIDATION' | 'ARCHIVED'
+  const [workflowFilter, setWorkflowFilter] = useState('ALL'); // 'ALL' | 'PROPOSED' | 'OPEN' | 'PENDING_VALIDATION' | 'ARCHIVED'
+  const [voteFilter, setVoteFilter] = useState('ALL'); // 'ALL' | 'PROPOSED' | 'OPEN' | 'PENDING_VALIDATION' | 'ARCHIVED'
 
   // Voting Spotlight Carrousel State
   const [activeVoteIndex, setActiveVoteIndex] = useState(0);
@@ -187,18 +187,6 @@ export default function TasksPage({ currentUser = 'Henri Jamet' }) {
   const isVoteOpen = (p) => {
     if (!p || isVoteArchived(p) || isVoteProposed(p) || isVotePendingValidation(p)) return false;
     return true;
-  };
-
-  // Compteurs dynamiques des délibérations
-  const countVotesAll = projects.length;
-  const countVotesProposed = useMemo(() => projects.filter(p => isVoteProposed(p)).length, [projects]);
-  const countVotesOpen = useMemo(() => projects.filter(p => isVoteOpen(p)).length, [projects]);
-  const countVotesPendingValidation = useMemo(() => projects.filter(p => isVotePendingValidation(p)).length, [projects]);
-  const countVotesArchived = useMemo(() => projects.filter(p => isVoteArchived(p)).length, [projects]);
-
-  const handleVoteFilterChange = (newFilter) => {
-    setVoteFilter(newFilter);
-    setActiveVoteIndex(0);
   };
 
   // Liste des scrutins pour le carrousel filtrée selon voteFilter (Annotations 8, 10, 11)
@@ -1035,129 +1023,7 @@ export default function TasksPage({ currentUser = 'Henri Jamet' }) {
       </div>
 
       {/* ========================================================================= */}
-      {/* 2b. ONGLETS DE SÉLECTION DES DÉLIBÉRATIONS & SCRUTINS (Annotations 8, 10, 11) */}
-      {/* ========================================================================= */}
-      <div className="flex flex-wrap items-center gap-2 mb-4 p-1.5 bg-surface-container-low dark:bg-slate-800/60 rounded-2xl border border-slate-200/80 dark:border-slate-800">
-        
-        {/* 1. Toutes les Délibérations (ALL) */}
-        <button
-          type="button"
-          onClick={() => handleVoteFilterChange('ALL')}
-          className={`flex-1 sm:flex-initial inline-flex items-center justify-center gap-2 px-4 py-2.5 rounded-xl font-label-md text-xs sm:text-sm font-semibold transition-all cursor-pointer whitespace-nowrap ${
-            voteFilter === 'ALL'
-              ? 'bg-slate-700 text-white shadow-sm font-bold'
-              : 'text-slate-600 dark:text-slate-300 hover:bg-white dark:hover:bg-slate-700 hover:text-on-surface'
-          }`}
-        >
-          <span className="material-symbols-outlined text-[18px]">how_to_vote</span>
-          <span className="whitespace-nowrap">Tous</span>
-          <span
-            className={`text-xs px-2 py-0.5 rounded-full font-bold ${
-              voteFilter === 'ALL'
-                ? 'bg-white/20 text-white'
-                : 'bg-slate-200 text-slate-800 dark:bg-slate-700 dark:text-slate-200'
-            }`}
-          >
-            {countVotesAll}
-          </span>
-        </button>
-
-        {/* 2. Propositions en attente (PROPOSED, ambre) */}
-        <button
-          type="button"
-          onClick={() => handleVoteFilterChange('PROPOSED')}
-          className={`flex-1 sm:flex-initial inline-flex items-center justify-center gap-2 px-4 py-2.5 rounded-xl font-label-md text-xs sm:text-sm font-semibold transition-all cursor-pointer whitespace-nowrap ${
-            voteFilter === 'PROPOSED'
-              ? 'bg-amber-500 text-white shadow-sm font-bold'
-              : 'text-slate-600 dark:text-slate-300 hover:bg-white dark:hover:bg-slate-700 hover:text-on-surface'
-          }`}
-        >
-          <span className="material-symbols-outlined text-[18px]">gavel</span>
-          <span className="whitespace-nowrap">En attente de création</span>
-          <span
-            className={`text-xs px-2 py-0.5 rounded-full font-bold ${
-              voteFilter === 'PROPOSED'
-                ? 'bg-white/20 text-white'
-                : 'bg-amber-100 text-amber-900 dark:bg-amber-950 dark:text-amber-200'
-            }`}
-          >
-            {countVotesProposed}
-          </span>
-        </button>
-
-        {/* 3. Scrutins en cours (OPEN, bleu) */}
-        <button
-          type="button"
-          onClick={() => handleVoteFilterChange('OPEN')}
-          className={`flex-1 sm:flex-initial inline-flex items-center justify-center gap-2 px-4 py-2.5 rounded-xl font-label-md text-xs sm:text-sm font-semibold transition-all cursor-pointer whitespace-nowrap ${
-            voteFilter === 'OPEN'
-              ? 'bg-primary text-white shadow-sm font-bold'
-              : 'text-slate-600 dark:text-slate-300 hover:bg-white dark:hover:bg-slate-700 hover:text-on-surface'
-          }`}
-        >
-          <span className="material-symbols-outlined text-[18px]">play_circle</span>
-          <span className="whitespace-nowrap">En cours</span>
-          <span
-            className={`text-xs px-2 py-0.5 rounded-full font-bold ${
-              voteFilter === 'OPEN'
-                ? 'bg-white/20 text-white'
-                : 'bg-sky-100 text-sky-900 dark:bg-sky-950 dark:text-sky-200'
-            }`}
-          >
-            {countVotesOpen}
-          </span>
-        </button>
-
-        {/* 4. En attente de validation (PENDING_VALIDATION, émeraude) */}
-        <button
-          type="button"
-          onClick={() => handleVoteFilterChange('PENDING_VALIDATION')}
-          className={`flex-1 sm:flex-initial inline-flex items-center justify-center gap-2 px-4 py-2.5 rounded-xl font-label-md text-xs sm:text-sm font-semibold transition-all cursor-pointer whitespace-nowrap ${
-            voteFilter === 'PENDING_VALIDATION'
-              ? 'bg-emerald-600 text-white shadow-sm font-bold'
-              : 'text-slate-600 dark:text-slate-300 hover:bg-white dark:hover:bg-slate-700 hover:text-on-surface'
-          }`}
-        >
-          <span className="material-symbols-outlined text-[18px]">verified</span>
-          <span className="whitespace-nowrap">En attente de validation</span>
-          <span
-            className={`text-xs px-2 py-0.5 rounded-full font-bold ${
-              voteFilter === 'PENDING_VALIDATION'
-                ? 'bg-white/20 text-white'
-                : 'bg-emerald-100 text-emerald-900 dark:bg-emerald-950 dark:text-emerald-200'
-            }`}
-          >
-            {countVotesPendingValidation}
-          </span>
-        </button>
-
-        {/* 5. Scrutins archivés (ARCHIVED, gris) */}
-        <button
-          type="button"
-          onClick={() => handleVoteFilterChange('ARCHIVED')}
-          className={`flex-1 sm:flex-initial inline-flex items-center justify-center gap-2 px-4 py-2.5 rounded-xl font-label-md text-xs sm:text-sm font-semibold transition-all cursor-pointer whitespace-nowrap ${
-            voteFilter === 'ARCHIVED'
-              ? 'bg-slate-600 text-white shadow-sm font-bold'
-              : 'text-slate-600 dark:text-slate-300 hover:bg-white dark:hover:bg-slate-700 hover:text-on-surface'
-          }`}
-        >
-          <span className="material-symbols-outlined text-[18px]">inventory_2</span>
-          <span className="whitespace-nowrap">Archivés</span>
-          <span
-            className={`text-xs px-2 py-0.5 rounded-full font-bold ${
-              voteFilter === 'ARCHIVED'
-                ? 'bg-white/20 text-white'
-                : 'bg-slate-200 text-slate-800 dark:bg-slate-700 dark:text-slate-200'
-            }`}
-          >
-            {countVotesArchived}
-          </span>
-        </button>
-
-      </div>
-
-      {/* ========================================================================= */}
-      {/* 3. DÉMOCRATIE FAMILIALE & SCRUTINS EN COURS (Spotlight Unifié Stitch)    */}
+      {/* 3. DÉMOCRATIE FAMILIALE & SCRUTINS (Spotlight Unifié Stitch)              */}
       {/* ========================================================================= */}
       <section className="mb-space-lg bg-surface-container-lowest rounded-xl p-space-md lg:p-space-lg shadow-sm flex flex-col gap-space-md border border-border-subtle">
         
@@ -1169,17 +1035,8 @@ export default function TasksPage({ currentUser = 'Henri Jamet' }) {
             </div>
             <div>
               <div className="flex items-center gap-2">
-                {/* ANNOTATION 2 : Titre de section des scrutins synchronisé avec voteFilter */}
                 <h2 className="font-headline-sm text-headline-sm text-forest-deep font-bold">
-                  {voteFilter === 'ALL'
-                    ? 'Toutes les Délibérations'
-                    : voteFilter === 'PROPOSED'
-                    ? 'Propositions en attente'
-                    : voteFilter === 'PENDING_VALIDATION'
-                    ? "En attente d'arbitrage"
-                    : voteFilter === 'ARCHIVED'
-                    ? 'Scrutins archivés'
-                    : 'Scrutins en cours'}
+                  Scrutins &amp; Délibérations
                 </h2>
                 {currentVote && (
                   <span className="px-2.5 py-0.5 rounded-full text-xs font-semibold bg-sage-soft text-primary">
