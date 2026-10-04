@@ -104,6 +104,7 @@ def disabled_circuit_breaker(monkeypatch):
     monkeypatch.setenv("EMAIL_TEST_MODE", "false")
     monkeypatch.setenv("EMAIL_FORCE_REAL_MODE", "true")
     monkeypatch.setenv("EMAIL_TEST_REDIRECT_TO", "hellenvillierssci@gmail.com")
+    monkeypatch.setenv("RESEND_API_KEY", "re_mock_test_key_12345")
     assert email_mod.is_email_disabled() is False
 
 def test_whitelist_contains_official_members():

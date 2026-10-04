@@ -8911,7 +8911,8 @@ async def create_member_expense(
         status="A_FAIRE",
         charge_points=1,
         assignee_id=henri_id,
-        assigned_members=["Henri Jamet"],
+        assigned_members=json.dumps(["Henri Jamet"]),
+        created_by=member.name or "Henri Jamet",
         key_values=json.dumps(key_values_list, ensure_ascii=False),
         documents=json.dumps(task_docs, ensure_ascii=False) if task_docs else None,
         created_at=datetime.utcnow(),
@@ -9135,10 +9136,22 @@ def verify_cron_auth(request: Request):
 
 @app.api_route("/api/cron/banking-sync", methods=["GET", "POST"], tags=["Crons"])
 async def cron_banking_sync(request: Request, db: Session = Depends(get_db)):
-    """Cron quotidien Vercel : synchronisation bancaire + lettrage automatique."""
+    """Cron quotidien Vercel : synchronisation bancaire + lettrage automatique + garde-vie Google Drive."""
     verify_cron_auth(request)
 
-    # 1. Synchro bancaire si un compte existe
+    # 1. Garde-vie Google Drive (détection fail-loud de l'expiration du token)
+    drive_status = None
+    try:
+        drive_status = drive_jail_service.check_connection_status(db)
+        if not drive_status.get("connected"):
+            logger.error(f"[CRON DRIVE ALERTE] Connexion Google Drive défaillante : {drive_status.get('message')}")
+        else:
+            logger.info("[CRON DRIVE] Connexion Google Drive active et opérationnelle.")
+    except Exception as drive_err:
+        logger.error(f"[CRON DRIVE ERREUR] Échec du contrôle Drive : {drive_err}", exc_info=True)
+        drive_status = {"connected": False, "status": "error", "message": str(drive_err)}
+
+    # 2. Synchro bancaire si un compte existe
     try:
         from .services.banking import sync_bank_account_transactions
         acc = db.query(BankAccount).first()
@@ -9147,13 +9160,14 @@ async def cron_banking_sync(request: Request, db: Session = Depends(get_db)):
     except Exception as sync_err:
         logger.warning(f"[CRON] Avertissement sync bancaire : {sync_err}")
 
-    # 2. Lettrage automatique
+    # 3. Lettrage automatique
     from .services.reconciliation_service import ReconciliationService
     rec_res = ReconciliationService.run_reconciliation(db)
     return {
         "success": True,
         "cron": "banking-sync",
         "timestamp": datetime.utcnow().isoformat(),
+        "drive_status": drive_status,
         "reconciliation": rec_res
     }
 

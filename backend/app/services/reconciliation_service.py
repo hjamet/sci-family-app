@@ -27,13 +27,6 @@ def normalize_alphanumeric(text: Optional[str]) -> str:
     return re.sub(r"[^A-Za-z0-9]", "", ascii_text).upper()
 
 
-def match_permanent_reference(search_text: str, members: List[Member]) -> Optional[Tuple_Match]:
-    """
-    Vérifie si la référence permanente d'un membre apparaît dans le texte de la transaction.
-    """
-    pass
-
-
 class ReconciliationService:
     @staticmethod
     def normalize(text: Optional[str]) -> str:

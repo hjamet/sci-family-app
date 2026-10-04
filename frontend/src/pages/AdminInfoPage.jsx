@@ -7,6 +7,7 @@ import {
   Pencil, Lock, User, Receipt, Wallet, FileSpreadsheet, ExternalLink
 } from 'lucide-react';
 import FinancialLedgerModal from '../components/FinancialLedgerModal';
+import MemberTreasurySection from '../components/MemberTreasurySection';
 import BankReauthBanner from '../components/BankReauthBanner';
 import DriveReauthBanner from '../components/DriveReauthBanner';
 import DocumentViewerModal from '../components/DocumentViewerModal';
@@ -1021,6 +1022,11 @@ export default function AdminInfoPage({ currentUser }) {
       </div>
 
       {/* ========================================================================= */}
+      {/* SECTION TRÉSORERIE PAR MEMBRE & RAPPROCHEMENT BANCAIRE                    */}
+      {/* ========================================================================= */}
+      <MemberTreasurySection currentUser={currentUser} isCoordinator={isCoordinator} />
+
+      {/* ========================================================================= */}
       {/* SECTION 2 : TABLEAU DES DERNIÈRES FACTURES & RÈGLEMENTS                   */}
       {/* ========================================================================= */}
       <div className="mt-space-md bg-surface-container-lowest rounded-lg border border-border-subtle p-space-md shadow-[0_2px_8px_-2px_rgba(6,95,70,0.04),0_6px_20px_-4px_rgba(15,23,42,0.05)]">
@@ -1806,13 +1812,13 @@ export default function AdminInfoPage({ currentUser }) {
       {/* MODAL 2 : DÉCLARER UNE DÉPENSE POUR LA SCI (#modal-operation)             */}
       {/* ========================================================================= */}
       {isOperationModalOpen && (
-        <div id="modal-operation" className="fixed inset-0 z-50 bg-inverse-surface/45 backdrop-blur-xs flex items-center justify-center p-4">
-          <div className="bg-surface-container-lowest w-full max-w-xl rounded-lg p-space-lg shadow-[0_20px_48px_-12px_rgba(15,23,42,0.20)] border border-border-subtle relative max-h-[90vh] overflow-y-auto">
+        <div id="modal-operation" className="fixed inset-0 z-50 bg-inverse-surface/45 backdrop-blur-xs flex items-center justify-center p-2 sm:p-4">
+          <div className="bg-surface-container-lowest w-full max-w-xl rounded-2xl shadow-[0_20px_48px_-12px_rgba(15,23,42,0.20)] border border-border-subtle relative flex flex-col max-h-[92vh] overflow-hidden">
             
             {/* Modal Header */}
-            <div className="flex items-center justify-between pb-space-sm border-b border-border-subtle">
+            <div className="flex items-center justify-between p-4 sm:p-5 border-b border-border-subtle shrink-0">
               <div className="flex items-center gap-2">
-                <div className="w-10 h-10 rounded-full bg-emerald-50 dark:bg-emerald-950/40 flex items-center justify-center text-emerald-800 dark:text-emerald-300 border border-emerald-200 dark:border-emerald-800">
+                <div className="w-10 h-10 rounded-full bg-emerald-50 dark:bg-emerald-950/40 flex items-center justify-center text-emerald-800 dark:text-emerald-300 border border-emerald-200 dark:border-emerald-800 shrink-0">
                   <span className="material-symbols-outlined text-[22px]">receipt_long</span>
                 </div>
                 <div>
@@ -1839,7 +1845,8 @@ export default function AdminInfoPage({ currentUser }) {
             </div>
 
             {/* Modal Form */}
-            <form id="operation-form" onSubmit={handleOperationSubmit} className="mt-space-md flex flex-col gap-space-md">
+            <form id="operation-form" onSubmit={handleOperationSubmit} className="flex flex-col flex-1 min-h-0 overflow-hidden">
+              <div className="overflow-y-auto p-4 sm:p-5 space-y-4 flex-1">
               
               {/* Callout Déductibilité — Sortie Exclusive (Annotation 5) */}
               <div
@@ -2014,35 +2021,36 @@ export default function AdminInfoPage({ currentUser }) {
                   </div>
                 )}
               </div>
+            </div>
 
-              {/* Actions */}
-              <div className="mt-space-sm pt-space-sm border-t border-border-subtle flex items-center justify-end gap-space-sm">
-                <button
-                  id="btn-cancel-operation"
-                  type="button"
-                  onClick={() => {
-                    setIsOperationModalOpen(false);
-                    setOperationFileError('');
-                    setOperationLabelError('');
-                  }}
-                  className="h-[52px] px-6 rounded-DEFAULT bg-surface-container-lowest border-2 border-border-subtle text-on-surface font-label-lg text-label-lg hover:bg-canvas-slate transition-all cursor-pointer"
-                >
-                  Annuler
-                </button>
-                <button
-                  id="btn-submit-operation"
-                  type="submit"
-                  disabled={isSubmittingOperation}
-                  className="h-[52px] px-6 rounded-DEFAULT bg-surface-container-lowest border-2 border-primary text-primary font-label-lg text-label-lg hover:bg-sage-soft transition-all flex items-center gap-2 cursor-pointer disabled:opacity-50"
-                >
-                  <span className="material-symbols-outlined text-[20px]">
-                    {isSubmittingOperation ? 'progress_activity' : 'save'}
-                  </span>
-                  <span>{isSubmittingOperation ? 'Enregistrement...' : 'Enregistrer la dépense'}</span>
-                </button>
-              </div>
+            {/* Actions - Pied FIXE toujours visible sur mobile */}
+            <div className="p-3 sm:p-4 border-t border-border-subtle shrink-0 flex items-center justify-end gap-3 bg-surface-container-lowest">
+              <button
+                id="btn-cancel-operation"
+                type="button"
+                onClick={() => {
+                  setIsOperationModalOpen(false);
+                  setOperationFileError('');
+                  setOperationLabelError('');
+                }}
+                className="h-[44px] px-5 rounded-DEFAULT bg-surface-container-lowest border-2 border-border-subtle text-on-surface font-label-lg text-sm hover:bg-canvas-slate transition-all cursor-pointer"
+              >
+                Annuler
+              </button>
+              <button
+                id="btn-submit-operation"
+                type="submit"
+                disabled={isSubmittingOperation}
+                className="h-[44px] px-6 rounded-DEFAULT bg-surface-container-lowest border-2 border-primary text-primary font-label-lg text-sm font-bold hover:bg-sage-soft transition-all flex items-center gap-2 cursor-pointer disabled:opacity-50"
+              >
+                <span className="material-symbols-outlined text-[20px]">
+                  {isSubmittingOperation ? 'progress_activity' : 'save'}
+                </span>
+                <span>{isSubmittingOperation ? 'Enregistrement...' : 'Enregistrer la dépense'}</span>
+              </button>
+            </div>
 
-            </form>
+          </form>
 
           </div>
         </div>
