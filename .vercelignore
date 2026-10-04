@@ -1,0 +1,12 @@
+# Exclusion des fichiers inutiles au runtime serverless Vercel
+backend/tests/
+backend/test_*.py
+test_*.py
+pytest.ini
+
+backend/scripts/
+scripts/
+
+*.md
+docs/
+scratch/
