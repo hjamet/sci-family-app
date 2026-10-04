@@ -57,11 +57,14 @@ export async function captureScreen(filename = 'capture_ecran.png') {
       );
     };
 
+    const isMobile = typeof window !== 'undefined' && (window.innerWidth < 768 || window.innerHeight < 768);
+    const captureScale = isMobile ? 1 : Math.min(window.devicePixelRatio || 1, 1.25);
+
     canvas = await html2canvas(document.body, {
       logging: false,
       useCORS: true,
       allowTaint: true,
-      scale: Math.min(window.devicePixelRatio || 1, 2),
+      scale: captureScale,
       ignoreElements,
       windowWidth: document.documentElement.clientWidth,
       windowHeight: document.documentElement.clientHeight,
@@ -73,22 +76,31 @@ export async function captureScreen(filename = 'capture_ecran.png') {
     canvas = createFallbackCanvas(err?.message || 'Erreur html2canvas');
   }
 
+  const outputFilename = (filename || 'capture_ecran.jpg').replace(/\.png$/i, '.jpg');
+
   return new Promise((resolve) => {
     canvas.toBlob(
       (blob) => {
+        // Libération immédiate de la mémoire canvas
+        try {
+          canvas.width = 0;
+          canvas.height = 0;
+        } catch (_) {}
+
         if (blob) {
-          const file = new File([blob], filename, { type: 'image/png' });
+          const file = new File([blob], outputFilename, { type: 'image/jpeg' });
           resolve(file);
         } else {
           // Dernier recours si toBlob échoue
           const fallback = createFallbackCanvas('toBlob null');
           fallback.toBlob((fbBlob) => {
-            const fbFile = new File([fbBlob || new Blob()], filename, { type: 'image/png' });
+            const fbFile = new File([fbBlob || new Blob()], outputFilename, { type: 'image/jpeg' });
             resolve(fbFile);
-          }, 'image/png');
+          }, 'image/jpeg', 0.8);
         }
       },
-      'image/png'
+      'image/jpeg',
+      0.8
     );
   });
 }

@@ -23,68 +23,92 @@ export default function BugReportButton({ onOpenBugReport, currentUser = null })
           : (typeof currentUser === 'string' && currentUser ? currentUser : null)
       ) || (typeof window !== 'undefined' ? localStorage.getItem('sci_user') : null) || 'Membre SCI';
 
-      // 1. Capture d'écran de l'état actuel de l'application
+      // 1. Capture d'écran de l'état actuel de l'application (tolérante aux erreurs mémoire sur mobile)
       const timestamp = new Date().toISOString().replace(/[:.]/g, '-');
-      const screenshotFile = await captureScreen(`capture_bug_${timestamp}.png`);
+      let screenshotFile = null;
+      try {
+        screenshotFile = await captureScreen(`capture_bug_${timestamp}.jpg`);
+      } catch (screenErr) {
+        console.warn('Avertissement capture d\'écran non disponible:', screenErr);
+      }
 
       // 2. Génération du rapport de diagnostic technique (logs d'erreurs, console, viewport, etc.)
-      const diagnosticText = generateDiagnosticReport();
-      const diagnosticBlob = new Blob([diagnosticText], { type: 'text/plain;charset=utf-8' });
-      const diagnosticFile = new File([diagnosticBlob], `rapport_diagnostic_${timestamp}.txt`, {
-        type: 'text/plain;charset=utf-8',
-      });
+      let diagnosticFile = null;
+      try {
+        const diagnosticText = generateDiagnosticReport();
+        const diagnosticBlob = new Blob([diagnosticText], { type: 'text/plain;charset=utf-8' });
+        diagnosticFile = new File([diagnosticBlob], `rapport_diagnostic_${timestamp}.txt`, {
+          type: 'text/plain;charset=utf-8',
+        });
+      } catch (diagErr) {
+        console.warn('Avertissement génération diagnostic:', diagErr);
+      }
 
-      // 3. Téléversement automatique des 2 pièces jointes via uploadDocument
+      // 3. Téléversement automatique tolérant des pièces jointes via uploadDocument
       const nowStr = new Date().toLocaleDateString('fr-FR');
+      let uploadedScreenshot = null;
+      if (screenshotFile) {
+        try {
+          const fdScreenshot = new FormData();
+          fdScreenshot.append('file', screenshotFile);
+          fdScreenshot.append('organisme', 'Bug Reporter');
+          fdScreenshot.append('title', `Capture d'écran - ${nowStr}`);
+          fdScreenshot.append('category', 'Travaux & Chantiers');
+          fdScreenshot.append('uploaded_by', resolvedUploader);
+          uploadedScreenshot = await uploadDocument(fdScreenshot);
+        } catch (uploadScreenErr) {
+          console.warn('Téléversement capture d\'écran ignoré:', uploadScreenErr);
+        }
+      }
 
-      // 3a. Téléversement de la capture d'écran
-      const fdScreenshot = new FormData();
-      fdScreenshot.append('file', screenshotFile);
-      fdScreenshot.append('organisme', 'Bug Reporter');
-      fdScreenshot.append('title', `Capture d'écran - ${nowStr}`);
-      fdScreenshot.append('category', 'Travaux & Chantiers');
-      fdScreenshot.append('uploaded_by', resolvedUploader);
-      const uploadedScreenshot = await uploadDocument(fdScreenshot);
-
-      // 3b. Téléversement du rapport de diagnostic
-      const fdReport = new FormData();
-      fdReport.append('file', diagnosticFile);
-      fdReport.append('organisme', 'Bug Reporter');
-      fdReport.append('title', `Rapport technique diagnostic - ${nowStr}.txt`);
-      fdReport.append('category', 'Travaux & Chantiers');
-      fdReport.append('uploaded_by', resolvedUploader);
-      const uploadedReport = await uploadDocument(fdReport);
+      let uploadedReport = null;
+      if (diagnosticFile) {
+        try {
+          const fdReport = new FormData();
+          fdReport.append('file', diagnosticFile);
+          fdReport.append('organisme', 'Bug Reporter');
+          fdReport.append('title', `Rapport technique diagnostic - ${nowStr}.txt`);
+          fdReport.append('category', 'Travaux & Chantiers');
+          fdReport.append('uploaded_by', resolvedUploader);
+          uploadedReport = await uploadDocument(fdReport);
+        } catch (uploadDiagErr) {
+          console.warn('Téléversement rapport diagnostic ignoré:', uploadDiagErr);
+        }
+      }
 
       const tempDocIds = [uploadedScreenshot?.id, uploadedReport?.id].filter(Boolean);
 
       // 4. Préparation des documents attachés normalisés pour TaskDetailModal
-      const attachedDocs = [
-        {
-          id: uploadedScreenshot?.id,
-          name: uploadedScreenshot?.title || `Capture d'écran - ${nowStr}`,
-          title: uploadedScreenshot?.title || `Capture d'écran - ${nowStr}`,
-          filename: uploadedScreenshot?.file_name || `capture_bug_${timestamp}.png`,
-          file_url: uploadedScreenshot?.file_url || `/api/documents/${uploadedScreenshot?.id}/download`,
-          url: uploadedScreenshot?.file_url || `/api/documents/${uploadedScreenshot?.id}/download`,
+      const attachedDocs = [];
+      if (uploadedScreenshot) {
+        attachedDocs.push({
+          id: uploadedScreenshot.id,
+          name: uploadedScreenshot.title || `Capture d'écran - ${nowStr}`,
+          title: uploadedScreenshot.title || `Capture d'écran - ${nowStr}`,
+          filename: uploadedScreenshot.file_name || `capture_bug_${timestamp}.jpg`,
+          file_url: uploadedScreenshot.file_url || `/api/documents/${uploadedScreenshot.id}/download`,
+          url: uploadedScreenshot.file_url || `/api/documents/${uploadedScreenshot.id}/download`,
           type: 'Image',
-          size: uploadedScreenshot?.file_size ? `${Math.round(uploadedScreenshot.file_size / 1024)} Ko` : '',
+          size: uploadedScreenshot.file_size ? `${Math.round(uploadedScreenshot.file_size / 1024)} Ko` : '',
           category: 'Travaux & Chantiers',
           uploaded_at: new Date().toISOString(),
-        },
-        {
-          id: uploadedReport?.id,
-          name: uploadedReport?.title || `Rapport technique diagnostic - ${nowStr}.txt`,
-          title: uploadedReport?.title || `Rapport technique diagnostic - ${nowStr}.txt`,
-          filename: uploadedReport?.file_name || `rapport_diagnostic_${timestamp}.txt`,
-          file_url: uploadedReport?.file_url || `/api/documents/${uploadedReport?.id}/download`,
-          url: uploadedReport?.file_url || `/api/documents/${uploadedReport?.id}/download`,
+        });
+      }
+      if (uploadedReport) {
+        attachedDocs.push({
+          id: uploadedReport.id,
+          name: uploadedReport.title || `Rapport technique diagnostic - ${nowStr}.txt`,
+          title: uploadedReport.title || `Rapport technique diagnostic - ${nowStr}.txt`,
+          filename: uploadedReport.file_name || `rapport_diagnostic_${timestamp}.txt`,
+          file_url: uploadedReport.file_url || `/api/documents/${uploadedReport.id}/download`,
+          url: uploadedReport.file_url || `/api/documents/${uploadedReport.id}/download`,
           type: 'Text',
           file_type: 'text/plain',
-          size: uploadedReport?.file_size ? `${Math.round(uploadedReport.file_size / 1024)} Ko` : '',
+          size: uploadedReport.file_size ? `${Math.round(uploadedReport.file_size / 1024)} Ko` : '',
           category: 'Travaux & Chantiers',
           uploaded_at: new Date().toISOString(),
-        },
-      ];
+        });
+      }
 
       // 5. Structure de la tâche de signalement pré-remplie et assignée à Henri Jamet
       const bugTaskData = {
@@ -121,9 +145,9 @@ export default function BugReportButton({ onOpenBugReport, currentUser = null })
         url: '/api/documents/upload',
         method: 'POST',
         status: 500,
-        message: `Échec de l'initialisation du rapport de bug : ${err.message || 'Erreur inconnue'}`,
+        message: `Erreur lors de l'initialisation du signalement : ${err.message || 'Erreur technique'}`,
       });
-      alert(`Impossible d'initialiser le rapport de bug : ${err.message || 'Erreur technique'}`);
+      alert(`Impossible d'initialiser le signalement : ${err.message || 'Erreur technique'}`);
     } finally {
       setIsProcessing(false);
     }
