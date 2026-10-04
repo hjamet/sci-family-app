@@ -8,6 +8,16 @@
       "excludeFiles": "backend/tests/**"
     }
   },
+  "crons": [
+    {
+      "path": "/api/cron/calls-for-funds",
+      "schedule": "0 8 1 * *"
+    },
+    {
+      "path": "/api/cron/banking-sync",
+      "schedule": "0 6 * * *"
+    }
+  ],
   "rewrites": [
     {
       "source": "/api",

@@ -1392,6 +1392,8 @@ class MemberExpenseResponse(BaseModel):
     expense_date: str
     category: str
     status: str
+    task_id: Optional[int] = None
+    rejection_reason: Optional[str] = None
     document_id: Optional[int] = None
     document_url: Optional[str] = None
     document_filename: Optional[str] = None
@@ -1413,6 +1415,8 @@ class CallForFundsResponse(BaseModel):
     period_label: str
     theoretical_contribution: float
     approved_expenses_total: float
+    balance_before: Optional[float] = 0.0
+    amount_due: Optional[float] = 50.0
     net_amount: float
     status: str
     iban: Optional[str] = None
@@ -1420,6 +1424,8 @@ class CallForFundsResponse(BaseModel):
     payment_reference: str
     pdf_filename: Optional[str] = None
     pdf_url: Optional[str] = None
+    bank_transaction_id: Optional[int] = None
+    paid_at: Optional[datetime] = None
     details_json: Optional[str] = None
     notification_sent: bool = False
     notification_sent_at: Optional[datetime] = None
@@ -1428,6 +1434,48 @@ class CallForFundsResponse(BaseModel):
 
     class Config:
         from_attributes = True
+
+
+class MemberLedgerEntryResponse(BaseModel):
+    id: int
+    member_id: int
+    entry_type: str
+    amount: float
+    balance_after: Optional[float] = None
+    entry_date: Optional[datetime] = None
+    description: Optional[str] = None
+    expense_id: Optional[int] = None
+    bank_transaction_id: Optional[int] = None
+    call_for_funds_id: Optional[int] = None
+
+    class Config:
+        from_attributes = True
+
+
+class MemberTreasurySummaryResponse(BaseModel):
+    member_id: int
+    member_name: str
+    prenom: str
+    balance: float
+    monthly_contribution: float
+    covered_months: int
+    payment_reference: str
+    is_bank_active: bool
+    bank_status_notice: str
+    iban: Optional[str] = None
+    bic: Optional[str] = None
+    beneficiary: str
+    recent_entries: List[Dict[str, Any]] = []
+
+
+class ExpenseRejectRequest(BaseModel):
+    rejection_reason: str
+
+
+class ReconciliationAssignRequest(BaseModel):
+    member_id: int
+    notes: Optional[str] = None
+
 
 
 class CallForFundsCalculationResult(BaseModel):

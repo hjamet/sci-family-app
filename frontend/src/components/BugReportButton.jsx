@@ -154,7 +154,7 @@ export default function BugReportButton({ onOpenBugReport, currentUser = null })
   };
 
   return (
-    <div className="bug-report-ignore fixed bottom-6 right-6 z-40">
+    <div className="bug-report-ignore fixed bottom-3 right-3 sm:bottom-6 sm:right-6 z-40">
       <button
         id="btn-bug-report"
         type="button"
@@ -162,18 +162,19 @@ export default function BugReportButton({ onOpenBugReport, currentUser = null })
         onClick={handleClick}
         title="Signaler un bug ou proposer une amélioration"
         aria-label="Signaler un bug ou proposer une amélioration"
-        className="group relative w-12 h-12 rounded-full p-0 flex items-center justify-center bg-rose-700 hover:bg-rose-800 text-white shadow-lg hover:shadow-xl transition-all duration-200 cursor-pointer border-2 border-rose-400/40 hover:scale-105 active:scale-95 disabled:opacity-75 disabled:pointer-events-none"
+        className="group relative w-8 h-8 sm:w-11 sm:h-11 rounded-full p-0 flex items-center justify-center bg-rose-700/85 hover:bg-rose-800 text-white shadow-md hover:shadow-xl transition-all duration-200 cursor-pointer border border-rose-300/40 hover:scale-105 active:scale-95 disabled:opacity-75 disabled:pointer-events-none"
       >
         {isProcessing ? (
-          <span className="material-symbols-outlined text-[22px] animate-spin">
+          <span className="material-symbols-outlined text-[16px] sm:text-[20px] animate-spin">
             progress_activity
           </span>
         ) : (
-          <span className="material-symbols-outlined text-[24px] transition-transform duration-200 group-hover:rotate-12">
+          <span className="material-symbols-outlined text-[17px] sm:text-[22px] transition-transform duration-200 group-hover:rotate-12">
             pest_control
           </span>
         )}
       </button>
     </div>
   );
+
 }

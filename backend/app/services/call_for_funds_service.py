@@ -276,35 +276,53 @@ def calculate_member_call_for_funds(
     month: int
 ) -> Dict[str, Any]:
     """
-    Calcule la compensation et le solde net de la quote-part mensuelle d'un membre.
-    Formule : Solde Net = Quote-part théorique - Dépenses validées du mois.
-    RÈGLE ABSOLUE :
-      Si Solde Net <= 0 € :
-      AUCUN avis d'appel de fonds n'est émis et AUCUNE notification n'est envoyée.
-    GARDE-FOU BANCAIRE :
-      Si l'IBAN Swan officiel n'est pas actif (IS_BANK_ACCOUNT_ACTIVE=false),
-      les avis sont marqués « En attente de validation IBAN Swan » et aucun e-mail n'est envoyé.
+    Calcule la compensation et le solde net de la quote-part mensuelle d'un membre
+    en s'appuyant sur sa trésorerie cumulée illimitée (Grand Livre).
+    RÈGLES D'OR HENRI :
+      - Cumul illimité : + avances validées, + virements reçus, - cotisations antérieures.
+      - Si Solde >= Quote-part (50 €) : Échéance intégralement couverte (statut COUVERT). Aucun avis émis.
+      - Si 0 < Solde < Quote-part : Reliquat réclamé (statut EMIS ou PENDING_SWAN_IBAN).
+      - Si Solde <= 0 : Quote-part intégrale réclamée.
     """
+    from .treasury_service import get_member_balance
+
     period_label = f"{MONTH_NAMES_FR[month]} {year}"
     theoretical = float(member.monthly_contribution or 50.0)
 
-    # Récupération des dépenses avancées enregistrées par le membre sur le mois
+    # Solde de trésorerie disponible du membre avant cette échéance
+    balance_before = get_member_balance(db, member.id)
+
+    # Récupération des dépenses avancées enregistrées par le membre sur le mois (pour information)
     expenses = get_member_expenses_for_period(db, member.id, year, month)
     approved_expenses_total = sum(e["amount"] for e in expenses)
 
-    net_raw = theoretical - approved_expenses_total
     bank_active = is_bank_account_active(db)
 
-    # RÈGLE ABSOLUE : Si solde net <= 0, AUCUN avis émis, AUCUNE notification.
-    if net_raw <= 0.0:
+    # Arbitrage selon le solde de trésorerie disponible
+    if balance_before >= theoretical:
         should_issue = False
         net_amount = 0.0
-        status = "NEUTRALISE_COMPENSATION"
-        status_label = "Neutralisé par compensation de dépenses (Solde net ≤ 0 €)"
-        reason = f"Dépenses avancées ({approved_expenses_total:.2f} €) supérieures ou égales à la cotisation ({theoretical:.2f} €). Aucun avis émis et aucune notification envoyée."
-    else:
-        net_amount = round(net_raw, 2)
+        amount_due = 0.0
+        status = "COUVERT"
+        status_label = "Couvert par la trésorerie / avances du membre"
+        reason = f"Cotisation ({theoretical:.2f} €) intégralement couverte par le solde disponible ({balance_before:.2f} €). Aucun avis émis et aucune notification envoyée."
+    elif balance_before > 0:
+        reliquat = round(theoretical - balance_before, 2)
         should_issue = True
+        net_amount = reliquat
+        amount_due = reliquat
+        if not bank_active:
+            status = "PENDING_SWAN_IBAN"
+            status_label = "En attente de validation IBAN Swan"
+            reason = f"Avis pour le reliquat ({reliquat:.2f} €) préparé mais bloqué en attente de l'IBAN officiel Indy / Swan. Zéro e-mail envoyé."
+        else:
+            status = "EMIS"
+            status_label = "Avis émis (reliquat après compensation)"
+            reason = f"Avis d'appel de fonds émis pour le reliquat de {reliquat:.2f} € avec QR-code SEPA valide."
+    else:
+        should_issue = True
+        net_amount = theoretical
+        amount_due = theoretical
         if not bank_active:
             status = "PENDING_SWAN_IBAN"
             status_label = "En attente de validation IBAN Swan"
@@ -315,7 +333,7 @@ def calculate_member_call_for_funds(
             reason = "Avis d'appel de fonds émis avec QR-code SEPA valide."
 
     ref = f"AF-{year}{month:02d}-{member.prenom.upper()}"
-    payment_ref = f"Apport CCA - {member.prenom} {month:02d}/{year}"
+    payment_ref = member.payment_reference or f"HLV-{member.prenom.upper()}"
 
     return {
         "member_id": member.id,
@@ -326,8 +344,10 @@ def calculate_member_call_for_funds(
         "period_label": period_label,
         "theoretical_contribution": theoretical,
         "approved_expenses_total": round(approved_expenses_total, 2),
+        "balance_before": round(balance_before, 2),
+        "amount_due": amount_due,
         "net_amount": net_amount,
-        "net_raw": round(net_raw, 2),
+        "net_raw": amount_due,
         "should_issue": should_issue,
         "status": status,
         "status_label": status_label,
@@ -336,6 +356,7 @@ def calculate_member_call_for_funds(
         "payment_reference": payment_ref,
         "deducted_expenses": expenses
     }
+
 
 
 def generate_call_for_funds_pdf(
@@ -739,6 +760,8 @@ def generate_and_save_monthly_call(
         call_obj = existing
         call_obj.theoretical_contribution = calc["theoretical_contribution"]
         call_obj.approved_expenses_total = calc["approved_expenses_total"]
+        call_obj.balance_before = calc.get("balance_before", 0.0)
+        call_obj.amount_due = calc.get("amount_due", calc["net_amount"])
         call_obj.net_amount = calc["net_amount"]
         call_obj.status = calc["status"]
         call_obj.iban = bank_info.get("iban")
@@ -759,6 +782,8 @@ def generate_and_save_monthly_call(
             period_label=calc["period_label"],
             theoretical_contribution=calc["theoretical_contribution"],
             approved_expenses_total=calc["approved_expenses_total"],
+            balance_before=calc.get("balance_before", 0.0),
+            amount_due=calc.get("amount_due", calc["net_amount"]),
             net_amount=calc["net_amount"],
             status=calc["status"],
             iban=bank_info.get("iban"),
@@ -774,6 +799,55 @@ def generate_and_save_monthly_call(
     db.commit()
     db.refresh(call_obj)
 
+    # Tentative d'archivage sur Google Drive si PDF généré
+    if calc["should_issue"] and pdf_bytes:
+        try:
+            from .drive_service import GoogleDriveJailService
+            drive_svc = GoogleDriveJailService()
+            if drive_svc.is_configured():
+                drive_file = drive_svc.upload_file(
+                    content=pdf_bytes,
+                    filename=pdf_filename,
+                    mimetype="application/pdf",
+                    description=f"Avis Appel de Fonds - {member.name} - {calc['period_label']}"
+                )
+                logger.info(f"Avis PDF téléversé sur Google Drive : {drive_file.get('id')}")
+        except Exception as drive_err:
+            logger.error(f"[DRIVE UPLOAD ERROR] Échec explicite upload Google Drive pour avis {pdf_filename}: {drive_err}")
+
+    # Synchronisation comptable au grand livre (idempotence stricte)
+    try:
+        from .treasury_service import add_ledger_entry
+        from ..models import MemberLedgerEntry
+        existing_ledger = db.query(MemberLedgerEntry).filter(
+            MemberLedgerEntry.call_for_funds_id == call_obj.id,
+            MemberLedgerEntry.entry_type == "ECHEANCE"
+        ).first()
+
+        if not existing_ledger:
+            # Calcul du débit selon couverture
+            if calc["status"] == "COUVERT":
+                debit = -calc["theoretical_contribution"]
+                desc = f"Échéance {calc['period_label']} (Couverte par avance/trésorerie)"
+            elif calc.get("balance_before", 0.0) > 0:
+                debit = -calc["balance_before"]
+                desc = f"Échéance {calc['period_label']} (Acompte trésorerie {calc['balance_before']:.2f} €)"
+            else:
+                debit = -calc["theoretical_contribution"]
+                desc = f"Échéance {calc['period_label']}"
+
+            add_ledger_entry(
+                db=db,
+                member_id=member.id,
+                entry_type="ECHEANCE",
+                amount=debit,
+                description=desc,
+                call_for_funds_id=call_obj.id,
+                entry_date=datetime(year, month, 1)
+            )
+    except Exception as ledger_err:
+        logger.error(f"[TREASURY ERROR] Échec écriture grand livre pour échéance {call_obj.id}: {ledger_err}")
+
     # Rattacher les dépenses au call_obj
     if calc.get("deducted_expenses"):
         for exp in calc["deducted_expenses"]:
@@ -784,3 +858,4 @@ def generate_and_save_monthly_call(
         db.commit()
 
     return call_obj
+

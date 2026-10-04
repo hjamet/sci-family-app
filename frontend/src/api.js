@@ -2040,4 +2040,76 @@ export async function fetchDriveOAuthUrl() {
   }
   return res.json();
 }
+export async function validateMemberExpense(expenseId) {
+  const res = await fetch(`${API_BASE}/finances/expenses/${expenseId}/validate`, {
+    method: 'POST',
+    headers: getAuthJsonHeaders()
+  });
+  if (!res.ok) throw new Error('Erreur lors de la validation de l\'avance.');
+  return res.json();
+}
+
+export async function rejectMemberExpense(expenseId, rejectionReason) {
+  const res = await fetch(`${API_BASE}/finances/expenses/${expenseId}/reject`, {
+    method: 'POST',
+    headers: getAuthJsonHeaders(),
+    body: JSON.stringify({ rejection_reason: rejectionReason || 'Non justifié' })
+  });
+  if (!res.ok) throw new Error('Erreur lors du refus de l\'avance.');
+  return res.json();
+}
+
+export async function fetchMyTreasury() {
+  const res = await fetch(`${API_BASE}/finances/treasury/me`, {
+    headers: getAuthHeaders()
+  });
+  if (!res.ok) throw new Error('Erreur lors du chargement de votre trésorerie.');
+  return res.json();
+}
+
+export async function fetchMemberTreasury(memberId) {
+  const res = await fetch(`${API_BASE}/finances/treasury/members/${memberId}`, {
+    headers: getAuthHeaders()
+  });
+  if (!res.ok) throw new Error('Erreur lors du chargement de la trésorerie du membre.');
+  return res.json();
+}
+
+export async function fetchAllTreasurySummary() {
+  const res = await fetch(`${API_BASE}/finances/treasury/summary`, {
+    headers: getAuthHeaders()
+  });
+  if (!res.ok) throw new Error('Erreur lors du chargement de la synthèse de trésorerie.');
+  return res.json();
+}
+
+export async function runReconciliation() {
+  const res = await fetch(`${API_BASE}/finances/reconciliation/run`, {
+    method: 'POST',
+    headers: getAuthJsonHeaders()
+  });
+  if (!res.ok) throw new Error('Erreur lors du lettrage bancaire.');
+  return res.json();
+}
+
+export async function fetchUnmatchedReconciliation() {
+  const res = await fetch(`${API_BASE}/finances/reconciliation/unmatched`, {
+    headers: getAuthHeaders()
+  });
+  if (!res.ok) throw new Error('Erreur lors de la récupération des virements en attente.');
+  return res.json();
+}
+
+export async function assignReconciliation(transactionId, memberId, notes = null) {
+  const res = await fetch(`${API_BASE}/finances/reconciliation/${transactionId}/assign`, {
+    method: 'POST',
+    headers: getAuthJsonHeaders(),
+    body: JSON.stringify({ member_id: memberId, notes })
+  });
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({}));
+    throw new Error(err.detail || 'Erreur lors de l\'attribution du virement.');
+  }
+  return res.json();
+}
 

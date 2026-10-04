@@ -26,7 +26,7 @@ from .models import (
     VademecumItem, MaintenanceTask, StayTaskAssignment, Task, TaskComment, Log,
     BankAccount, BankTransaction, BankAuthSession, MemberSettings, ThermalSettings,
     Notification, AppRelease, MemberReleaseView,
-    CallForFunds, MemberExpense
+    CallForFunds, MemberExpense, MemberLedgerEntry
 )
 from .schemas import (
     LoginRequest, PropertyResponse, UserResponse, MemberResponse, TokenResponse,
@@ -57,6 +57,7 @@ from .schemas import (
     MemberExpenseCreate, MemberExpenseResponse,
     CallForFundsResponse, CallForFundsCalculationResult,
     CallForFundsGenerateRequest, CallForFundsSummaryResponse,
+    MemberTreasurySummaryResponse, ExpenseRejectRequest, ReconciliationAssignRequest,
     ResumableUploadInitRequest, ResumableUploadCompleteRequest
 )
 from .onboarding_service import (
@@ -4963,6 +4964,24 @@ def validate_task_unified(
     db.commit()
     db.refresh(task)
 
+    # Synchronisation si la tâche est liée à une avance de frais membre
+    try:
+        linked_expense = db.query(MemberExpense).filter(MemberExpense.task_id == task.id).first()
+        if linked_expense and linked_expense.status == "PENDING":
+            linked_expense.status = "VALIDATED"
+            from .services.treasury_service import add_ledger_entry
+            add_ledger_entry(
+                db=db,
+                member_id=linked_expense.member_id,
+                entry_type="AVANCE",
+                amount=float(linked_expense.amount),
+                description=f"Avance validée : {linked_expense.title}",
+                expense_id=linked_expense.id
+            )
+            db.commit()
+    except Exception as exp_sync_err:
+        logger.error(f"[EXPENSE SYNC ERROR] Erreur validation avance liée à la tâche {task.id}: {exp_sync_err}")
+
     try:
         create_internal_notification(
             db=db,
@@ -4991,27 +5010,37 @@ def invalidate_task_unified(
             detail="Action réservée aux coordinateurs (is_coordinator requis)."
         )
     task = resolve_task_by_id_or_ref(task_id, db)
-    task.status = "A_FAIRE"
+    task.status = "REJECTED" if "Validation avance" in (task.title or "") else "A_FAIRE"
     task.updated_at = datetime.utcnow()
 
     # Si message explicatif fourni, ajout au chat FamilyChat via TaskComment
     explanation = None
     if payload:
-        explanation = payload.get("explanation") or payload.get("message") or payload.get("comment")
+        explanation = payload.get("explanation") or payload.get("message") or payload.get("comment") or payload.get("rejection_reason")
     if explanation and str(explanation).strip():
         comment = TaskComment(
             task_id=task.id,
             author_id=current_user.id,
             author_name=f"{current_user.prenom} (Coordination)",
             author_role="Coordinateur",
-            content=f"[Demande de révision] {str(explanation).strip()}",
+            content=f"[Demande de révision / Refus] {str(explanation).strip()}",
             reactions="{}"
         )
         db.add(comment)
 
+    # Synchronisation si tâche liée à une avance de frais
+    try:
+        linked_expense = db.query(MemberExpense).filter(MemberExpense.task_id == task.id).first()
+        if linked_expense and linked_expense.status == "PENDING":
+            linked_expense.status = "REJECTED"
+            linked_expense.rejection_reason = str(explanation).strip() if explanation else "Refusé par la coordination"
+    except Exception as exp_sync_err:
+        logger.error(f"[EXPENSE SYNC ERROR] Erreur refus avance liée à la tâche {task.id}: {exp_sync_err}")
+
     db.commit()
     db.refresh(task)
     return format_task_response(task, include_comments=True)
+
 
 
 @app.post("/api/tasks/{task_id}/accept")
@@ -8844,7 +8873,7 @@ async def create_member_expense(
         amount=amount,
         expense_date=clean_date,
         category=category or "Entretien & Fournitures",
-        status="VALIDATED",
+        status="PENDING",
         document_id=doc_id,
         document_url=doc_url,
         document_filename=doc_filename,
@@ -8853,6 +8882,66 @@ async def create_member_expense(
     db.add(expense)
     db.commit()
     db.refresh(expense)
+
+    # Création automatique d'une tâche ACTIVE assignée à Henri (coordinateur principal)
+    henri = db.query(Member).filter(func.lower(Member.prenom) == "henri").first()
+    henri_id = henri.id if henri else 1
+
+    key_values_list = [
+        {"key": "Membre", "value": member.prenom},
+        {"key": "Montant", "value": f"{amount:.2f} €"},
+        {"key": "Date", "value": clean_date},
+        {"key": "Motif", "value": clean_title}
+    ]
+    task_docs = []
+    if doc_id:
+        task_docs.append({
+            "id": doc_id,
+            "name": clean_title,
+            "filename": doc_filename or "Facture jointe",
+            "file_url": doc_url or f"/api/documents/{doc_id}/download",
+            "url": doc_url or f"/api/documents/{doc_id}/download",
+            "type": "Facture / Justificatif"
+        })
+
+    validation_task = Task(
+        title=f"Validation avance de frais : {member.prenom} - {clean_title} ({amount:.2f} €)",
+        description=f"Avance de frais déclarée par {member.name} pour la SCI Hellenvilliers.\nMontant avancé : {amount:.2f} €\nMotif : {clean_title}\nDate : {clean_date}",
+        category="Finances & Trésorerie",
+        status="A_FAIRE",
+        charge_points=1,
+        assignee_id=henri_id,
+        assigned_members=["Henri Jamet"],
+        key_values=json.dumps(key_values_list, ensure_ascii=False),
+        documents=json.dumps(task_docs, ensure_ascii=False) if task_docs else None,
+        created_at=datetime.utcnow(),
+        updated_at=datetime.utcnow()
+    )
+    db.add(validation_task)
+    db.commit()
+    db.refresh(validation_task)
+
+    if doc_id:
+        doc_rec = db.query(AdminDocument).filter(AdminDocument.id == doc_id).first()
+        if doc_rec:
+            doc_rec.task_id = validation_task.id
+            db.commit()
+
+    expense.task_id = validation_task.id
+    db.commit()
+    db.refresh(expense)
+
+    try:
+        create_internal_notification(
+            db=db,
+            title=f"Nouvelle avance à valider : {member.prenom} ({amount:.2f} €)",
+            description=f"{member.prenom} a avancé {amount:.2f} € pour « {clean_title} ». Tâche assignée à Henri.",
+            notif_type="expense_validation",
+            link_path=f"/taches?task_id={validation_task.id}",
+            link_id=str(validation_task.id)
+        )
+    except Exception as notif_err:
+        logger.warning(f"Notice notification avance: {notif_err}")
 
     return expense
 
@@ -8878,6 +8967,223 @@ def list_member_expenses(
         query = query.filter(MemberExpense.status == status)
 
     return query.order_by(MemberExpense.expense_date.desc(), MemberExpense.id.desc()).all()
+
+
+@app.post("/api/finances/expenses/{expense_id}/validate", response_model=MemberExpenseResponse, tags=["Dépenses Membres"])
+def validate_member_expense_endpoint(
+    expense_id: int,
+    current_user: Optional[User] = Depends(get_optional_current_user),
+    db: Session = Depends(get_db)
+):
+    """Valide officiellement une avance de frais, synchronise sa tâche et crédite la trésorerie du membre."""
+    expense = db.query(MemberExpense).filter(MemberExpense.id == expense_id).first()
+    if not expense:
+        raise HTTPException(status_code=404, detail="Avance introuvable.")
+
+    expense.status = "VALIDATED"
+    if expense.task_id:
+        t = db.query(Task).filter(Task.id == expense.task_id).first()
+        if t:
+            t.status = "TERMINEE"
+            t.updated_at = datetime.utcnow()
+    db.commit()
+
+    # Inscription au grand livre
+    from .services.treasury_service import add_ledger_entry
+    add_ledger_entry(
+        db=db,
+        member_id=expense.member_id,
+        entry_type="AVANCE",
+        amount=float(expense.amount),
+        description=f"Avance validée : {expense.title}",
+        expense_id=expense.id
+    )
+
+    db.refresh(expense)
+    return expense
+
+
+@app.post("/api/finances/expenses/{expense_id}/reject", response_model=MemberExpenseResponse, tags=["Dépenses Membres"])
+def reject_member_expense_endpoint(
+    expense_id: int,
+    payload: ExpenseRejectRequest,
+    current_user: Optional[User] = Depends(get_optional_current_user),
+    db: Session = Depends(get_db)
+):
+    """Refuse une avance de frais avec motif, synchronise sa tâche et n'inscrit aucun crédit."""
+    expense = db.query(MemberExpense).filter(MemberExpense.id == expense_id).first()
+    if not expense:
+        raise HTTPException(status_code=404, detail="Avance introuvable.")
+
+    reason = payload.rejection_reason.strip() if payload and payload.rejection_reason else "Non justifié"
+    expense.status = "REJECTED"
+    expense.rejection_reason = reason
+    if expense.task_id:
+        t = db.query(Task).filter(Task.id == expense.task_id).first()
+        if t:
+            t.status = "REJECTED"
+            t.updated_at = datetime.utcnow()
+    db.commit()
+    db.refresh(expense)
+    return expense
+
+
+# ==============================================================================
+# SECTION TRÉSORERIE PAR MEMBRE & CODES DE VIREMENT PERMANENTS
+# ==============================================================================
+
+@app.get("/api/finances/treasury/me", response_model=MemberTreasurySummaryResponse, tags=["Trésorerie"])
+def get_my_treasury_summary(
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db)
+):
+    """Retourne l'état de trésorerie de l'utilisateur connecté."""
+    from .services.treasury_service import get_member_treasury_summary
+    return get_member_treasury_summary(db, current_user)
+
+
+@app.get("/api/finances/treasury/members/{member_id}", response_model=MemberTreasurySummaryResponse, tags=["Trésorerie"])
+def get_member_treasury_endpoint(
+    member_id: int,
+    current_user: Optional[User] = Depends(get_optional_current_user),
+    db: Session = Depends(get_db)
+):
+    """Retourne l'état de trésorerie pour un associé spécifique."""
+    from .services.treasury_service import get_member_treasury_summary
+    member = db.query(Member).filter(Member.id == member_id).first()
+    if not member:
+        raise HTTPException(status_code=404, detail="Membre introuvable.")
+    return get_member_treasury_summary(db, member)
+
+
+@app.get("/api/finances/treasury/summary", tags=["Trésorerie"])
+def get_all_treasury_endpoint(
+    current_user: Optional[User] = Depends(get_optional_current_user),
+    db: Session = Depends(get_db)
+):
+    """Vue administrative globale de la trésorerie de tous les associés."""
+    from .services.treasury_service import get_all_treasury_summaries
+    return get_all_treasury_summaries(db)
+
+
+# ==============================================================================
+# SECTION LETTRAGE BANCAIRE & RAPPROCHEMENT
+# ==============================================================================
+
+@app.post("/api/finances/reconciliation/run", tags=["Lettrage & Rapprochement"])
+def run_reconciliation_endpoint(
+    current_user: Optional[User] = Depends(get_optional_current_user),
+    db: Session = Depends(get_db)
+):
+    """Lance manuellement l'automate de lettrage bancaire (Niveau 1 certifié, Niveau 2 à vérifier)."""
+    from .services.reconciliation_service import ReconciliationService
+    return ReconciliationService.run_reconciliation(db)
+
+
+@app.get("/api/finances/reconciliation/unmatched", tags=["Lettrage & Rapprochement"])
+def get_unmatched_reconciliation_endpoint(
+    current_user: Optional[User] = Depends(get_optional_current_user),
+    db: Session = Depends(get_db)
+):
+    """Retourne la liste des virements non lettrés et la file de vérification Niveau 2."""
+    from .services.reconciliation_service import ReconciliationService
+    return ReconciliationService.get_unmatched_and_pending_transactions(db)
+
+
+@app.post("/api/finances/reconciliation/{transaction_id}/assign", tags=["Lettrage & Rapprochement"])
+def assign_reconciliation_endpoint(
+    transaction_id: int,
+    payload: ReconciliationAssignRequest,
+    current_user: Optional[User] = Depends(get_optional_current_user),
+    db: Session = Depends(get_db)
+):
+    """Attribution manuelle certifiée d'un virement à un membre par Henri."""
+    from .services.reconciliation_service import ReconciliationService
+    try:
+        res = ReconciliationService.assign_transaction_manually(
+            db=db,
+            transaction_id=transaction_id,
+            member_id=payload.member_id,
+            notes=payload.notes
+        )
+        return res
+    except ValueError as val_err:
+        raise HTTPException(status_code=400, detail=str(val_err))
+
+
+# ==============================================================================
+# SECTION CRONS VERCEL QUOTIDIENS (SÉCURISÉS PAR CRON_SECRET)
+# ==============================================================================
+
+def verify_cron_auth(request: Request):
+    """Vérifie l'en-tête de sécurité CRON_SECRET pour protéger les crons Vercel."""
+    expected_secret = os.getenv("CRON_SECRET")
+    if not expected_secret:
+        # Fail-fast absolu : sans CRON_SECRET configuré, refuser les requêtes externes
+        raise HTTPException(status_code=401, detail="CRON_SECRET non configuré sur le serveur.")
+
+    auth_header = request.headers.get("Authorization", "")
+    token = None
+    if auth_header.startswith("Bearer "):
+        token = auth_header.replace("Bearer ", "", 1).strip()
+    elif "secret" in request.query_params:
+        token = request.query_params["secret"]
+
+    if token != expected_secret:
+        raise HTTPException(status_code=401, detail="Non autorisé : jeton cron invalide.")
+
+
+@app.api_route("/api/cron/banking-sync", methods=["GET", "POST"], tags=["Crons"])
+async def cron_banking_sync(request: Request, db: Session = Depends(get_db)):
+    """Cron quotidien Vercel : synchronisation bancaire + lettrage automatique."""
+    verify_cron_auth(request)
+
+    # 1. Synchro bancaire si un compte existe
+    try:
+        from .services.banking import sync_bank_account_transactions
+        acc = db.query(BankAccount).first()
+        if acc:
+            sync_bank_account_transactions(db, acc.id)
+    except Exception as sync_err:
+        logger.warning(f"[CRON] Avertissement sync bancaire : {sync_err}")
+
+    # 2. Lettrage automatique
+    from .services.reconciliation_service import ReconciliationService
+    rec_res = ReconciliationService.run_reconciliation(db)
+    return {
+        "success": True,
+        "cron": "banking-sync",
+        "timestamp": datetime.utcnow().isoformat(),
+        "reconciliation": rec_res
+    }
+
+
+@app.api_route("/api/cron/calls-for-funds", methods=["GET", "POST"], tags=["Crons"])
+async def cron_calls_for_funds(request: Request, db: Session = Depends(get_db)):
+    """Cron mensuel Vercel (1er du mois) : génération idempotente des avis d'échéance."""
+    verify_cron_auth(request)
+    now = datetime.utcnow()
+    members = db.query(Member).all()
+    generated = []
+
+    for m in members:
+        call_obj = generate_and_save_monthly_call(db, m, now.year, now.month)
+        generated.append({
+            "member_id": m.id,
+            "member_name": m.name,
+            "status": call_obj.status,
+            "amount_due": getattr(call_obj, "amount_due", call_obj.net_amount)
+        })
+
+    return {
+        "success": True,
+        "cron": "calls-for-funds",
+        "year": now.year,
+        "month": now.month,
+        "generated_count": len(generated),
+        "calls": generated
+    }
+
 
 
 

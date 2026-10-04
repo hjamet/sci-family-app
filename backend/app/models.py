@@ -38,6 +38,7 @@ class Member(Base):
     monthly_contribution = Column(Float, default=50.0, nullable=False, server_default="50.0")
     notif_new_invoices = Column(Boolean, default=True, nullable=False, server_default="1")
     notif_calls_for_funds = synonym("notif_new_invoices")
+    payment_reference = Column(String(50), unique=True, index=True, nullable=True)  # ex: "HLV-HENRI"
 
     tasks = relationship("Task", back_populates="assignee", foreign_keys="Task.assignee_id")
     task_comments = relationship("TaskComment", back_populates="author", foreign_keys="TaskComment.author_id")
@@ -528,13 +529,17 @@ class CallForFunds(Base):
     theoretical_contribution = Column(Float, default=50.0, nullable=False)
     approved_expenses_total = Column(Float, default=0.0, nullable=False)
     net_amount = Column(Float, default=50.0, nullable=False)
-    status = Column(String(50), default="PENDING_SWAN_IBAN", nullable=False)  # PENDING_SWAN_IBAN, EMIS, REGLE, NEUTRALISE_COMPENSATION, ANNULE
+    balance_before = Column(Float, default=0.0, nullable=False)  # Solde de trésorerie avant échéance
+    amount_due = Column(Float, default=50.0, nullable=False)  # Montant net réclamé
+    status = Column(String(50), default="PENDING_SWAN_IBAN", nullable=False)  # PENDING_SWAN_IBAN, EMIS, REGLE, COUVERT, NEUTRALISE_COMPENSATION, ANNULE
     iban = Column(String(100), nullable=True)
     bic = Column(String(20), nullable=True)
     payment_reference = Column(String(150), nullable=False)  # ex: "Apport CCA - Henri 10/2026"
     pdf_filename = Column(String(255), nullable=True)
     pdf_url = Column(String(255), nullable=True)
     details_json = Column(Text, nullable=True)  # JSON-encoded list of deducted expenses
+    bank_transaction_id = Column(Integer, ForeignKey("bank_transactions.id", ondelete="SET NULL"), nullable=True, index=True)
+    paid_at = Column(DateTime, nullable=True)
     notification_sent = Column(Boolean, default=False, nullable=False, server_default="0")
     notification_sent_at = Column(DateTime, nullable=True)
     created_at = Column(DateTime, default=datetime.utcnow)
@@ -542,6 +547,7 @@ class CallForFunds(Base):
 
     member = relationship("Member", backref="calls_for_funds")
     expenses = relationship("MemberExpense", back_populates="call_for_funds")
+    bank_transaction = relationship("BankTransaction", foreign_keys=[bank_transaction_id])
 
 
 class MemberExpense(Base):
@@ -554,7 +560,9 @@ class MemberExpense(Base):
     amount = Column(Float, nullable=False)
     expense_date = Column(String(50), nullable=False)  # YYYY-MM-DD
     category = Column(String(100), default="Entretien & Fournitures", nullable=False)
-    status = Column(String(50), default="VALIDATED", nullable=False)  # VALIDATED, PENDING, REJECTED
+    status = Column(String(50), default="PENDING", nullable=False)  # PENDING, VALIDATED, REJECTED
+    task_id = Column(Integer, ForeignKey("tasks.id", ondelete="SET NULL"), nullable=True, index=True)
+    rejection_reason = Column(Text, nullable=True)
     document_id = Column(Integer, ForeignKey("admin_documents.id", ondelete="SET NULL"), nullable=True)
     document_url = Column(String(255), nullable=True)
     document_filename = Column(String(255), nullable=True)
@@ -566,4 +574,27 @@ class MemberExpense(Base):
     member = relationship("Member", backref="member_expenses")
     document = relationship("AdminDocument", backref="member_expense_records")
     call_for_funds = relationship("CallForFunds", back_populates="expenses")
+    task = relationship("Task", foreign_keys=[task_id])
+
+
+class MemberLedgerEntry(Base):
+    __tablename__ = "member_ledger_entries"
+
+    id = Column(Integer, primary_key=True, index=True)
+    member_id = Column(Integer, ForeignKey("members.id", ondelete="CASCADE"), nullable=False, index=True)
+    entry_type = Column(String(50), nullable=False)  # AVANCE, VIREMENT, ECHEANCE, AJUSTEMENT
+    amount = Column(Float, nullable=False)  # Positif pour crédit (+), négatif pour débit (-)
+    balance_after = Column(Float, nullable=True)  # Solde cumulé après opération
+    entry_date = Column(DateTime, default=datetime.utcnow, nullable=False)
+    description = Column(String(255), nullable=True)
+    expense_id = Column(Integer, ForeignKey("member_expenses.id", ondelete="SET NULL"), nullable=True, index=True)
+    bank_transaction_id = Column(Integer, ForeignKey("bank_transactions.id", ondelete="SET NULL"), nullable=True, index=True)
+    call_for_funds_id = Column(Integer, ForeignKey("calls_for_funds.id", ondelete="SET NULL"), nullable=True, index=True)
+    created_at = Column(DateTime, default=datetime.utcnow)
+    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+
+    member = relationship("Member", backref="ledger_entries")
+    expense = relationship("MemberExpense", backref="ledger_entries")
+    bank_transaction = relationship("BankTransaction", backref="ledger_entries")
+    call_for_funds = relationship("CallForFunds", backref="ledger_entries")
 
