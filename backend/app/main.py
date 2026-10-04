@@ -9,12 +9,13 @@ import secrets
 import string
 import re
 import unicodedata
+from urllib.parse import urlparse
 from datetime import datetime, timedelta, timezone
 from typing import List, Optional, Any, Dict
 from fastapi import FastAPI, Depends, HTTPException, Query, UploadFile, File, Form, status, Request, BackgroundTasks, Body
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
-from fastapi.responses import FileResponse, Response, RedirectResponse
+from fastapi.responses import FileResponse, Response, RedirectResponse, StreamingResponse, JSONResponse
 from sqlalchemy.orm import Session, selectinload, joinedload
 from sqlalchemy import func, or_, and_
 from sqlalchemy.exc import IntegrityError
@@ -76,7 +77,24 @@ from .services.workload_balancer import (
 from .services.vicare_service import ViCareService
 from .services.klereo_service import KlereoService
 from .services.banking import enable_banking_service
-from .services.drive_service import drive_jail_service, SecurityException
+from .services.drive_service import drive_jail_service, SecurityException, escape_drive_query_value
+
+
+def format_currency_fr(amount: Optional[float], include_symbol: bool = True) -> str:
+    """
+    Formatage monétaire français strict avec séparateur de milliers (espace)
+    et virgule décimale : 1 234,50 € (ou 1 234,50 sans symbole).
+    """
+    if amount is None:
+        return ""
+    try:
+        val = float(amount)
+    except (ValueError, TypeError):
+        return str(amount)
+    formatted = f"{val:,.2f}".replace(",", " ").replace(".", ",")
+    return f"{formatted} €" if include_symbol else formatted
+
+
 from .security import (
     rate_limiter, verify_password, hash_password, create_access_token, decode_access_token, normalize_prenom, pwd_context
 )
@@ -4206,6 +4224,16 @@ def format_task_response(task: Task, include_comments: bool = False) -> dict:
 
     comments_list = [format_comment_response(c) for c in task.comments] if task.comments else []
 
+    expense_id = None
+    if isinstance(key_values, list):
+        for kv in key_values:
+            if isinstance(kv, dict) and str(kv.get("key", "")).lower() in ("expense_id", "expenseid", "depense_id", "id_expense", "id_depense"):
+                try:
+                    expense_id = int(kv.get("value"))
+                except (ValueError, TypeError):
+                    pass
+                break
+
     data = {
         "id": task.id,
         "ref": task.ref,
@@ -4215,6 +4243,7 @@ def format_task_response(task: Task, include_comments: bool = False) -> dict:
         "category": task.category,
         "priority": task.priority,
         "status": task.status,
+        "expense_id": expense_id,
         "is_recurring": bool(getattr(task, "is_recurring", False)),
         "recurrence_interval": getattr(task, "recurrence_interval", 1) or 1,
         "recurrence_unit": getattr(task, "recurrence_unit", "semaines") or "semaines",
@@ -6225,6 +6254,7 @@ async def upload_document_canonical(
 async def init_resumable_upload(
     req: ResumableUploadInitRequest,
     request: Request,
+    current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db)
 ):
     """
@@ -6289,16 +6319,29 @@ async def init_resumable_upload(
 
 @app.put("/api/documents/upload/resumable/chunk", tags=["Documents"])
 async def relay_resumable_chunk(
-    request: Request
+    request: Request,
+    current_user: User = Depends(get_current_user)
 ):
     """
     Relais serverless pour les morceaux de téléversement Resumable Google Drive (< 4 Mo par morceau).
     Contourne de manière étanche les restrictions CORS éventuelles des navigateurs web tout en respectant
     le plafond de payload Vercel de 4.5 Mo.
+    Exige l'authentification et valide strictement l'URL de session résumable Google Drive (anti-SSRF).
     """
     upload_url = request.headers.get("x-upload-url") or request.query_params.get("upload_url")
     if not upload_url:
         raise HTTPException(status_code=400, detail="En-tête 'X-Upload-Url' manquant.")
+
+    parsed_url = urlparse(upload_url)
+    if (
+        parsed_url.scheme != "https"
+        or parsed_url.netloc != "www.googleapis.com"
+        or not parsed_url.path.startswith("/upload/drive/v3/")
+    ):
+        raise HTTPException(
+            status_code=400,
+            detail="URL de téléversement invalide : seules les sessions résumables officielles Google Drive (https://www.googleapis.com/upload/drive/v3/...) sont autorisées."
+        )
 
     content_range = request.headers.get("content-range")
     if not content_range:
@@ -6311,23 +6354,34 @@ async def relay_resumable_chunk(
         raise HTTPException(status_code=413, detail="Le morceau dépasse la taille maximale de 4 Mo.")
 
     try:
-        status_code, data, raw_text = drive_jail_service.relay_chunk(
+        relay_res = drive_jail_service.relay_chunk(
             upload_url=upload_url,
             chunk_bytes=chunk_bytes,
             content_range=content_range,
             mimetype=content_type
         )
+        status_code, data, raw_text = relay_res[0], relay_res[1], relay_res[2]
+        resp_headers = getattr(relay_res, "headers", {})
     except Exception as exc:
         logger.error(f"Erreur relais chunk vers Google Drive: {exc}")
         raise HTTPException(status_code=502, detail=f"Échec relais vers Google Drive: {exc}")
 
-    from fastapi.responses import JSONResponse
-    return JSONResponse(content=data if data else {"status": status_code, "raw": raw_text}, status_code=status_code)
+    headers = {}
+    range_val = resp_headers.get("Range") or resp_headers.get("range")
+    if range_val:
+        headers["Range"] = range_val
+
+    return JSONResponse(
+        content=data if data else {"status": status_code, "raw": raw_text},
+        status_code=status_code,
+        headers=headers
+    )
 
 
 @app.post("/api/documents/upload/resumable/complete", status_code=status.HTTP_201_CREATED, tags=["Documents"])
 async def complete_resumable_upload(
     req: ResumableUploadCompleteRequest,
+    current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db)
 ):
     """
@@ -6748,7 +6802,7 @@ def download_document(
     # Si pas de drive_file_id mais qu'on a un nom de fichier, rattrapage automatique sur Drive
     if not target_drive_id and doc and doc.file_name:
         try:
-            drive_matches = drive_jail_service.list_files(query_filter=f"name = '{doc.file_name}'")
+            drive_matches = drive_jail_service.list_files(name=doc.file_name)
             if drive_matches:
                 target_drive_id = drive_matches[0]["id"]
                 doc.drive_file_id = target_drive_id
@@ -6760,33 +6814,36 @@ def download_document(
 
     disposition_type = "attachment" if download else "inline"
 
-    # 1. Extraction binaire prioritaire depuis Google Drive (avec vérification Strict Jail)
+    # 1. Extraction binaire prioritaire depuis Google Drive (avec vérification Strict Jail) en flux
     if target_drive_id:
         try:
-            content, metadata = drive_jail_service.download_file(target_drive_id)
+            stream_gen, metadata, file_size = drive_jail_service.stream_file(target_drive_id)
             filename = (doc.file_name if doc else None) or metadata.get("name") or f"document_{doc_id}.pdf"
             guessed_type, _ = mimetypes.guess_type(filename)
             drive_mime = metadata.get("mimeType")
             mimetype = guessed_type or (drive_mime if drive_mime and drive_mime != "application/octet-stream" else None) or (doc.file_type if doc and doc.file_type != "application/octet-stream" else None) or "application/pdf"
 
             # Synchronisation silencieuse de la taille en base si nécessaire
-            if doc and (not doc.file_size or doc.file_size != len(content)):
+            if doc and file_size and (not doc.file_size or doc.file_size != file_size):
                 try:
-                    doc.file_size = len(content)
+                    doc.file_size = file_size
                     db.commit()
                 except Exception:
                     pass
 
-            return Response(
-                content=content,
+            headers = {
+                "Content-Disposition": f'{disposition_type}; filename="{filename}"',
+                "Accept-Ranges": "bytes",
+                "Access-Control-Allow-Origin": "*",
+                "Cache-Control": "public, max-age=3600"
+            }
+            if file_size > 0:
+                headers["Content-Length"] = str(file_size)
+
+            return StreamingResponse(
+                stream_gen,
                 media_type=mimetype,
-                headers={
-                    "Content-Disposition": f'{disposition_type}; filename="{filename}"',
-                    "Content-Length": str(len(content)),
-                    "Accept-Ranges": "bytes",
-                    "Access-Control-Allow-Origin": "*",
-                    "Cache-Control": "public, max-age=3600"
-                }
+                headers=headers
             )
         except Exception as e:
             logger.warning(f"Téléchargement Google Drive échoué pour {target_drive_id} ({e}), tentative depuis la base ou le cache local")
@@ -7076,9 +7133,14 @@ def get_drive_status(
 
 
 @app.get("/api/drive/files", tags=["Google Drive"])
-def list_drive_files(query: Optional[str] = None, page_size: int = 100):
+def list_drive_files(
+    query: Optional[str] = None,
+    name: Optional[str] = None,
+    page_size: int = 100,
+    current_user: User = Depends(get_current_user)
+):
     """Liste exclusivement les fichiers situés dans le dossier confiné Hellenvilliers SCI."""
-    files = drive_jail_service.list_files(query_filter=query, page_size=page_size)
+    files = drive_jail_service.list_files(name=name or query, page_size=page_size)
     return {"files": files, "count": len(files), "folder_id": drive_jail_service.folder_id}
 
 
@@ -8802,7 +8864,8 @@ async def create_member_expense(
     henri = db.query(Member).filter(func.lower(Member.prenom) == "henri").first()
     henri_id = henri.id if henri else 1
 
-    amount_fr = f"{amount:.2f}".replace(".", ",")
+    amount_fr = format_currency_fr(amount, include_symbol=False)
+    amount_with_symbol = format_currency_fr(amount, include_symbol=True)
     clean_date_fr = clean_date
     if clean_date and len(clean_date) == 10 and clean_date[4] == "-" and clean_date[7] == "-":
         parts = clean_date.split("-")
@@ -8810,7 +8873,7 @@ async def create_member_expense(
 
     key_values_list = [
         {"key": "Membre", "value": member.name or f"{member.prenom} Jamet"},
-        {"key": "Montant", "value": f"{amount_fr} €"},
+        {"key": "Montant", "value": amount_with_symbol},
         {"key": "Date", "value": clean_date_fr},
         {"key": "Motif", "value": clean_title},
         {"key": "expense_id", "value": str(expense.id)}
@@ -8827,8 +8890,8 @@ async def create_member_expense(
         })
 
     validation_task = Task(
-        title=f"Validation avance de frais : {member.prenom} - {clean_title} ({amount_fr} €)",
-        description=f"Avance de frais déclarée par {member.name or member.prenom} pour la SCI Hellenvilliers.\nMontant avancé : {amount_fr} €\nMotif : {clean_title}\nDate : {clean_date_fr}",
+        title=f"Validation avance de frais : {member.prenom} - {clean_title} ({amount_with_symbol})",
+        description=f"Avance de frais déclarée par {member.name or member.prenom} pour la SCI Hellenvilliers.\nMontant avancé : {amount_with_symbol}\nMotif : {clean_title}\nDate : {clean_date_fr}",
         category="Finances & Trésorerie",
         status="TODO",
         charge_points=1,
@@ -8857,8 +8920,8 @@ async def create_member_expense(
     try:
         create_internal_notification(
             db=db,
-            title=f"Nouvelle avance à valider : {member.prenom} ({amount:.2f} €)",
-            description=f"{member.prenom} a avancé {amount:.2f} € pour « {clean_title} ». Tâche assignée à Henri.",
+            title=f"Nouvelle avance à valider : {member.prenom} ({amount_with_symbol})",
+            description=f"{member.prenom} a avancé {amount_with_symbol} pour « {clean_title} ». Tâche assignée à Henri.",
             notif_type="expense_validation",
             link_path=f"/taches?task_id={validation_task.id}",
             link_id=str(validation_task.id)

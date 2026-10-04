@@ -42,6 +42,32 @@ class SecurityException(HTTPException):
         super().__init__(status_code=403, detail=detail)
 
 
+def escape_drive_query_value(value: str) -> str:
+    """
+    Échappe systématiquement les valeurs textuelles insérées dans les requêtes 'q' Google Drive v3.
+    Règle Google Drive : doubler les antislashs (\\) puis échapper les apostrophes (\\').
+    """
+    if not value:
+        return ""
+    return str(value).replace("\\", "\\\\").replace("'", "\\'")
+
+
+class RelayResult(tuple):
+    """
+    Résultat d'un relais de morceau Resumable.
+    Sous-classe de tuple (status_code, data, raw_text) pour rétrocompatibilité
+    totale avec l'ancien déballage à 3 éléments, enrichi de l'attribut headers.
+    """
+    def __new__(cls, status_code: int, data: Dict[str, Any], raw_text: str, headers: Optional[Dict[str, str]] = None):
+        return super().__new__(cls, (status_code, data, raw_text))
+
+    def __init__(self, status_code: int, data: Dict[str, Any], raw_text: str, headers: Optional[Dict[str, str]] = None):
+        self.status_code = status_code
+        self.data = data
+        self.raw_text = raw_text
+        self.headers = headers or {}
+
+
 class GoogleDriveJailService:
     """Service de gestion sécurisée Google Drive via API REST directe v3 avec confinement strict (Strict Drive Jail).
     Garantit qu'aucun fichier ne peut être créé, lu, listé ou supprimé en dehors des dossiers Hellenvilliers SCI.
@@ -233,7 +259,7 @@ class GoogleDriveJailService:
         chunk_bytes: bytes,
         content_range: str,
         mimetype: Optional[str] = None
-    ) -> Tuple[int, Dict[str, Any], str]:
+    ) -> RelayResult:
         """Transmet un morceau binaire (<= 4 Mo) vers l'URL de session Resumable Google Drive."""
         headers = {
             "Content-Range": content_range,
@@ -247,7 +273,7 @@ class GoogleDriveJailService:
                 data = resp.json()
             except Exception:
                 pass
-        return resp.status_code, data, resp.text
+        return RelayResult(resp.status_code, data, resp.text, dict(resp.headers))
 
     def upload_file(
         self,
@@ -325,13 +351,21 @@ class GoogleDriveJailService:
         self.clear_cache()
         return file
 
-    def list_files(self, query_filter: Optional[str] = None, page_size: int = 100, force_refresh: bool = False) -> List[Dict[str, Any]]:
+    def list_files(
+        self,
+        query_filter: Optional[str] = None,
+        name: Optional[str] = None,
+        mime_type: Optional[str] = None,
+        page_size: int = 100,
+        force_refresh: bool = False
+    ) -> List[Dict[str, Any]]:
         """Liste uniquement les fichiers présents dans ALLOWED_FOLDER_ID via REST files.list.
         Clause de confinement obligatoire : '{ALLOWED_FOLDER_ID}' in parents and trashed = false.
         Maintient un cache en mémoire TTL de 120s avec verrou thread-safe.
+        Gère exhaustivement la pagination (nextPageToken) et l'échappement strict des clauses.
         """
         global _DRIVE_FILES_CACHE, _DRIVE_FILES_CACHE_TIMESTAMP
-        cache_key = f"{self.folder_id}_{query_filter or ''}_{page_size}"
+        cache_key = f"{self.folder_id}_{query_filter or ''}_{name or ''}_{mime_type or ''}_{page_size}"
         now = time.time()
 
         if not force_refresh and (cache_key in _DRIVE_FILES_CACHE) and (now - _DRIVE_FILES_CACHE_TIMESTAMP < DRIVE_FILES_CACHE_TTL):
@@ -348,48 +382,80 @@ class GoogleDriveJailService:
                 jail_clause = f"({parents_conditions}) and trashed = false"
             else:
                 jail_clause = f"'{self.folder_id}' in parents and trashed = false"
+
+            extra_clauses = []
+            if name:
+                extra_clauses.append(f"name = '{escape_drive_query_value(name)}'")
+            if mime_type:
+                extra_clauses.append(f"mimeType = '{escape_drive_query_value(mime_type)}'")
             if query_filter:
-                q = f"{jail_clause} and ({query_filter})"
+                extra_clauses.append(query_filter)
+
+            if extra_clauses:
+                joined_extra = " and ".join(f"({c})" if not (c.startswith("(") and c.endswith(")")) else c for c in extra_clauses)
+                q = f"{jail_clause} and {joined_extra}"
             else:
                 q = jail_clause
 
             # Rétro-compatibilité si un client mocké avec files() est injecté
             mock_client = self._get_service_mock_if_any()
             if mock_client is not None:
-                results = mock_client.files().list(
-                    q=q,
-                    pageSize=page_size,
-                    fields="nextPageToken, files(id, name, parents, mimeType, size, createdTime, modifiedTime, webViewLink, webContentLink)"
-                ).execute()
-                files = results.get("files", [])
+                files = []
+                page_token = None
+                while True:
+                    list_kwargs = {
+                        "q": q,
+                        "pageSize": min(page_size, 100),
+                        "fields": "nextPageToken, files(id, name, parents, mimeType, size, createdTime, modifiedTime, webViewLink, webContentLink)"
+                    }
+                    if page_token:
+                        list_kwargs["pageToken"] = page_token
+                    results = mock_client.files().list(**list_kwargs).execute()
+                    files.extend(results.get("files", []))
+                    page_token = results.get("nextPageToken")
+                    if not page_token:
+                        break
                 _DRIVE_FILES_CACHE[cache_key] = files
                 _DRIVE_FILES_CACHE_TIMESTAMP = time.time()
                 return files.copy()
 
             try:
-                resp = self._request(
-                    "GET",
-                    f"{DRIVE_API_BASE}/files",
-                    params={
+                files = []
+                page_token = None
+                while True:
+                    req_params = {
                         "q": q,
-                        "pageSize": page_size,
+                        "pageSize": min(page_size, 100),
                         "fields": "nextPageToken, files(id, name, parents, mimeType, size, createdTime, modifiedTime, webViewLink, webContentLink)"
-                    },
-                    timeout=30
-                )
-                if resp.status_code != 200:
-                    err_msg = resp.text
-                    try:
-                        err_msg = resp.json().get("error", {}).get("message", resp.text)
-                    except Exception:
-                        pass
-                    logger.error(f"Erreur API Google Drive lors du listage : HTTP {resp.status_code} - {err_msg}")
-                    if cache_key in _DRIVE_FILES_CACHE:
-                        logger.warning(f"[DRIVE] Renvoi du cache stale pour les fichiers Google Drive suite à: {err_msg}")
-                        return _DRIVE_FILES_CACHE[cache_key].copy()
-                    raise HTTPException(status_code=resp.status_code, detail=f"Google Drive Error: {err_msg}")
+                    }
+                    if page_token:
+                        req_params["pageToken"] = page_token
 
-                files = resp.json().get("files", [])
+                    resp = self._request(
+                        "GET",
+                        f"{DRIVE_API_BASE}/files",
+                        params=req_params,
+                        timeout=30
+                    )
+                    if resp.status_code != 200:
+                        err_msg = resp.text
+                        try:
+                            err_msg = resp.json().get("error", {}).get("message", resp.text)
+                        except Exception:
+                            pass
+                        logger.error(f"Erreur API Google Drive lors du listage : HTTP {resp.status_code} - {err_msg}")
+                        if cache_key in _DRIVE_FILES_CACHE:
+                            logger.warning(f"[DRIVE] Renvoi du cache stale pour les fichiers Google Drive suite à: {err_msg}")
+                            return _DRIVE_FILES_CACHE[cache_key].copy()
+                        raise HTTPException(status_code=resp.status_code, detail=f"Google Drive Error: {err_msg}")
+
+                    data = resp.json()
+                    page_files = data.get("files", [])
+                    files.extend(page_files)
+                    page_token = data.get("nextPageToken")
+                    if not page_token:
+                        break
+
                 _DRIVE_FILES_CACHE[cache_key] = files
                 _DRIVE_FILES_CACHE_TIMESTAMP = time.time()
                 return files.copy()
@@ -459,6 +525,44 @@ class GoogleDriveJailService:
             raise HTTPException(status_code=resp.status_code, detail=f"Google Drive Error: {err_msg}")
 
         return resp.content, metadata
+
+    def stream_file(self, file_id: str, chunk_size: int = 1024 * 1024) -> Tuple[Any, Dict[str, Any], int]:
+        """
+        Diffuse le contenu d'un fichier en flux (stream) depuis Google Drive sans charger
+        l'intégralité du binaire en mémoire RAM.
+        Vérifie préalablement le confinement Strict Drive Jail.
+        Retourne (iter_content_generator, metadata, total_size).
+        """
+        metadata = self.get_file_metadata(file_id)
+
+        resp = self._request(
+            "GET",
+            f"{DRIVE_API_BASE}/files/{file_id}",
+            params={"alt": "media"},
+            stream=True,
+            timeout=120
+        )
+        if resp.status_code != 200:
+            err_msg = resp.text
+            try:
+                err_msg = resp.json().get("error", {}).get("message", resp.text)
+            except Exception:
+                pass
+            logger.error(f"Erreur API Google Drive lors du streaming de {file_id} : HTTP {resp.status_code} - {err_msg}")
+            raise HTTPException(status_code=resp.status_code, detail=f"Google Drive Error: {err_msg}")
+
+        raw_size = resp.headers.get("Content-Length") or metadata.get("size") or 0
+        total_size = int(raw_size) if str(raw_size).isdigit() else 0
+
+        def stream_generator():
+            try:
+                for chunk in resp.iter_content(chunk_size=chunk_size):
+                    if chunk:
+                        yield chunk
+            finally:
+                resp.close()
+
+        return stream_generator(), metadata, total_size
 
     def rename_file(self, file_id: str, new_name: str) -> Dict[str, Any]:
         """Renomme un fichier sur Google Drive après vérification stricte de son confinement."""
