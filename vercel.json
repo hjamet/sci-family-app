@@ -5,8 +5,7 @@
   "functions": {
     "api/index.py": {
       "includeFiles": "backend/**",
-      "excludeFiles": "backend/tests/**",
-      "maxDuration": 60
+      "excludeFiles": "backend/tests/**"
     }
   },
   "rewrites": [

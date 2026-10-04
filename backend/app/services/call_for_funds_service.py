@@ -11,13 +11,22 @@ from typing import List, Dict, Any, Optional, Tuple
 from sqlalchemy.orm import Session
 from sqlalchemy import extract, or_, and_
 
-from reportlab.lib.pagesizes import A4
-from reportlab.lib import colors
-from reportlab.platypus import (
-    SimpleDocTemplate, Paragraph, Spacer, Table, TableStyle, Image, KeepTogether, HRFlowable
-)
-from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
-from reportlab.lib.units import cm
+try:
+    from reportlab.lib.pagesizes import A4
+    from reportlab.lib import colors
+    from reportlab.platypus import (
+        SimpleDocTemplate, Paragraph, Spacer, Table, TableStyle, Image, KeepTogether, HRFlowable
+    )
+    from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
+    from reportlab.lib.units import cm
+    REPORTLAB_AVAILABLE = True
+except ImportError:
+    A4 = None
+    colors = None
+    SimpleDocTemplate = None
+    Paragraph = Spacer = Table = TableStyle = Image = KeepTogether = HRFlowable = None
+    getSampleStyleSheet = ParagraphStyle = cm = None
+    REPORTLAB_AVAILABLE = False
 
 from ..models import Member, BankAccount, BankTransaction, AdminDocument, CallForFunds, MemberExpense
 
@@ -35,7 +44,10 @@ DEFAULT_BIC = os.getenv("ENABLE_BANKING_ASPSP_BIC", "SWNBFR22")
 # Dossier d'archivage des documents
 BASE_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 DOCUMENTS_DIR = os.path.join(BASE_DIR, "uploads", "documents")
-os.makedirs(DOCUMENTS_DIR, exist_ok=True)
+try:
+    os.makedirs(DOCUMENTS_DIR, exist_ok=True)
+except OSError:
+    pass
 
 MONTH_NAMES_FR = [
     "", "Janvier", "Février", "Mars", "Avril", "Mai", "Juin",
@@ -343,6 +355,8 @@ def generate_call_for_funds_pdf(
       - Coordonnées bancaires IBAN / BIC.
       - Bandeau de garde-fou si IBAN Swan en attente de validation.
     """
+    if not REPORTLAB_AVAILABLE:
+        raise RuntimeError("La librairie reportlab n'est pas installée sur cet environnement serverless.")
     pdf_buffer = io.BytesIO()
 
     # Document A4 avec marges professionnelles de 36 pt (1,27 cm)
