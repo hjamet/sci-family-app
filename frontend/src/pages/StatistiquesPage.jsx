@@ -348,10 +348,10 @@ function StatistiquesPageInner({ currentUser, onOpenOnboardingModal }) {
         <HouseUsageChart reservations={filteredReservations} />
       </ErrorBoundary>
 
-      {/* Jauge de Répartition des Charges & Responsabilités */}
+      {/* Jauge d'Équilibre & Participation des Associés */}
       <ErrorBoundary
-        title="Jauge d'Implication & Charges indisponible"
-        description="Le calcul du ratio d'implication des associés a rencontré une exception."
+        title="Jauge d'équilibre et de participation indisponible"
+        description="Le calcul de l'indice de participation des associés a rencontré une exception."
       >
         <WorkloadDashboard currentUser={currentUser} period={period} />
       </ErrorBoundary>

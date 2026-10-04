@@ -226,11 +226,11 @@ function WorkloadDashboardInner({ currentUser, period: propPeriod = 'all' }) {
           <div>
             <div className="flex items-center gap-2">
               <h2 className="text-lg font-extrabold text-slate-900">
-                Équilibre d'Implication &amp; Double Jauge (7 Associés)
+                Équilibre &amp; Participation des Associés
               </h2>
             </div>
             <p className="text-xs text-slate-500">
-              Indicateur d'engagement : équilibre des missions accomplies et de la présence au domaine
+              Indicateur d'entraide : équilibre des missions accomplies et de la présence au domaine
             </p>
           </div>
         </div>
@@ -268,13 +268,18 @@ function WorkloadDashboardInner({ currentUser, period: propPeriod = 'all' }) {
       {/* Explanatory Rule Banner */}
       <div className="p-3.5 sm:p-4 rounded-2xl bg-gradient-to-r from-amber-50/80 via-indigo-50/50 to-emerald-50/80 border border-amber-200/70 text-slate-700 text-xs flex items-start gap-3 shadow-2xs">
         <Sparkles className="w-5 h-5 text-amber-600 shrink-0 mt-0.5" />
-        <div className="leading-relaxed">
+        <div className="leading-relaxed flex-1">
           <strong className="text-slate-900 font-bold">Équilibre de participation :</strong>{' '}
-          Cet indicateur met en regard le nombre de missions réalisées et le temps passé au domaine :{' '}
-          <code className="px-1.5 py-0.5 bg-white/90 border border-slate-200 rounded font-mono font-bold text-indigo-700">
-            (missions validées + 0.5) / (séjours + 0.5)
-          </code>
-          . Il permet de valoriser les contributions de chacun dans un esprit d'entraide familiale.
+          Plus vous accomplissez de missions par rapport à vos séjours, plus votre indice est élevé. Cet indicateur valorise les contributions de chacun dans un esprit d'entraide familiale.
+          <details className="mt-1.5 text-[11px] text-slate-500 cursor-pointer group">
+            <summary className="inline-flex items-center gap-1 font-semibold text-indigo-700 hover:text-indigo-900 select-none">
+              <Info className="w-3.5 h-3.5 inline shrink-0" />
+              Comment est-ce calculé ?
+            </summary>
+            <p className="mt-1 pl-4 border-l-2 border-indigo-200 text-slate-600">
+              Formule de calcul : <span className="font-mono font-semibold text-indigo-900">(missions validées + 0,5) / (séjours + 0,5)</span>. L'ajout de 0,5 garantit un départ équitable pour chacun et évite toute division par zéro.
+            </p>
+          </details>
         </div>
       </div>
 
@@ -395,7 +400,7 @@ function WorkloadDashboardInner({ currentUser, period: propPeriod = 'all' }) {
                         <div className="text-right">
                           <div className="flex items-center gap-1.5 justify-end">
                             <span className="text-[11px] font-bold text-slate-500 uppercase tracking-wider">
-                              Ratio d'implication :
+                              Indice de participation :
                             </span>
                             <span
                               className={`text-sm sm:text-base font-black px-2 py-0.5 rounded-xl border ${
@@ -405,7 +410,7 @@ function WorkloadDashboardInner({ currentUser, period: propPeriod = 'all' }) {
                                   ? 'bg-indigo-100 text-indigo-900 border-indigo-300'
                                   : 'bg-slate-100 text-slate-800 border-slate-200'
                               }`}
-                              title={`Formule: (${member.score_taches} + 0.5) / (${member.score_usage} + 0.5)`}
+                              title={`Indice calculé : (${member.score_taches} + 0,5) / (${member.score_usage} + 0,5) selon les missions et séjours`}
                             >
                               {member.ratio.toFixed(2)}
                             </span>
@@ -426,7 +431,7 @@ function WorkloadDashboardInner({ currentUser, period: propPeriod = 'all' }) {
                       <div className="flex items-center justify-between text-xs">
                         <span className="font-bold text-slate-600 flex items-center gap-1.5">
                           <Calendar className="w-3.5 h-3.5 text-indigo-500" />
-                          <span>1. Score d'occupation :</span>
+                          <span>1. Présence au domaine :</span>
                         </span>
                         <span className="font-black text-indigo-950 font-mono">
                           {member.score_usage} {member.score_usage > 1 ? 'jours' : 'jour'}
@@ -443,7 +448,7 @@ function WorkloadDashboardInner({ currentUser, period: propPeriod = 'all' }) {
 
                       <div className="flex justify-between items-center text-[10px] text-slate-400">
                         <span>Présence au domaine ({selectedPeriodLabel})</span>
-                        <span>{pctUsage}% relative</span>
+                        <span>{pctUsage}% du max</span>
                       </div>
                     </div>
 
@@ -452,7 +457,7 @@ function WorkloadDashboardInner({ currentUser, period: propPeriod = 'all' }) {
                       <div className="flex items-center justify-between text-xs">
                         <span className="font-bold text-slate-600 flex items-center gap-1.5">
                           <CheckCircle2 className="w-3.5 h-3.5 text-emerald-600" />
-                          <span>2. Score de tâches accomplies :</span>
+                          <span>2. Missions accomplies :</span>
                         </span>
                         <span className="font-black text-emerald-900 font-mono">
                           {member.score_taches} {member.score_taches > 1 ? 'tâches validées' : 'tâche validée'}
@@ -469,7 +474,7 @@ function WorkloadDashboardInner({ currentUser, period: propPeriod = 'all' }) {
 
                       <div className="flex justify-between items-center text-[10px] text-slate-400">
                         <span>Missions validées &amp; clôturées</span>
-                        <span>{pctTasks}% relative</span>
+                        <span>{pctTasks}% du max</span>
                       </div>
                     </div>
                   </div>
@@ -551,8 +556,8 @@ function WorkloadDashboardInner({ currentUser, period: propPeriod = 'all' }) {
 export default function WorkloadDashboard(props) {
   return (
     <ErrorBoundary
-      title="Jauge d'Implication & Double Barre indisponible"
-      description="Une anomalie s'est produite lors de l'évaluation des statistiques d'équité. L'affichage du reste de la page reste opérationnel."
+      title="Jauge d'Équilibre &amp; Participation indisponible"
+      description="Une anomalie s'est produite lors de l'évaluation des statistiques de participation. L'affichage du reste de la page reste opérationnel."
     >
       <WorkloadDashboardInner {...props} />
     </ErrorBoundary>
