@@ -178,8 +178,12 @@ def migrate_sqlite_db(db_path: str = None):
                            OR LOWER(prenom) = 'maman'
                     )
                 """)
-            except Exception:
-                pass
+            except sqlite3.OperationalError as op_err:
+                # Les tables member_ledger_entries ou calls_for_funds peuvent ne pas encore exister lors d'une initialisation à froid
+                logger.debug(f"[MIGRATION NOTICE] Table non existante lors de la purge Maman (initialisation à froid) : {op_err}")
+            except Exception as clean_err:
+                logger.error(f"[MIGRATION ERROR] Échec inattendu lors de la purge Maman : {clean_err}")
+                raise
 
             # 5ter. Create calls_for_funds and member_expenses tables if missing
             cursor.execute("""

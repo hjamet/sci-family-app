@@ -77,6 +77,11 @@ const INITIAL_INVOICES = [];
 
 export default function AdminInfoPage({ currentUser }) {
   const activeUser = currentUser || localStorage.getItem('sci_user') || 'Henri Jamet';
+  const currentUserName = (
+    currentUser && typeof currentUser === 'object'
+      ? (currentUser.name || currentUser.fullName || (currentUser.prenom ? `${currentUser.prenom} ${currentUser.nom || ''}`.trim() : null) || currentUser.id)
+      : (typeof currentUser === 'string' && currentUser ? currentUser : null)
+  ) || (typeof activeUser === 'string' ? activeUser : 'Henri Jamet');
   const isCoordinator = Boolean(currentUser?.is_coordinator);
 
   // KPI Financial Totals (Zéro valeur inventée - initialisé à null)
@@ -1100,7 +1105,7 @@ export default function AdminInfoPage({ currentUser }) {
             <div>
               <div className="flex items-center gap-2">
                 <h2 className="font-headline-sm text-headline-sm text-forest-deep font-semibold">
-                  Mes Dernières Factures &amp; Règlements — Henri Jamet
+                  Mes Dernières Factures &amp; Règlements — {currentUserName}
                 </h2>
               </div>
               <p className="font-body-md text-xs text-on-surface-variant mt-0.5">

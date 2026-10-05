@@ -454,3 +454,94 @@ def test_b3_reportlab_and_qrcode_importable_and_available():
         # En environnement sans reportlab, la fonction retourne None sans crash
         assert generate_call_for_funds_pdf({}, None, {}) is None
 
+
+def test_parental_couple_reconciliation_pooling(test_db, setup_members):
+    """
+    Vérifie la mutualisation des virements du couple parental Frédéric & Élisabeth :
+    - Échéance foyer : 1 000,00 €/mois portée par Frédéric, 0,00 € pour Maman.
+    - Virement Maman de 300,00 € + Virement Frédéric de 700,00 € = Foyer soldé (solde = 0,00 €).
+    - Aucun seuil arbitraire : même < 500 €, le virement de Maman abonde le compte foyer.
+    """
+    acc = setup_members["acc"]
+
+    frederic = Member(
+        name="Frédéric Jamet",
+        prenom="Frédéric",
+        email="frdjamet@gmail.com",
+        monthly_contribution=1000.0,
+        payment_reference="HLV-FREDERIC",
+        is_coordinator=False
+    )
+    maman = Member(
+        name="Elizabeth Jamet",
+        prenom="Maman",
+        email="elizabeth_jamet@yahoo.fr",
+        monthly_contribution=0.0,
+        payment_reference="HLV-MAMAN",
+        is_coordinator=False
+    )
+    test_db.add(frederic)
+    test_db.add(maman)
+    test_db.commit()
+    test_db.refresh(frederic)
+    test_db.refresh(maman)
+
+    # 1. Échéance mensuelle de 1 000 € appelée sur le compte foyer de Frédéric
+    add_ledger_entry(
+        db=test_db,
+        member_id=frederic.id,
+        entry_type="ECHEANCE",
+        amount=-1000.0,
+        description="Appel de fonds Octobre 2026 (Foyer couple)"
+    )
+
+    # Vérification initiale : Frédéric débiteur de -1000 €, Maman à 0 €
+    assert get_member_balance(test_db, frederic.id) == -1000.0
+    assert get_member_balance(test_db, maman.id) == 0.0
+
+    # 2. Virement de Maman de 300 € (< 500 €) avec sa référence permanente
+    tx_maman = BankTransaction(
+        transaction_id="TX-PARENT-MAMAN-300",
+        account_id=acc.id,
+        amount=300.0,
+        currency="EUR",
+        booking_date="2026-10-02",
+        debtor_name="Elizabeth Jamet",
+        remittance_information="Virement mensuel HLV-MAMAN"
+    )
+    # 3. Virement de Frédéric de 700 € avec sa référence permanente
+    tx_frederic = BankTransaction(
+        transaction_id="TX-PARENT-FREDERIC-700",
+        account_id=acc.id,
+        amount=700.0,
+        currency="EUR",
+        booking_date="2026-10-03",
+        debtor_name="Frédéric Jamet",
+        remittance_information="Cotisation HLV-FREDERIC solde"
+    )
+    test_db.add(tx_maman)
+    test_db.add(tx_frederic)
+    test_db.commit()
+
+    # 4. Exécution du lettrage automatique
+    res = ReconciliationService.run_reconciliation(test_db)
+    assert res["success"] is True
+    assert len(res["level_1_matches"]) == 2
+
+    # 5. Vérification du solde du foyer :
+    # - Maman n'a aucun débit/crédit parasite (solde = 0.0 €)
+    # - Frédéric a reçu les deux virements (+300 € et +700 €), solde = 0.0 € (foyer soldé pour le mois !)
+    balance_maman = get_member_balance(test_db, maman.id)
+    balance_frederic = get_member_balance(test_db, frederic.id)
+    assert balance_maman == 0.0
+    assert balance_frederic == 0.0
+
+    # Vérification des écritures au grand livre de Frédéric
+    entries = test_db.query(MemberLedgerEntry).filter(MemberLedgerEntry.member_id == frederic.id).all()
+    assert len(entries) == 3  # 1 ECHEANCE (-1000) + 2 VIREMENTS (+300, +700)
+    virements = [e for e in entries if e.entry_type == "VIREMENT"]
+    assert len(virements) == 2
+    amounts = sorted([v.amount for v in virements])
+    assert amounts == [300.0, 700.0]
+
+

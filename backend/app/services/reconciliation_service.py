@@ -4,6 +4,7 @@ import logging
 import unicodedata
 from datetime import datetime
 from typing import Dict, Any, List, Optional
+from sqlalchemy import or_, func
 from sqlalchemy.orm import Session
 
 from ..models import Member, BankTransaction, CallForFunds, MemberLedgerEntry
@@ -127,10 +128,10 @@ class ReconciliationService:
             # Si match Niveau 1 certifié
             if matched_member:
                 # Règle couple parental : mutualisation des virements Frédéric & Élisabeth
-                # Si le virement est rattaché à Maman mais correspond à l'échéance parentale (>= 500 €),
-                # on le rattache au compte du foyer (Frédéric) portant la quote-part commune de 1 000 €
+                # TOUS les virements de Frédéric OU de Maman alimentent le même solde de foyer (1 000 €/mois).
+                # Tout virement de Maman est rattaché sans condition de montant au compte foyer de Frédéric.
                 is_maman_match = (matched_member.email or "").lower() == "elizabeth_jamet@yahoo.fr" or (matched_member.prenom or "").lower() == "maman"
-                if is_maman_match and float(tx.amount) >= 500.0:
+                if is_maman_match:
                     frederic_obj = next((m_info["member"] for m_info in member_lookup.values() if (m_info["member"].email or "").lower() == "frdjamet@gmail.com" or (m_info["member"].prenom or "").lower() in ("frédéric", "frederic")), None)
                     if frederic_obj:
                         logger.info(f"[RECONCILIATION] Virement parental de {tx.amount:.2f} € rattaché au compte foyer de Frédéric (#{frederic_obj.id})")
@@ -327,6 +328,19 @@ class ReconciliationService:
         member = db.query(Member).filter(Member.id == member_id).first()
         if not member:
             raise ValueError(f"Membre #{member_id} introuvable.")
+
+        # Règle couple parental : si attribué à Maman, rattacher au compte foyer de Frédéric
+        is_maman = (member.email or "").lower() == "elizabeth_jamet@yahoo.fr" or (member.prenom or "").lower() == "maman"
+        if is_maman:
+            frederic_obj = db.query(Member).filter(
+                or_(
+                    func.lower(Member.email) == "frdjamet@gmail.com",
+                    func.lower(Member.prenom).in_(["frédéric", "frederic"])
+                )
+            ).first()
+            if frederic_obj:
+                logger.info(f"[RECONCILIATION] Attribution manuelle Maman de {tx.amount:.2f} € rattachée au foyer de Frédéric (#{frederic_obj.id})")
+                member = frederic_obj
 
         # Vérification d'unicité
         existing = db.query(MemberLedgerEntry).filter(
