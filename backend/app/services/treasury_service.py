@@ -99,7 +99,7 @@ def get_member_treasury_summary(db: Session, member: Member) -> Dict[str, Any]:
     - historique des dernières écritures
     """
     balance = get_member_balance(db, member.id)
-    monthly_contrib = float(member.monthly_contribution or 50.0)
+    monthly_contrib = float(member.monthly_contribution if member.monthly_contribution is not None else 50.0)
     covered_months = get_member_covered_months(balance, monthly_contrib)
 
     # Référence permanente du membre (normalisée sans accents)
@@ -107,6 +107,19 @@ def get_member_treasury_summary(db: Session, member: Member) -> Dict[str, Any]:
 
     bank_active = is_bank_account_active(db)
     bank_info = get_official_bank_info(db)
+
+    # Détection du couple parental (Frédéric et Elizabeth / Maman)
+    is_maman = (member.email or "").lower() == "elizabeth_jamet@yahoo.fr" or (member.prenom or "").lower() == "maman"
+    is_frederic = (member.email or "").lower() == "frdjamet@gmail.com" or (member.prenom or "").lower() in ("frédéric", "frederic")
+    is_joint_couple = is_maman or is_frederic
+    joint_partner_name = "Frédéric Jamet" if is_maman else "Maman (Élisabeth) Jamet" if is_frederic else None
+    contribution_note = (
+        "Incluse dans la quote-part commune avec Frédéric (1 000,00 €/mois pour le foyer)"
+        if is_maman
+        else "Quote-part commune pour le couple Frédéric & Élisabeth (1 000,00 €/mois)"
+        if is_frederic
+        else None
+    )
 
     # Récupération des dernières écritures
     entries = db.query(MemberLedgerEntry).filter(
@@ -138,6 +151,9 @@ def get_member_treasury_summary(db: Session, member: Member) -> Dict[str, Any]:
         "monthly_contribution": monthly_contrib,
         "covered_months": covered_months,
         "payment_reference": payment_ref,
+        "is_joint_couple": is_joint_couple,
+        "joint_partner_name": joint_partner_name,
+        "contribution_note": contribution_note,
         "is_bank_active": bank_active,
         "bank_status_notice": (
             "Coordonnées bancaires opérationnelles"
@@ -156,17 +172,20 @@ def get_all_treasury_summaries(db: Session) -> Dict[str, Any]:
     Pour l'espace Administrateur :
     - Soldes de l'ensemble des associés
     - Total de trésorerie disponible
+    - Total des cotisations mensuelles attendues (1 250 € : 5 x 50 € + 1 000 € couple)
     - Total des échéances couvertes globales
     """
     members = db.query(Member).order_by(Member.id.asc()).all()
     summaries = [get_member_treasury_summary(db, m) for m in members]
 
     total_treasury = round(sum(s["balance"] for s in summaries), 2)
+    total_monthly_contributions = round(sum(s["monthly_contribution"] for s in summaries), 2)
     bank_active = is_bank_account_active(db)
     bank_info = get_official_bank_info(db)
 
     return {
         "total_treasury": total_treasury,
+        "total_monthly_contributions": total_monthly_contributions,
         "is_bank_active": bank_active,
         "bank_status_notice": (
             "Coordonnées bancaires opérationnelles"

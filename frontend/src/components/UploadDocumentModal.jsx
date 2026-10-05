@@ -42,8 +42,11 @@ export default function UploadDocumentModal({
   targetProjectId = null,
   defaultCategory = null,
   currentUser = null,
-  initialFile = null
+  initialFile = null,
+  mode = 'document', // 'document' | 'invoice'
+  isInvoice = false
 }) {
+  const isInvoiceMode = mode === 'invoice' || Boolean(isInvoice);
   const [categoriesList, setCategoriesList] = useState([]);
   const [uploadOrganisme, setUploadOrganisme] = useState('');
   const [uploadTitle, setUploadTitle] = useState('');
@@ -193,10 +196,14 @@ export default function UploadDocumentModal({
       return;
     }
 
-    if (payerType === 'member') {
+    if (isInvoiceMode) {
       const parsedAmount = parseFloat(advanceAmount);
       if (isNaN(parsedAmount) || parsedAmount <= 0) {
-        alert("Veuillez renseigner un montant valide pour votre avance de frais (ex : 45.50).");
+        alert(
+          payerType === 'member'
+            ? "Veuillez renseigner un montant valide pour votre avance de frais (ex : 45.50)."
+            : "Veuillez renseigner le montant de la facture à régler par la SCI (ex : 120.00)."
+        );
         return;
       }
     }
@@ -209,7 +216,7 @@ export default function UploadDocumentModal({
       const userMeta = resolveUserMeta(currentUser);
       const deposant = userMeta.name || 'Henri Jamet';
 
-      const primaryCat = uploadTags.length > 0 ? uploadTags.join(', ') : (categoriesList[0]?.name || defaultCategory || 'Travaux & Chantiers');
+      const primaryCat = uploadTags.length > 0 ? uploadTags.join(', ') : (categoriesList[0]?.name || defaultCategory || (isInvoiceMode ? 'Travaux & Factures' : 'Travaux & Chantiers'));
       const finalTags = uploadTags.length > 0 ? uploadTags : [primaryCat];
 
       const newDoc = await uploadUniversalDocument(
@@ -229,22 +236,28 @@ export default function UploadDocumentModal({
         }
       );
 
-      // Si le membre a avancé les frais, créer l'avance de frais liée au document
-      if (payerType === 'member') {
+      // Si le modal est en mode facture, créer l'entité liée (avance membre ou facture directe à régler par la SCI)
+      if (isInvoiceMode) {
         try {
           const expenseFormData = new FormData();
           expenseFormData.append('member_id', String(userMeta.id || 1));
           expenseFormData.append('title', uploadTitle.trim());
-          expenseFormData.append('amount', String(parseFloat(advanceAmount)));
+          expenseFormData.append('amount', String(parseFloat(advanceAmount) || 0));
           expenseFormData.append('category', primaryCat);
+          expenseFormData.append('payer_type', payerType);
           if (newDoc && newDoc.id) {
             expenseFormData.append('document_id', String(newDoc.id));
           }
-          expenseFormData.append('notes', `Avance déclarée lors du dépôt de document : ${uploadTitle.trim()}`);
+          expenseFormData.append(
+            'notes',
+            payerType === 'sci'
+              ? `Facture à régler par la SCI : ${uploadTitle.trim()}`
+              : `Avance déclarée lors du dépôt de document : ${uploadTitle.trim()}`
+          );
           await createMemberExpense(expenseFormData);
         } catch (expErr) {
-          console.error("Erreur création avance de frais liée:", expErr);
-          alert(`Document déposé avec succès, mais l'enregistrement de l'avance a échoué : ${expErr.message || expErr}`);
+          console.error("Erreur création facture / avance liée:", expErr);
+          alert(`Document déposé avec succès, mais l'enregistrement de la facture a échoué : ${expErr.message || expErr}`);
         }
       }
 
@@ -286,14 +299,18 @@ export default function UploadDocumentModal({
         <div className="flex items-center justify-between p-4 sm:p-5 border-b border-border-subtle shrink-0">
           <div className="flex items-center gap-2.5">
             <div className="w-10 h-10 rounded-full bg-sage-soft flex items-center justify-center text-primary shrink-0">
-              <span className="material-symbols-outlined text-[22px]">upload_file</span>
+              <span className="material-symbols-outlined text-[22px]">
+                {isInvoiceMode ? 'receipt_long' : 'upload_file'}
+              </span>
             </div>
             <div>
               <h3 className="font-headline-sm text-base sm:text-lg text-forest-deep font-bold">
-                Déposer un document
+                {isInvoiceMode ? 'Déposer une facture' : 'Déposer un document'}
               </h3>
               <p className="font-body-md text-xs text-on-surface-variant">
-                {targetTaskId
+                {isInvoiceMode
+                  ? "Dépôt d'une facture à régler par la SCI ou d'une avance de frais"
+                  : targetTaskId
                   ? `Indexation et association à la tâche #${targetTaskId}`
                   : targetProjectId
                   ? `Indexation et association au scrutin`
@@ -446,70 +463,70 @@ export default function UploadDocumentModal({
               </div>
             </div>
 
-            {/* Section Qui a payé ? */}
-            <div className="p-3.5 bg-surface-container-low rounded-DEFAULT border border-border-subtle space-y-3">
-              <label className="block font-label-md text-xs font-bold text-on-surface">
-                Qui a payé ? *
-              </label>
-              <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
-                <button
-                  type="button"
-                  onClick={() => setPayerType('sci')}
-                  className={`p-3 rounded-lg border text-left flex items-start gap-2.5 transition-all cursor-pointer ${
-                    payerType === 'sci'
-                      ? 'border-primary bg-primary/5 ring-1 ring-primary'
-                      : 'border-border-subtle hover:border-slate-300 bg-surface-container-lowest'
-                  }`}
-                >
-                  <span className={`material-symbols-outlined text-[20px] ${payerType === 'sci' ? 'text-primary' : 'text-slate-400'}`}>
-                    account_balance
-                  </span>
-                  <div>
-                    <div className={`text-xs font-bold ${payerType === 'sci' ? 'text-primary' : 'text-slate-700'}`}>
-                      La SCI doit payer
+            {/* Section Qui a payé ? & Montant (Exclusivement en mode facture - Annotation A4/A5) */}
+            {isInvoiceMode && (
+              <div className="p-3.5 bg-surface-container-low rounded-DEFAULT border border-border-subtle space-y-3">
+                <label className="block font-label-md text-xs font-bold text-on-surface">
+                  Qui a payé ? *
+                </label>
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+                  <button
+                    type="button"
+                    onClick={() => setPayerType('sci')}
+                    className={`p-3 rounded-lg border text-left flex items-start gap-2.5 transition-all cursor-pointer ${
+                      payerType === 'sci'
+                        ? 'border-primary bg-primary/5 ring-1 ring-primary'
+                        : 'border-border-subtle hover:border-slate-300 bg-surface-container-lowest'
+                    }`}
+                  >
+                    <span className={`material-symbols-outlined text-[20px] ${payerType === 'sci' ? 'text-primary' : 'text-slate-400'}`}>
+                      account_balance
+                    </span>
+                    <div>
+                      <div className={`text-xs font-bold ${payerType === 'sci' ? 'text-primary' : 'text-slate-700'}`}>
+                        La SCI doit payer
+                      </div>
+                      <div className="text-[11px] text-on-surface-variant">
+                        Facture à régler par la SCI
+                      </div>
                     </div>
-                    <div className="text-[11px] text-on-surface-variant">
-                      Facture à régler par la SCI
-                    </div>
-                  </div>
-                </button>
+                  </button>
 
-                <button
-                  type="button"
-                  onClick={() => setPayerType('member')}
-                  className={`p-3 rounded-lg border text-left flex items-start gap-2.5 transition-all cursor-pointer ${
-                    payerType === 'member'
-                      ? 'border-emerald-600 bg-emerald-50/60 dark:bg-emerald-950/20 ring-1 ring-emerald-600'
-                      : 'border-border-subtle hover:border-slate-300 bg-surface-container-lowest'
-                  }`}
-                >
-                  <span className={`material-symbols-outlined text-[20px] ${payerType === 'member' ? 'text-emerald-700' : 'text-slate-400'}`}>
-                    receipt_long
-                  </span>
-                  <div>
-                    <div className={`text-xs font-bold ${payerType === 'member' ? 'text-emerald-700' : 'text-slate-700'}`}>
-                      J'ai payé moi-même
+                  <button
+                    type="button"
+                    onClick={() => setPayerType('member')}
+                    className={`p-3 rounded-lg border text-left flex items-start gap-2.5 transition-all cursor-pointer ${
+                      payerType === 'member'
+                        ? 'border-emerald-600 bg-emerald-50/60 dark:bg-emerald-950/20 ring-1 ring-emerald-600'
+                        : 'border-border-subtle hover:border-slate-300 bg-surface-container-lowest'
+                    }`}
+                  >
+                    <span className={`material-symbols-outlined text-[20px] ${payerType === 'member' ? 'text-emerald-700' : 'text-slate-400'}`}>
+                      receipt_long
+                    </span>
+                    <div>
+                      <div className={`text-xs font-bold ${payerType === 'member' ? 'text-emerald-700' : 'text-slate-700'}`}>
+                        J'ai payé moi-même
+                      </div>
+                      <div className="text-[11px] text-on-surface-variant">
+                        Avance de frais à vous créditer
+                      </div>
                     </div>
-                    <div className="text-[11px] text-on-surface-variant">
-                      Avance de frais à vous créditer
-                    </div>
-                  </div>
-                </button>
-              </div>
+                  </button>
+                </div>
 
-              {payerType === 'member' && (
                 <div className="pt-2 border-t border-border-subtle/60 space-y-2 animate-in fade-in duration-150">
                   <div>
                     <label className="block text-xs font-bold text-slate-700 mb-1">
-                      Montant avancé (€) *
+                      {payerType === 'member' ? 'Montant avancé (€) *' : 'Montant de la facture à régler (€) *'}
                     </label>
                     <div className="relative">
                       <input
                         type="number"
                         step="0.01"
                         min="0.01"
-                        required={payerType === 'member'}
-                        placeholder="Ex : 45.50"
+                        required={isInvoiceMode}
+                        placeholder={payerType === 'member' ? "Ex : 45.50" : "Ex : 120.00"}
                         value={advanceAmount}
                         onChange={(e) => setAdvanceAmount(e.target.value)}
                         className="w-full h-11 px-3 pr-8 bg-surface-container-lowest border-2 border-border-subtle rounded-DEFAULT font-body-md text-sm text-on-surface focus:outline-none focus:border-emerald-600 focus:ring-2 focus:ring-emerald-600/20"
@@ -519,12 +536,14 @@ export default function UploadDocumentModal({
                       </span>
                     </div>
                     <p className="text-[11px] text-slate-500 mt-1">
-                      Une tâche de validation sera automatiquement assignée à Henri, et le montant crédité sur votre trésorerie SCI dès validation.
+                      {payerType === 'member'
+                        ? "Une tâche de validation sera automatiquement assignée à Henri, et le montant crédité sur votre trésorerie SCI dès validation."
+                        : "Cette facture apparaîtra dans vos factures à revoir et une tâche de règlement sera assignée au coordinateur (Henri)."}
                     </p>
                   </div>
                 </div>
-              )}
-            </div>
+              </div>
+            )}
 
             {/* Sélecteur Multi-Tags & Création de Catégorie (Annotation 2) */}
             <div>

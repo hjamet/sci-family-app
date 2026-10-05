@@ -146,7 +146,12 @@ export default function MemberTreasurySection({ currentUser, isCoordinator = fal
                 <h3 className="font-headline-sm text-base sm:text-lg text-forest-deep font-bold">
                   Ma trésorerie SCI
                 </h3>
-                {coveredMonths > 0 ? (
+                {myTreasury?.monthly_contribution === 0 && myTreasury?.is_joint_couple ? (
+                  <span className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full text-xs font-bold bg-slate-100 text-slate-800 border border-slate-300">
+                    <CheckCircle2 className="w-3.5 h-3.5 text-emerald-600" />
+                    Foyer à jour
+                  </span>
+                ) : coveredMonths > 0 ? (
                   <span className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full text-xs font-bold bg-emerald-100 text-emerald-800 border border-emerald-300">
                     <CheckCircle2 className="w-3.5 h-3.5 text-emerald-600" />
                     +{coveredMonths} mois d'avance
@@ -162,7 +167,11 @@ export default function MemberTreasurySection({ currentUser, isCoordinator = fal
                 )}
               </div>
               <p className="font-body-md text-xs text-on-surface-variant">
-                Grand livre de trésorerie individuel à cumul illimité — Quote-part : 50 €/mois
+                {myTreasury?.contribution_note ? (
+                  <span>{myTreasury.contribution_note}</span>
+                ) : (
+                  <span>Grand livre de trésorerie individuel à cumul illimité — Quote-part : {myTreasury?.monthly_contribution != null ? `${myTreasury.monthly_contribution.toFixed(2)} €/mois` : '50,00 €/mois'}</span>
+                )}
               </p>
             </div>
           </div>
@@ -409,6 +418,39 @@ export default function MemberTreasurySection({ currentUser, isCoordinator = fal
             </div>
           )}
 
+          {/* Synthèse Trésorerie & Cotisations attendues */}
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+            <div className="p-3.5 rounded-xl bg-surface-container-low border border-border-subtle flex items-center justify-between">
+              <div>
+                <span className="text-[11px] uppercase tracking-wider text-slate-500 font-bold block">
+                  Cotisations Mensuelles Attendues
+                </span>
+                <span className="text-xs text-slate-500 mt-0.5 block">
+                  5 × 50 € + 1 000 € (couple parental)
+                </span>
+              </div>
+              <span className="font-mono text-base font-bold text-forest-deep">
+                {allTreasury?.total_monthly_contributions ? `${allTreasury.total_monthly_contributions.toFixed(2)} €/mois` : '1 250,00 €/mois'}
+              </span>
+            </div>
+
+            <div className="p-3.5 rounded-xl bg-surface-container-low border border-border-subtle flex items-center justify-between">
+              <div>
+                <span className="text-[11px] uppercase tracking-wider text-slate-500 font-bold block">
+                  Solde Global Trésorerie Associés
+                </span>
+                <span className="text-xs text-slate-500 mt-0.5 block">
+                  Somme cumulée des comptes courants
+                </span>
+              </div>
+              <span className={`font-mono text-base font-bold ${
+                (allTreasury?.total_treasury ?? 0) >= 0 ? 'text-emerald-700 dark:text-emerald-400' : 'text-rose-700'
+              }`}>
+                {(allTreasury?.total_treasury ?? 0) >= 0 ? `+${(allTreasury?.total_treasury ?? 0).toFixed(2)}` : (allTreasury?.total_treasury ?? 0).toFixed(2)} €
+              </span>
+            </div>
+          </div>
+
           {/* Onglets Admin */}
           <div className="flex items-center gap-2 border-b border-border-subtle pb-1">
             <button
@@ -455,44 +497,64 @@ export default function MemberTreasurySection({ currentUser, isCoordinator = fal
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-border-subtle font-body-md text-on-surface">
-                  {allTreasury?.members?.map((m) => (
-                    <tr key={m.member_id} className="hover:bg-canvas-slate/60">
-                      <td className="py-2.5 px-3 font-bold text-forest-deep">
-                        {m.member_name}
-                      </td>
-                      <td className="py-2.5 px-3 font-mono text-slate-600">
-                        {m.payment_reference}
-                      </td>
-                      <td className="py-2.5 px-3 text-right font-mono text-slate-500">
-                        {m.monthly_contribution.toFixed(2)} €/mois
-                      </td>
-                      <td className="py-2.5 px-3 text-right font-mono font-bold">
-                        <span className={m.balance > 0 ? 'text-emerald-700' : m.balance < 0 ? 'text-rose-700' : 'text-slate-600'}>
-                          {m.balance > 0 ? `+${m.balance.toFixed(2)}` : m.balance.toFixed(2)} €
-                        </span>
-                      </td>
-                      <td className="py-2.5 px-3 text-center">
-                        {m.covered_months > 0 ? (
-                          <span className="inline-flex px-2 py-0.5 rounded-full text-[11px] font-bold bg-emerald-100 text-emerald-800">
-                            {m.covered_months} mois couverts
+                  {allTreasury?.members?.map((m) => {
+                    const isMaman = (m.monthly_contribution === 0 || m.monthly_contribution < 1) && m.is_joint_couple;
+                    const isFrederic = m.monthly_contribution > 500 && m.is_joint_couple;
+                    return (
+                      <tr key={m.member_id} className="hover:bg-canvas-slate/60">
+                        <td className="py-2.5 px-3 font-bold text-forest-deep">
+                          <div>{m.member_name}</div>
+                          {m.is_joint_couple && (
+                            <div className="text-[10px] font-normal text-slate-500">
+                              {isFrederic ? 'Foyer parental (couple)' : 'Foyer parental (avec Frédéric)'}
+                            </div>
+                          )}
+                        </td>
+                        <td className="py-2.5 px-3 font-mono text-slate-600">
+                          {m.payment_reference}
+                        </td>
+                        <td className="py-2.5 px-3 text-right font-mono text-slate-500">
+                          <div>{m.monthly_contribution.toFixed(2)} €/mois</div>
+                          {m.is_joint_couple && (
+                            <div className="text-[10px] text-slate-500 font-sans">
+                              {isFrederic ? 'Quote-part commune couple' : 'Incluse avec Frédéric (1 000 €)'}
+                            </div>
+                          )}
+                        </td>
+                        <td className="py-2.5 px-3 text-right font-mono font-bold">
+                          <span className={m.balance > 0 ? 'text-emerald-700' : m.balance < 0 ? 'text-rose-700' : 'text-slate-600'}>
+                            {m.balance > 0 ? `+${m.balance.toFixed(2)}` : m.balance.toFixed(2)} €
                           </span>
-                        ) : (
-                          <span className="text-slate-400 text-[11px]">—</span>
-                        )}
-                      </td>
-                      <td className="py-2.5 px-3 text-center">
-                        <span className={`inline-flex px-2 py-0.5 rounded text-[10px] font-bold uppercase ${
-                          m.balance > 0
-                            ? 'bg-emerald-50 text-emerald-700 border border-emerald-200'
-                            : m.balance < 0
-                            ? 'bg-rose-50 text-rose-700 border border-rose-200'
-                            : 'bg-slate-50 text-slate-600 border border-slate-200'
-                        }`}>
-                          {m.balance > 0 ? 'Créditeur' : m.balance < 0 ? 'Débiteur' : 'À jour'}
-                        </span>
-                      </td>
-                    </tr>
-                  ))}
+                        </td>
+                        <td className="py-2.5 px-3 text-center">
+                          {isMaman ? (
+                            <span className="inline-flex px-2 py-0.5 rounded-full text-[11px] font-bold bg-slate-100 text-slate-700 border border-slate-200">
+                              Foyer à jour
+                            </span>
+                          ) : m.covered_months > 0 ? (
+                            <span className="inline-flex px-2 py-0.5 rounded-full text-[11px] font-bold bg-emerald-100 text-emerald-800">
+                              {m.covered_months} mois couverts
+                            </span>
+                          ) : (
+                            <span className="text-slate-400 text-[11px]">—</span>
+                          )}
+                        </td>
+                        <td className="py-2.5 px-3 text-center">
+                          <span className={`inline-flex px-2 py-0.5 rounded text-[10px] font-bold uppercase ${
+                            isMaman
+                              ? 'bg-slate-50 text-slate-700 border border-slate-200'
+                              : m.balance > 0
+                              ? 'bg-emerald-50 text-emerald-700 border border-emerald-200'
+                              : m.balance < 0
+                              ? 'bg-rose-50 text-rose-700 border border-rose-200'
+                              : 'bg-slate-50 text-slate-600 border border-slate-200'
+                          }`}>
+                            {isMaman ? 'À jour' : m.balance > 0 ? 'Créditeur' : m.balance < 0 ? 'Débiteur' : 'À jour'}
+                          </span>
+                        </td>
+                      </tr>
+                    );
+                  })}
                 </tbody>
               </table>
             </div>

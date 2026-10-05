@@ -238,10 +238,11 @@ def get_member_expenses_for_period(
 
     expenses = []
 
-    # 1. Dépenses spécifiques dans member_expenses
+    # 1. Dépenses spécifiques dans member_expenses (uniquement avances de frais membres, pas les factures directes SCI)
     me_records = db.query(MemberExpense).filter(
         MemberExpense.member_id == member_id,
         MemberExpense.status != "REJECTED",
+        or_(MemberExpense.payer_type == "member", MemberExpense.payer_type.is_(None)),
         MemberExpense.expense_date.like(f"{prefix_date}%")
     ).all()
 
@@ -315,7 +316,7 @@ def calculate_member_call_for_funds(
     from .treasury_service import get_member_balance
 
     period_label = f"{MONTH_NAMES_FR[month]} {year}"
-    theoretical = float(member.monthly_contribution or 50.0)
+    theoretical = float(member.monthly_contribution if member.monthly_contribution is not None else 50.0)
 
     # Solde de trésorerie disponible du membre avant cette échéance
     balance_before = get_member_balance(db, member.id)
@@ -325,6 +326,29 @@ def calculate_member_call_for_funds(
     approved_expenses_total = sum(e["amount"] for e in expenses)
 
     bank_active = is_bank_account_active(db)
+
+    # Cas particulier : quote-part nulle (ex : Maman incluse dans la quote-part commune avec Frédéric)
+    if theoretical <= 0.0:
+        return {
+            "member_id": member.id,
+            "member_name": member.name,
+            "prenom": member.prenom,
+            "year": year,
+            "month": month,
+            "period_label": period_label,
+            "theoretical_contribution": 0.0,
+            "balance_before": balance_before,
+            "approved_expenses_total": approved_expenses_total,
+            "net_amount": 0.0,
+            "amount_due": 0.0,
+            "status": "COUVERT",
+            "status_label": "Quote-part commune (couple Frédéric & Élisabeth)",
+            "reason": "Membre rattaché à la quote-part commune du foyer (Frédéric & Élisabeth, 1 000,00 €/mois). Aucun avis individuel émis.",
+            "should_issue": False,
+            "reference": f"AF-{year}{month:02d}-{member.prenom.upper()}",
+            "payment_reference": member.payment_reference or f"HLV-{member.prenom.upper()}",
+            "deducted_expenses": expenses
+        }
 
     # Arbitrage selon le solde de trésorerie disponible
     if balance_before >= theoretical:
@@ -874,19 +898,20 @@ def generate_and_save_monthly_call(
         if not is_treasury_contributions_started(year, month, db):
             logger.info(f"[TREASURY] Compte inactif ou période antérieure au démarrage ({year}-{month:02d}) : aucun débit d'échéance inscrit au grand livre.")
         elif not existing_ledger:
-            # L'échéance mensuelle (dette statutaire) est TOUJOURS la quote-part intégrale
+            # L'échéance mensuelle (dette statutaire) est la quote-part intégrale (uniquement si > 0)
             debit = -float(calc["theoretical_contribution"])
-            desc = f"Échéance {calc['period_label']}"
+            if debit < 0:
+                desc = f"Échéance {calc['period_label']}"
 
-            add_ledger_entry(
-                db=db,
-                member_id=member.id,
-                entry_type="ECHEANCE",
-                amount=debit,
-                description=desc,
-                call_for_funds_id=call_obj.id,
-                entry_date=datetime(year, month, 1)
-            )
+                add_ledger_entry(
+                    db=db,
+                    member_id=member.id,
+                    entry_type="ECHEANCE",
+                    amount=debit,
+                    description=desc,
+                    call_for_funds_id=call_obj.id,
+                    entry_date=datetime(year, month, 1)
+                )
     except Exception as ledger_err:
         logger.error(f"[TREASURY ERROR] Échec écriture grand livre pour échéance {call_obj.id}: {ledger_err}")
 

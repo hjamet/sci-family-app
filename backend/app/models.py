@@ -560,7 +560,8 @@ class MemberExpense(Base):
     amount = Column(Float, nullable=False)
     expense_date = Column(String(50), nullable=False)  # YYYY-MM-DD
     category = Column(String(100), default="Entretien & Fournitures", nullable=False)
-    status = Column(String(50), default="PENDING", nullable=False)  # PENDING, VALIDATED, REJECTED
+    payer_type = Column(String(50), default="member", nullable=False, server_default="member")  # member (avance de frais) | sci (facture directe à régler par la SCI)
+    status = Column(String(50), default="PENDING", nullable=False)  # PENDING, VALIDATED, REJECTED, PENDING_SCI_PAYMENT, PAID
     task_id = Column(Integer, ForeignKey("tasks.id", ondelete="SET NULL"), nullable=True, index=True)
     rejection_reason = Column(Text, nullable=True)
     document_id = Column(Integer, ForeignKey("admin_documents.id", ondelete="SET NULL"), nullable=True)

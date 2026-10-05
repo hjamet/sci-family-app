@@ -152,8 +152,34 @@ def migrate_sqlite_db(db_path: str = None):
             m_cols = {row[1] for row in cursor.fetchall()}
             if "monthly_contribution" not in m_cols:
                 cursor.execute("ALTER TABLE members ADD COLUMN monthly_contribution FLOAT DEFAULT 50.0")
-                cursor.execute("UPDATE members SET monthly_contribution = 50.0 WHERE monthly_contribution IS NULL")
-                cursor.execute("UPDATE members SET monthly_contribution = 1000.0 WHERE LOWER(prenom) LIKE '%fred%'")
+            cursor.execute("UPDATE members SET monthly_contribution = 50.0 WHERE monthly_contribution IS NULL")
+            # Frédéric paie 1000 € pour le couple parental
+            cursor.execute("UPDATE members SET monthly_contribution = 1000.0 WHERE LOWER(email) = 'frdjamet@gmail.com' OR LOWER(prenom) IN ('frédéric', 'frederic')")
+            # Maman (Élisabeth) a une quote-part de 0 € (incluse dans les 1000 € du couple avec Frédéric)
+            cursor.execute("UPDATE members SET monthly_contribution = 0.0 WHERE LOWER(email) = 'elizabeth_jamet@yahoo.fr' OR LOWER(prenom) = 'maman'")
+
+            # Nettoyage idempotent : supprimer les écritures d'échéances indues pour Maman au grand livre
+            try:
+                cursor.execute("""
+                    DELETE FROM member_ledger_entries
+                    WHERE member_id IN (
+                        SELECT id FROM members 
+                        WHERE LOWER(email) = 'elizabeth_jamet@yahoo.fr' 
+                           OR LOWER(prenom) = 'maman'
+                    )
+                    AND entry_type = 'ECHEANCE'
+                """)
+                cursor.execute("""
+                    UPDATE calls_for_funds
+                    SET theoretical_contribution = 0.0, net_amount = 0.0, amount_due = 0.0, status = 'COUVERT'
+                    WHERE member_id IN (
+                        SELECT id FROM members 
+                        WHERE LOWER(email) = 'elizabeth_jamet@yahoo.fr' 
+                           OR LOWER(prenom) = 'maman'
+                    )
+                """)
+            except Exception:
+                pass
 
             # 5ter. Create calls_for_funds and member_expenses tables if missing
             cursor.execute("""
@@ -192,6 +218,7 @@ def migrate_sqlite_db(db_path: str = None):
                     amount FLOAT NOT NULL,
                     expense_date VARCHAR(50) NOT NULL,
                     category VARCHAR(100) NOT NULL DEFAULT 'Entretien & Fournitures',
+                    payer_type VARCHAR(50) NOT NULL DEFAULT 'member',
                     status VARCHAR(50) NOT NULL DEFAULT 'VALIDATED',
                     document_id INTEGER REFERENCES admin_documents(id) ON DELETE SET NULL,
                     document_url VARCHAR(255),
@@ -202,6 +229,12 @@ def migrate_sqlite_db(db_path: str = None):
                     updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
                 )
             """)
+
+            cursor.execute("PRAGMA table_info(member_expenses)")
+            me_cols = {row[1] for row in cursor.fetchall()}
+            if "payer_type" not in me_cols:
+                cursor.execute("ALTER TABLE member_expenses ADD COLUMN payer_type VARCHAR(50) DEFAULT 'member'")
+            cursor.execute("UPDATE member_expenses SET payer_type = 'member' WHERE payer_type IS NULL")
 
             # 6. Migrate tasks table (charge_points) (Annotation 1)
             cursor.execute("SELECT name FROM sqlite_master WHERE type='table' AND name='tasks'")
@@ -390,7 +423,41 @@ def migrate_engine(engine):
                 try:
                     conn.execute(text("ALTER TABLE members ADD COLUMN IF NOT EXISTS monthly_contribution FLOAT DEFAULT 50.0;"))
                     conn.execute(text("UPDATE members SET monthly_contribution = 50.0 WHERE monthly_contribution IS NULL;"))
-                    conn.execute(text("UPDATE members SET monthly_contribution = 1000.0 WHERE LOWER(prenom) LIKE '%fred%';"))
+                    conn.execute(text("""
+                        UPDATE members 
+                        SET monthly_contribution = 1000.0 
+                        WHERE LOWER(email) = 'frdjamet@gmail.com' 
+                           OR LOWER(prenom) IN ('frédéric', 'frederic');
+                    """))
+                    conn.execute(text("""
+                        UPDATE members 
+                        SET monthly_contribution = 0.0 
+                        WHERE LOWER(email) = 'elizabeth_jamet@yahoo.fr' 
+                           OR LOWER(prenom) = 'maman';
+                    """))
+
+                    # Nettoyage idempotent : supprimer les écritures d'échéances indues pour Maman au grand livre
+                    conn.execute(text("""
+                        DELETE FROM member_ledger_entries
+                        WHERE member_id IN (
+                            SELECT id FROM members 
+                            WHERE LOWER(email) = 'elizabeth_jamet@yahoo.fr' 
+                               OR LOWER(prenom) = 'maman'
+                        )
+                        AND entry_type = 'ECHEANCE';
+                    """))
+
+                    # Mettre à jour les éventuels appels de fonds antérieurs de Maman pour éviter solde débiteur
+                    conn.execute(text("""
+                        UPDATE calls_for_funds
+                        SET theoretical_contribution = 0.0, net_amount = 0.0, amount_due = 0.0, status = 'COUVERT'
+                        WHERE member_id IN (
+                            SELECT id FROM members 
+                            WHERE LOWER(email) = 'elizabeth_jamet@yahoo.fr' 
+                               OR LOWER(prenom) = 'maman'
+                        );
+                    """))
+                    conn.commit()
                 except Exception as m_mig_err:
                     logger.warning(f"[MIGRATION NOTICE] members monthly_contribution notice: {m_mig_err}")
 
@@ -436,6 +503,7 @@ def migrate_engine(engine):
                             amount FLOAT NOT NULL,
                             expense_date VARCHAR(50) NOT NULL,
                             category VARCHAR(100) NOT NULL DEFAULT 'Entretien & Fournitures',
+                            payer_type VARCHAR(50) NOT NULL DEFAULT 'member',
                             status VARCHAR(50) NOT NULL DEFAULT 'VALIDATED',
                             document_id INTEGER REFERENCES admin_documents(id) ON DELETE SET NULL,
                             document_url VARCHAR(255),
@@ -446,6 +514,9 @@ def migrate_engine(engine):
                             updated_at TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP
                         );
                     """))
+                    conn.execute(text("ALTER TABLE member_expenses ADD COLUMN IF NOT EXISTS payer_type VARCHAR(50) DEFAULT 'member';"))
+                    conn.execute(text("UPDATE member_expenses SET payer_type = 'member' WHERE payer_type IS NULL;"))
+                    conn.commit()
                 except Exception as me_mig_err:
                     logger.warning(f"[MIGRATION NOTICE] member_expenses notice: {me_mig_err}")
 

@@ -1380,6 +1380,7 @@ class MemberExpenseCreate(BaseModel):
     amount: float
     expense_date: Optional[str] = None  # YYYY-MM-DD
     category: Optional[str] = "Entretien & Fournitures"
+    payer_type: Optional[str] = "member"
     document_id: Optional[int] = None
     notes: Optional[str] = None
 
@@ -1392,6 +1393,7 @@ class MemberExpenseResponse(BaseModel):
     amount: float
     expense_date: str
     category: str
+    payer_type: Optional[str] = "member"
     status: str
     task_id: Optional[int] = None
     rejection_reason: Optional[str] = None

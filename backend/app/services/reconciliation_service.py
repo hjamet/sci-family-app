@@ -126,6 +126,17 @@ class ReconciliationService:
 
             # Si match Niveau 1 certifié
             if matched_member:
+                # Règle couple parental : mutualisation des virements Frédéric & Élisabeth
+                # Si le virement est rattaché à Maman mais correspond à l'échéance parentale (>= 500 €),
+                # on le rattache au compte du foyer (Frédéric) portant la quote-part commune de 1 000 €
+                is_maman_match = (matched_member.email or "").lower() == "elizabeth_jamet@yahoo.fr" or (matched_member.prenom or "").lower() == "maman"
+                if is_maman_match and float(tx.amount) >= 500.0:
+                    frederic_obj = next((m_info["member"] for m_info in member_lookup.values() if (m_info["member"].email or "").lower() == "frdjamet@gmail.com" or (m_info["member"].prenom or "").lower() in ("frédéric", "frederic")), None)
+                    if frederic_obj:
+                        logger.info(f"[RECONCILIATION] Virement parental de {tx.amount:.2f} € rattaché au compte foyer de Frédéric (#{frederic_obj.id})")
+                        matched_member = frederic_obj
+                        matched_ref = f"{matched_ref} (Foyer Frédéric & Élisabeth)"
+
                 # Écriture immédiate au grand livre
                 entry_date = None
                 if tx.booking_date:

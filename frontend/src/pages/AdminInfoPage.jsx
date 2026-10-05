@@ -26,7 +26,8 @@ import {
   createAccountingTransaction,
   updateDocument,
   deleteDocument,
-  fetchBankStatus
+  fetchBankStatus,
+  fetchMemberExpenses
 } from '../api';
 
 // Palette de 8 couleurs sobres pour les catégories personnalisées (Annotation 5)
@@ -139,6 +140,7 @@ export default function AdminInfoPage({ currentUser }) {
 
   // Modals Visibility
   const [isUploadModalOpen, setIsUploadModalOpen] = useState(false);
+  const [uploadModalMode, setUploadModalMode] = useState('document'); // 'document' | 'invoice'
   const [isOperationModalOpen, setIsOperationModalOpen] = useState(false);
   const [isRenameModalOpen, setIsRenameModalOpen] = useState(false);
   const [selectedRenamingDoc, setSelectedRenamingDoc] = useState(null);
@@ -247,10 +249,63 @@ export default function AdminInfoPage({ currentUser }) {
     }
   };
 
+  const loadInvoices = async () => {
+    try {
+      const expensesList = await fetchMemberExpenses();
+      if (Array.isArray(expensesList)) {
+        const formatted = expensesList.map((exp) => {
+          const isSciToPay = exp.payer_type === 'sci' || exp.status === 'PENDING_SCI_PAYMENT';
+          let statusType = 'pending';
+          let statusLabel = isSciToPay ? 'À régler par la SCI' : 'En attente de validation';
+          if (exp.status === 'VALIDATED') {
+            statusType = 'verified';
+            statusLabel = 'Validé (crédité trésorerie)';
+          } else if (exp.status === 'PAID') {
+            statusType = 'paid';
+            statusLabel = 'Réglé par la SCI';
+          } else if (exp.status === 'REJECTED') {
+            statusType = 'refund';
+            statusLabel = 'Refusé';
+          }
+
+          let dateFormatted = exp.expense_date || '';
+          if (dateFormatted.length === 10 && dateFormatted.includes('-')) {
+            const [y, m, d] = dateFormatted.split('-');
+            dateFormatted = `${d}/${m}/${y}`;
+          }
+
+          const supplier = exp.title.includes(' - ') ? exp.title.split(' - ')[0] : exp.title;
+          const refName = exp.document_filename || `FAC-${exp.id}`;
+
+          return {
+            id: exp.id,
+            date: dateFormatted,
+            dueDate: isSciToPay ? 'Facture fournisseur SCI' : 'Avance associée',
+            dueWarning: isSciToPay && exp.status !== 'PAID',
+            supplier: supplier,
+            reference: refName,
+            amount: `${Number(exp.amount || 0).toFixed(2).replace('.', ',')} €`,
+            taxInfo: isSciToPay ? 'Facture SCI' : 'Avance membre',
+            statusType: statusType,
+            status: statusLabel,
+            filename: exp.document_filename || (exp.document_url ? exp.document_url.split('/').pop() : 'Facture.pdf'),
+            document_url: exp.document_url,
+            payerType: exp.payer_type,
+            rawExpense: exp
+          };
+        });
+        setInvoices(formatted);
+      }
+    } catch (err) {
+      console.warn('Erreur chargement factures:', err.message);
+    }
+  };
+
   useEffect(() => {
     loadBankStatus();
     loadDocuments();
     loadCategories();
+    loadInvoices();
   }, []);
 
   useEffect(() => {
@@ -567,6 +622,7 @@ export default function AdminInfoPage({ currentUser }) {
     setDocuments((prev) => [newDoc, ...prev]);
     await loadDocuments();
     await loadCategories();
+    await loadInvoices();
     showToast('Document archivé', `« ${newDoc.filename || newDoc.name} » a été archivé avec succès.`, 'cloud_done');
   };
 
@@ -656,6 +712,7 @@ export default function AdminInfoPage({ currentUser }) {
 
       // Rechargement dynamique des documents pour affichage direct du justificatif
       await loadDocuments();
+      await loadInvoices();
 
       setIsOperationModalOpen(false);
       showToast(
@@ -834,7 +891,10 @@ export default function AdminInfoPage({ currentUser }) {
             <button
               id="btn-open-upload"
               type="button"
-              onClick={() => setIsUploadModalOpen(true)}
+              onClick={() => {
+                setUploadModalMode('document');
+                setIsUploadModalOpen(true);
+              }}
               className="group flex items-center justify-center gap-2 px-5 py-3.5 rounded-DEFAULT bg-white dark:bg-slate-900 border-2 border-primary text-primary hover:bg-sage-soft font-label-lg text-sm sm:text-base font-bold shadow-sm hover:shadow-md transition-all duration-200 cursor-pointer whitespace-nowrap"
             >
               <span className="material-symbols-outlined text-[22px] group-hover:scale-110 transition-transform">upload_file</span>
@@ -1050,6 +1110,18 @@ export default function AdminInfoPage({ currentUser }) {
           </div>
 
           <div className="flex items-center gap-2">
+            <button
+              id="btn-open-upload-invoice"
+              type="button"
+              onClick={() => {
+                setUploadModalMode('invoice');
+                setIsUploadModalOpen(true);
+              }}
+              className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-DEFAULT bg-primary text-on-primary hover:bg-forest-deep text-xs font-semibold shadow-sm transition-all cursor-pointer"
+            >
+              <span className="material-symbols-outlined text-[16px]">receipt_long</span>
+              <span>+ Déposer une facture</span>
+            </button>
             <span className="text-xs font-semibold text-on-surface-variant bg-surface-container-low px-3 py-1.5 rounded-full">
               {invoices.length} factures répertoriées
             </span>
@@ -1079,6 +1151,17 @@ export default function AdminInfoPage({ currentUser }) {
                       <span className="text-on-surface-variant text-xs max-w-sm">
                         Les factures, devis et justificatifs de dépenses téléversés apparaîtront ici.
                       </span>
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setUploadModalMode('invoice');
+                          setIsUploadModalOpen(true);
+                        }}
+                        className="mt-2 inline-flex items-center gap-1.5 px-3 py-1.5 rounded-DEFAULT bg-primary text-on-primary hover:bg-forest-deep text-xs font-semibold transition-all cursor-pointer"
+                      >
+                        <span className="material-symbols-outlined text-[16px]">receipt_long</span>
+                        <span>Déposer une facture</span>
+                      </button>
                     </div>
                   </td>
                 </tr>
@@ -1363,7 +1446,10 @@ export default function AdminInfoPage({ currentUser }) {
           <button
             id="btn-empty-upload"
             type="button"
-            onClick={() => setIsUploadModalOpen(true)}
+            onClick={() => {
+              setUploadModalMode('document');
+              setIsUploadModalOpen(true);
+            }}
             className="mt-space-md inline-flex items-center gap-2 h-[48px] px-6 rounded-DEFAULT bg-primary text-white font-label-md text-sm font-bold shadow-xs hover:bg-forest-deep transition-all cursor-pointer"
           >
             <span className="material-symbols-outlined text-[20px]">upload_file</span>
@@ -1659,6 +1745,8 @@ export default function AdminInfoPage({ currentUser }) {
         onClose={() => setIsUploadModalOpen(false)}
         onUploadSuccess={handleUploadSuccess}
         currentUser={currentUser}
+        mode={uploadModalMode}
+        defaultCategory={uploadModalMode === 'invoice' ? 'Travaux & Factures' : undefined}
       />
 
       {/* ========================================================================= */}

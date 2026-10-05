@@ -8765,11 +8765,12 @@ def download_call_for_funds_pdf(
 
 @app.post("/api/finances/expenses", status_code=status.HTTP_201_CREATED, response_model=MemberExpenseResponse, tags=["Dépenses Membres"])
 async def create_member_expense(
-    member_id: int = Form(..., description="ID de l'associé ayant avancé les fonds"),
+    member_id: int = Form(..., description="ID de l'associé ayant avancé les fonds ou déposé la facture"),
     title: str = Form(..., description="Libellé de la dépense"),
-    amount: float = Form(..., description="Montant avancé (€)"),
+    amount: float = Form(..., description="Montant avancé ou facture (€)"),
     expense_date: Optional[str] = Form(None, description="Date de la facture YYYY-MM-DD"),
     category: Optional[str] = Form("Entretien & Fournitures", description="Catégorie de la dépense"),
+    payer_type: Optional[str] = Form("member", description="Type de payeur : 'member' (avance) ou 'sci' (facture directe à régler par la SCI)"),
     document_id: Optional[int] = Form(None, description="ID d'un document existant dans admin_documents"),
     file: Optional[UploadFile] = File(None, description="Justificatif ou facture téléversé"),
     notes: Optional[str] = Form(None, description="Notes explicatives"),
@@ -8777,12 +8778,13 @@ async def create_member_expense(
     db: Session = Depends(get_db)
 ):
     """
-    Enregistre une avance de frais réalisée par un membre pour la SCI.
-    Cette dépense sera déduite de sa quote-part mensuelle lors du prochain appel de fonds.
+    Enregistre une avance de frais membre ou une facture directe à régler par la SCI.
+    - Si payer_type == 'member' : avance déduite de la quote-part mensuelle lors du prochain appel de fonds.
+    - Si payer_type == 'sci' : facture fournisseur à régler par la SCI (apparaît dans les factures à revoir).
     """
     is_coord = bool(getattr(current_user, "is_coordinator", False)) or (getattr(current_user, "prenom", "") or "").lower() == "henri"
     if not is_coord and current_user.id != member_id:
-        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Un membre ne peut déclarer une avance que pour son propre compte.")
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Un membre ne peut déclarer une dépense que pour son propre compte.")
 
     member = db.query(Member).filter(Member.id == member_id).first()
     if not member:
@@ -8795,6 +8797,9 @@ async def create_member_expense(
     if not clean_title:
         raise HTTPException(status_code=400, detail="Le libellé de la dépense est obligatoire.")
 
+    clean_payer_type = "sci" if (payer_type or "").strip().lower() == "sci" else "member"
+    initial_status = "PENDING_SCI_PAYMENT" if clean_payer_type == "sci" else "PENDING"
+
     now = datetime.utcnow()
     clean_date = (expense_date or "").strip() or now.strftime("%Y-%m-%d")
 
@@ -8806,7 +8811,8 @@ async def create_member_expense(
         file_bytes = await file.read()
         _, ext = os.path.splitext(file.filename)
         safe_ext = ext if ext else ".pdf"
-        safe_name = f"SCI {now.strftime('%m%Y')} Avance {member.prenom} {clean_title[:30]}{safe_ext}"
+        prefix_type = "Facture" if clean_payer_type == "sci" else "Avance"
+        safe_name = f"SCI {now.strftime('%m%Y')} {prefix_type} {member.prenom} {clean_title[:30]}{safe_ext}"
         dest_path = os.path.join(CFF_DOCUMENTS_DIR, safe_name)
         try:
             with open(dest_path, "wb") as f:
@@ -8816,7 +8822,7 @@ async def create_member_expense(
 
         # Enregistrement dans AdminDocument pour indexation permanente
         new_doc = AdminDocument(
-            title=f"Avance {member.prenom} - {clean_title}",
+            title=f"{prefix_type} {member.prenom} - {clean_title}",
             category="Travaux & Factures",
             file_url=f"/api/documents/temp",
             file_name=safe_name,
@@ -8825,7 +8831,7 @@ async def create_member_expense(
             file_data=file_bytes,
             source_type="EXPENSE",
             uploaded_by=member.name,
-            notes=f"Avance de frais membre : {amount:.2f} €"
+            notes=f"{prefix_type} : {amount:.2f} €"
         )
         db.add(new_doc)
         db.commit()
@@ -8850,7 +8856,8 @@ async def create_member_expense(
         amount=amount,
         expense_date=clean_date,
         category=category or "Entretien & Fournitures",
-        status="PENDING",
+        payer_type=clean_payer_type,
+        status=initial_status,
         document_id=doc_id,
         document_url=doc_url,
         document_filename=doc_filename,
@@ -8876,6 +8883,7 @@ async def create_member_expense(
         {"key": "Montant", "value": amount_with_symbol},
         {"key": "Date", "value": clean_date_fr},
         {"key": "Motif", "value": clean_title},
+        {"key": "Type", "value": "Facture à régler par la SCI" if clean_payer_type == "sci" else "Avance de frais membre"},
         {"key": "expense_id", "value": str(expense.id)}
     ]
     task_docs = []
@@ -8889,9 +8897,16 @@ async def create_member_expense(
             "type": "Facture / Justificatif"
         })
 
+    if clean_payer_type == "sci":
+        task_title = f"Règlement facture SCI : {clean_title} ({amount_with_symbol})"
+        task_desc = f"Facture à régler directement par la SCI déposée par {member.name or member.prenom}.\nMontant : {amount_with_symbol}\nMotif : {clean_title}\nDate : {clean_date_fr}"
+    else:
+        task_title = f"Validation avance de frais : {member.prenom} - {clean_title} ({amount_with_symbol})"
+        task_desc = f"Avance de frais déclarée par {member.name or member.prenom} pour la SCI Hellenvilliers.\nMontant avancé : {amount_with_symbol}\nMotif : {clean_title}\nDate : {clean_date_fr}"
+
     validation_task = Task(
-        title=f"Validation avance de frais : {member.prenom} - {clean_title} ({amount_with_symbol})",
-        description=f"Avance de frais déclarée par {member.name or member.prenom} pour la SCI Hellenvilliers.\nMontant avancé : {amount_with_symbol}\nMotif : {clean_title}\nDate : {clean_date_fr}",
+        title=task_title,
+        description=task_desc,
         category="Finances & Trésorerie",
         status="TODO",
         charge_points=1,
@@ -8906,6 +8921,9 @@ async def create_member_expense(
     db.add(validation_task)
     db.commit()
     db.refresh(validation_task)
+
+    expense.task_id = validation_task.id
+    db.commit()
 
     if doc_id:
         doc_rec = db.query(AdminDocument).filter(AdminDocument.id == doc_id).first()
@@ -8965,29 +8983,20 @@ def validate_member_expense_endpoint(
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db)
 ):
-    """Valide officiellement une avance de frais, synchronise sa tâche et crédite la trésorerie du membre."""
+    """Valide officiellement une avance de frais ou marque réglée une facture SCI, synchronise sa tâche."""
     check_coordinator_permission(current_user)
     expense = db.query(MemberExpense).filter(MemberExpense.id == expense_id).first()
     if not expense:
-        raise HTTPException(status_code=404, detail="Avance introuvable.")
+        raise HTTPException(status_code=404, detail="Facture / Avance introuvable.")
 
-    if expense.status != "PENDING":
+    if expense.status not in ("PENDING", "PENDING_SCI_PAYMENT"):
         raise HTTPException(
             status_code=status.HTTP_409_CONFLICT,
-            detail=f"Cette avance n'est pas en attente de validation (statut actuel : {expense.status})."
+            detail=f"Cette facture / avance n'est pas en attente de validation (statut actuel : {expense.status})."
         )
 
-    existing_ledger = db.query(MemberLedgerEntry).filter(
-        MemberLedgerEntry.expense_id == expense.id,
-        MemberLedgerEntry.entry_type == "AVANCE"
-    ).first()
-    if existing_ledger:
-        raise HTTPException(
-            status_code=status.HTTP_409_CONFLICT,
-            detail="Une écriture au grand livre existe déjà pour cette avance."
-        )
-
-    expense.status = "VALIDATED"
+    is_sci = expense.payer_type == "sci"
+    expense.status = "PAID" if is_sci else "VALIDATED"
     if expense.task_id:
         t = db.query(Task).filter(Task.id == expense.task_id).first()
         if t:
@@ -8995,16 +9004,22 @@ def validate_member_expense_endpoint(
             t.updated_at = datetime.utcnow()
     db.commit()
 
-    # Inscription au grand livre
-    from .services.treasury_service import add_ledger_entry
-    add_ledger_entry(
-        db=db,
-        member_id=expense.member_id,
-        entry_type="AVANCE",
-        amount=float(expense.amount),
-        description=f"Avance validée : {expense.title}",
-        expense_id=expense.id
-    )
+    # Inscription au grand livre individuel uniquement pour les avances de membres
+    if not is_sci:
+        existing_ledger = db.query(MemberLedgerEntry).filter(
+            MemberLedgerEntry.expense_id == expense.id,
+            MemberLedgerEntry.entry_type == "AVANCE"
+        ).first()
+        if not existing_ledger:
+            from .services.treasury_service import add_ledger_entry
+            add_ledger_entry(
+                db=db,
+                member_id=expense.member_id,
+                entry_type="AVANCE",
+                amount=float(expense.amount),
+                description=f"Avance validée : {expense.title}",
+                expense_id=expense.id
+            )
 
     db.refresh(expense)
     return expense

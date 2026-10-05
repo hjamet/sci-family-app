@@ -190,6 +190,7 @@ def init_db(target_engine=None):
 
                 conn.execute(text("ALTER TABLE member_expenses ADD COLUMN IF NOT EXISTS task_id INTEGER REFERENCES tasks(id) ON DELETE SET NULL;"))
                 conn.execute(text("ALTER TABLE member_expenses ADD COLUMN IF NOT EXISTS rejection_reason TEXT;"))
+                conn.execute(text("ALTER TABLE member_expenses ADD COLUMN IF NOT EXISTS payer_type VARCHAR(50) DEFAULT 'member';"))
                 conn.execute(text("ALTER TABLE members ADD COLUMN IF NOT EXISTS payment_reference VARCHAR(50);"))
                 conn.execute(text("ALTER TABLE calls_for_funds ADD COLUMN IF NOT EXISTS balance_before FLOAT DEFAULT 0.0;"))
                 conn.execute(text("ALTER TABLE calls_for_funds ADD COLUMN IF NOT EXISTS amount_due FLOAT DEFAULT 50.0;"))
