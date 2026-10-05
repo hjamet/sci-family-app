@@ -125,6 +125,8 @@ export default function DocumentViewerModal({
   // États internes de visualisation et de typage
   const [blobUrl, setBlobUrl] = useState(null);
   const [textContent, setTextContent] = useState(docItem?.content || null);
+  const [mediaTypeOverride, setMediaTypeOverride] = useState(null);
+  const [formatNotice, setFormatNotice] = useState(null);
   const [isLoading, setIsLoading] = useState(false);
   const [loadError, setLoadError] = useState(null);
   const [serverContentType, setServerContentType] = useState(null);
@@ -134,8 +136,8 @@ export default function DocumentViewerModal({
   const [zoomLevel, setZoomLevel] = useState(1);
   const [rotation, setRotation] = useState(0);
 
-  // Résolution dynamique du type de média
-  const activeMediaType = detectMediaType({
+  // Résolution dynamique du type de média (avec prise en compte du format réel inspecté dans le binaire)
+  const activeMediaType = mediaTypeOverride || detectMediaType({
     ext,
     mimeType: serverContentType || rawType,
     filename: fileName
@@ -196,6 +198,8 @@ export default function DocumentViewerModal({
     if (!isOpen || !rawUrl) {
       setBlobUrl(null);
       setTextContent(docItem?.content || null);
+      setMediaTypeOverride(null);
+      setFormatNotice(null);
       setLoadError(null);
       setServerContentType(null);
       setFetchedSize(null);
@@ -224,10 +228,13 @@ export default function DocumentViewerModal({
     const fetchDocumentContent = async () => {
       setIsLoading(true);
       setLoadError(null);
+      setMediaTypeOverride(null);
+      setFormatNotice(null);
+
       try {
         const response = await fetch(rawUrl);
         if (!response.ok) {
-          throw new Error(`Erreur HTTP ${response.status} lors de la récupération du fichier`);
+          throw new Error(`Erreur HTTP ${response.status} (${response.statusText || 'Échec de chargement'})`);
         }
 
         // Extraction du Content-Type du header HTTP
@@ -261,24 +268,56 @@ export default function DocumentViewerModal({
             setFetchedSize(blob.size);
           }
 
-          // Détermination du bon type MIME selon le format réel
-          const safeMime = resolveBlobMime({
-            mediaType: resolvedMediaType,
-            ext,
-            serverHeaderMime: headerContentType,
-            initialMime: rawType
-          });
+          let effectiveMediaType = resolvedMediaType;
 
-          const safeBlob = new Blob([blob], { type: safeMime });
-          createdUrl = URL.createObjectURL(safeBlob);
-          if (isMounted) {
-            setBlobUrl(createdUrl);
+          // Si le document est identifié comme PDF, validation stricte de la signature magique
+          if (resolvedMediaType === 'pdf') {
+            const headerSlice = await blob.slice(0, 1024).arrayBuffer();
+            const headerBytes = new Uint8Array(headerSlice);
+            const headerStr = new TextDecoder('latin1').decode(headerBytes);
+            const isRealPdf = headerStr.includes('%PDF-');
+
+            if (!isRealPdf) {
+              // Vérification si le document est du texte lisible (ex: Markdown Voicenotes ou note Obsidian)
+              const hasNullBytes = headerBytes.slice(0, Math.min(headerBytes.length, 512)).some(b => b === 0);
+              if (!hasNullBytes) {
+                effectiveMediaType = 'text';
+                const text = await blob.text();
+                if (isMounted) {
+                  setTextContent(text);
+                  setMediaTypeOverride('text');
+                  setFormatNotice('Ce document porte une extension .pdf mais son contenu réel est du texte brut / Markdown.');
+                }
+              } else {
+                effectiveMediaType = 'other';
+                if (isMounted) {
+                  setMediaTypeOverride('other');
+                  setFormatNotice("Ce document porte une extension .pdf mais sa structure binaire n'est pas un document PDF valide.");
+                }
+              }
+            }
+          }
+
+          if (effectiveMediaType !== 'text') {
+            // Détermination du bon type MIME selon le format réel
+            const safeMime = resolveBlobMime({
+              mediaType: effectiveMediaType,
+              ext,
+              serverHeaderMime: headerContentType,
+              initialMime: rawType
+            });
+
+            const safeBlob = new Blob([blob], { type: safeMime });
+            createdUrl = URL.createObjectURL(safeBlob);
+            if (isMounted) {
+              setBlobUrl(createdUrl);
+            }
           }
         }
       } catch (err) {
         console.warn('DocumentViewerModal fetch notice:', err.message);
         if (isMounted) {
-          setLoadError('Aperçu direct indisponible pour ce fichier. Utilisez le bouton Télécharger pour le consulter.');
+          setLoadError(`Aperçu direct indisponible (${err.message || 'Erreur réseau'}). Utilisez le bouton Télécharger pour le consulter.`);
         }
       } finally {
         if (isMounted) {
@@ -361,7 +400,7 @@ export default function DocumentViewerModal({
 
   return (
     <div
-      className="fixed inset-0 z-50 bg-slate-950/80 backdrop-blur-sm flex items-center justify-center p-2 sm:p-4 md:p-6 animate-in fade-in duration-200"
+      className="fixed inset-0 z-[70] bg-slate-950/80 backdrop-blur-sm flex items-center justify-center p-2 sm:p-4 md:p-6 animate-in fade-in duration-200"
       onClick={(e) => {
         if (e.target === e.currentTarget) onClose();
       }}
@@ -393,7 +432,7 @@ export default function DocumentViewerModal({
                     : activeMediaType === 'pdf'
                     ? 'Document PDF'
                     : activeMediaType === 'text'
-                    ? 'Fichier texte'
+                    ? (ext === 'pdf' ? 'Contenu texte / Markdown (source .pdf)' : 'Fichier texte')
                     : otherMeta.label}
                 </span>
                 {displaySize && (
@@ -589,7 +628,13 @@ export default function DocumentViewerModal({
           {/* Rendu Texte Brut */}
           {!loadError && activeMediaType === 'text' && textContent && (
             <div className="w-full h-full max-w-4xl bg-white dark:bg-slate-900 rounded-xl p-6 shadow-sm border border-slate-200 dark:border-slate-800 overflow-y-auto">
-              <pre className="font-mono text-xs sm:text-sm text-slate-800 dark:text-slate-200 whitespace-pre-wrap leading-relaxed">
+              {formatNotice && (
+                <div className="mb-4 p-3 bg-amber-50 dark:bg-amber-950/40 border border-amber-200 dark:border-amber-800/60 rounded-xl text-amber-800 dark:text-amber-300 text-xs flex items-center gap-2">
+                  <AlertCircle className="w-4 h-4 shrink-0 text-amber-600 dark:text-amber-400" />
+                  <span>{formatNotice}</span>
+                </div>
+              )}
+              <pre className="font-mono text-xs sm:text-sm text-slate-800 dark:text-slate-200 whitespace-pre-wrap leading-relaxed select-text">
                 {textContent}
               </pre>
             </div>
@@ -615,7 +660,7 @@ export default function DocumentViewerModal({
                 </div>
 
                 <p className="text-xs text-slate-500 dark:text-slate-400 max-w-xs leading-relaxed">
-                  Ce format ne dispose pas de prévisualisation intégrée dans le navigateur. Téléchargez-le pour l'ouvrir dans votre application dédiée.
+                  {formatNotice || "Ce format ne dispose pas de prévisualisation intégrée dans le navigateur. Téléchargez-le pour l'ouvrir dans votre application dédiée."}
                 </p>
 
                 <button
