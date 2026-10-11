@@ -8647,6 +8647,8 @@ def generate_calls_for_funds(
         # Gestion des notifications e-mails
         if request_data.send_notifications and call_obj.status == "EMIS":
             if bank_active and mem.notif_new_invoices and call_obj.net_amount > 0:
+                details_raw = json.loads(call_obj.details_json) if call_obj.details_json else {}
+                deducted_list = details_raw.get("deducted_expenses", []) if isinstance(details_raw, dict) else (details_raw if isinstance(details_raw, list) else [])
                 call_data = {
                     "reference": call_obj.reference,
                     "period_label": call_obj.period_label,
@@ -8654,7 +8656,7 @@ def generate_calls_for_funds(
                     "approved_expenses_total": call_obj.approved_expenses_total,
                     "net_amount": call_obj.net_amount,
                     "payment_reference": call_obj.payment_reference,
-                    "deducted_expenses": json.loads(call_obj.details_json) if call_obj.details_json else []
+                    "deducted_expenses": deducted_list
                 }
                 email_res = send_call_for_funds_email(mem, call_data, actually_send=True, db=db)
                 if email_res.get("status") in ("sent", "simulated"):

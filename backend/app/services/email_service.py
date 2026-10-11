@@ -1609,14 +1609,22 @@ def send_call_for_funds_email(
     preheader = f"Votre avis d'appel de fonds pour {period_label} est disponible : {net_amount:.2f} € à régler."
 
     # Lignes du tableau des dépenses
-    deducted = call_data.get("deducted_expenses") or []
+    raw_deducted = call_data.get("deducted_expenses") or []
+    if isinstance(raw_deducted, dict):
+        deducted = raw_deducted.get("deducted_expenses") or []
+    elif isinstance(raw_deducted, list):
+        deducted = raw_deducted
+    else:
+        deducted = []
+
     expenses_rows_html = ""
-    if deducted:
-        for exp in deducted:
+    valid_expenses = [exp for exp in deducted if isinstance(exp, dict)]
+    if valid_expenses:
+        for exp in valid_expenses:
             expenses_rows_html += f"""
             <tr>
                 <td style="padding: 6px 10px; border-bottom: 1px solid #f1f5f9; color: #475569;">Déduction avance : {exp.get('title', 'Dépense')}</td>
-                <td style="padding: 6px 10px; border-bottom: 1px solid #f1f5f9; text-align: right; color: #b91c1c; font-weight: 600;">-{exp.get('amount', 0):.2f} €</td>
+                <td style="padding: 6px 10px; border-bottom: 1px solid #f1f5f9; text-align: right; color: #b91c1c; font-weight: 600;">-{float(exp.get('amount') or 0):.2f} €</td>
             </tr>
             """
     else:
