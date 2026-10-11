@@ -63,7 +63,7 @@ La société réunit 7 membres d'une même famille selon une convention de déme
 * **Alertes Énergétiques ou Techniques Actives** : Statut de la chaudière, alerte Linky jour rouge Tempo, ou incident signalé non résolu.
 
 #### 4. Composants d'Information Souhaités
-* **Bannière d'Accueil Familiale Personnalisée** : Message d'accueil chaleureux (« Viva Hellenvilliers !! »), rappel de l'identité du membre connecté, badge de son rôle au sein de la SCI (Coordinateur, Garante du Patrimoine, Responsable Espaces Verts, etc.).
+* **Bannière d'Accueil Familiale Personnalisée** : Message d'accueil chaleureux (« Viva Hellenvilliers !! »), rappel de l'identité du membre connecté, badge de son rôle au sein de la SCI (Coordinateur Général, Coordinatrice Adjointe, Membre Associé).
 * **Grille des 6 Grandes Tuiles Thématiques d'Accès Rapide** :
   1. *Vadémécum* (guide d'arrivée, codes Wi-Fi, clés, compteurs d'eau).
   2. *Signaler un Problème / Nouveau Projet* (formulaire d'incident ou de proposition de travaux).
@@ -413,7 +413,7 @@ La société réunit 7 membres d'une même famille selon une convention de déme
 
 #### 2. Utilisateurs Cibles & Niveaux d'Habilitation
 * **Tous les Associés** : Signalement d'un problème constaté lors d'un séjour (avec photos), consultation de l'avancement des réparations.
-* **Responsables Thématiques Familiaux** : Hortense et Alex (Espaces Verts), Marguerite (Équipements), Frédéric (Électricité), Eugénie (Peintures & Tri).
+* **Membres Associés** : Suivi des tâches courantes et de maintenance.
 * **Gérant / Coordinateur (Henri Jamet)** : Qualification des signalements, arbitrage budgétaire (< 300 € direct, > 300 € mis au vote), validation des devis, suivi des factures et clôture des tâches.
 
 #### 3. Indicateurs Clés / Chiffres & KPIs à Afficher
@@ -528,11 +528,11 @@ La société réunit 7 membres d'une même famille selon une convention de déme
   * *Stock & Pack de Survie* : Vérification de la présence des produits de première nécessité (pâtes, riz, sauces, café).
 * **Modale de Validation de Tâche avec Dépôt de Justificatifs** :
   * Formulaire permettant à l'occupant de cocher une tâche lourde ou d'entretien, de saisir un commentaire explicatif et de joindre des photos prouvant la bonne exécution (ex: photo du jardin tondu, photo du tableau électrique éteint).
-* **Suivi des Tâches Spéciales des Référents Thématiques** :
-  * Espaces verts (Hortense / Alex) : Suivi de la fauche tardive et du compost.
-  * Équipements (Marguerite) : Suivi des révisions d'électroménager.
-  * Électricité (Frédéric) : Vérification des éclairages extérieurs et disjoncteurs.
-  * Peintures & Tri (Eugénie) : Tri sélectif et retouches d'entretien.
+* **Suivi des Tâches des Membres Associés** :
+  * Espaces verts : Suivi de la fauche tardive et du compost.
+  * Équipements : Suivi des révisions d'électroménager.
+  * Électricité : Vérification des éclairages extérieurs et disjoncteurs.
+  * Peintures & Tri : Tri sélectif et retouches d'entretien.
 
 #### 5. Actions & Fonctionnalités Interactives
 * **Cochage Interactif des Actions** : Mise à jour en temps réel de l'état d'avancement de la checklist.
@@ -614,11 +614,11 @@ La société réunit 7 membres d'une même famille selon une convention de déme
 * **Liste Exhaustive des 7 Profils Familiaux Reconnus** :
   1. *Henri Jamet* : Coordinateur Général & Gérant opérationnel (Couleur : Cyan).
   2. *Joséphine Jamet* : Coordinatrice Adjointe (Couleur : Émeraude).
-  3. *Hortense Jamet* : Responsable Espaces Verts & Jardinier (Couleur : Rose).
-  4. *Marguerite Jamet* : Responsable Équipements & Maison (Couleur : Violet).
-  5. *Eugénie Jamet* : Responsable Peintures, Tri & Décoration (Couleur : Ambre).
-  6. *Frédéric Jamet* : Usufruitier, Référent Électricité & Accord Piscine (Couleur : Bleu).
-  7. *Élisabeth Jamet (Maman)* : Usufruitière, Garante du Patrimoine Familial (Couleur : Sarcelle/Teal).
+  3. *Hortense Jamet* : Membre Associé (Couleur : Rose).
+  4. *Marguerite Jamet* : Membre Associé (Couleur : Violet).
+  5. *Eugénie Jamet* : Membre Associé (Couleur : Ambre).
+  6. *Frédéric Jamet* : Membre Associé (Couleur : Bleu).
+  7. *Élisabeth Jamet (Maman)* : Membre Associé (Couleur : Sarcelle/Teal).
 * **Statut de Session** : Indication de la connexion active, jeton de session sécurisé, date de dernière visite.
 
 #### 4. Composants d'Information Souhaités
@@ -662,11 +662,11 @@ La société réunit 7 membres d'une même famille selon une convention de déme
   * Cartes individuelles à fond blanc pur (`bg-white`) avec bordure de 2px et **liseré latéral gauche distinctif de 4px (`border-l-4`)** aux couleurs d'attribution familiale :
     1. *Henri Jamet* : `border-l-cyan-500` (Coordinateur Général & Gérant)
     2. *Joséphine Jamet* : `border-l-emerald-500` (Coordinatrice Adjointe)
-    3. *Hortense Jamet* : `border-l-rose-500` (Espaces Verts & Jardinier)
-    4. *Marguerite Jamet* : `border-l-purple-500` (Équipements & Maison)
-    5. *Eugénie Jamet* : `border-l-amber-500` (Peintures & Tri)
-    6. *Frédéric Jamet* : `border-l-blue-500` (Usufruitier • Piscine & Électricité)
-    7. *Élisabeth Jamet (Maman)* : `border-l-teal-500` (Usufruitière • Garante Patrimoine)
+    3. *Hortense Jamet* : `border-l-rose-500` (Membre Associé)
+    4. *Marguerite Jamet* : `border-l-purple-500` (Membre Associé)
+    5. *Eugénie Jamet* : `border-l-amber-500` (Membre Associé)
+    6. *Frédéric Jamet* : `border-l-blue-500` (Membre Associé)
+    7. *Élisabeth Jamet (Maman)* : `border-l-teal-500` (Membre Associé)
   * État sélectionné : double anneau `ring-2 ring-emerald-600 border-emerald-600 shadow-md scale-[1.03]`.
 * **Ergonomie Tablette Familiale & Accessibilité** :
   * **Hauteur Minimale des Cibles Tactiles** : `>= 52px` (`min-h-[52px]`) sur tous les boutons, champs de saisie, case à cocher et tuiles de profils (`min-h-[92px]`), garantissant une manipulation sans friction sur écran tactile partagé.

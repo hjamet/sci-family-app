@@ -43,44 +43,44 @@ import {
 // Correspondance des rôles et badges officiels de la SCI
 const ASSOCIATE_ROLES = {
   henri: {
-    badge: 'Gérant',
-    role: 'Nu-propriétaire • Gérant & Coordinateur Opérationnel',
+    badge: 'Coordinateur',
+    role: 'Coordinateur Général',
     color: 'emerald',
     initials: 'HJ'
   },
   frederic: {
-    badge: 'Usufruitier',
-    role: 'Usufruitier • Référent Énergie & Accord Piscine',
+    badge: 'Associé',
+    role: 'Membre Associé',
     color: 'teal',
     initials: 'FJ'
   },
   elisabeth: {
-    badge: 'Usufruitière',
-    role: 'Usufruitière • Garante du Patrimoine Familial',
+    badge: 'Associée',
+    role: 'Membre Associé',
     color: 'emerald',
     initials: 'ÉJ'
   },
   josephine: {
     badge: 'Coordination',
-    role: 'Nue-propriétaire • Coordinatrice Adjointe',
+    role: 'Coordinatrice Adjointe',
     color: 'green',
     initials: 'JJ'
   },
   hortense: {
-    badge: 'Jardin',
-    role: 'Nue-propriétaire • Référente Espaces Verts & Jardin',
+    badge: 'Associée',
+    role: 'Membre Associé',
     color: 'lime',
     initials: 'HJ'
   },
   marguerite: {
-    badge: 'Maison',
-    role: 'Référente Équipements & Maison',
+    badge: 'Associée',
+    role: 'Membre Associé',
     color: 'emerald',
     initials: 'MJ'
   },
   eugenie: {
-    badge: 'Déco & Peinture',
-    role: 'Nue-propriétaire • Référente Peintures, Tri & Déco',
+    badge: 'Associée',
+    role: 'Membre Associé',
     color: 'amber',
     initials: 'EJ'
   }
@@ -93,7 +93,7 @@ export default function SettingsPage({ currentUser }) {
     prenom: 'Henri',
     name: 'Henri Jamet',
     email: '',
-    role: 'Nu-propriétaire • Gérant & Coordinateur Opérationnel'
+    role: 'Coordinateur Général'
   });
   const [emailInput, setEmailInput] = useState('');
   const [emailLoading, setEmailLoading] = useState(false);

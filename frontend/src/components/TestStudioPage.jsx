@@ -14,12 +14,12 @@ import {
 
 const FAMILY_MEMBERS = [
   { prenom: 'Henri', role: 'Coordinateur Général', color: 'bg-cyan-600 text-white', badgeBg: 'bg-cyan-50 border-cyan-200 text-cyan-800' },
-  { prenom: 'Hortense', role: 'Responsable Espaces Verts', color: 'bg-rose-500 text-white', badgeBg: 'bg-rose-50 border-rose-200 text-rose-800' },
-  { prenom: 'Marguerite', role: 'Responsable Équipements', color: 'bg-purple-500 text-white', badgeBg: 'bg-purple-50 border-purple-200 text-purple-800' },
+  { prenom: 'Hortense', role: 'Membre Associé', color: 'bg-rose-500 text-white', badgeBg: 'bg-rose-50 border-rose-200 text-rose-800' },
+  { prenom: 'Marguerite', role: 'Membre Associé', color: 'bg-purple-500 text-white', badgeBg: 'bg-purple-50 border-purple-200 text-purple-800' },
   { prenom: 'Joséphine', role: 'Coordinatrice Adjointe', color: 'bg-emerald-500 text-white', badgeBg: 'bg-emerald-50 border-emerald-200 text-emerald-800' },
-  { prenom: 'Eugénie', role: 'Responsable Peintures & Tri', color: 'bg-amber-500 text-white', badgeBg: 'bg-amber-50 border-amber-200 text-amber-800' },
-  { prenom: 'Frédéric', role: 'Responsable Électricité', color: 'bg-blue-500 text-white', badgeBg: 'bg-blue-50 border-blue-200 text-blue-800' },
-  { prenom: 'Maman', role: 'Garante du Patrimoine', color: 'bg-teal-500 text-white', badgeBg: 'bg-teal-50 border-teal-200 text-teal-800' }
+  { prenom: 'Eugénie', role: 'Membre Associé', color: 'bg-amber-500 text-white', badgeBg: 'bg-amber-50 border-amber-200 text-amber-800' },
+  { prenom: 'Frédéric', role: 'Membre Associé', color: 'bg-blue-500 text-white', badgeBg: 'bg-blue-50 border-blue-200 text-blue-800' },
+  { prenom: 'Maman', role: 'Membre Associé', color: 'bg-teal-500 text-white', badgeBg: 'bg-teal-50 border-teal-200 text-teal-800' }
 ];
 
 const INITIAL_TASKS = [
