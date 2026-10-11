@@ -1346,11 +1346,11 @@ export default function TaskDetailModal({
         // Annotation 9 : Désactiver la fermeture au clic en dehors (backdrop click désactivé)
         e.stopPropagation();
       }}
-      className="fixed inset-0 z-50 bg-inverse-surface/60 backdrop-blur-sm flex items-center justify-center p-3 sm:p-6 overflow-y-auto"
+      className="fixed inset-0 z-50 bg-inverse-surface/60 backdrop-blur-sm flex items-center justify-center p-3 sm:p-6 overflow-y-auto pt-16 sm:pt-20 pb-4"
     >
       <div
         onClick={(e) => e.stopPropagation()}
-        className="w-full max-w-6xl my-auto bg-surface-container-lowest rounded-2xl sm:rounded-3xl shadow-2xl flex flex-col overflow-hidden max-h-[92vh] border border-border-subtle animate-in fade-in zoom-in-95 duration-200"
+        className="w-full max-w-6xl my-auto bg-surface-container-lowest rounded-2xl sm:rounded-3xl shadow-2xl flex flex-col overflow-hidden max-h-[calc(100vh-5rem)] border border-border-subtle animate-in fade-in zoom-in-95 duration-200 mt-2 sm:mt-4"
       >
         
         {/* ========================================== */}

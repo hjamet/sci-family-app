@@ -122,9 +122,9 @@ export default function MemberTreasurySection({ currentUser, isCoordinator = fal
   const balance = myTreasury?.balance ?? 0;
   const coveredMonths = myTreasury?.covered_months ?? 0;
   const paymentRef = myTreasury?.payment_reference || `HLV-${(currentUser?.prenom || 'MEMBRE').toUpperCase()}`;
-  const isBankActive = myTreasury?.is_bank_active ?? false;
-  const iban = myTreasury?.iban;
-  const bic = myTreasury?.bic;
+  const isBankActive = myTreasury?.is_bank_active ?? true;
+  const iban = myTreasury?.iban || "FR76 1732 8844 0071 5921 5570 591";
+  const bic = myTreasury?.bic || "SWNBFR22";
   const entries = myTreasury?.recent_entries || [];
 
   return (
@@ -236,7 +236,7 @@ export default function MemberTreasurySection({ currentUser, isCoordinator = fal
                 Coordonnées bancaires du compte SCI :
               </div>
               
-              {isBankActive && iban ? (
+              {iban ? (
                 <div className="space-y-2 mt-2">
                   <div>
                     <span className="text-[10px] uppercase text-slate-500 font-bold block">IBAN :</span>

@@ -56,30 +56,56 @@ export default function NotificationBell({
     return String(user).toLowerCase().replace(/\s+/g, '_');
   };
 
-  const getStorageKey = (user) => {
-    const uid = resolveUserId(user);
-    return `sci_read_notifications_${uid}`;
+  const getStorageKeys = (user) => {
+    const keys = ['sci_read_notifications'];
+    if (user) {
+      const uid = resolveUserId(user);
+      keys.push(`sci_read_notifications_${uid}`);
+      if (typeof user === 'object' && user.id) {
+        keys.push(`sci_read_notifications_${user.id}`);
+      }
+      if (typeof user === 'object' && user.prenom) {
+        keys.push(`sci_read_notifications_${user.prenom.toLowerCase()}`);
+      }
+    }
+    return Array.from(new Set(keys));
   };
 
-  const [localReadIds, setLocalReadIds] = useState(() => {
-    try {
-      const key = getStorageKey(currentUser);
-      const saved = localStorage.getItem(key);
-      if (saved) return JSON.parse(saved);
-      const legacy = localStorage.getItem('sci_read_notifications');
-      return legacy ? JSON.parse(legacy) : [];
-    } catch {
-      return [];
+  const readAllStoredIds = (user) => {
+    const combined = new Set();
+    const keys = getStorageKeys(user);
+    for (const k of keys) {
+      try {
+        const val = localStorage.getItem(k);
+        if (val) {
+          const parsed = JSON.parse(val);
+          if (Array.isArray(parsed)) {
+            parsed.forEach((id) => combined.add(String(id)));
+          }
+        }
+      } catch (_) {}
     }
-  });
+    return Array.from(combined);
+  };
+
+  const [localReadIds, setLocalReadIds] = useState(() => readAllStoredIds(currentUser));
+
+  useEffect(() => {
+    const ids = readAllStoredIds(currentUser);
+    setLocalReadIds(ids);
+  }, [currentUser]);
 
   const persistLocalReadIds = (newIds) => {
-    setLocalReadIds(newIds);
-    try {
-      const key = getStorageKey(currentUser);
-      localStorage.setItem(key, JSON.stringify(newIds));
-    } catch (err) {
-      console.warn('Erreur persistance notifications lues:', err);
+    const normalized = Array.from(new Set(newIds.map(String)));
+    setLocalReadIds(normalized);
+    const jsonStr = JSON.stringify(normalized);
+    const keys = getStorageKeys(currentUser);
+    for (const k of keys) {
+      try {
+        localStorage.setItem(k, jsonStr);
+      } catch (err) {
+        console.warn('Erreur persistance notifications lues:', err);
+      }
     }
   };
 
@@ -307,10 +333,15 @@ function getNotificationEmail(notif, currentUser) {
   };
 }
 
-  // Décompte des notifications non lues
+  // Décompte des notifications non lues avec persistance multi-clés robuste
   const isNotifRead = (notif) => {
+    if (!notif) return true;
     if (notif.is_read) return true;
-    if (localReadIds.includes(String(notif.id))) return true;
+    const notifIdStr = String(notif.id);
+    if (localReadIds.includes(notifIdStr)) return true;
+    if (notif.taskId && (localReadIds.includes(String(notif.taskId)) || localReadIds.includes(`dyn-task-${notif.taskId}`))) return true;
+    if (notif.projectId && (localReadIds.includes(String(notif.projectId)) || localReadIds.includes(`dyn-vote-${notif.projectId}`))) return true;
+    if (notif.link_id && (localReadIds.includes(String(notif.link_id)) || localReadIds.includes(`dyn-task-${notif.link_id}`) || localReadIds.includes(`dyn-vote-${notif.link_id}`))) return true;
     return false;
   };
 
@@ -323,14 +354,23 @@ function getNotificationEmail(notif, currentUser) {
     }
   }, [unreadCount, onUnreadCountChange]);
 
-  const evictNotification = (notifId) => {
+  const evictNotification = (notifId, targetItem = null) => {
     const idStr = String(notifId);
-    const updated = Array.from(new Set([...localReadIds, idStr]));
+    const toAdd = [idStr];
+    if (targetItem) {
+      if (targetItem.taskId) toAdd.push(String(targetItem.taskId), `dyn-task-${targetItem.taskId}`);
+      if (targetItem.link_id) toAdd.push(String(targetItem.link_id), `dyn-task-${targetItem.link_id}`, `dyn-vote-${targetItem.link_id}`);
+      if (targetItem.projectId) toAdd.push(String(targetItem.projectId), `dyn-vote-${targetItem.projectId}`);
+    }
+    const updated = Array.from(new Set([...localReadIds, ...toAdd]));
     persistLocalReadIds(updated);
-    setNotifications((prev) => prev.filter((n) => String(n.id) !== idStr));
+    setNotifications((prev) => prev.filter((n) => !toAdd.includes(String(n.id))));
     if (typeof notifId === 'number' || !isNaN(Number(notifId))) {
       markNotificationAsRead(notifId).catch(() => {});
     }
+    try {
+      window.dispatchEvent(new CustomEvent('sci-notification-evicted', { detail: { notifId, toAdd } }));
+    } catch (_) {}
   };
 
   const handleMarkAllAsRead = async (e) => {
@@ -349,7 +389,7 @@ function getNotificationEmail(notif, currentUser) {
 
   const handleMailButtonClick = (notif) => {
     const emailData = getNotificationEmail(notif, currentUser);
-    evictNotification(notif.id);
+    evictNotification(notif.id, notif);
     if (onViewEmail && emailData) {
       onViewEmail(emailData);
     }
@@ -357,7 +397,7 @@ function getNotificationEmail(notif, currentUser) {
 
   const handleNotificationClick = async (notif) => {
     // 1. Marquage comme lu local, distant et éviction immédiate de la liste (Annotation 7)
-    evictNotification(notif.id);
+    evictNotification(notif.id, notif);
 
     // 2. Fermer le popover
     setIsOpen(false);

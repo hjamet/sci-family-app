@@ -1214,13 +1214,13 @@ function VoteRoofModalInner({
 
   return (
     <div 
-      className="fixed inset-0 z-50 bg-slate-900/70 backdrop-blur-sm flex items-center justify-center p-3 sm:p-space-md animate-in fade-in duration-200"
+      className="fixed inset-0 z-50 bg-slate-900/70 backdrop-blur-sm flex items-center justify-center p-3 sm:p-space-md animate-in fade-in duration-200 pt-16 sm:pt-20 pb-4"
       onClick={(e) => {
         // Annotation 9 : Clic sur backdrop désactivé pour empêcher la fermeture accidentelle
       }}
     >
       <div 
-        className="relative w-full max-w-5xl bg-surface-container-lowest rounded-2xl shadow-2xl overflow-hidden flex flex-col max-h-[92vh] border border-border-subtle"
+        className="relative w-full max-w-5xl my-auto bg-surface-container-lowest rounded-2xl shadow-2xl overflow-hidden flex flex-col max-h-[calc(100vh-5rem)] border border-border-subtle mt-2 sm:mt-4"
         role="dialog"
         aria-modal="true"
         aria-labelledby="modal-roof-title"

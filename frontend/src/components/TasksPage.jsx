@@ -89,6 +89,19 @@ export default function TasksPage({ currentUser = 'Henri Jamet' }) {
     const qProjectId = searchParams.get('project_id');
 
     if (qTaskId) {
+      // Annotation 2 : Persistance du masquage/lecture de la notification de cette tâche au rafraîchissement
+      try {
+        const toAdd = [String(qTaskId), `dyn-task-${qTaskId}`];
+        const userSlug = String(currentUser?.prenom || currentUser || 'user').toLowerCase().replace(/\s+/g, '_');
+        const keys = ['sci_read_notifications', `sci_read_notifications_${userSlug}`];
+        for (const k of keys) {
+          const raw = localStorage.getItem(k);
+          const current = raw ? JSON.parse(raw) : [];
+          const updated = Array.from(new Set([...current, ...toAdd]));
+          localStorage.setItem(k, JSON.stringify(updated));
+        }
+      } catch (_) {}
+
       const foundTask = tasks.find((t) => String(t.id) === String(qTaskId) || String(t.ref) === String(qTaskId));
       if (foundTask) {
         setInspectingTask(foundTask);
@@ -104,6 +117,18 @@ export default function TasksPage({ currentUser = 'Henri Jamet' }) {
           .catch((err) => console.warn('Erreur chargement tâche URL:', err));
       }
     } else if (qProjectId) {
+      try {
+        const toAdd = [String(qProjectId), `dyn-vote-${qProjectId}`];
+        const userSlug = String(currentUser?.prenom || currentUser || 'user').toLowerCase().replace(/\s+/g, '_');
+        const keys = ['sci_read_notifications', `sci_read_notifications_${userSlug}`];
+        for (const k of keys) {
+          const raw = localStorage.getItem(k);
+          const current = raw ? JSON.parse(raw) : [];
+          const updated = Array.from(new Set([...current, ...toAdd]));
+          localStorage.setItem(k, JSON.stringify(updated));
+        }
+      } catch (_) {}
+
       const foundProject = projects.find((p) => String(p.id) === String(qProjectId));
       if (foundProject) {
         setSelectedVoteForModal(foundProject);
@@ -717,7 +742,8 @@ export default function TasksPage({ currentUser = 'Henri Jamet' }) {
     } else if (workflowFilter === 'PENDING_VALIDATION') {
       if (archived || !isTaskPendingValidation(t)) return false;
     } else if (workflowFilter === 'ALL') {
-      // Toutes les missions : afficher toutes les tâches sans restriction de statut
+      // Annotation 3 : Exclure formellement les tâches archivées (les archivées ne s'affichent que sous l'onglet "Archivées")
+      if (archived) return false;
     }
 
     // Recherche textuelle
@@ -792,8 +818,6 @@ export default function TasksPage({ currentUser = 'Henri Jamet' }) {
   // Comptages dynamiques pour les pilules (alignés sur l'onglet actif)
   const currentViewTasks = workflowFilter === 'ARCHIVED'
     ? archivedTasks
-    : workflowFilter === 'ALL'
-    ? tasks
     : activeTasks;
   const countsByPriority = {
     Toutes: currentViewTasks.length,

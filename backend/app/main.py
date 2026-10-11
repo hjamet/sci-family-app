@@ -8909,6 +8909,7 @@ async def create_member_expense(
         description=task_desc,
         category="Finances & Trésorerie",
         status="TODO",
+        complexity="Facile",
         charge_points=1,
         assignee_id=henri_id,
         assigned_members=json.dumps(["Henri Jamet"]),

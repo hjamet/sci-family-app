@@ -159,7 +159,6 @@ def check_firewall(to_email: Union[str, List[str]]) -> Optional[dict]:
         return get_circuit_breaker_response()
 
     allowed_whitelist = {r.strip().lower() for r in ALLOWED_RECIPIENTS}
-    allowed_whitelist.discard("henri.jamet.ch@gmail.com")
     if isinstance(to_email, str):
         clean = to_email.strip().lower()
         if clean not in allowed_whitelist:
@@ -287,7 +286,6 @@ def send_email(
 
     # 1. VERROU HERMÉTIQUE & PARE-FEU STRICT DE PROTECTION FAMILIALE
     allowed_whitelist = {r.strip().lower() for r in ALLOWED_RECIPIENTS}
-    allowed_whitelist.discard("henri.jamet.ch@gmail.com")
 
     if isinstance(to_email, str):
         clean_email = to_email.strip().lower()

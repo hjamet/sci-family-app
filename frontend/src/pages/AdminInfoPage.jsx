@@ -142,6 +142,16 @@ export default function AdminInfoPage({ currentUser }) {
 
   // Invoices State
   const [invoices, setInvoices] = useState(INITIAL_INVOICES);
+  const isHenriUser = (currentUserName || '').toLowerCase().includes('henri');
+  const myInvoices = useMemo(() => {
+    return invoices.filter((inv) => {
+      const p = (inv.memberPrenom || '').toLowerCase();
+      if (isHenriUser) {
+        return p === 'henri' || inv.memberId === 1 || (!p && !inv.memberId);
+      }
+      return p === (currentUser?.prenom || '').toLowerCase() || inv.memberId === currentUser?.id;
+    });
+  }, [invoices, currentUserName, currentUser, isHenriUser]);
 
   // Modals Visibility
   const [isUploadModalOpen, setIsUploadModalOpen] = useState(false);
@@ -296,6 +306,9 @@ export default function AdminInfoPage({ currentUser }) {
             filename: exp.document_filename || (exp.document_url ? exp.document_url.split('/').pop() : 'Facture.pdf'),
             document_url: exp.document_url,
             payerType: exp.payer_type,
+            memberId: exp.member_id,
+            memberPrenom: exp.member_prenom || '',
+            memberName: exp.member_prenom ? `${exp.member_prenom} Jamet` : 'Associé',
             rawExpense: exp
           };
         });
@@ -910,6 +923,195 @@ export default function AdminInfoPage({ currentUser }) {
       </section>
 
       {/* ========================================================================= */}
+      {/* SECTION PRIORITAIRE HAUT DE PAGE : MES DERNIÈRES FACTURES & RÈGLEMENTS    */}
+      {/* ========================================================================= */}
+      <div className="mt-space-md mb-space-md bg-surface-container-lowest rounded-lg border border-border-subtle p-space-md shadow-[0_2px_8px_-2px_rgba(6,95,70,0.04),0_6px_20px_-4px_rgba(15,23,42,0.05)]">
+        {/* Coordonnées officielles du compte Swan */}
+        <div className="mb-4 p-3.5 bg-emerald-50/80 border border-emerald-200 rounded-xl flex flex-col sm:flex-row sm:items-center justify-between gap-3 text-xs text-forest-deep shadow-2xs">
+          <div className="flex items-center gap-2.5">
+            <div className="w-8 h-8 rounded-lg bg-emerald-100 text-emerald-800 flex items-center justify-center shrink-0">
+              <span className="material-symbols-outlined text-[18px]">account_balance</span>
+            </div>
+            <div>
+              <div className="font-bold text-forest-deep">Coordonnées officielles du compte Swan :</div>
+              <div className="flex flex-wrap items-center gap-2 mt-0.5">
+                <span className="font-mono font-bold text-emerald-950 text-xs sm:text-sm">FR76 1732 8844 0071 5921 5570 591</span>
+                <span className="text-slate-600 font-semibold">• BIC : SWNBFR22</span>
+                <span className="text-slate-500">• Compte Principal Swan SCI</span>
+              </div>
+            </div>
+          </div>
+          <button
+            type="button"
+            onClick={() => {
+              navigator.clipboard.writeText("FR76 1732 8844 0071 5921 5570 591");
+              showToast("Copié !", "L'IBAN officiel Swan a été copié dans le presse-papier.", "check_circle");
+            }}
+            className="self-start sm:self-auto inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-white hover:bg-emerald-100 text-emerald-900 border border-emerald-300 font-semibold shadow-2xs transition-all cursor-pointer shrink-0"
+          >
+            <span className="material-symbols-outlined text-[15px]">content_copy</span>
+            <span>Copier l'IBAN Swan</span>
+          </button>
+        </div>
+
+        {/* Header Encadré Personnel */}
+        <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-space-xs pb-space-sm border-b border-border-subtle">
+          <div className="flex items-center gap-2.5">
+            <div className="w-9 h-9 rounded-full bg-sage-soft flex items-center justify-center text-primary">
+              <span className="material-symbols-outlined text-[20px]">receipt_long</span>
+            </div>
+            <div>
+              <div className="flex items-center gap-2">
+                <h2 className="font-headline-sm text-headline-sm text-forest-deep font-semibold">
+                  Mes Dernières Factures &amp; Règlements — {currentUserName}
+                </h2>
+              </div>
+              <p className="font-body-md text-xs text-on-surface-variant mt-0.5">
+                Vue personnelle prioritaire • Suivi de vos factures directes, avances de frais et remboursements
+              </p>
+            </div>
+          </div>
+
+          <div className="flex items-center gap-2">
+            <button
+              id="btn-open-upload-invoice-top"
+              type="button"
+              onClick={() => {
+                setUploadModalMode('invoice');
+                setIsUploadModalOpen(true);
+              }}
+              className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-DEFAULT bg-primary text-on-primary hover:bg-forest-deep text-xs font-semibold shadow-sm transition-all cursor-pointer"
+            >
+              <span className="material-symbols-outlined text-[16px]">receipt_long</span>
+              <span>+ Déposer une facture</span>
+            </button>
+            <span className="text-xs font-semibold text-on-surface-variant bg-surface-container-low px-3 py-1.5 rounded-full">
+              {myInvoices.length} {myInvoices.length <= 1 ? 'facture' : 'factures'}
+            </span>
+          </div>
+        </div>
+
+        {/* Table Body Personnel */}
+        <div className="mt-3 overflow-x-auto">
+          <table className="w-full text-left border-collapse">
+            <thead className="text-xs uppercase text-on-surface-variant bg-surface-container-low/70 border-b border-border-subtle font-semibold">
+              <tr>
+                <th className="py-3 px-4" scope="col">Date &amp; Échéance</th>
+                <th className="py-3 px-4" scope="col">Réf. Facture &amp; Prestataire</th>
+                <th className="py-3 px-4" scope="col">Montant TTC</th>
+                <th className="py-3 px-4" scope="col">Statut de paiement</th>
+                <th className="py-3 px-4" scope="col">Justificatif</th>
+                <th className="py-3 px-4 text-right" scope="col">Actions</th>
+              </tr>
+            </thead>
+            <tbody className="divide-y divide-border-subtle font-body-md text-sm text-on-surface">
+              {myInvoices.length === 0 ? (
+                <tr>
+                  <td colSpan="6" className="py-8 px-4 text-center text-on-surface-variant font-body-md text-xs">
+                    <div className="flex flex-col items-center justify-center gap-1.5">
+                      <span className="material-symbols-outlined text-[28px] text-outline">receipt_long</span>
+                      <span className="font-semibold text-forest-deep text-sm">Aucune facture personnelle enregistrée pour {currentUserName}</span>
+                      <span className="text-on-surface-variant text-xs">
+                        Déposez une facture ou une avance de frais pour la rattacher directement à votre trésorerie.
+                      </span>
+                    </div>
+                  </td>
+                </tr>
+              ) : (
+                myInvoices.map((inv) => (
+                  <tr key={inv.id} className="hover:bg-canvas-slate/80 transition-colors">
+                    <td className="py-3.5 px-4 whitespace-nowrap">
+                      <div className="font-semibold text-forest-deep">{inv.date}</div>
+                      <div className={`text-xs ${inv.dueWarning ? 'text-amber-rich font-semibold' : 'text-on-surface-variant'}`}>
+                        {inv.dueDate}
+                      </div>
+                    </td>
+                    <td className="py-3.5 px-4">
+                      <div className="font-semibold text-on-surface">{inv.supplier}</div>
+                      <div className="text-xs text-on-surface-variant font-mono">{inv.reference}</div>
+                    </td>
+                    <td className="py-3.5 px-4 whitespace-nowrap">
+                      <div className="font-headline-sm text-sm font-bold text-forest-deep tabular-nums">
+                        {inv.amount}
+                      </div>
+                      <div className="text-[11px] text-on-surface-variant">{inv.taxInfo}</div>
+                    </td>
+                    <td className="py-3.5 px-4 whitespace-nowrap">
+                      {inv.statusType === 'paid' && (
+                        <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-xs font-semibold bg-sage-soft text-forest-deep">
+                          <span className="material-symbols-outlined text-[14px]">check_circle</span>
+                          <span>{inv.status}</span>
+                        </span>
+                      )}
+                      {inv.statusType === 'pending' && (
+                        <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-xs font-semibold bg-amber-soft text-amber-rich">
+                          <span className="material-symbols-outlined text-[14px]">pending</span>
+                          <span>{inv.status}</span>
+                        </span>
+                      )}
+                      {inv.statusType === 'verified' && (
+                        <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-xs font-semibold bg-sage-soft text-forest-deep">
+                          <span className="material-symbols-outlined text-[14px]">verified</span>
+                          <span>{inv.status}</span>
+                        </span>
+                      )}
+                      {inv.statusType === 'refund' && (
+                        <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-xs font-semibold bg-surface-container-low text-primary border border-sage-border">
+                          <span className="material-symbols-outlined text-[14px]">currency_exchange</span>
+                          <span>{inv.status}</span>
+                        </span>
+                      )}
+                    </td>
+                    <td className="py-3.5 px-4 whitespace-nowrap">
+                      <button
+                        type="button"
+                        onClick={(e) => {
+                          e.preventDefault();
+                          e.stopPropagation();
+                          handleViewDocument(inv.filename);
+                        }}
+                        className="btn-download inline-flex items-center gap-1.5 px-2.5 py-1 rounded bg-surface-container-low text-forest-deep hover:bg-sage-soft border border-border-subtle transition-all text-xs font-semibold cursor-pointer"
+                        title="Consulter le justificatif dans la visionneuse"
+                      >
+                        <span className="material-symbols-outlined text-error text-[16px]">picture_as_pdf</span>
+                        <span>{inv.filename}</span>
+                      </button>
+                    </td>
+                    <td className="py-3.5 px-4 whitespace-nowrap text-right">
+                      <div className="inline-flex items-center justify-end gap-1.5">
+                        <button
+                          type="button"
+                          onClick={(e) => {
+                            e.preventDefault();
+                            e.stopPropagation();
+                            handleViewDocument(inv.filename);
+                          }}
+                          className="btn-view px-2.5 h-8 rounded-DEFAULT bg-surface-container-lowest border border-primary text-primary hover:bg-sage-soft transition-all text-xs font-semibold inline-flex items-center gap-1 cursor-pointer"
+                          title="Consulter dans la visionneuse"
+                        >
+                          <span className="material-symbols-outlined text-[15px]">visibility</span>
+                          <span>Consulter</span>
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => handleDownload(inv.filename)}
+                          className="btn-download px-2.5 h-8 rounded-DEFAULT bg-surface-container-lowest border border-border-subtle text-on-surface-variant hover:text-primary hover:border-primary transition-all text-xs font-semibold inline-flex items-center gap-1 cursor-pointer"
+                          title="Télécharger une copie du fichier"
+                        >
+                          <span className="material-symbols-outlined text-[15px]">download</span>
+                          <span>Télécharger</span>
+                        </button>
+                      </div>
+                    </td>
+                  </tr>
+                ))
+              )}
+            </tbody>
+          </table>
+        </div>
+      </div>
+
+      {/* ========================================================================= */}
       {/* SECTION 1 : FINANCIAL QUICK SUMMARY (3 HIGH-IMPACT KPI CARDS)             */}
       {/* ========================================================================= */}
       <div className="mt-space-lg">
@@ -1105,18 +1307,18 @@ export default function AdminInfoPage({ currentUser }) {
             <div>
               <div className="flex items-center gap-2">
                 <h2 className="font-headline-sm text-headline-sm text-forest-deep font-semibold">
-                  Mes Dernières Factures &amp; Règlements — {currentUserName}
+                  Historique des Factures &amp; Règlements de Tous les Membres
                 </h2>
               </div>
               <p className="font-body-md text-xs text-on-surface-variant mt-0.5">
-                Suivi des factures, dépenses directes et remboursements SCI rattachés à votre profil
+                Vue coordinateur globale • Historique consolidé des factures directes SCI, avances de frais et remboursements
               </p>
             </div>
           </div>
 
           <div className="flex items-center gap-2">
             <button
-              id="btn-open-upload-invoice"
+              id="btn-open-upload-invoice-global"
               type="button"
               onClick={() => {
                 setUploadModalMode('invoice');
@@ -1128,7 +1330,7 @@ export default function AdminInfoPage({ currentUser }) {
               <span>+ Déposer une facture</span>
             </button>
             <span className="text-xs font-semibold text-on-surface-variant bg-surface-container-low px-3 py-1.5 rounded-full">
-              {invoices.length} factures répertoriées
+              {invoices.length} {invoices.length <= 1 ? 'facture globale' : 'factures globales'}
             </span>
           </div>
         </div>
@@ -1139,6 +1341,7 @@ export default function AdminInfoPage({ currentUser }) {
             <thead className="text-xs uppercase text-on-surface-variant bg-surface-container-low/70 border-b border-border-subtle font-semibold">
               <tr>
                 <th className="py-3 px-4" scope="col">Date &amp; Échéance</th>
+                <th className="py-3 px-4" scope="col">Membre Associé</th>
                 <th className="py-3 px-4" scope="col">Réf. Facture &amp; Prestataire</th>
                 <th className="py-3 px-4" scope="col">Montant TTC</th>
                 <th className="py-3 px-4" scope="col">Statut de paiement</th>
@@ -1149,24 +1352,13 @@ export default function AdminInfoPage({ currentUser }) {
             <tbody className="divide-y divide-border-subtle font-body-md text-sm text-on-surface">
               {invoices.length === 0 ? (
                 <tr>
-                  <td colSpan="6" className="py-12 px-4 text-center text-on-surface-variant font-body-md text-xs">
+                  <td colSpan="7" className="py-12 px-4 text-center text-on-surface-variant font-body-md text-xs">
                     <div className="flex flex-col items-center justify-center gap-2">
                       <span className="material-symbols-outlined text-[32px] text-outline">receipt_long</span>
-                      <span className="font-semibold text-forest-deep text-sm">Aucun justificatif ou facture en attente</span>
+                      <span className="font-semibold text-forest-deep text-sm">Aucun justificatif ou facture enregistré</span>
                       <span className="text-on-surface-variant text-xs max-w-sm">
-                        Les factures, devis et justificatifs de dépenses téléversés apparaîtront ici.
+                        Les factures fournisseurs SCI et avances de frais de l'ensemble des associés apparaîtront ici.
                       </span>
-                      <button
-                        type="button"
-                        onClick={() => {
-                          setUploadModalMode('invoice');
-                          setIsUploadModalOpen(true);
-                        }}
-                        className="mt-2 inline-flex items-center gap-1.5 px-3 py-1.5 rounded-DEFAULT bg-primary text-on-primary hover:bg-forest-deep text-xs font-semibold transition-all cursor-pointer"
-                      >
-                        <span className="material-symbols-outlined text-[16px]">receipt_long</span>
-                        <span>Déposer une facture</span>
-                      </button>
                     </div>
                   </td>
                 </tr>
@@ -1180,6 +1372,14 @@ export default function AdminInfoPage({ currentUser }) {
                     <div className={`text-xs ${inv.dueWarning ? 'text-amber-rich font-semibold' : 'text-on-surface-variant'}`}>
                       {inv.dueDate}
                     </div>
+                  </td>
+
+                  {/* Membre Associé */}
+                  <td className="py-3.5 px-4 whitespace-nowrap">
+                    <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-xs font-semibold bg-emerald-50 text-emerald-900 border border-emerald-200">
+                      <span className="material-symbols-outlined text-[14px]">person</span>
+                      <span>{inv.memberName || 'Associé'}</span>
+                    </span>
                   </td>
 
                   {/* Réf & Prestataire */}
