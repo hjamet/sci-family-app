@@ -1681,3 +1681,73 @@ def send_call_for_funds_email(
     return res
 
 
+def send_invoice_approval_request_email(
+    to_email: str,
+    recipient_name: str,
+    submitter_name: str,
+    expense_title: str,
+    amount_str: str,
+    expense_date_str: str,
+    payer_type: str,
+    task_id: int,
+    actually_send: bool = True
+) -> dict:
+    """
+    Template: NOUVELLE FACTURE / DÉPENSE DÉPOSÉE POUR APPROBATION (notif_invoice_approval_request)
+    Notifies members who opted in when a new invoice or expense advance is submitted.
+    """
+    import html as html_lib
+    safe_submitter = html_lib.escape(submitter_name or "Un associé")
+    safe_title = html_lib.escape(expense_title or "Facture")
+    safe_amount = html_lib.escape(amount_str or "")
+    safe_date = html_lib.escape(expense_date_str or "")
+    greeting_name = recipient_name or "associé(e)"
+
+    type_label = "Facture directe à régler par la SCI" if (payer_type or "").lower() == "sci" else "Avance de frais membre"
+    subject = f"[Hellenvilliers SCI] 🧾 Nouvelle facture à approuver : {safe_title} ({safe_amount})"
+    preheader = f"{safe_submitter} a soumis une dépense ({safe_amount}) pour approbation."
+    action_url = f"{APP_BASE_URL}/taches?task_id={task_id}"
+
+    content_html = f"""
+    <p>Bonjour {greeting_name},</p>
+    <p>Une nouvelle facture / avance de frais a été soumise pour approbation par <strong>{safe_submitter}</strong> :</p>
+
+    <div style="background-color: #f9f8f6; border: 1px solid #e5e3dc; border-left: 4px solid #1e3a2f; border-radius: 6px; padding: 16px 20px; margin: 20px 0; color: #1f2937; font-size: 15px; line-height: 1.6;">
+        <p style="margin: 0 0 8px 0;"><strong>Objet :</strong> {safe_title}</p>
+        <p style="margin: 0 0 8px 0;"><strong>Montant :</strong> {safe_amount}</p>
+        <p style="margin: 0 0 8px 0;"><strong>Date :</strong> {safe_date}</p>
+        <p style="margin: 0;"><strong>Type :</strong> {type_label}</p>
+    </div>
+
+    <p>Vous pouvez consulter la tâche correspondante et valider les détails sur la plateforme de la SCI :</p>
+    """
+
+    html_body = build_responsive_email_layout(
+        title="Nouvelle Facture Déposée",
+        preheader=preheader,
+        content_html=content_html,
+        action_url=action_url,
+        action_label="Consulter la tâche & approuver"
+    )
+
+    names = [greeting_name]
+    email_entry = record_dispatched_email(
+        trigger_action="invoice_approval_request",
+        subject=subject,
+        recipients=to_email,
+        html_content=html_body,
+        recipients_names=names,
+        status="sent" if (actually_send and not is_email_disabled() and not is_test_mode()) else "simulated"
+    )
+
+    if actually_send and not is_email_disabled() and not is_test_mode():
+        res = send_email(to_email=to_email, subject=subject, html_content=html_body)
+    else:
+        res = {"status": "simulated", "id": email_entry["id"]}
+
+    if isinstance(res, dict):
+        res["_email_dispatched"] = email_entry
+    return res
+
+
+

@@ -1553,26 +1553,47 @@ export default function VademecumPage({ properties, currentUser, reservations = 
                     <h3 className="font-headline-sm text-headline-sm text-on-surface font-semibold truncate">Chauffage (ViCare)</h3>
                   </div>
                   <span className={`inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full font-label-sm text-[11px] font-bold shrink-0 ${
-                    isHeatingActive && heatingStatus?.burner_active
-                      ? 'bg-rose-100 text-rose-800 border border-rose-300 animate-pulse'
-                      : isHeatingActive
-                        ? 'bg-amber-50 text-amber-800 border border-amber-200'
-                        : 'bg-slate-100 text-slate-700 border border-slate-200'
+                    heatingStatus?.has_burner_error
+                      ? 'bg-rose-100 text-rose-900 border border-rose-400 font-extrabold animate-pulse'
+                      : isHeatingActive && heatingStatus?.burner_active
+                        ? 'bg-rose-100 text-rose-800 border border-rose-300 animate-pulse'
+                        : isHeatingActive
+                          ? 'bg-amber-50 text-amber-800 border border-amber-200'
+                          : 'bg-slate-100 text-slate-700 border border-slate-200'
                   }`}>
                     <span className={`w-1.5 h-1.5 rounded-full ${
-                      isHeatingActive && heatingStatus?.burner_active
-                        ? 'bg-rose-600 animate-ping'
-                        : isHeatingActive
-                          ? 'bg-amber-500'
-                          : 'bg-slate-400'
+                      heatingStatus?.has_burner_error
+                        ? 'bg-rose-600'
+                        : isHeatingActive && heatingStatus?.burner_active
+                          ? 'bg-rose-600 animate-ping'
+                          : isHeatingActive
+                            ? 'bg-amber-500'
+                            : 'bg-slate-400'
                     }`}></span>
-                    {isHeatingActive && heatingStatus?.burner_active
-                      ? 'Chauffe en cours'
-                      : isHeatingActive
-                        ? 'Au repos (brûleur éteint)'
-                        : `Arrêt hors-gel (${heatingFrostTarget.toFixed(1)}°C)`}
+                    {heatingStatus?.has_burner_error
+                      ? `En dérangement (Code ${heatingStatus.burner_error_code || 227})`
+                      : isHeatingActive && heatingStatus?.burner_active
+                        ? 'Chauffe en cours'
+                        : isHeatingActive
+                          ? 'Au repos (brûleur éteint)'
+                          : `Arrêt hors-gel (${heatingFrostTarget.toFixed(1)}°C)`}
                   </span>
                 </div>
+
+                {/* Alerte Rouge Vif : Dérangement Brûleur Chaudière ViCare (Code 227) */}
+                {heatingStatus?.has_burner_error && (
+                  <div className="p-3.5 rounded-xl bg-rose-50 border-2 border-rose-500 text-rose-900 shadow-xs flex items-start gap-2.5 animate-in fade-in duration-200">
+                    <span className="material-symbols-outlined text-rose-600 text-[20px] shrink-0 mt-0.5">error</span>
+                    <div className="flex flex-col gap-0.5">
+                      <span className="text-xs font-black text-rose-950">
+                        ⚠️ Dérangement Brûleur Chaudière — Code {heatingStatus.burner_error_code || 227} (Sécurité de combustion verrouillée)
+                      </span>
+                      <p className="text-[11px] text-rose-800 font-semibold leading-relaxed">
+                        Un réarmement physique sur la chaudière est requis. Le brûleur fioul s'est mis en sécurité thermique et la chauffe est interrompue.
+                      </p>
+                    </div>
+                  </div>
+                )}
 
                 {/* Gros Switch Marche / Arrêt géant (Annotation 2) */}
                 <div className="space-y-1.5">

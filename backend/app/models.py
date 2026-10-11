@@ -38,6 +38,7 @@ class Member(Base):
     monthly_contribution = Column(Float, default=50.0, nullable=False, server_default="50.0")
     notif_new_invoices = Column(Boolean, default=True, nullable=False, server_default="1")
     notif_calls_for_funds = synonym("notif_new_invoices")
+    notif_invoice_approval_request = Column(Boolean, default=False, nullable=True)
     payment_reference = Column(String(50), unique=True, index=True, nullable=True)  # ex: "HLV-HENRI"
 
     tasks = relationship("Task", back_populates="assignee", foreign_keys="Task.assignee_id")

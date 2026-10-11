@@ -130,7 +130,8 @@ export default function SettingsPage({ currentUser }) {
     notify_thermal_changes: false,
     notify_vote_creation: false,
     notif_new_invoices: true,
-    notif_calls_for_funds: true
+    notif_calls_for_funds: true,
+    notif_invoice_approval_request: false
   });
   const [notificationsLoading, setNotificationsLoading] = useState(false);
 
@@ -233,7 +234,8 @@ export default function SettingsPage({ currentUser }) {
             notify_thermal_changes: thermalPref,
             notify_vote_creation: voteCreationPref,
             notif_new_invoices: (settings.notif_new_invoices != null ? settings.notif_new_invoices : (settings.notif_calls_for_funds != null ? settings.notif_calls_for_funds : (userProfile?.notif_new_invoices ?? true))) !== false,
-            notif_calls_for_funds: (settings.notif_new_invoices != null ? settings.notif_new_invoices : (settings.notif_calls_for_funds != null ? settings.notif_calls_for_funds : (userProfile?.notif_new_invoices ?? true))) !== false
+            notif_calls_for_funds: (settings.notif_new_invoices != null ? settings.notif_new_invoices : (settings.notif_calls_for_funds != null ? settings.notif_calls_for_funds : (userProfile?.notif_new_invoices ?? true))) !== false,
+            notif_invoice_approval_request: Boolean(settings.notif_invoice_approval_request != null ? settings.notif_invoice_approval_request : (userProfile?.notif_invoice_approval_request ?? false))
           });
         }
       } catch (err) {
@@ -365,7 +367,8 @@ export default function SettingsPage({ currentUser }) {
       notify_thermal_changes: status,
       notify_vote_creation: status,
       notif_new_invoices: status,
-      notif_calls_for_funds: status
+      notif_calls_for_funds: status,
+      notif_invoice_approval_request: status
     });
   };
 
@@ -1227,6 +1230,36 @@ export default function SettingsPage({ currentUser }) {
                 <div className="shrink-0 pt-1">
                   <div className={`w-11 h-6 flex items-center rounded-full p-1 duration-300 ease-in-out ${notifications.notif_new_invoices ? 'bg-primary' : 'bg-slate-300'}`}>
                     <div className={`bg-white w-4 h-4 rounded-full shadow-md transform duration-300 ease-in-out ${notifications.notif_new_invoices ? 'translate-x-5' : 'translate-x-0'}`} />
+                  </div>
+                </div>
+              </div>
+
+              {/* Item 2 : Alertes dépôts de factures à approuver */}
+              <div
+                id="toggle-notif-invoice-approval-request"
+                onClick={() => handleToggleNotification('notif_invoice_approval_request')}
+                className={`flex items-start justify-between gap-3.5 p-3.5 sm:p-4 rounded-xl border transition-all cursor-pointer select-none ${
+                  notifications.notif_invoice_approval_request
+                    ? 'border-emerald-300/80 bg-white hover:bg-emerald-50/20 shadow-xs'
+                    : 'border-slate-200 bg-white/70 hover:bg-slate-100/60'
+                }`}
+              >
+                <div className="flex items-start gap-3">
+                  <div className="w-8 h-8 rounded-xl bg-amber-100 text-amber-800 flex items-center justify-center shrink-0 mt-0.5 border border-amber-200 shadow-2xs">
+                    <ClipboardList className="w-4 h-4" />
+                  </div>
+                  <div>
+                    <span className="text-sm font-bold text-slate-900 block leading-snug">
+                      Alertes nouvelles factures déposées pour approbation
+                    </span>
+                    <p className="text-xs text-slate-600 mt-1 leading-relaxed">
+                      Recevoir un e-mail lorsqu'une nouvelle facture ou avance de frais est soumise pour approbation.
+                    </p>
+                  </div>
+                </div>
+                <div className="shrink-0 pt-1">
+                  <div className={`w-11 h-6 flex items-center rounded-full p-1 duration-300 ease-in-out ${notifications.notif_invoice_approval_request ? 'bg-primary' : 'bg-slate-300'}`}>
+                    <div className={`bg-white w-4 h-4 rounded-full shadow-md transform duration-300 ease-in-out ${notifications.notif_invoice_approval_request ? 'translate-x-5' : 'translate-x-0'}`} />
                   </div>
                 </div>
               </div>

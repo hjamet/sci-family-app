@@ -376,6 +376,27 @@ def fetch_live_telemetry() -> Dict[str, Any]:
             except Exception:
                 pass
 
+        # Détection réelle de dérangement brûleur (heating.burners.0.errorStatus)
+        has_burner_error = False
+        burner_error_code = None
+        burner_error_details = None
+        if boiler_device:
+            try:
+                error_status_prop = boiler_device.getProperty("heating.burners.0.errorStatus")
+                if isinstance(error_status_prop, dict):
+                    props = error_status_prop.get("properties", {})
+                    status_val = props.get("status", {}).get("value")
+                    err_code_val = props.get("errorCode", {}).get("value")
+                    if (err_code_val is not None and err_code_val != 0) or str(status_val).lower() == "error":
+                        has_burner_error = True
+                        try:
+                            burner_error_code = int(err_code_val) if err_code_val is not None else 227
+                        except (ValueError, TypeError):
+                            burner_error_code = 227
+                        burner_error_details = "Défaut brûleur (sécurité de combustion verrouillée)"
+            except Exception as b_err:
+                logger.debug(f"[VICARE] Notice lecture heating.burners.0.errorStatus: {b_err}")
+
         # Eco mode detection
         eco_mode_active = (active_program == "eco")
 
@@ -421,6 +442,10 @@ def fetch_live_telemetry() -> Dict[str, Any]:
                 frost_temp_str = f"{target_temp:.1f}°C"
                 heating_status_label = "Arrêt (Mode été • Eau chaude seule)"
                 heating_status_subtext = f"Circuit chauffage à l'arrêt • Seule la production d'eau chaude sanitaire est active"
+        elif has_burner_error:
+            heating_status_state = "error"
+            heating_status_label = f"En dérangement (Code {burner_error_code or 227})"
+            heating_status_subtext = "Défaut brûleur (sécurité de combustion verrouillée) • Réarmement physique requis sur la chaudière"
         elif is_heating_burning:
             heating_status_state = "heating"
             heating_status_label = "Chauffe en cours"
@@ -509,6 +534,9 @@ def fetch_live_telemetry() -> Dict[str, Any]:
             "burner_active": burner_active,
             "burner_starts": burner_starts,
             "burner_hours": burner_hours,
+            "has_burner_error": has_burner_error,
+            "burner_error_code": burner_error_code,
+            "burner_error_details": burner_error_details,
             "mode": active_mode,
             "active_mode": active_mode,
             "active_program": active_program,
@@ -600,6 +628,21 @@ class ViCareService:
             )
         if "heating_status_subtext" not in data:
             data["heating_status_subtext"] = None
+
+        # Qualification et bascule d'état en dérangement si erreur brûleur détectée
+        if "has_burner_error" not in data:
+            data["has_burner_error"] = False
+        if "burner_error_code" not in data:
+            data["burner_error_code"] = None
+        if "burner_error_details" not in data:
+            data["burner_error_details"] = None
+
+        if data.get("has_burner_error"):
+            b_code = data.get("burner_error_code") or 227
+            if data.get("heating_status_state") in ("standby", "off") or "repos" in str(data.get("heating_status_label", "")).lower():
+                data["heating_status_state"] = "error"
+                data["heating_status_label"] = f"En dérangement (Code {b_code})"
+                data["heating_status_subtext"] = "Défaut brûleur (sécurité de combustion verrouillée) • Réarmement physique requis sur la chaudière"
 
         read_only = is_read_only_mode()
         msg = (

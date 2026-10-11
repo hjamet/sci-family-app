@@ -25,6 +25,9 @@ COORDINATOR_VOTE_COLUMNS = [
     ("notify_vote_arbitration", "BOOLEAN DEFAULT FALSE"),
 ]
 
+# Column for invoice approval notification (default FALSE)
+INVOICE_APPROVAL_NOTIFICATION_COLUMN = ("notif_invoice_approval_request", "BOOLEAN DEFAULT FALSE")
+
 
 def migrate_sqlite_db(db_path: str = None):
     """
@@ -83,6 +86,13 @@ def migrate_sqlite_db(db_path: str = None):
                         logger.info(f"[MIGRATION SQLite] Adding column {col_name} to members in {target}.")
                         cursor.execute(f"ALTER TABLE members ADD COLUMN {col_name} {col_def}")
                     cursor.execute(f"UPDATE members SET {col_name} = 0 WHERE {col_name} IS NULL")
+                
+                # 2ter. Invoice approval request column (default 0/False)
+                col_name, col_def = INVOICE_APPROVAL_NOTIFICATION_COLUMN
+                if col_name not in existing_cols:
+                    logger.info(f"[MIGRATION SQLite] Adding column {col_name} to members in {target}.")
+                    cursor.execute(f"ALTER TABLE members ADD COLUMN {col_name} {col_def}")
+                cursor.execute(f"UPDATE members SET {col_name} = 0 WHERE {col_name} IS NULL")
 
             # 3. Create thermal_settings table if missing
             cursor.execute("""
@@ -148,42 +158,44 @@ def migrate_sqlite_db(db_path: str = None):
                 """)
 
             # 5bis. monthly_contribution on members
-            cursor.execute("PRAGMA table_info(members)")
-            m_cols = {row[1] for row in cursor.fetchall()}
-            if "monthly_contribution" not in m_cols:
-                cursor.execute("ALTER TABLE members ADD COLUMN monthly_contribution FLOAT DEFAULT 50.0")
-            cursor.execute("UPDATE members SET monthly_contribution = 50.0 WHERE monthly_contribution IS NULL")
-            # Frédéric paie 1000 € pour le couple parental
-            cursor.execute("UPDATE members SET monthly_contribution = 1000.0 WHERE LOWER(email) = 'frdjamet@gmail.com' OR LOWER(prenom) IN ('frédéric', 'frederic')")
-            # Maman (Élisabeth) a une quote-part de 0 € (incluse dans les 1000 € du couple avec Frédéric)
-            cursor.execute("UPDATE members SET monthly_contribution = 0.0 WHERE LOWER(email) = 'elizabeth_jamet@yahoo.fr' OR LOWER(prenom) = 'maman'")
+            if existing_cols:
+                cursor.execute("PRAGMA table_info(members)")
+                m_cols = {row[1] for row in cursor.fetchall()}
+                if "monthly_contribution" not in m_cols:
+                    cursor.execute("ALTER TABLE members ADD COLUMN monthly_contribution FLOAT DEFAULT 50.0")
+                cursor.execute("UPDATE members SET monthly_contribution = 50.0 WHERE monthly_contribution IS NULL")
+                # Frédéric paie 1000 € pour le couple parental
+                cursor.execute("UPDATE members SET monthly_contribution = 1000.0 WHERE LOWER(email) = 'frdjamet@gmail.com' OR LOWER(prenom) IN ('frédéric', 'frederic')")
+                # Maman (Élisabeth) a une quote-part de 0 € (incluse dans les 1000 € du couple avec Frédéric)
+                cursor.execute("UPDATE members SET monthly_contribution = 0.0 WHERE LOWER(email) = 'elizabeth_jamet@yahoo.fr' OR LOWER(prenom) = 'maman'")
 
             # Nettoyage idempotent : supprimer les écritures d'échéances indues pour Maman au grand livre
-            try:
-                cursor.execute("""
-                    DELETE FROM member_ledger_entries
-                    WHERE member_id IN (
-                        SELECT id FROM members 
-                        WHERE LOWER(email) = 'elizabeth_jamet@yahoo.fr' 
-                           OR LOWER(prenom) = 'maman'
-                    )
-                    AND entry_type = 'ECHEANCE'
-                """)
-                cursor.execute("""
-                    UPDATE calls_for_funds
-                    SET theoretical_contribution = 0.0, net_amount = 0.0, amount_due = 0.0, status = 'COUVERT'
-                    WHERE member_id IN (
-                        SELECT id FROM members 
-                        WHERE LOWER(email) = 'elizabeth_jamet@yahoo.fr' 
-                           OR LOWER(prenom) = 'maman'
-                    )
-                """)
-            except sqlite3.OperationalError as op_err:
-                # Les tables member_ledger_entries ou calls_for_funds peuvent ne pas encore exister lors d'une initialisation à froid
-                logger.debug(f"[MIGRATION NOTICE] Table non existante lors de la purge Maman (initialisation à froid) : {op_err}")
-            except Exception as clean_err:
-                logger.error(f"[MIGRATION ERROR] Échec inattendu lors de la purge Maman : {clean_err}")
-                raise
+            if existing_cols:
+                try:
+                    cursor.execute("""
+                        DELETE FROM member_ledger_entries
+                        WHERE member_id IN (
+                            SELECT id FROM members 
+                            WHERE LOWER(email) = 'elizabeth_jamet@yahoo.fr' 
+                               OR LOWER(prenom) = 'maman'
+                        )
+                        AND entry_type = 'ECHEANCE'
+                    """)
+                    cursor.execute("""
+                        UPDATE calls_for_funds
+                        SET theoretical_contribution = 0.0, net_amount = 0.0, amount_due = 0.0, status = 'COUVERT'
+                        WHERE member_id IN (
+                            SELECT id FROM members 
+                            WHERE LOWER(email) = 'elizabeth_jamet@yahoo.fr' 
+                               OR LOWER(prenom) = 'maman'
+                        )
+                    """)
+                except sqlite3.OperationalError as op_err:
+                    # Les tables member_ledger_entries ou calls_for_funds peuvent ne pas encore exister lors d'une initialisation à froid
+                    logger.debug(f"[MIGRATION NOTICE] Table non existante lors de la purge Maman (initialisation à froid) : {op_err}")
+                except Exception as clean_err:
+                    logger.error(f"[MIGRATION ERROR] Échec inattendu lors de la purge Maman : {clean_err}")
+                    raise
 
             # 5ter. Create calls_for_funds and member_expenses tables if missing
             cursor.execute("""
@@ -291,6 +303,11 @@ def migrate_engine(engine):
                         conn.execute(text(f"ALTER TABLE members ADD COLUMN {col_name} {col_def}"))
                     conn.execute(text(f"UPDATE members SET {col_name} = 0 WHERE {col_name} IS NULL"))
 
+                col_name, col_def = INVOICE_APPROVAL_NOTIFICATION_COLUMN
+                if col_name not in existing_cols:
+                    conn.execute(text(f"ALTER TABLE members ADD COLUMN {col_name} {col_def}"))
+                conn.execute(text(f"UPDATE members SET {col_name} = 0 WHERE {col_name} IS NULL"))
+
                 # thermal_settings
                 conn.execute(text("""
                     CREATE TABLE IF NOT EXISTS thermal_settings (
@@ -333,6 +350,10 @@ def migrate_engine(engine):
                     conn.execute(text("ALTER TABLE member_settings ADD COLUMN notify_vote_arbitration BOOLEAN DEFAULT 0;"))
                 except Exception:
                     pass
+                try:
+                    conn.execute(text("ALTER TABLE member_settings ADD COLUMN notif_invoice_approval_request BOOLEAN DEFAULT 0;"))
+                except Exception:
+                    pass
 
                 # tasks.charge_points in SQLite (Annotation 1)
                 try:
@@ -362,6 +383,11 @@ def migrate_engine(engine):
                 for col_name, col_def in COORDINATOR_VOTE_COLUMNS:
                     conn.execute(text(f"ALTER TABLE members ADD COLUMN IF NOT EXISTS {col_name} {col_def};"))
                     conn.execute(text(f"UPDATE members SET {col_name} = FALSE WHERE {col_name} IS NULL;"))
+
+                # Invoice approval notification column
+                col_name, col_def = INVOICE_APPROVAL_NOTIFICATION_COLUMN
+                conn.execute(text(f"ALTER TABLE members ADD COLUMN IF NOT EXISTS {col_name} {col_def};"))
+                conn.execute(text(f"UPDATE members SET {col_name} = FALSE WHERE {col_name} IS NULL;"))
 
                 # Invariant : notif_thermal_changes est désactivé par défaut (FALSE) pour TOUS les associés sans exception
                 conn.execute(text(f"UPDATE members SET {col_name} = FALSE WHERE {col_name} IS NULL;"))

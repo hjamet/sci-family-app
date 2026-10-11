@@ -112,6 +112,7 @@ from .services.email_service import (
     send_mention_notification,
     send_task_chat_activity_email,
     send_vote_chat_activity_email,
+    send_invoice_approval_request_email,
     notify_coordinator_new_issue,
     notify_all_members_project_vote,
     record_dispatched_email,
@@ -1660,6 +1661,7 @@ def get_member_settings(
         "notify_mention_all": getattr(member, "notify_mention_all", True),
         "notif_new_invoices": getattr(member, "notif_new_invoices", True),
         "notif_calls_for_funds": getattr(member, "notif_new_invoices", True),
+        "notif_invoice_approval_request": bool(getattr(member, "notif_invoice_approval_request", False)),
         "monthly_contribution": getattr(member, "monthly_contribution", 50.0),
         "is_coordinator": getattr(member, "is_coordinator", False),
     }
@@ -1771,6 +1773,9 @@ def update_member_settings(
     elif data.notif_calls_for_funds is not None:
         member.notif_new_invoices = data.notif_calls_for_funds
 
+    if data.notif_invoice_approval_request is not None:
+        member.notif_invoice_approval_request = data.notif_invoice_approval_request
+
     if data.monthly_contribution is not None:
         member.monthly_contribution = data.monthly_contribution
 
@@ -1807,6 +1812,8 @@ def update_member_settings(
                     ms.notif_new_invoices = data.notif_new_invoices
                 elif data.notif_calls_for_funds is not None:
                     ms.notif_new_invoices = data.notif_calls_for_funds
+                if data.notif_invoice_approval_request is not None:
+                    ms.notif_invoice_approval_request = data.notif_invoice_approval_request
     except Exception as ms_err:
         logger.debug(f"[MEMBER SETTINGS SYNC NOTICE] Optional settings sync skipped: {ms_err}")
 
@@ -1843,6 +1850,7 @@ def update_member_settings(
         "notify_thermal_changes": getattr(member, "notif_thermal_changes", False),
         "notif_new_invoices": getattr(member, "notif_new_invoices", True),
         "notif_calls_for_funds": getattr(member, "notif_new_invoices", True),
+        "notif_invoice_approval_request": bool(getattr(member, "notif_invoice_approval_request", False)),
         "monthly_contribution": getattr(member, "monthly_contribution", 50.0),
         "is_coordinator": getattr(member, "is_coordinator", False),
     }
@@ -8947,6 +8955,27 @@ async def create_member_expense(
         )
     except Exception as notif_err:
         logger.warning(f"Notice notification avance: {notif_err}")
+
+    # Notification e-mail aux membres ayant activé notif_invoice_approval_request
+    try:
+        subscribed_members = db.query(Member).filter(
+            Member.notif_invoice_approval_request == True,
+            Member.email.isnot(None)
+        ).all()
+        for sub_member in subscribed_members:
+            if sub_member.email and "@" in sub_member.email:
+                send_invoice_approval_request_email(
+                    to_email=sub_member.email,
+                    recipient_name=sub_member.prenom or sub_member.name,
+                    submitter_name=member.name or f"{member.prenom} Jamet",
+                    expense_title=clean_title,
+                    amount_str=amount_with_symbol,
+                    expense_date_str=clean_date_fr,
+                    payer_type=clean_payer_type,
+                    task_id=validation_task.id
+                )
+    except Exception as email_err:
+        logger.warning(f"Notice email alerte facture: {email_err}")
 
     return expense
 

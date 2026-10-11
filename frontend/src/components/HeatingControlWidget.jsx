@@ -219,8 +219,31 @@ export default function HeatingControlWidget({ currentUser }) {
           <span>Chargement des métriques ViCare en direct...</span>
         </div>
       ) : (
-        /* Grid Layout: Live Telemetry Cards */
-        <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-5 gap-3 sm:gap-4 mb-7">
+        <>
+          {/* Alerte Rouge Vif : Dérangement Brûleur Chaudière ViCare (Code 227) */}
+          {status?.has_burner_error && (
+            <div className="mb-6 p-5 sm:p-6 rounded-3xl bg-rose-50 border-2 border-rose-500 text-rose-900 shadow-md animate-in fade-in duration-200">
+              <div className="flex items-start space-x-4">
+                <div className="p-3 bg-rose-600 text-white rounded-2xl shrink-0">
+                  <AlertTriangle className="h-7 w-7" />
+                </div>
+                <div className="flex-1">
+                  <h3 className="text-base sm:text-lg font-black text-rose-950 flex items-center gap-2">
+                    <span>⚠️ Dérangement Brûleur Chaudière — Code {status.burner_error_code || 227} (Sécurité de combustion verrouillée)</span>
+                  </h3>
+                  <p className="text-xs sm:text-sm text-rose-800 font-semibold mt-1 leading-relaxed">
+                    Un réarmement physique sur la chaudière est requis. Le brûleur fioul s'est mis en sécurité thermique et la chauffe est interrompue.
+                  </p>
+                  <div className="mt-3 p-3 bg-rose-100/90 border border-rose-300 rounded-xl text-xs text-rose-950">
+                    <strong>Diagnostic ViCare :</strong> {status.burner_error_details || "Défaut brûleur (sécurité de combustion verrouillée)"} • Code d'erreur matériel {status.burner_error_code || 227}
+                  </div>
+                </div>
+              </div>
+            </div>
+          )}
+
+          {/* Grid Layout: Live Telemetry Cards */}
+          <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-5 gap-3 sm:gap-4 mb-7">
           
           {/* 1. Ambiance */}
           <div className="p-4 rounded-2xl bg-slate-50 border border-slate-200/80 flex flex-col justify-between">
@@ -294,7 +317,8 @@ export default function HeatingControlWidget({ currentUser }) {
           </div>
 
         </div>
-      )}
+      </>
+    )}
 
       {/* 3 Explicit Operation Mode Selectors */}
       <div className="mb-8">

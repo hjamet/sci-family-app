@@ -1722,7 +1722,8 @@ export async function fetchMemberSettings(memberIdOrName = 'current') {
     notif_thermal_changes: false,
     notify_thermal_changes: false,
     notif_new_invoices: true,
-    notif_calls_for_funds: true
+    notif_calls_for_funds: true,
+    notif_invoice_approval_request: false
   };
 
   const cacheKey = `sci_settings_${memberIdOrName}`;

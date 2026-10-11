@@ -84,6 +84,7 @@ class MemberUpdate(BaseModel):
     notify_mention_all: Optional[bool] = None
     notif_new_invoices: Optional[bool] = None
     notif_calls_for_funds: Optional[bool] = None
+    notif_invoice_approval_request: Optional[bool] = None
     monthly_contribution: Optional[float] = None
 
 class MemberResponse(MemberBase):
@@ -121,6 +122,7 @@ class MemberSettingsResponse(BaseModel):
     notify_mention_all: bool = True
     notif_new_invoices: bool = True
     notif_calls_for_funds: Optional[bool] = None
+    notif_invoice_approval_request: bool = False
     monthly_contribution: Optional[float] = 50.0
     is_coordinator: Optional[bool] = False
 
@@ -149,6 +151,7 @@ class MemberSettingsUpdate(BaseModel):
     notify_mention_all: Optional[bool] = None
     notif_new_invoices: Optional[bool] = None
     notif_calls_for_funds: Optional[bool] = None
+    notif_invoice_approval_request: Optional[bool] = None
     monthly_contribution: Optional[float] = None
 
 class ChangePasswordRequest(BaseModel):
@@ -769,6 +772,9 @@ class HeatingStatusResponse(BaseModel):
     burner_active: bool = False
     burner_starts: Optional[int] = None
     burner_hours: Optional[int] = None
+    has_burner_error: bool = False
+    burner_error_code: Optional[int] = None
+    burner_error_details: Optional[str] = None
     mode: Optional[str] = None
     active_mode: Optional[str] = None
     active_program: Optional[str] = None
@@ -1222,6 +1228,7 @@ class MemberSettingsResponse(BaseModel):
     notify_mention_all: bool = True
     notif_new_invoices: bool = True
     notif_calls_for_funds: Optional[bool] = None
+    notif_invoice_approval_request: bool = False
     monthly_contribution: Optional[float] = 50.0
     is_coordinator: Optional[bool] = False
     # Aliases for legacy compatibility
@@ -1262,6 +1269,7 @@ class MemberSettingsUpdate(BaseModel):
     notify_thermal_changes: Optional[bool] = None
     notif_new_invoices: Optional[bool] = None
     notif_calls_for_funds: Optional[bool] = None
+    notif_invoice_approval_request: Optional[bool] = None
     monthly_contribution: Optional[float] = None
 
 
