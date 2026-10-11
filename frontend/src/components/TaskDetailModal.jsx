@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useRef } from 'react';
+import React, { useState, useEffect, useRef, useCallback } from 'react';
 import {
   fetchTaskById,
   updateTask,
@@ -95,9 +95,9 @@ function normalizeDocItem(docItem, idx = 0) {
     const isUploadOrHttp = docItem.startsWith('/uploads/') || docItem.startsWith('http') || docItem.startsWith('/api/');
     const url = isUploadOrHttp ? docItem : `/api/documents/${encodeURIComponent(docItem)}/download`;
     const cleanBasename = docItem.split('/').pop().replace(/^[a-f0-9]{32}_/, '') || docItem;
-    const isImg = Boolean(cleanBasename.match(/\.(png|jpe?g|webp|gif|svg)$/i));
+    const isImg = Boolean(cleanBasename.match(/\.(png|jpe?g|webp|gif|svg|bmp|ico)$/i));
     const isText = Boolean(cleanBasename.match(/\.(txt|log|md|json)$/i));
-    const properFilename = isImg || isText ? cleanBasename : (cleanBasename.includes('.') ? cleanBasename : `${cleanBasename}.pdf`);
+    const properFilename = isImg || isText || cleanBasename.includes('.') ? cleanBasename : `${cleanBasename}.pdf`;
     return {
       id: docItem,
       name: cleanBasename,
@@ -105,16 +105,39 @@ function normalizeDocItem(docItem, idx = 0) {
       file_url: url,
       url: url,
       type: isImg ? 'Image' : (isText ? 'Text' : 'PDF'),
-      file_type: isText ? 'text/plain' : undefined,
+      file_type: isImg ? 'image/jpeg' : (isText ? 'text/plain' : 'application/pdf'),
       size: '',
     };
   }
   const url = docItem.file_url || docItem.url || (docItem.id ? `/api/documents/${docItem.id}/download` : (docItem.filename?.startsWith('/uploads/') ? docItem.filename : ''));
   const rawName = docItem.name || docItem.filename || docItem.title || (url ? url.split('/').pop() : `Document_${idx + 1}`);
   const cleanName = String(rawName).replace(/^[a-f0-9]{32}_/, '');
-  const isImg = Boolean(cleanName.match(/\.(png|jpe?g|webp|gif|svg)$/i)) || (docItem.type === 'Image') || (docItem.file_type && docItem.file_type.startsWith('image/'));
-  const isText = Boolean(cleanName.match(/\.(txt|log|md|json)$/i)) || (docItem.type === 'Text') || (docItem.file_type === 'text/plain');
-  const properFilename = isImg || isText ? cleanName : (cleanName.includes('.') ? cleanName : `${cleanName}.pdf`);
+
+  const mime = String(
+    docItem.mimeType ||
+    docItem.mime_type ||
+    docItem.mimetype ||
+    docItem.file_type ||
+    docItem.contentType ||
+    docItem.content_type ||
+    ''
+  ).toLowerCase();
+
+  const isImgMime = mime.startsWith('image/');
+  const isTextMime = mime.startsWith('text/') || mime === 'application/json';
+  const isPdfMime = mime === 'application/pdf';
+
+  const checkImg = (s) => Boolean(String(s || '').match(/\.(png|jpe?g|webp|gif|svg|bmp|ico)$/i));
+  const checkText = (s) => Boolean(String(s || '').match(/\.(txt|log|md|json)$/i));
+  const checkPdf = (s) => Boolean(String(s || '').match(/\.pdf$/i));
+
+  const isImg = isImgMime || checkImg(cleanName) || checkImg(rawName) || checkImg(docItem.filename) || checkImg(url) || docItem.type === 'Image' || docItem.type === 'image';
+  const isText = !isImg && (isTextMime || checkText(cleanName) || checkText(rawName) || checkText(docItem.filename) || docItem.type === 'Text' || docItem.type === 'text');
+  const isPdf = !isImg && !isText && (isPdfMime || checkPdf(cleanName) || checkPdf(rawName) || checkPdf(docItem.filename) || docItem.type === 'PDF' || docItem.type === 'pdf');
+
+  const detectedType = isImg ? 'Image' : (isText ? 'Text' : 'PDF');
+  const properFilename = isImg || isText || isPdf || cleanName.includes('.') ? cleanName : `${cleanName}.pdf`;
+
   return {
     ...docItem,
     id: docItem.id || url || `doc-${idx}`,
@@ -122,8 +145,8 @@ function normalizeDocItem(docItem, idx = 0) {
     filename: properFilename,
     file_url: url,
     url: url,
-    type: isImg ? 'Image' : (isText ? 'Text' : 'PDF'),
-    file_type: isText ? 'text/plain' : docItem.file_type,
+    type: detectedType,
+    file_type: isImg ? (docItem.file_type || docItem.mime_type || docItem.mimeType || 'image/jpeg') : (isText ? 'text/plain' : (docItem.file_type || 'application/pdf')),
     size: docItem.size || '',
   };
 }
@@ -154,6 +177,15 @@ export default function TaskDetailModal({
   const isSavedRef = useRef(false);
   const isDeletedRef = useRef(false);
   const tempDocIdsRef = useRef(tempUploadedDocIds || initialTask?.tempUploadedDocIds || []);
+
+  // Annotation 3 : Textarea description auto-extensible (6 lignes par défaut ~140px, max 100 lignes ~1500px)
+  const descriptionTextareaRef = useRef(null);
+  const adjustDescriptionHeight = useCallback((el) => {
+    if (!el) return;
+    el.style.height = 'auto';
+    const targetHeight = Math.min(Math.max(el.scrollHeight, 140), 1500);
+    el.style.height = `${targetHeight}px`;
+  }, []);
 
   useEffect(() => {
     isSavedRef.current = false;
@@ -212,17 +244,30 @@ export default function TaskDetailModal({
     onClose();
   };
 
-  // Fermeture par touche Échap avec purge Zero-Leak
+  // Verrouillage du scroll du document/body à l'ouverture du modal et fermeture par touche Échap
   useEffect(() => {
     if (!isOpen) return;
+    const originalOverflow = document.body.style.overflow;
+    document.body.style.overflow = 'hidden';
+
     const handleKeyDown = (e) => {
       if (e.key === 'Escape') {
         handleSafeClose();
       }
     };
     window.addEventListener('keydown', handleKeyDown);
-    return () => window.removeEventListener('keydown', handleKeyDown);
+    return () => {
+      document.body.style.overflow = originalOverflow || 'unset';
+      window.removeEventListener('keydown', handleKeyDown);
+    };
   }, [isOpen]);
+
+  // Synchronisation dynamique de la hauteur de la textarea de description
+  useEffect(() => {
+    if (mode === 'edit' && descriptionTextareaRef.current) {
+      adjustDescriptionHeight(descriptionTextareaRef.current);
+    }
+  }, [mode, editDescription, adjustDescriptionHeight]);
   
   // Initialisation des commentaires (avec message d'accueil si nouvelle création, ou task.comments si existant)
   const [comments, setComments] = useState(() => {
@@ -1346,11 +1391,11 @@ export default function TaskDetailModal({
         // Annotation 9 : Désactiver la fermeture au clic en dehors (backdrop click désactivé)
         e.stopPropagation();
       }}
-      className="fixed inset-0 z-50 bg-inverse-surface/60 backdrop-blur-sm flex items-center justify-center p-3 sm:p-6 overflow-y-auto pt-16 sm:pt-20 pb-4"
+      className="fixed inset-0 z-[70] bg-inverse-surface/60 backdrop-blur-sm flex items-center justify-center p-3 sm:p-6 overflow-hidden"
     >
       <div
         onClick={(e) => e.stopPropagation()}
-        className="w-full max-w-6xl my-auto bg-surface-container-lowest rounded-2xl sm:rounded-3xl shadow-2xl flex flex-col overflow-hidden max-h-[calc(100vh-5rem)] border border-border-subtle animate-in fade-in zoom-in-95 duration-200 mt-2 sm:mt-4"
+        className="w-full max-w-6xl my-auto bg-surface-container-lowest rounded-2xl sm:rounded-3xl shadow-2xl flex flex-col overflow-hidden max-h-[85vh] border border-border-subtle animate-in fade-in zoom-in-95 duration-200"
       >
         
         {/* ========================================== */}
@@ -1751,13 +1796,28 @@ export default function TaskDetailModal({
                           return (
                             <div key={norm.id || idx} className="p-3 bg-canvas-slate rounded-xl flex items-center justify-between gap-3 shadow-xs border border-slate-200">
                               <div className="flex items-center gap-3 min-w-0">
-                                <div className="w-10 h-10 rounded-xl bg-error-container/40 text-error flex items-center justify-center shrink-0">
-                                  <span className="material-symbols-outlined text-[20px]">
+                                <div className={`w-10 h-10 rounded-xl flex items-center justify-center shrink-0 overflow-hidden ${
+                                  norm.type === 'Image' ? 'bg-emerald-50 text-emerald-700 border border-emerald-200' : (norm.type === 'Text' ? 'bg-sky-50 text-sky-700 border border-sky-200' : 'bg-error-container/40 text-error')
+                                }`}>
+                                  {norm.type === 'Image' && (norm.url || norm.file_url) ? (
+                                    <img
+                                      src={norm.url || norm.file_url}
+                                      alt={norm.name}
+                                      className="w-full h-full object-cover rounded-xl"
+                                      onError={(e) => {
+                                        e.currentTarget.style.display = 'none';
+                                        if (e.currentTarget.nextElementSibling) {
+                                          e.currentTarget.nextElementSibling.classList.remove('hidden');
+                                        }
+                                      }}
+                                    />
+                                  ) : null}
+                                  <span className={`material-symbols-outlined text-[20px] ${norm.type === 'Image' && (norm.url || norm.file_url) ? 'hidden' : ''}`}>
                                     {norm.type === 'Image' ? 'image' : (norm.type === 'Text' ? 'description' : 'picture_as_pdf')}
                                   </span>
                                 </div>
                                 <div className="min-w-0">
-                                  <p className="font-label-md text-xs font-semibold text-on-surface truncate" title={norm.name}>
+                                  <p className="font-label-md text-xs font-semibold text-on-surface break-words" title={norm.name}>
                                     {norm.name}
                                   </p>
                                   <p className="font-body-md text-[11px] text-outline">
@@ -1801,7 +1861,7 @@ export default function TaskDetailModal({
                                 </div>
                                 <div className="min-w-0">
                                   <div className="flex items-center gap-2">
-                                    <p className="font-label-md text-xs font-semibold text-on-surface truncate" title={linkTitle}>
+                                    <p className="font-label-md text-xs font-semibold text-on-surface break-words" title={linkTitle}>
                                       {linkTitle}
                                     </p>
                                     <span className="px-2 py-0.5 rounded-full text-[10px] font-bold bg-sky-100 text-sky-800 dark:bg-sky-900/60 dark:text-sky-200 border border-sky-200 shrink-0">
@@ -1812,7 +1872,7 @@ export default function TaskDetailModal({
                                     href={linkUrl}
                                     target="_blank"
                                     rel="noopener noreferrer"
-                                    className="font-body-md text-[11px] text-primary hover:underline truncate block"
+                                    className="font-body-md text-[11px] text-primary hover:underline break-all block"
                                     title={linkUrl}
                                   >
                                     {linkUrl}
@@ -2392,11 +2452,15 @@ export default function TaskDetailModal({
                   <div className="flex flex-col gap-1">
                     <label className="font-label-md text-xs font-semibold text-on-surface">Description détaillée &amp; Justificatifs</label>
                     <textarea
-                      rows={3}
+                      ref={descriptionTextareaRef}
+                      rows={6}
                       value={editDescription}
-                      onChange={(e) => setEditDescription(e.target.value)}
+                      onChange={(e) => {
+                        setEditDescription(e.target.value);
+                        adjustDescriptionHeight(e.target);
+                      }}
                       placeholder={isVoteInitiative ? "Expliquez l'urgence, le contexte, l'impact sur la propriété et l'intérêt pour la SCI..." : "Description..."}
-                      className="bg-white dark:bg-slate-800 rounded-lg px-3.5 py-2.5 text-xs sm:text-sm border border-slate-300 dark:border-slate-700 focus:outline-none focus:ring-2 focus:ring-primary leading-relaxed resize-y min-h-[120px]"
+                      className="bg-white dark:bg-slate-800 rounded-lg px-3.5 py-2.5 text-xs sm:text-sm border border-slate-300 dark:border-slate-700 focus:outline-none focus:ring-2 focus:ring-primary leading-relaxed resize-y min-h-[140px] max-h-[1500px] overflow-y-auto"
                     />
                   </div>
 
@@ -2582,13 +2646,28 @@ export default function TaskDetailModal({
                             className="p-3 bg-canvas-slate rounded-xl flex items-center justify-between gap-3 shadow-xs border border-slate-200"
                           >
                             <div className="flex items-center gap-3 min-w-0">
-                              <div className="w-10 h-10 rounded-xl bg-error-container/40 text-error flex items-center justify-center shrink-0">
-                                <span className="material-symbols-outlined text-[20px]">
+                              <div className={`w-10 h-10 rounded-xl flex items-center justify-center shrink-0 overflow-hidden ${
+                                norm.type === 'Image' ? 'bg-emerald-50 text-emerald-700 border border-emerald-200' : (norm.type === 'Text' ? 'bg-sky-50 text-sky-700 border border-sky-200' : 'bg-error-container/40 text-error')
+                              }`}>
+                                {norm.type === 'Image' && (norm.url || norm.file_url) ? (
+                                  <img
+                                    src={norm.url || norm.file_url}
+                                    alt={norm.name}
+                                    className="w-full h-full object-cover rounded-xl"
+                                    onError={(e) => {
+                                      e.currentTarget.style.display = 'none';
+                                      if (e.currentTarget.nextElementSibling) {
+                                        e.currentTarget.nextElementSibling.classList.remove('hidden');
+                                      }
+                                    }}
+                                  />
+                                ) : null}
+                                <span className={`material-symbols-outlined text-[20px] ${norm.type === 'Image' && (norm.url || norm.file_url) ? 'hidden' : ''}`}>
                                   {norm.type === 'Image' ? 'image' : (norm.type === 'Text' ? 'description' : 'picture_as_pdf')}
                                 </span>
                               </div>
                               <div className="min-w-0">
-                                <p className="font-label-md text-xs font-semibold text-on-surface truncate" title={norm.name}>
+                                <p className="font-label-md text-xs font-semibold text-on-surface break-words" title={norm.name}>
                                   {norm.name}
                                 </p>
                                 <p className="font-body-md text-[11px] text-outline">
@@ -2643,7 +2722,7 @@ export default function TaskDetailModal({
                               </div>
                               <div className="min-w-0">
                                 <div className="flex items-center gap-2">
-                                  <p className="font-label-md text-xs font-semibold text-on-surface truncate" title={linkTitle}>
+                                  <p className="font-label-md text-xs font-semibold text-on-surface break-words" title={linkTitle}>
                                     {linkTitle}
                                   </p>
                                   <span className="px-2 py-0.5 rounded-full text-[10px] font-bold bg-sky-100 text-sky-800 dark:bg-sky-900/60 dark:text-sky-200 border border-sky-200 shrink-0">
@@ -2654,7 +2733,7 @@ export default function TaskDetailModal({
                                   href={linkUrl}
                                   target="_blank"
                                   rel="noopener noreferrer"
-                                  className="font-body-md text-[11px] text-primary hover:underline truncate block"
+                                  className="font-body-md text-[11px] text-primary hover:underline break-all block"
                                   title={linkUrl}
                                 >
                                   {linkUrl}

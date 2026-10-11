@@ -1,6 +1,7 @@
 import os
 import json
 import logging
+import base64
 from typing import List, Optional, Union, Set, Dict, Any
 import urllib.request
 import urllib.error
@@ -249,7 +250,7 @@ def render_email_layout(title: str, preheader: str, content_html: str, action_ur
                             </div>
                             <div>
                                 Notification automatique transmise aux associés. Vos préférences de notifications sont réglables sur votre
-                                <a href="{APP_BASE_URL}/#settings" style="color: #2d5a47; text-decoration: underline; font-weight: 500;">espace profil</a>.
+                                <a href="{APP_BASE_URL}/settings" style="color: #2d5a47; text-decoration: underline; font-weight: 500;">espace profil</a>.
                             </div>
                         </td>
                     </tr>
@@ -1342,7 +1343,7 @@ def send_mention_notification(
         Vous pouvez accéder directement à la discussion pour prendre connaissance de l'échange et y répondre :
     </p>
     <p style="font-size: 12px; color: #6b7280; margin-top: 24px; padding-top: 12px; border-top: 1px solid #eee;">
-        💡 <em>Vous pouvez désactiver cette notification à tout moment dans vos <a href="{APP_BASE_URL}/#settings" style="color: #2d5a47; text-decoration: underline;">Paramètres &amp; Préférences</a>.</em>
+        💡 <em>Vous pouvez désactiver cette notification à tout moment dans vos <a href="{APP_BASE_URL}/settings" style="color: #2d5a47; text-decoration: underline;">Paramètres &amp; Préférences</a>.</em>
     </p>
     """
 
@@ -1418,7 +1419,7 @@ def send_task_chat_activity_email(
         Vous pouvez accéder directement à la tâche pour lire l'échange et y répondre :
     </p>
     <p style="font-size: 12px; color: #6b7280; margin-top: 24px; padding-top: 12px; border-top: 1px solid #eee;">
-        💡 <em>Vous pouvez désactiver cette notification à tout moment dans vos <a href="{APP_BASE_URL}/#settings" style="color: #2d5a47; text-decoration: underline;">Paramètres &amp; Préférences</a>.</em>
+        💡 <em>Vous pouvez désactiver cette notification à tout moment dans vos <a href="{APP_BASE_URL}/settings" style="color: #2d5a47; text-decoration: underline;">Paramètres &amp; Préférences</a>.</em>
     </p>
     """
 
@@ -1485,7 +1486,7 @@ def send_vote_chat_activity_email(
         Vous pouvez accéder directement au scrutin pour lire l'échange et y répondre :
     </p>
     <p style="font-size: 12px; color: #6b7280; margin-top: 24px; padding-top: 12px; border-top: 1px solid #eee;">
-        💡 <em>Vous pouvez désactiver cette notification à tout moment dans vos <a href="{APP_BASE_URL}/#settings" style="color: #2d5a47; text-decoration: underline;">Paramètres &amp; Préférences</a>.</em>
+        💡 <em>Vous pouvez désactiver cette notification à tout moment dans vos <a href="{APP_BASE_URL}/settings" style="color: #2d5a47; text-decoration: underline;">Paramètres &amp; Préférences</a>.</em>
     </p>
     """
 
@@ -1539,7 +1540,12 @@ def send_call_for_funds_email(
        Vérifie que member.notif_new_invoices (ou notif_calls_for_funds) est actif (True par défaut).
     """
     # Import paresseux pour éviter les cycles
-    from .call_for_funds_service import is_bank_account_active, get_official_bank_info
+    from .call_for_funds_service import (
+        is_bank_account_active,
+        get_official_bank_info,
+        generate_epc_qr_image_bytes,
+        SCI_NAME,
+    )
 
     # 1. RÈGLE ABSOLUE : Solde net <= 0 € -> ZÉRO ÉMISSION & ZÉRO NOTIFICATION
     net_amount = float(call_data.get("net_amount", 0.0))
@@ -1589,6 +1595,16 @@ def send_call_for_funds_email(
     iban_val = bank_info.get("iban", "")
     bic_val = bank_info.get("bic", "SWNBFR22")
 
+    qr_bytes = generate_epc_qr_image_bytes(
+        iban=iban_val,
+        bic=bic_val,
+        amount=net_amount,
+        beneficiary_name=SCI_NAME,
+        remittance_info=payment_ref,
+        is_specimen=False
+    )
+    qr_b64 = base64.b64encode(qr_bytes).decode("ascii")
+
     subject = f"🏛️ SCI Hellenvilliers — Appel de fonds {period_label} ({net_amount:.2f} €)"
     preheader = f"Votre avis d'appel de fonds pour {period_label} est disponible : {net_amount:.2f} € à régler."
 
@@ -1633,26 +1649,35 @@ def send_call_for_funds_email(
     </div>
 
     <div style="background-color: #f0fdf4; border: 1px solid #bbf7d0; border-radius: 8px; padding: 16px; margin: 20px 0;">
-        <div style="font-size: 14px; font-weight: bold; color: #166534; margin-bottom: 8px;">
+        <div style="font-size: 14px; font-weight: bold; color: #166534; margin-bottom: 12px;">
             🏦 Coordonnées pour virement bancaire SEPA
         </div>
-        <p style="font-size: 13px; color: #1e293b; margin: 4px 0;">
-            • Titulaire : <strong>SCI HELLENVILLIERS</strong><br/>
-            • IBAN : <code style="font-family: monospace; font-size: 13px; background: #ffffff; padding: 2px 6px; border-radius: 4px; border: 1px solid #cbd5e1;">{iban_val}</code><br/>
-            • BIC : <code style="font-family: monospace;">{bic_val}</code><br/>
-            • <strong>Motif impératif :</strong> <strong style="color: #064e3b;">{payment_ref}</strong>
-        </p>
-        <p style="font-size: 12px; color: #475569; margin-top: 8px;">
-            📱 <em>Un QR-Code SEPA EPC standard est intégré dans l'avis PDF téléchargeable sur la plateforme pour pré-remplir le virement en un scan dans votre application bancaire.</em>
-        </p>
+        <table role="presentation" border="0" cellpadding="0" cellspacing="0" width="100%">
+            <tr>
+                <td style="vertical-align: top; padding-right: 16px;">
+                    <p style="font-size: 13px; color: #1e293b; margin: 0 0 10px 0; line-height: 1.6;">
+                        • Titulaire : <strong>SCI HELLENVILLIERS</strong><br/>
+                        • IBAN : <code style="font-family: monospace; font-size: 13px; background: #ffffff; padding: 2px 6px; border-radius: 4px; border: 1px solid #cbd5e1;">{iban_val}</code><br/>
+                        • BIC : <code style="font-family: monospace;">{bic_val}</code><br/>
+                        • <strong>Motif impératif :</strong> <strong style="color: #064e3b;">{payment_ref}</strong>
+                    </p>
+                    <p style="font-size: 12px; color: #475569; margin: 0;">
+                        📱 <em>Scannez le QR-Code SEPA EPC avec votre application bancaire pour pré-remplir le virement instantanément.</em>
+                    </p>
+                </td>
+                <td style="vertical-align: middle; text-align: center; width: 130px;">
+                    <img src="data:image/png;base64,{qr_b64}" width="130" height="130" style="display: block; border-radius: 6px; border: 1px solid #cbd5e1; box-shadow: 0 2px 6px rgba(0,0,0,0.08);" alt="QR-Code SEPA EPC" />
+                </td>
+            </tr>
+        </table>
     </div>
 
     <p style="font-size: 12px; color: #64748b; margin-top: 24px; border-top: 1px solid #e2e8f0; padding-top: 12px;">
-        💡 <em>Vous pouvez consulter vos factures et gérer vos préférences à tout moment dans vos <a href="{APP_BASE_URL}/#settings" style="color: #064e3b; text-decoration: underline;">Paramètres</a>.</em>
+        💡 <em>Vous pouvez consulter vos factures et gérer vos préférences à tout moment dans vos <a href="{APP_BASE_URL}/settings" style="color: #064e3b; text-decoration: underline;">Paramètres</a>.</em>
     </p>
     """
 
-    action_url = f"{APP_BASE_URL}/#admin"
+    action_url = f"{APP_BASE_URL}/admin"
     html_body = render_email_layout(
         title="Appel de fonds mensuel",
         preheader=preheader,

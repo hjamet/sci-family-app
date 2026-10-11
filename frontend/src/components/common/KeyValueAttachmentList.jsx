@@ -43,17 +43,15 @@ function resolveKeyValueMeta(keyName = '', value = '') {
   const k = keyName.toLowerCase();
   const v = value.toLowerCase();
 
-  // Téléphone
+  // Téléphone (Annotation 6 : Pas de bouton Appeler cassé ni d'URL tel: concaténant les numéros)
   if (k.includes('tel') || k.includes('téléphone') || k.includes('phone') || k.includes('mobile') || k.includes('portable')) {
-    const cleanTel = value.replace(/[^0-9+]/g, '');
     return {
       type: 'phone',
       icon: 'call',
       badgeColor: 'bg-emerald-100 text-emerald-800 dark:bg-emerald-950/60 dark:text-emerald-300 border-emerald-200 dark:border-emerald-800/60',
       iconColor: 'bg-emerald-100 text-emerald-700 dark:bg-emerald-950/70 dark:text-emerald-300 border border-emerald-200 dark:border-emerald-800',
-      actionUrl: cleanTel ? `tel:${cleanTel}` : null,
-      actionTitle: 'Composer le numéro',
-      actionIcon: 'phone_in_talk',
+      actionUrl: null,
+      actionTitle: null,
     };
   }
 
@@ -275,7 +273,7 @@ export default function KeyValueAttachmentList({
 
                   <div className="min-w-0">
                     <div className="flex items-center gap-2">
-                      <p className="font-label-md text-xs font-bold text-on-surface truncate">
+                      <p className="font-label-md text-xs font-bold text-on-surface break-words">
                         {item.key}
                       </p>
                       <button
@@ -305,14 +303,14 @@ export default function KeyValueAttachmentList({
                           href={meta.actionUrl}
                           target={meta.type === 'link' ? '_blank' : undefined}
                           rel={meta.type === 'link' ? 'noopener noreferrer' : undefined}
-                          className="font-body-md text-xs sm:text-sm font-semibold text-primary hover:underline truncate"
+                          className="font-body-md text-xs sm:text-sm font-semibold text-primary hover:underline break-words"
                           title={`${meta.actionTitle || 'Ouvrir'} : ${item.value}`}
                         >
                           {item.value}
                         </a>
                       ) : (
                         <span
-                          className="font-body-md text-xs sm:text-sm font-semibold text-slate-800 dark:text-slate-200 select-all truncate"
+                          className="font-body-md text-xs sm:text-sm font-semibold text-slate-800 dark:text-slate-200 select-all break-words"
                           title={item.value}
                         >
                           {item.value}
