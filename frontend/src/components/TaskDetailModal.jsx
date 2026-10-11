@@ -168,108 +168,53 @@ export default function TaskDetailModal({
   const isVoteInitiative = !!(initialTask?.isVoteInitiative || initialTask?.isVote || initialTask?.is_project);
   const isBugReportEffective = Boolean(isBugReport || initialTask?.isBugReport);
   const isNewTask = !initialTask || !initialTask.id || isEditing || initialMode === 'edit';
+
+  const currentUserName = typeof currentUser === 'object'
+    ? (currentUser?.name || currentUser?.prenom || '')
+    : (currentUser || '');
+  let resolvedUserName = currentUserName;
+  if (!resolvedUserName) {
+    try {
+      resolvedUserName = localStorage.getItem('sci_user') || '';
+    } catch (_) {}
+  }
+  const isCoordinator = Boolean(
+    currentUser?.is_coordinator === true ||
+    currentUser?.is_coordinator === 'true' ||
+    currentUser?.is_coordinator === 1 ||
+    resolvedUserName.toLowerCase().includes('henri') ||
+    resolvedUserName.toLowerCase().includes('joséphine') ||
+    resolvedUserName.toLowerCase().includes('josephine')
+  );
+
+  const userMeta = resolveUserMeta(currentUser);
+  const currentUserId = currentUser?.id ?? userMeta?.id;
+
+  // --- STATE HOOKS (Déclarés en tête absolue pour immunité totale contre la Temporal Dead Zone) ---
   const [task, setTask] = useState(initialTask || {});
   const [mode, setMode] = useState(isNewTask ? 'edit' : (initialMode || 'view')); // 'view' | 'edit'
   const [isArbitratingExpense, setIsArbitratingExpense] = useState(false);
   const [isMobileChatOpen, setIsMobileChatOpen] = useState(false);
 
-  // Gestion Zero-Leak des documents temporaires et contrôle d'invalidation / suppression
-  const isSavedRef = useRef(false);
-  const isDeletedRef = useRef(false);
-  const tempDocIdsRef = useRef(tempUploadedDocIds || initialTask?.tempUploadedDocIds || []);
+  // Edit Mode Form State
+  const [editTitle, setEditTitle] = useState('');
+  const [editDescription, setEditDescription] = useState('');
+  const [editSubject, setEditSubject] = useState('Presbytère');
+  const [editComplexity, setEditComplexity] = useState('Modérée');
+  const [editMembers, setEditMembers] = useState([]);
+  const [editChecklist, setEditChecklist] = useState([]);
+  const [editVoteOptions, setEditVoteOptions] = useState([]);
+  const [editDocuments, setEditDocuments] = useState([]);
+  const [editExternalLinks, setEditExternalLinks] = useState([]);
+  const [editKeyValues, setEditKeyValues] = useState([]);
+  const [editOnsitePresence, setEditOnsitePresence] = useState(isBugReportEffective ? false : (initialTask?.onsite_presence !== undefined ? initialTask.onsite_presence !== false : true));
+  const [editIsRecurring, setEditIsRecurring] = useState(false);
+  const [editRecurrenceInterval, setEditRecurrenceInterval] = useState(1);
+  const [editRecurrenceUnit, setEditRecurrenceUnit] = useState('semaines');
+  const [editAutoAssignByWorkload, setEditAutoAssignByWorkload] = useState(false);
+  const [savingEdit, setSavingEdit] = useState(false);
 
-  // Annotation 3 : Textarea description auto-extensible (6 lignes par défaut ~140px, max 100 lignes ~1500px)
-  const descriptionTextareaRef = useRef(null);
-  const adjustDescriptionHeight = useCallback((el) => {
-    if (!el) return;
-    el.style.height = 'auto';
-    const targetHeight = Math.min(Math.max(el.scrollHeight, 140), 1500);
-    el.style.height = `${targetHeight}px`;
-  }, []);
-
-  useEffect(() => {
-    isSavedRef.current = false;
-    isDeletedRef.current = false;
-    tempDocIdsRef.current = Array.isArray(tempUploadedDocIds) && tempUploadedDocIds.length > 0
-      ? tempUploadedDocIds
-      : (initialTask?.tempUploadedDocIds || []);
-  }, [isOpen, tempUploadedDocIds, initialTask]);
-
-  const purgeTempDocuments = async () => {
-    if (!isSavedRef.current && tempDocIdsRef.current && tempDocIdsRef.current.length > 0) {
-      const idsToPurge = [...tempDocIdsRef.current];
-      tempDocIdsRef.current = [];
-      for (const docId of idsToPurge) {
-        try {
-          await deleteDocument(docId);
-        } catch (purgeErr) {
-          console.warn(`[Purge Zero-Leak] Erreur suppression document temporaire #${docId}:`, purgeErr);
-        }
-      }
-    }
-  };
-
-  // Annotation 9: Détection des modifications non enregistrées pour confirmation explicite
-  const hasUnsavedChanges = () => {
-    if (mode !== 'edit') return false;
-    const origTitle = (task?.title || '').trim();
-    const origDesc = (task?.description || '').trim();
-    const origSub = (task?.subject || (isVoteInitiative ? 'Presbytère' : 'Presbytère')).trim();
-    const origComp = (task?.complexity || (isVoteInitiative ? 'Élevée' : 'Modérée')).trim();
-    const origMembers = Array.isArray(task?.assigned_members)
-      ? [...task.assigned_members].sort().join(',')
-      : (task?.assignee || '');
-    const currentMembers = Array.isArray(editMembers)
-      ? [...editMembers].sort().join(',')
-      : '';
-
-    if (editTitle.trim() !== origTitle) return true;
-    if (editDescription.trim() !== origDesc) return true;
-    if (editSubject.trim() !== origSub) return true;
-    if (!isVoteInitiative && editComplexity.trim() !== origComp) return true;
-    if (!isVoteInitiative && currentMembers !== origMembers) return true;
-    if (editChecklist.length !== parseChecklistItems(task?.checklist).length) return true;
-    if (editDocuments.length !== parseTaskDocuments(task?.documents || task?.completion_docs).length) return true;
-    if (editExternalLinks.length !== (Array.isArray(task?.external_links) ? task.external_links.length : 0)) return true;
-    if (JSON.stringify(editKeyValues) !== JSON.stringify(parseKeyValues(task?.key_values))) return true;
-    return false;
-  };
-
-  const handleSafeClose = async () => {
-    if (hasUnsavedChanges()) {
-      const confirmDiscard = window.confirm("Des modifications sont en cours et non enregistrées. Voulez-vous vraiment quitter sans enregistrer ?");
-      if (!confirmDiscard) return;
-    }
-    await purgeTempDocuments();
-    onClose();
-  };
-
-  // Verrouillage du scroll du document/body à l'ouverture du modal et fermeture par touche Échap
-  useEffect(() => {
-    if (!isOpen) return;
-    const originalOverflow = document.body.style.overflow;
-    document.body.style.overflow = 'hidden';
-
-    const handleKeyDown = (e) => {
-      if (e.key === 'Escape') {
-        handleSafeClose();
-      }
-    };
-    window.addEventListener('keydown', handleKeyDown);
-    return () => {
-      document.body.style.overflow = originalOverflow || 'unset';
-      window.removeEventListener('keydown', handleKeyDown);
-    };
-  }, [isOpen]);
-
-  // Synchronisation dynamique de la hauteur de la textarea de description
-  useEffect(() => {
-    if (mode === 'edit' && descriptionTextareaRef.current) {
-      adjustDescriptionHeight(descriptionTextareaRef.current);
-    }
-  }, [mode, editDescription, adjustDescriptionHeight]);
-  
-  // Initialisation des commentaires (avec message d'accueil si nouvelle création, ou task.comments si existant)
+  // Commentaires (avec message d'accueil si nouvelle création, ou task.comments si existant)
   const [comments, setComments] = useState(() => {
     if (initialTask?.comments && Array.isArray(initialTask.comments) && initialTask.comments.length > 0) {
       return initialTask.comments;
@@ -294,15 +239,127 @@ export default function TaskDetailModal({
   const [viewerDoc, setViewerDoc] = useState(null);
   const [isViewerOpen, setIsViewerOpen] = useState(false);
 
-  const handleViewDocument = (docItem) => {
+  // Recommandations
+  const [recommendations, setRecommendations] = useState([
+    { rank: 1, name: 'Joséphine Jamet', prenom: 'Joséphine', reason: `charge la plus basse dans ${initialTask?.subject || 'Rosings'}` },
+    { rank: 2, name: 'Hortense Jamet', prenom: 'Hortense', reason: 'charge basse' },
+    { rank: 3, name: 'Marguerite Jamet', prenom: 'Marguerite', reason: 'disponible pour ce domaine' },
+  ]);
+  const [loadingRecs, setLoadingRecs] = useState(false);
+  const [selectedValidationMembers, setSelectedValidationMembers] = useState([]);
+
+  // Upload modal et drag & drop
+  const [isUploadDocModalOpen, setIsUploadDocModalOpen] = useState(false);
+  const [isSelectExistingDocModalOpen, setIsSelectExistingDocModalOpen] = useState(false);
+  const [droppedFileForUpload, setDroppedFileForUpload] = useState(null);
+  const [uploadingDoc, setUploadingDoc] = useState(false);
+  const [dragOver, setDragOver] = useState(false);
+
+  // Close Protocol Modal State
+  const [isClosingModalOpen, setIsClosingModalOpen] = useState(false);
+  const [closeNotes, setCloseNotes] = useState('');
+  const [closingSubmitting, setClosingSubmitting] = useState(false);
+
+  // --- REFS ---
+  const isSavedRef = useRef(false);
+  const isDeletedRef = useRef(false);
+  const tempDocIdsRef = useRef(tempUploadedDocIds || initialTask?.tempUploadedDocIds || []);
+  const descriptionTextareaRef = useRef(null);
+  const fileUploadRef = useRef(null);
+  const fileUploadEditRef = useRef(null);
+  const validationSectionRef = useRef(null);
+
+  // --- VARIABLES DÉPENDANTES DU STATE / PROPS ---
+  const isAssignedToCurrentUser = Boolean(
+    (currentUserId != null && (
+      Number(task?.assigned_to) === Number(currentUserId) ||
+      Number(task?.assigned_to_id) === Number(currentUserId) ||
+      Number(task?.assigned_member_id) === Number(currentUserId) ||
+      Number(task?.assignee_id) === Number(currentUserId)
+    )) ||
+    isTaskAssignedToUser(task, currentUser)
+  );
+  const isPendingValidation = isTaskPendingValidation(task);
+  const isProposed = isTaskProposed(task);
+  const isOpenTask = isTaskOpen(task);
+
+  const taskCreator = String(task?.created_by || task?.submitted_by || task?.author || '').trim().toLowerCase();
+  const currentUserNameClean = resolvedUserName.trim().toLowerCase();
+  const currentUserFirstClean = (resolvedUserName.trim().split(' ')[0] || '').toLowerCase();
+  const isAuthor = Boolean(
+    taskCreator && (
+      taskCreator === currentUserNameClean ||
+      (currentUserFirstClean && (taskCreator.includes(currentUserFirstClean) || currentUserNameClean.includes(taskCreator))) ||
+      (task?.created_by_id && currentUser?.id && Number(task.created_by_id) === Number(currentUser.id))
+    )
+  );
+  const canDeleteTask = isCoordinator || isAuthor;
+
+  // --- FONCTIONS HOISTÉES (Déclarées avec function pour immunité TDZ totale) ---
+  function adjustDescriptionHeight(el) {
+    if (!el) return;
+    el.style.height = 'auto';
+    const targetHeight = Math.min(Math.max(el.scrollHeight, 140), 1500);
+    el.style.height = `${targetHeight}px`;
+  }
+
+  async function purgeTempDocuments() {
+    if (!isSavedRef.current && tempDocIdsRef.current && tempDocIdsRef.current.length > 0) {
+      const idsToPurge = [...tempDocIdsRef.current];
+      tempDocIdsRef.current = [];
+      for (const docId of idsToPurge) {
+        try {
+          await deleteDocument(docId);
+        } catch (purgeErr) {
+          console.warn(`[Purge Zero-Leak] Erreur suppression document temporaire #${docId}:`, purgeErr);
+        }
+      }
+    }
+  }
+
+  function hasUnsavedChanges() {
+    if (mode !== 'edit') return false;
+    const origTitle = (task?.title || '').trim();
+    const origDesc = (task?.description || '').trim();
+    const origSub = (task?.subject || (isVoteInitiative ? 'Presbytère' : 'Presbytère')).trim();
+    const origComp = (task?.complexity || (isVoteInitiative ? 'Élevée' : 'Modérée')).trim();
+    const origMembers = Array.isArray(task?.assigned_members)
+      ? [...task.assigned_members].sort().join(',')
+      : (task?.assignee || '');
+    const currentMembers = Array.isArray(editMembers)
+      ? [...editMembers].sort().join(',')
+      : '';
+
+    if (editTitle.trim() !== origTitle) return true;
+    if (editDescription.trim() !== origDesc) return true;
+    if (editSubject.trim() !== origSub) return true;
+    if (!isVoteInitiative && editComplexity.trim() !== origComp) return true;
+    if (!isVoteInitiative && currentMembers !== origMembers) return true;
+    if (editChecklist.length !== parseChecklistItems(task?.checklist).length) return true;
+    if (editDocuments.length !== parseTaskDocuments(task?.documents || task?.completion_docs).length) return true;
+    if (editExternalLinks.length !== (Array.isArray(task?.external_links) ? task.external_links.length : 0)) return true;
+    if (JSON.stringify(editKeyValues) !== JSON.stringify(parseKeyValues(task?.key_values))) return true;
+    return false;
+  }
+
+  async function handleSafeClose() {
+    if (hasUnsavedChanges()) {
+      const confirmDiscard = window.confirm("Des modifications sont en cours et non enregistrées. Voulez-vous vraiment quitter sans enregistrer ?");
+      if (!confirmDiscard) return;
+    }
+    await purgeTempDocuments();
+    onClose();
+  }
+
+  function handleViewDocument(docItem) {
     const norm = normalizeDocItem(docItem);
     if (norm) {
       setViewerDoc(norm);
       setIsViewerOpen(true);
     }
-  };
+  }
 
-  const handleDownloadDoc = (docItem) => {
+  function handleDownloadDoc(docItem) {
     const norm = normalizeDocItem(docItem);
     const targetUrl = norm?.file_url || norm?.url;
     const targetName = norm?.filename || norm?.name || 'document.pdf';
@@ -324,86 +381,9 @@ export default function TaskDetailModal({
       document.body.removeChild(a);
       URL.revokeObjectURL(url);
     }
-  };
+  }
 
-  // Edit Mode Form State
-  const [editTitle, setEditTitle] = useState('');
-  const [editDescription, setEditDescription] = useState('');
-  const [editSubject, setEditSubject] = useState('Presbytère');
-  const [editComplexity, setEditComplexity] = useState('Modérée');
-  const [editMembers, setEditMembers] = useState([]);
-  const [editChecklist, setEditChecklist] = useState([]);
-  const [editVoteOptions, setEditVoteOptions] = useState([]);
-  const [editDocuments, setEditDocuments] = useState([]);
-  const [editExternalLinks, setEditExternalLinks] = useState([]);
-  const [editKeyValues, setEditKeyValues] = useState([]);
-  const [editOnsitePresence, setEditOnsitePresence] = useState(isBugReportEffective ? false : (initialTask?.onsite_presence !== undefined ? initialTask.onsite_presence !== false : true));
-  const [editIsRecurring, setEditIsRecurring] = useState(false);
-  const [editRecurrenceInterval, setEditRecurrenceInterval] = useState(1);
-  const [editRecurrenceUnit, setEditRecurrenceUnit] = useState('semaines');
-  const [editAutoAssignByWorkload, setEditAutoAssignByWorkload] = useState(false);
-  const [savingEdit, setSavingEdit] = useState(false);
-
-  // Annotation 5 : Top 3 des membres recommandés calculés dynamiquement selon le domaine et l'équité
-  const [recommendations, setRecommendations] = useState([
-    { rank: 1, name: 'Joséphine Jamet', prenom: 'Joséphine', reason: `charge la plus basse dans ${editSubject || 'Rosings'}` },
-    { rank: 2, name: 'Hortense Jamet', prenom: 'Hortense', reason: 'charge basse' },
-    { rank: 3, name: 'Marguerite Jamet', prenom: 'Marguerite', reason: 'disponible pour ce domaine' },
-  ]);
-  const [loadingRecs, setLoadingRecs] = useState(false);
-
-  // Annotation 3 : Tous les 7 associés triés selon le calcul d'équité de charge
-  const sortedAssociatesByEquity = React.useMemo(() => {
-    const recList = Array.isArray(recommendations) ? recommendations : [];
-    const ordered = [];
-    const seen = new Set();
-
-    recList.forEach((rec, idx) => {
-      const recName = rec.name || rec.member_name || rec.prenom || '';
-      const match = ALL_MEMBERS.find((m) => m.toLowerCase().includes(recName.toLowerCase()) || recName.toLowerCase().includes(m.toLowerCase()));
-      const finalName = match || recName;
-      if (finalName && !seen.has(finalName)) {
-        seen.add(finalName);
-        ordered.push({
-          name: finalName,
-          rank: idx + 1,
-          reason: rec.reason || (idx === 0 ? "Charge la plus équitable" : "Disponible"),
-          score_usage: rec.score_usage,
-          ratio: rec.ratio,
-        });
-      }
-    });
-
-    ALL_MEMBERS.forEach((m) => {
-      if (!seen.has(m)) {
-        seen.add(m);
-        ordered.push({
-          name: m,
-          rank: ordered.length + 1,
-          reason: "",
-        });
-      }
-    });
-
-    return ordered;
-  }, [recommendations]);
-
-  // Annotation 3 : Multi-sélection des membres pour l'arbitrage / approbation de mission
-  const [selectedValidationMembers, setSelectedValidationMembers] = useState([]);
-
-  useEffect(() => {
-    if (!isOpen) return;
-    const taskMembers = Array.isArray(task?.assigned_members) && task.assigned_members.length > 0
-      ? task.assigned_members
-      : (task?.assignee ? [task.assignee] : []);
-    if (taskMembers.length > 0) {
-      setSelectedValidationMembers(taskMembers);
-    } else if (sortedAssociatesByEquity.length > 0) {
-      setSelectedValidationMembers([sortedAssociatesByEquity[0].name]);
-    }
-  }, [isOpen, task?.id, task?.assigned_members, task?.assignee, sortedAssociatesByEquity]);
-
-  const handleToggleValidationMember = (memberName) => {
+  function handleToggleValidationMember(memberName) {
     setSelectedValidationMembers((prev) => {
       if (prev.includes(memberName)) {
         return prev.filter((m) => m !== memberName);
@@ -411,70 +391,45 @@ export default function TaskDetailModal({
         return [...prev, memberName];
       }
     });
-  };
+  }
 
-  useEffect(() => {
-    if (!isOpen) return;
-    let isMounted = true;
-    const currentDomain = (mode === 'edit' ? editSubject : (task?.subject || task?.category)) || 'Rosings';
-    const currentComplexity = (mode === 'edit' ? editComplexity : task?.complexity) || 'Modérée';
+  function syncEditFields(t, isNew = false) {
+    if (!t) return;
+    setEditTitle(t.title || '');
+    setEditDescription(t.description || '');
+    setEditSubject(t.subject || 'Presbytère');
+    setEditComplexity(t.complexity || (isVoteInitiative ? 'Élevée' : 'Modérée'));
+    setEditMembers(isVoteInitiative ? [currentUserName || 'Henri Jamet'] : (Array.isArray(t.assigned_members) ? t.assigned_members : (t.assignee ? [t.assignee] : [])));
+    setEditChecklist(isNew ? [] : parseChecklistItems(t.checklist));
+    setEditDocuments(parseTaskDocuments(t.documents || t.completion_docs || t.document_urls));
+    setEditExternalLinks(Array.isArray(t.external_links) ? t.external_links : []);
+    setEditKeyValues(parseKeyValues(t.key_values || t.custom_fields));
+    setEditOnsitePresence(isBugReportEffective ? false : (t.onsite_presence !== undefined ? t.onsite_presence !== false : true));
+    setEditIsRecurring(Boolean(t.is_recurring));
+    setEditRecurrenceInterval(t.recurrence_interval || 1);
+    setEditRecurrenceUnit(t.recurrence_unit || 'semaines');
+    setEditAutoAssignByWorkload(Boolean(t.auto_assign_by_workload));
 
-    async function loadRecommendations() {
+    let parsedOptions = [];
+    if (Array.isArray(t.options)) {
+      parsedOptions = t.options;
+    } else if (typeof t.options === 'string' && t.options.trim()) {
       try {
-        setLoadingRecs(true);
-        const res = await fetchTaskRecommendations({
-          subject: currentDomain,
-          category: currentDomain,
-          complexity: currentComplexity,
-          taskId: task?.id,
-          limit: 7
-        });
-        if (isMounted && res && Array.isArray(res.recommendations) && res.recommendations.length > 0) {
-          setRecommendations(res.recommendations);
-        }
-      } catch (err) {
-        console.warn('Erreur chargement recommandations d\'équité:', err);
-      } finally {
-        if (isMounted) setLoadingRecs(false);
+        const parsed = JSON.parse(t.options);
+        if (Array.isArray(parsed)) parsedOptions = parsed;
+      } catch (_) {
+        parsedOptions = t.options.split(',').map((s) => s.trim()).filter(Boolean);
       }
     }
-    loadRecommendations();
-    return () => {
-      isMounted = false;
-    };
-  }, [isOpen, editSubject, editComplexity, task?.id, task?.subject, task?.category, task?.complexity, mode]);
+    if (parsedOptions.length === 0 && isVoteInitiative) {
+      parsedOptions = ['Approuver le projet', 'Rejeter le projet'];
+    }
+    setEditVoteOptions(parsedOptions);
+  }
 
-  // Catégories strictement fixes : Lieux fixes en premier puis SCI (Annotation 12 & 15)
-  const categoryOptions = React.useMemo(() => [
-    { value: 'Presbytère', label: '🏡 Presbytère' },
-    { value: 'Rosings', label: '🏠 Rosings' },
-    { value: 'Piscine', label: '🏊 Piscine' },
-    { value: 'Jardin & Espaces Verts', label: '🌳 Jardin & Espaces Verts' },
-    { value: 'Petites cabanes', label: '🛖 Petites cabanes' },
-    { value: 'Hangar à meuble', label: '📦 Hangar à meuble' },
-    { value: 'SCI & Administratif', label: '🏛️ SCI & Administratif' },
-  ], []);
-
-  // Document Upload & Drag-and-drop State (Universal Upload Modal)
-  const [isUploadDocModalOpen, setIsUploadDocModalOpen] = useState(false);
-  const [isSelectExistingDocModalOpen, setIsSelectExistingDocModalOpen] = useState(false);
-  const [droppedFileForUpload, setDroppedFileForUpload] = useState(null);
-  const [uploadingDoc, setUploadingDoc] = useState(false);
-  const [dragOver, setDragOver] = useState(false);
-
-  // Close Protocol Modal State
-  const [isClosingModalOpen, setIsClosingModalOpen] = useState(false);
-  const [closeNotes, setCloseNotes] = useState('');
-  const [closingSubmitting, setClosingSubmitting] = useState(false);
-
-  const fileUploadRef = useRef(null);
-  const fileUploadEditRef = useRef(null);
-  const validationSectionRef = useRef(null);
-
-  // Handler d'association de documents existants déjà uploadés (Annotation 6)
-  const handleAttachExistingDocs = async (attachedDocs) => {
+  async function handleAttachExistingDocs(attachedDocs) {
     if (!Array.isArray(attachedDocs) || attachedDocs.length === 0) return;
-    const newItems = attachedDocs.map((doc, idx) => ({
+    const newItems = attachedDocs.map((doc) => ({
       id: doc.id,
       name: doc.title || doc.name || doc.filename,
       title: doc.title || doc.name || doc.filename,
@@ -513,10 +468,9 @@ export default function TaskDetailModal({
         console.warn('Erreur post chat association documents:', chatErr);
       }
     }
-  };
+  }
 
-  // Handler universel d'upload de document conforme à l'onglet administratif (Annotation 10 & 11)
-  const handleUniversalUploadSuccess = async (newDoc) => {
+  async function handleUniversalUploadSuccess(newDoc) {
     const docItem = {
       id: newDoc.id,
       name: newDoc.title || newDoc.name,
@@ -530,17 +484,14 @@ export default function TaskDetailModal({
       uploaded_at: new Date().toISOString()
     };
 
-    // Mettre à jour editDocuments
     setEditDocuments((prev) => [...prev, docItem]);
 
-    // Mettre à jour l'objet task
     const currentTaskDocs = parseTaskDocuments(task?.documents || task?.completion_docs);
     const mergedTaskDocs = [...currentTaskDocs, docItem];
     setTask((prev) => ({ ...prev, documents: mergedTaskDocs }));
 
     if (onTaskUpdated) onTaskUpdated();
 
-    // Poster automatiquement dans le fil de discussion de la tâche (Annotation 10)
     if (task?.id) {
       try {
         const linkMsg = `📎 [${newDoc.title || newDoc.name} - ${newDoc.filename || newDoc.name}](${newDoc.file_url || newDoc.url})`;
@@ -552,22 +503,17 @@ export default function TaskDetailModal({
           author_name: currentSender,
           author_role: 'Associé'
         });
-        if (typeof loadComments === 'function') {
-          loadComments();
-        } else {
-          // Recharger les commentaires si loadComments a un autre nom
-          const updatedComments = await fetchTaskComments(task.id);
-          if (Array.isArray(updatedComments)) {
-            setComments(updatedComments);
-          }
+        const updatedComments = await fetchTaskComments(task.id);
+        if (Array.isArray(updatedComments)) {
+          setComments(updatedComments);
         }
       } catch (chatErr) {
         console.warn('Erreur post automatique dans le chat:', chatErr);
       }
     }
-  };
+  }
 
-  const handleUploadFiles = async (files) => {
+  async function handleUploadFiles(files) {
     if (!files || files.length === 0) return;
     try {
       setUploadingDoc(true);
@@ -587,16 +533,13 @@ export default function TaskDetailModal({
         };
       });
 
-      // Mettre à jour la liste des documents en édition
       const updatedEditDocs = [...editDocuments, ...newDocItems];
       setEditDocuments(updatedEditDocs);
 
-      // Mettre à jour l'objet tâche
       const currentTaskDocs = parseTaskDocuments(task?.documents || task?.completion_docs);
       const mergedTaskDocs = [...currentTaskDocs, ...newDocItems];
       setTask((prev) => ({ ...prev, documents: mergedTaskDocs }));
 
-      // Si la tâche existe déjà en base, persistance immédiate
       if (task?.id) {
         await updateTask(task.id, { documents: mergedTaskDocs });
         if (onTaskUpdated) onTaskUpdated();
@@ -609,9 +552,9 @@ export default function TaskDetailModal({
       if (fileUploadRef.current) fileUploadRef.current.value = '';
       if (fileUploadEditRef.current) fileUploadEditRef.current.value = '';
     }
-  };
+  }
 
-  const handleRemoveDocument = async (indexToRemove) => {
+  async function handleRemoveDocument(indexToRemove) {
     const currentDocs = mode === 'edit' ? editDocuments : parseTaskDocuments(task?.documents || task?.completion_docs);
     const updatedDocs = currentDocs.filter((_, idx) => idx !== indexToRemove);
 
@@ -627,54 +570,154 @@ export default function TaskDetailModal({
         alert('Erreur lors de la suppression du document.');
       }
     }
-  };
-
-  const currentUserName = typeof currentUser === 'object'
-    ? (currentUser?.name || currentUser?.prenom || '')
-    : (currentUser || '');
-  let resolvedUserName = currentUserName;
-  if (!resolvedUserName) {
-    try {
-      resolvedUserName = localStorage.getItem('sci_user') || '';
-    } catch (_) {}
   }
-  const isCoordinator = Boolean(
-    currentUser?.is_coordinator === true ||
-    currentUser?.is_coordinator === 'true' ||
-    currentUser?.is_coordinator === 1 ||
-    resolvedUserName.toLowerCase().includes('henri') ||
-    resolvedUserName.toLowerCase().includes('joséphine') ||
-    resolvedUserName.toLowerCase().includes('josephine')
-  );
 
-  // Annotation 18 : Vérification si l'utilisateur connecté est l'auteur ayant proposé la tâche
-  const taskCreator = String(task?.created_by || task?.submitted_by || task?.author || '').trim().toLowerCase();
-  const currentUserNameClean = resolvedUserName.trim().toLowerCase();
-  const currentUserFirstClean = (resolvedUserName.trim().split(' ')[0] || '').toLowerCase();
-  const isAuthor = Boolean(
-    taskCreator && (
-      taskCreator === currentUserNameClean ||
-      (currentUserFirstClean && (taskCreator.includes(currentUserFirstClean) || currentUserNameClean.includes(taskCreator))) ||
-      (task?.created_by_id && currentUser?.id && Number(task.created_by_id) === Number(currentUser.id))
-    )
-  );
-  const canDeleteTask = isCoordinator || isAuthor;
+  function formatFrenchCurrency(val) {
+    if (val === null || val === undefined || val === '') return '';
+    if (typeof val === 'number') {
+      return val.toLocaleString('fr-FR', { minimumFractionDigits: 2, maximumFractionDigits: 2 }) + ' €';
+    }
+    const str = String(val).trim();
+    const cleanStr = str.replace(/[€\sEUR]/gi, '').replace(',', '.');
+    const num = parseFloat(cleanStr);
+    if (!isNaN(num)) {
+      return num.toLocaleString('fr-FR', { minimumFractionDigits: 2, maximumFractionDigits: 2 }) + ' €';
+    }
+    return str;
+  }
 
-  const userMeta = resolveUserMeta(currentUser);
-  const currentUserId = currentUser?.id ?? userMeta?.id;
-  const isAssignedToCurrentUser = Boolean(
-    (currentUserId != null && (
-      Number(task?.assigned_to) === Number(currentUserId) ||
-      Number(task?.assigned_to_id) === Number(currentUserId) ||
-      Number(task?.assigned_member_id) === Number(currentUserId) ||
-      Number(task?.assignee_id) === Number(currentUserId)
-    )) ||
-    isTaskAssignedToUser(task, currentUser)
-  );
-  const isPendingValidation = isTaskPendingValidation(task);
-  const isProposed = isTaskProposed(task);
-  const isOpenTask = isTaskOpen(task);
+  function formatFrenchDate(val) {
+    if (!val) return '';
+    const str = String(val).trim();
+    if (/^\d{4}-\d{2}-\d{2}/.test(str)) {
+      const [year, month, day] = str.slice(0, 10).split('-');
+      return `${day}/${month}/${year}`;
+    }
+    return str;
+  }
 
+  // --- USEMEMOS ---
+  const sortedAssociatesByEquity = React.useMemo(() => {
+    const recList = Array.isArray(recommendations) ? recommendations : [];
+    const ordered = [];
+    const seen = new Set();
+
+    recList.forEach((rec, idx) => {
+      const recName = rec.name || rec.member_name || rec.prenom || '';
+      const match = ALL_MEMBERS.find((m) => m.toLowerCase().includes(recName.toLowerCase()) || recName.toLowerCase().includes(m.toLowerCase()));
+      const finalName = match || recName;
+      if (finalName && !seen.has(finalName)) {
+        seen.add(finalName);
+        ordered.push({
+          name: finalName,
+          rank: idx + 1,
+          reason: rec.reason || (idx === 0 ? "Charge la plus équitable" : "Disponible"),
+          score_usage: rec.score_usage,
+          ratio: rec.ratio,
+        });
+      }
+    });
+
+    ALL_MEMBERS.forEach((m) => {
+      if (!seen.has(m)) {
+        seen.add(m);
+        ordered.push({
+          name: m,
+          rank: ordered.length + 1,
+          reason: "",
+        });
+      }
+    });
+
+    return ordered;
+  }, [recommendations]);
+
+  const categoryOptions = React.useMemo(() => [
+    { value: 'Presbytère', label: '🏡 Presbytère' },
+    { value: 'Rosings', label: '🏠 Rosings' },
+    { value: 'Piscine', label: '🏊 Piscine' },
+    { value: 'Jardin & Espaces Verts', label: '🌳 Jardin & Espaces Verts' },
+    { value: 'Petites cabanes', label: '🛖 Petites cabanes' },
+    { value: 'Hangar à meuble', label: '📦 Hangar à meuble' },
+    { value: 'SCI & Administratif', label: '🏛️ SCI & Administratif' },
+  ], []);
+
+  // --- USEEFFECTS ---
+  useEffect(() => {
+    isSavedRef.current = false;
+    isDeletedRef.current = false;
+    tempDocIdsRef.current = Array.isArray(tempUploadedDocIds) && tempUploadedDocIds.length > 0
+      ? tempUploadedDocIds
+      : (initialTask?.tempUploadedDocIds || []);
+  }, [isOpen, tempUploadedDocIds, initialTask]);
+
+  useEffect(() => {
+    if (!isOpen) return;
+    const originalOverflow = document.body.style.overflow;
+    document.body.style.overflow = 'hidden';
+
+    const handleKeyDown = (e) => {
+      if (e.key === 'Escape') {
+        handleSafeClose();
+      }
+    };
+    window.addEventListener('keydown', handleKeyDown);
+    return () => {
+      document.body.style.overflow = originalOverflow || 'unset';
+      window.removeEventListener('keydown', handleKeyDown);
+    };
+  }, [isOpen]);
+
+  useEffect(() => {
+    if (mode === 'edit' && descriptionTextareaRef.current) {
+      adjustDescriptionHeight(descriptionTextareaRef.current);
+    }
+  }, [mode, editDescription]);
+
+  useEffect(() => {
+    if (!isOpen) return;
+    const taskMembers = Array.isArray(task?.assigned_members) && task.assigned_members.length > 0
+      ? task.assigned_members
+      : (task?.assignee ? [task.assignee] : []);
+    if (taskMembers.length > 0) {
+      setSelectedValidationMembers(taskMembers);
+    } else if (sortedAssociatesByEquity.length > 0) {
+      setSelectedValidationMembers([sortedAssociatesByEquity[0].name]);
+    }
+  }, [isOpen, task?.id, task?.assigned_members, task?.assignee, sortedAssociatesByEquity]);
+
+  useEffect(() => {
+    if (!isOpen) return;
+    let isMounted = true;
+    const currentDomain = (mode === 'edit' ? editSubject : (task?.subject || task?.category)) || 'Rosings';
+    const currentComplexity = (mode === 'edit' ? editComplexity : task?.complexity) || 'Modérée';
+
+    async function loadRecommendations() {
+      try {
+        setLoadingRecs(true);
+        const res = await fetchTaskRecommendations({
+          subject: currentDomain,
+          category: currentDomain,
+          complexity: currentComplexity,
+          taskId: task?.id,
+          limit: 7
+        });
+        if (isMounted && res && Array.isArray(res.recommendations) && res.recommendations.length > 0) {
+          setRecommendations(res.recommendations);
+        }
+      } catch (err) {
+        console.warn('Erreur chargement recommandations d\'équité:', err);
+      } finally {
+        if (isMounted) setLoadingRecs(false);
+      }
+    }
+    loadRecommendations();
+    return () => {
+      isMounted = false;
+    };
+  }, [isOpen, editSubject, editComplexity, task?.id, task?.subject, task?.category, task?.complexity, mode]);
+
+  // --- DÉRIVATIONS EXPENSES & JUSTIFICATIFS ---
   const keyValuesList = parseKeyValues(task?.key_values);
   const expenseIdKv = keyValuesList.find((kv) =>
     ['expense_id', 'expenseid', 'id_expense', 'depense_id', 'id_depense'].includes((kv.key || '').toLowerCase())
@@ -694,38 +737,11 @@ export default function TaskDetailModal({
 
   const expenseId = task?.expense_id || task?.expenseId || (expenseIdKv ? parseInt(expenseIdKv.value, 10) : null);
 
-  // Formatage monétaire français strict (ex: 45,50 €)
-  const formatFrenchCurrency = (val) => {
-    if (val === null || val === undefined || val === '') return '';
-    if (typeof val === 'number') {
-      return val.toLocaleString('fr-FR', { minimumFractionDigits: 2, maximumFractionDigits: 2 }) + ' €';
-    }
-    const str = String(val).trim();
-    const cleanStr = str.replace(/[€\sEUR]/gi, '').replace(',', '.');
-    const num = parseFloat(cleanStr);
-    if (!isNaN(num)) {
-      return num.toLocaleString('fr-FR', { minimumFractionDigits: 2, maximumFractionDigits: 2 }) + ' €';
-    }
-    return str;
-  };
-
   const titleAmountMatch = task?.title ? task.title.match(/\((\d+[.,]?\d*)\s*€\)/) : null;
   const descAmountMatch = task?.description ? task.description.match(/Montant avancé\s*:\s*(\d+[.,]?\d*)/i) : null;
   const rawAmount = expenseAmountKv?.value ?? (titleAmountMatch ? titleAmountMatch[1] : null) ?? (descAmountMatch ? descAmountMatch[1] : null) ?? (task?.budget && task.budget > 0 ? task.budget : null);
   const expenseAmount = formatFrenchCurrency(rawAmount);
 
-  // Formatage de date français strict (ex: 04/10/2026)
-  const formatFrenchDate = (val) => {
-    if (!val) return '';
-    const str = String(val).trim();
-    if (/^\d{4}-\d{2}-\d{2}/.test(str)) {
-      const [year, month, day] = str.slice(0, 10).split('-');
-      return `${day}/${month}/${year}`;
-    }
-    return str;
-  };
-
-  // Résolution stricte du nom du demandeur (zéro ID numérique brut comme '1')
   const titleMemberMatch = task?.title ? task.title.match(/Validation avance(?: de frais)?\s*:\s*([A-Za-zÀ-ÿ]+)/i) : null;
   const rawMember = expenseMemberKv?.value || (titleMemberMatch ? titleMemberMatch[1] : null) || task?.created_by;
   const expenseMemberName = resolveMemberDisplayName(rawMember) || 'Henri Jamet';
@@ -735,7 +751,6 @@ export default function TaskDetailModal({
   const expenseMotif = expenseMotifKv ? expenseMotifKv.value : null;
   const isExpenseValidationTask = Boolean(expenseId);
 
-  // Pièces jointes / Justificatifs de l'avance
   const allAttachedDocs = parseTaskDocuments(task?.documents || task?.completion_docs || task?.document_urls);
   const docUrlKv = keyValuesList.find((kv) =>
     ['document_url', 'file_url', 'justificatif_url', 'justificatif', 'url'].includes((kv.key || '').toLowerCase())
@@ -751,6 +766,7 @@ export default function TaskDetailModal({
   }
   const expenseDocs = allAttachedDocs;
 
+  // --- CHARGEMENT DES DONNÉES DE LA TÂCHE ---
   useEffect(() => {
     if (!isOpen) return;
     setIsMobileChatOpen(false);
@@ -810,40 +826,6 @@ export default function TaskDetailModal({
       isMounted = false;
     };
   }, [isOpen, initialTask, initialMode, isEditing, isVoteInitiative, isBugReportEffective]);
-
-  const syncEditFields = (t, isNew = false) => {
-    if (!t) return;
-    setEditTitle(t.title || '');
-    setEditDescription(t.description || '');
-    setEditSubject(t.subject || 'Presbytère');
-    setEditComplexity(t.complexity || (isVoteInitiative ? 'Élevée' : 'Modérée'));
-    setEditMembers(isVoteInitiative ? [currentUserName || 'Henri Jamet'] : (Array.isArray(t.assigned_members) ? t.assigned_members : (t.assignee ? [t.assignee] : [])));
-    setEditChecklist(isNew ? [] : parseChecklistItems(t.checklist));
-    setEditDocuments(parseTaskDocuments(t.documents || t.completion_docs || t.document_urls));
-    setEditExternalLinks(Array.isArray(t.external_links) ? t.external_links : []);
-    setEditKeyValues(parseKeyValues(t.key_values || t.custom_fields));
-    setEditOnsitePresence(isBugReportEffective ? false : (t.onsite_presence !== undefined ? t.onsite_presence !== false : true));
-    setEditIsRecurring(Boolean(t.is_recurring));
-    setEditRecurrenceInterval(t.recurrence_interval || 1);
-    setEditRecurrenceUnit(t.recurrence_unit || 'semaines');
-    setEditAutoAssignByWorkload(Boolean(t.auto_assign_by_workload));
-
-    let parsedOptions = [];
-    if (Array.isArray(t.options)) {
-      parsedOptions = t.options;
-    } else if (typeof t.options === 'string' && t.options.trim()) {
-      try {
-        const parsed = JSON.parse(t.options);
-        if (Array.isArray(parsed)) parsedOptions = parsed;
-      } catch (_) {
-        parsedOptions = t.options.split(',').map((s) => s.trim()).filter(Boolean);
-      }
-    }
-    if (parsedOptions.length === 0 && isVoteInitiative) {
-      parsedOptions = ['Approuver le projet', 'Rejeter le projet'];
-    }
-    setEditVoteOptions(parsedOptions);
-  };
 
   if (!isOpen || !task) return null;
 
