@@ -8760,45 +8760,63 @@ def download_call_for_funds_pdf(
         if call_obj and call_obj.member_id != current_user.id:
             raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Accès interdit au document d'un autre membre.")
 
-    file_path = os.path.join(CFF_DOCUMENTS_DIR, safe_name)
-    if not os.path.exists(file_path):
-        call_obj = db.query(CallForFunds).filter(CallForFunds.pdf_filename == safe_name).first()
-        if call_obj:
-            from .services.call_for_funds_service import generate_call_for_funds_pdf_bytes, get_swan_active_iban
-            member = db.query(Member).filter(Member.id == call_obj.member_id).first()
-            if member:
-                bank_info, is_pending = get_swan_active_iban(db)
-                calc = {
-                    "reference": call_obj.reference,
-                    "period_label": call_obj.period_label,
-                    "theoretical_contribution": call_obj.theoretical_contribution,
-                    "approved_expenses_total": call_obj.approved_expenses_total,
-                    "balance_before": call_obj.balance_before or 0.0,
-                    "net_amount": call_obj.net_amount,
-                    "payment_reference": call_obj.payment_reference,
-                    "deducted_expenses": []
-                }
-                if call_obj.details_json:
+    file_path = os.path.join(CFF_DOCUMENTS_DIR, safe_name) if CFF_DOCUMENTS_DIR else None
+    if file_path and os.path.exists(file_path):
+        return FileResponse(
+            path=file_path,
+            media_type="application/pdf",
+            filename=safe_name
+        )
+
+    # Régénération dynamique à la volée du PDF avec QR Code SEPA EPC (compatible Vercel Serverless)
+    call_obj = db.query(CallForFunds).filter(CallForFunds.pdf_filename == safe_name).first()
+    if not call_obj:
+        for c in db.query(CallForFunds).all():
+            if c.pdf_filename == safe_name or safe_name.endswith(f"{c.id}.pdf"):
+                call_obj = c
+                break
+
+    if call_obj:
+        from .services.call_for_funds_service import generate_call_for_funds_pdf, get_official_bank_info, is_bank_account_active
+        member = db.query(Member).filter(Member.id == call_obj.member_id).first()
+        if member:
+            bank_info = get_official_bank_info(db)
+            is_pending = not is_bank_account_active(db)
+            calc = {
+                "reference": call_obj.reference,
+                "period_label": call_obj.period_label,
+                "theoretical_contribution": call_obj.theoretical_contribution,
+                "approved_expenses_total": call_obj.approved_expenses_total,
+                "balance_before": call_obj.balance_before or 0.0,
+                "net_amount": call_obj.net_amount,
+                "payment_reference": call_obj.payment_reference,
+                "deducted_expenses": [],
+                "year": call_obj.year,
+                "month": call_obj.month
+            }
+            if call_obj.details_json:
+                try:
+                    d = json.loads(call_obj.details_json)
+                    if isinstance(d, dict):
+                        calc["deducted_expenses"] = d.get("deducted_expenses", [])
+                except Exception:
+                    pass
+            pdf_bytes = generate_call_for_funds_pdf(calc, member, bank_info, is_pending)
+            if pdf_bytes:
+                if file_path:
                     try:
-                        d = json.loads(call_obj.details_json)
-                        if isinstance(d, dict):
-                            calc["deducted_expenses"] = d.get("deducted_expenses", [])
-                    except Exception:
+                        os.makedirs(os.path.dirname(file_path), exist_ok=True)
+                        with open(file_path, "wb") as f:
+                            f.write(pdf_bytes)
+                    except OSError:
                         pass
-                pdf_bytes = generate_call_for_funds_pdf_bytes(calc, member, bank_info, is_pending)
-                if pdf_bytes:
-                    os.makedirs(CFF_DOCUMENTS_DIR, exist_ok=True)
-                    with open(file_path, "wb") as f:
-                        f.write(pdf_bytes)
+                return Response(
+                    content=pdf_bytes,
+                    media_type="application/pdf",
+                    headers={"Content-Disposition": f'inline; filename="{safe_name}"'}
+                )
 
-    if not os.path.exists(file_path):
-        raise HTTPException(status_code=404, detail=f"Document PDF '{safe_name}' introuvable.")
-
-    return FileResponse(
-        path=file_path,
-        media_type="application/pdf",
-        filename=safe_name
-    )
+    raise HTTPException(status_code=404, detail=f"Document PDF '{safe_name}' introuvable.")
 
 
 # --- Dépenses Avancées par les Membres ---
