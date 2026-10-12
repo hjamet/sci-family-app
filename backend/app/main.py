@@ -8117,8 +8117,30 @@ def update_pool_settings(
 
 # --- Open Banking DSP2 (Enable Banking & Swan France) Endpoints ---
 
+def extract_psu_headers_from_request(request: Request) -> Dict[str, str]:
+    """Extrait l'adresse IP et le User-Agent client pour l'injection des headers PSU DSP2."""
+    client_ip = request.headers.get("x-forwarded-for") or (request.client.host if request.client else None)
+    if client_ip and "," in client_ip:
+        client_ip = client_ip.split(",")[0].strip()
+
+    # Si l'IP est locale/loopback (127.0.0.1, ::1), utiliser cf-connecting-ip ou une IP publique valide
+    if not client_ip or client_ip in ("127.0.0.1", "::1", "localhost", "testclient"):
+        cf_ip = request.headers.get("cf-connecting-ip") or request.headers.get("x-real-ip")
+        if cf_ip:
+            client_ip = cf_ip.strip()
+        else:
+            client_ip = os.getenv("ENABLE_BANKING_PSU_IP", "82.66.120.1")
+
+    user_agent = request.headers.get("user-agent") or "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36"
+    return {
+        "Psu-Ip-Address": client_ip,
+        "Psu-User-Agent": user_agent
+    }
+
+
 @app.get("/api/banking/status", response_model=BankStatusResponse, tags=["Banking"])
 def get_banking_status(
+    request: Request,
     refresh: bool = Query(False),
     force_refresh: bool = Query(False),
     db: Session = Depends(get_db)
@@ -8129,8 +8151,13 @@ def get_banking_status(
     et expose fidèlement l'erreur brute, le code d'erreur et les détails pour diagnostic.
     """
     is_refresh = refresh or force_refresh
+    psu_headers = extract_psu_headers_from_request(request) if force_refresh else None
     try:
-        status_data = enable_banking_service.check_connection_status(db=db, force_refresh=is_refresh)
+        status_data = enable_banking_service.check_connection_status(
+            db=db,
+            force_refresh=is_refresh,
+            psu_headers=psu_headers
+        )
     except Exception as e:
         logger.error(f"Erreur inattendue check_connection_status : {e}", exc_info=True)
         status_data = {
@@ -8325,10 +8352,14 @@ def get_banking_transactions(
 
 
 @app.post("/api/banking/sync", response_model=BankSyncResponse, tags=["Banking"])
-def trigger_banking_sync(db: Session = Depends(get_db)):
+def trigger_banking_sync(
+    request: Request,
+    db: Session = Depends(get_db)
+):
     """Déclenche la synchronisation manuelle en direct des comptes et transactions bancaires."""
+    psu_headers = extract_psu_headers_from_request(request)
     try:
-        result = enable_banking_service.sync_database(db=db)
+        result = enable_banking_service.sync_database(db=db, psu_headers=psu_headers)
         enable_banking_service.clear_status_cache()
         return BankSyncResponse(
             success=result.get("success", True),

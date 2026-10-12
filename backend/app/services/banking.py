@@ -10,6 +10,7 @@ from typing import Optional, Dict, Any, List
 from pathlib import Path
 import urllib.request
 import urllib.error
+import urllib.parse
 import threading
 
 from dotenv import load_dotenv
@@ -313,12 +314,19 @@ class EnableBankingService:
         method: str,
         endpoint: str,
         data: Optional[Dict[str, Any]] = None,
+        params: Optional[Dict[str, Any]] = None,
         timeout: Optional[float] = None,
         retries: int = 1,
-        backoff_seconds: float = 2.0
+        backoff_seconds: float = 1.0,
+        psu_headers: Optional[Dict[str, str]] = None
     ) -> Dict[str, Any]:
         """Exécute une requête HTTP authentifiée vers l'API Enable Banking avec retry et timeout sécurisé."""
         token = self.get_jwt_token()
+        if params:
+            encoded_params = urllib.parse.urlencode({k: v for k, v in params.items() if v is not None})
+            sep = "&" if "?" in endpoint else "?"
+            endpoint = f"{endpoint}{sep}{encoded_params}"
+
         url = f"{self.base_url.rstrip('/')}/{endpoint.lstrip('/')}"
         headers = {
             "Authorization": f"Bearer {token}",
@@ -326,6 +334,8 @@ class EnableBankingService:
             "Accept": "application/json",
             "User-Agent": "SCI-Hellenvilliers/2.0"
         }
+        if psu_headers:
+            headers.update({k: str(v).strip() for k, v in psu_headers.items() if v is not None and str(v).strip()})
 
         # Timeout par défaut à 8.0 secondes (conforme aux exigences serverless Vercel)
         req_timeout = timeout if timeout is not None else float(os.getenv("ENABLE_BANKING_TIMEOUT", "8.0"))
@@ -491,7 +501,12 @@ class EnableBankingService:
             logger.debug(f"Détails compte non disponibles via API pour {acc_str} : {e}")
             return {}
 
-    def get_account_balances(self, account_id: Any, raise_errors: bool = False) -> List[Dict[str, Any]]:
+    def get_account_balances(
+        self,
+        account_id: Any,
+        raise_errors: bool = False,
+        psu_headers: Optional[Dict[str, str]] = None
+    ) -> List[Dict[str, Any]]:
         """Récupère les soldes d'un compte bancaire."""
         acc_str = self._extract_account_id_str(account_id)
         if not acc_str:
@@ -500,7 +515,7 @@ class EnableBankingService:
                 raise ValueError(f"Identifiant de compte invalide pour solde : {account_id}")
             return []
         try:
-            data = self._api_request("GET", f"/accounts/{acc_str}/balances")
+            data = self._api_request("GET", f"/accounts/{acc_str}/balances", psu_headers=psu_headers)
             if isinstance(data, dict):
                 balances = data.get("balances", [])
                 return balances if isinstance(balances, list) else []
@@ -517,12 +532,16 @@ class EnableBankingService:
         self,
         account_id: Any,
         date_from: Optional[str] = None,
-        date_to: Optional[str] = None
+        date_to: Optional[str] = None,
+        psu_headers: Optional[Dict[str, str]] = None,
+        raise_errors: bool = True
     ) -> List[Dict[str, Any]]:
         """Récupère les transactions d'un compte bancaire."""
         acc_str = self._extract_account_id_str(account_id)
         if not acc_str:
             logger.warning(f"Identifiant de compte invalide pour transactions : {account_id}")
+            if raise_errors:
+                raise ValueError(f"Identifiant de compte invalide pour transactions : {account_id}")
             return []
         endpoint = f"/accounts/{acc_str}/transactions"
         params = []
@@ -534,7 +553,7 @@ class EnableBankingService:
             endpoint += "?" + "&".join(params)
 
         try:
-            data = self._api_request("GET", endpoint)
+            data = self._api_request("GET", endpoint, psu_headers=psu_headers)
             if isinstance(data, dict):
                 txs = data.get("transactions", [])
                 return txs if isinstance(txs, list) else []
@@ -543,6 +562,8 @@ class EnableBankingService:
             return []
         except Exception as e:
             logger.warning(f"Erreur API transactions pour compte {acc_str} : {e}")
+            if raise_errors:
+                raise
             return []
 
     def categorize_transaction(self, label: str, amount: float) -> str:
@@ -571,7 +592,12 @@ class EnableBankingService:
         else:
             return "Dépense Courante Domaine"
 
-    def sync_database(self, db: Session, session_id: Optional[str] = None) -> Dict[str, Any]:
+    def sync_database(
+        self,
+        db: Session,
+        session_id: Optional[str] = None,
+        psu_headers: Optional[Dict[str, str]] = None
+    ) -> Dict[str, Any]:
         """Synchronise les soldes et transactions depuis Enable Banking vers la base SQLite.
         
         Supporte de façon robuste :
@@ -589,6 +615,7 @@ class EnableBankingService:
 
         synced_accounts_count = 0
         synced_transactions_count = 0
+        tx_errors = []
 
         # Récupération via l'API Enable Banking
         try:
@@ -615,6 +642,16 @@ class EnableBankingService:
                             accounts_data.extend(cached_accs)
                     except Exception:
                         pass
+
+        if not accounts_data:
+            existing_db_accounts = db.query(BankAccount).all()
+            if existing_db_accounts:
+                for db_acc in existing_db_accounts:
+                    if db_acc.account_id and db_acc.account_id not in accounts_data:
+                        accounts_data.append(db_acc.account_id)
+            elif not active_sessions:
+                # Compte principal officiel Swan SCI Hellenvilliers
+                accounts_data.append("930a1be0-0796-460a-99cd-c7694e51cc81")
 
         # Traitement défensif universel de chaque compte
         seen_account_ids = set()
@@ -682,7 +719,7 @@ class EnableBankingService:
             balance_val = 0.0
             balance_type = "interimAvailable"
             try:
-                balances = self.get_account_balances(acc_id)
+                balances = self.get_account_balances(acc_id, psu_headers=psu_headers)
                 if balances and isinstance(balances, list):
                     bal_obj = balances[0]
                     if isinstance(bal_obj, dict):
@@ -744,7 +781,12 @@ class EnableBankingService:
             # Récupération des transactions (bornée strictement aux 30 derniers jours selon la directive formelle d'Henri)
             try:
                 date_from = (datetime.utcnow() - timedelta(days=30)).strftime("%Y-%m-%d")
-                tx_list = self.get_account_transactions(acc_id, date_from=date_from)
+                tx_list = self.get_account_transactions(
+                    acc_id,
+                    date_from=date_from,
+                    psu_headers=psu_headers,
+                    raise_errors=True
+                )
                 if isinstance(tx_list, list):
                     for tx in tx_list:
                         if not isinstance(tx, dict):
@@ -822,15 +864,49 @@ class EnableBankingService:
                         synced_transactions_count += 1
 
             except Exception as e:
-                logger.warning(f"Erreur récupération transactions pour compte {acc_id} : {e}")
+                logger.error(f"Erreur récupération transactions pour compte {acc_id} : {e}")
+                tx_errors.append(e)
 
         db.commit()
-        return {
+
+        # Analyse des erreurs survenues lors de la récupération des transactions (Fail-Fast)
+        tx_error_msg = None
+        is_rate_limit = False
+        if tx_errors:
+            last_err = tx_errors[-1]
+            tx_error_msg = str(last_err)
+            is_rate_limit = getattr(last_err, "is_rate_limit", False) or (getattr(last_err, "status_code", None) == 429)
+
+            # Si toutes les tentatives ont échoué et aucune transaction n'a été récupérée, propager l'erreur
+            if seen_account_ids and len(tx_errors) >= len(seen_account_ids) and synced_transactions_count == 0:
+                if isinstance(last_err, EnableBankingAPIError):
+                    raise last_err
+                raise RuntimeError(f"Échec de la récupération des transactions bancaires : {last_err}") from last_err
+
+        # Déclenchement automatique du lettrage post-synchronisation
+        reconcil_res = {}
+        try:
+            from .reconciliation_service import ReconciliationService
+            reconcil_res = ReconciliationService.run_reconciliation(db)
+            logger.info(
+                f"Lettrage automatique post-synchronisation exécuté : "
+                f"{reconcil_res.get('reconciled_count', 0)} transaction(s) lettrée(s), "
+                f"{reconcil_res.get('unmatched_count', 0)} non appariée(s)"
+            )
+        except Exception as e:
+            logger.error(f"Erreur lors du lettrage automatique post-synchronisation : {e}", exc_info=True)
+
+        result = {
             "success": True,
             "accounts_synced": synced_accounts_count,
             "transactions_synced": synced_transactions_count,
-            "timestamp": datetime.utcnow().isoformat()
+            "timestamp": datetime.utcnow().isoformat(),
+            "reconciliation": reconcil_res
         }
+        if tx_error_msg:
+            result["error"] = tx_error_msg
+            result["is_rate_limit"] = is_rate_limit
+        return result
 
     def create_auth_session(
         self,
@@ -876,7 +952,12 @@ class EnableBankingService:
             logger.error(f"Impossible d'initialiser l'URL de ré-authentification Enable Banking : {e}")
             return {"url": None, "session_id": None}
 
-    def check_connection_status(self, db: Session, force_refresh: bool = False) -> Dict[str, Any]:
+    def check_connection_status(
+        self,
+        db: Session,
+        force_refresh: bool = False,
+        psu_headers: Optional[Dict[str, str]] = None
+    ) -> Dict[str, Any]:
         """Vérifie de manière réactive l'état réel de la liaison bancaire Swan via Enable Banking.
         
         RÈGLE D'OR DE DÉTECTION (Consigne stricte Henri) :
@@ -1102,7 +1183,7 @@ class EnableBankingService:
         if candidate_accounts:
             for acc_id in candidate_accounts:
                 try:
-                    self.get_account_balances(acc_id, raise_errors=True)
+                    self.get_account_balances(acc_id, raise_errors=True, psu_headers=psu_headers)
                     is_query_successful = True
                     break
                 except Exception as e:
