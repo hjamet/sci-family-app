@@ -156,6 +156,19 @@ export default function AdminInfoPage({ currentUser }) {
     });
   }, [invoices, currentUserName, currentUser, isHenriUser]);
 
+  // ANNOTATION 2 : Filtrer STRICTEMENT les factures et notes de frais déposées manuellement par les membres
+  // Retirer impérativement les appels de fonds et les paiements bancaires
+  const manualMemberExpenses = useMemo(() => {
+    return invoices.filter((inv) => {
+      if (inv.isCallForFunds) return false;
+      if (inv.id && String(inv.id).startsWith('cff-')) return false;
+      if (inv.supplier && inv.supplier.includes('Appel de fonds')) return false;
+      if (inv.reference && String(inv.reference).startsWith('AF-')) return false;
+      if (inv.taxInfo && inv.taxInfo.includes('QR code SEPA')) return false;
+      return Boolean(inv.rawExpense || (!inv.isCallForFunds && inv.payerType));
+    });
+  }, [invoices]);
+
   // Modals Visibility
   const [isUploadModalOpen, setIsUploadModalOpen] = useState(false);
   const [uploadModalMode, setUploadModalMode] = useState('document'); // 'document' | 'invoice'
@@ -277,10 +290,11 @@ export default function AdminInfoPage({ currentUser }) {
       const formattedCalls = Array.isArray(callsList) ? callsList.map((call) => {
         const isPaid = call.status === 'REGLE' || call.status === 'COUVERT';
         const pdfFilename = call.pdf_filename || `SCI ${String(call.month).padStart(2, '0')}${call.year} Avis Appel de Fonds ${call.member_name ? call.member_name.split(' ')[0] : 'Membre'}.pdf`;
-        const pdfUrl = `/api/finances/calls-for-funds/download/${encodeURIComponent(pdfFilename)}`;
+        const pdfUrl = `/api/calls-for-funds/${call.id}/pdf`;
 
         return {
           id: `cff-${call.id}`,
+          callId: call.id,
           date: `01/${String(call.month).padStart(2, '0')}/${call.year}`,
           dueDate: `Échéance ${call.period_label || 'Appel de fonds'}`,
           dueWarning: !isPaid && Number(call.net_amount !== undefined ? call.net_amount : (call.amount_due || 0)) > 0,
@@ -434,10 +448,19 @@ export default function AdminInfoPage({ currentUser }) {
       };
     } else if (doc) {
       const isCall = doc.isCallForFunds || (doc.filename && doc.filename.startsWith('SCI ') && doc.filename.includes('Avis Appel de Fonds'));
+      const callId = doc.callId || doc.rawCall?.id;
+      let url = doc.file_url || doc.url || doc.document_url || '';
+      if (isCall && callId) {
+        url = `/api/calls-for-funds/${callId}/pdf`;
+      } else if (isCall && doc.filename) {
+        url = `/api/finances/calls-for-funds/download/${encodeURIComponent(doc.filename)}`;
+      } else if (doc.id && !isCall) {
+        url = `/api/documents/${doc.id}/download`;
+      }
       resolved = {
         ...doc,
         filename: doc.filename || doc.file_name || doc.name || doc.title || 'document.pdf',
-        file_url: doc.file_url || doc.url || doc.document_url || (isCall && doc.filename ? `/api/finances/calls-for-funds/download/${encodeURIComponent(doc.filename)}` : (doc.id ? `/api/documents/${doc.id}/download` : ''))
+        file_url: url
       };
     }
     if (resolved) {
@@ -457,7 +480,16 @@ export default function AdminInfoPage({ currentUser }) {
     } else if (doc) {
       targetName = doc.filename || doc.file_name || doc.name || doc.title || 'document.pdf';
       const isCall = doc.isCallForFunds || (targetName.startsWith('SCI ') && targetName.includes('Avis Appel de Fonds'));
-      targetUrl = doc.file_url || doc.url || doc.document_url || (isCall && targetName ? `/api/finances/calls-for-funds/download/${encodeURIComponent(targetName)}` : (doc.id ? `/api/documents/${doc.id}/download` : ''));
+      const callId = doc.callId || doc.rawCall?.id;
+      if (isCall && callId) {
+        targetUrl = `/api/calls-for-funds/${callId}/pdf`;
+      } else if (isCall && targetName) {
+        targetUrl = `/api/finances/calls-for-funds/download/${encodeURIComponent(targetName)}`;
+      } else if (doc.file_url || doc.url || doc.document_url) {
+        targetUrl = doc.file_url || doc.url || doc.document_url;
+      } else if (doc.id) {
+        targetUrl = `/api/documents/${doc.id}/download`;
+      }
     }
 
     if (targetUrl) {
@@ -846,13 +878,19 @@ export default function AdminInfoPage({ currentUser }) {
 
     return documents
       .filter((doc) => {
+        // ANNOTATION 1 : Exclure formellement tout appel de fonds pour ne pas polluer les documents administratifs généraux
+        const docTitleRaw = doc.title || doc.name || doc.filename || doc.file_name || '';
+        if (doc.isCallForFunds || doc.source_type === 'CALL_FOR_FUNDS' || (docTitleRaw.startsWith('SCI ') && docTitleRaw.includes('Avis Appel de Fonds'))) {
+          return false;
+        }
+
         const docTags = parseDocumentTags(doc);
         const matchesCategory =
           selectedCategory === 'all' ||
           docTags.includes(selectedCategory) ||
           doc.category === selectedCategory;
 
-        const docTitle = (doc.title || doc.name || doc.filename || '').toLowerCase();
+        const docTitle = docTitleRaw.toLowerCase();
         const docAuthor = (doc.uploaded_by || doc.author || '').toLowerCase();
         const docOrg = (doc.notes || '').toLowerCase();
         const docTagsStr = docTags.join(' ').toLowerCase();
@@ -1167,7 +1205,7 @@ export default function AdminInfoPage({ currentUser }) {
                         onClick={(e) => {
                           e.preventDefault();
                           e.stopPropagation();
-                          handleViewDocument(inv.filename);
+                          handleViewDocument(inv);
                         }}
                         className="btn-download inline-flex items-center gap-1.5 px-2.5 py-1 rounded bg-surface-container-low text-forest-deep hover:bg-sage-soft border border-border-subtle transition-all text-xs font-semibold cursor-pointer"
                         title="Consulter le justificatif dans la visionneuse"
@@ -1183,7 +1221,7 @@ export default function AdminInfoPage({ currentUser }) {
                           onClick={(e) => {
                             e.preventDefault();
                             e.stopPropagation();
-                            handleViewDocument(inv.filename);
+                            handleViewDocument(inv);
                           }}
                           className="btn-view px-2.5 h-8 rounded-DEFAULT bg-surface-container-lowest border border-primary text-primary hover:bg-sage-soft transition-all text-xs font-semibold inline-flex items-center gap-1 cursor-pointer"
                           title="Consulter dans la visionneuse"
@@ -1193,7 +1231,7 @@ export default function AdminInfoPage({ currentUser }) {
                         </button>
                         <button
                           type="button"
-                          onClick={() => handleDownload(inv.filename)}
+                          onClick={() => handleDownload(inv)}
                           className="btn-download px-2.5 h-8 rounded-DEFAULT bg-surface-container-lowest border border-border-subtle text-on-surface-variant hover:text-primary hover:border-primary transition-all text-xs font-semibold inline-flex items-center gap-1 cursor-pointer"
                           title="Télécharger une copie du fichier"
                         >
@@ -1429,15 +1467,15 @@ export default function AdminInfoPage({ currentUser }) {
               <span>+ Déposer une facture</span>
             </button>
             <span className="text-xs font-semibold text-on-surface-variant bg-surface-container-low px-3 py-1.5 rounded-full">
-              {invoices.length} {invoices.length <= 1 ? 'facture globale' : 'factures globales'}
+              {manualMemberExpenses.length} {manualMemberExpenses.length <= 1 ? 'facture manuelle' : 'factures manuelles'}
             </span>
           </div>
         </div>
 
-        {/* Invoices Table Body */}
-        <div className="mt-3 overflow-x-auto">
+        {/* Invoices Table Body — Limité à maximum 5 éléments visibles par défaut avec conteneur défilable verticalement (Annotation 2) */}
+        <div className="mt-3 overflow-x-auto max-h-[320px] overflow-y-auto">
           <table className="w-full text-left border-collapse">
-            <thead className="text-xs uppercase text-on-surface-variant bg-surface-container-low/70 border-b border-border-subtle font-semibold">
+            <thead className="text-xs uppercase text-on-surface-variant bg-surface-container-low/70 border-b border-border-subtle font-semibold sticky top-0 z-10">
               <tr>
                 <th className="py-3 px-4" scope="col">Date &amp; Échéance</th>
                 <th className="py-3 px-4" scope="col">Membre Associé</th>
@@ -1449,20 +1487,20 @@ export default function AdminInfoPage({ currentUser }) {
               </tr>
             </thead>
             <tbody className="divide-y divide-border-subtle font-body-md text-sm text-on-surface">
-              {invoices.length === 0 ? (
+              {manualMemberExpenses.length === 0 ? (
                 <tr>
                   <td colSpan="7" className="py-12 px-4 text-center text-on-surface-variant font-body-md text-xs">
                     <div className="flex flex-col items-center justify-center gap-2">
                       <span className="material-symbols-outlined text-[32px] text-outline">receipt_long</span>
-                      <span className="font-semibold text-forest-deep text-sm">Aucun justificatif ou facture enregistré</span>
+                      <span className="font-semibold text-forest-deep text-sm">Aucun justificatif ou facture manuelle enregistré</span>
                       <span className="text-on-surface-variant text-xs max-w-sm">
-                        Les factures fournisseurs SCI et avances de frais de l'ensemble des associés apparaîtront ici.
+                        Seules les factures fournisseurs SCI et avances de frais déposées manuellement par les membres sont affichées ici.
                       </span>
                     </div>
                   </td>
                 </tr>
               ) : (
-                invoices.map((inv) => (
+                manualMemberExpenses.map((inv) => (
                 <tr key={inv.id} className="hover:bg-canvas-slate/80 transition-colors">
                   
                   {/* Date & Échéance */}
@@ -1530,7 +1568,7 @@ export default function AdminInfoPage({ currentUser }) {
                       onClick={(e) => {
                         e.preventDefault();
                         e.stopPropagation();
-                        handleViewDocument(inv.filename);
+                        handleViewDocument(inv);
                       }}
                       className="btn-download inline-flex items-center gap-1.5 px-2.5 py-1 rounded bg-surface-container-low text-forest-deep hover:bg-sage-soft border border-border-subtle transition-all text-xs font-semibold cursor-pointer"
                       title="Consulter le justificatif dans la visionneuse"
@@ -1548,7 +1586,7 @@ export default function AdminInfoPage({ currentUser }) {
                         onClick={(e) => {
                           e.preventDefault();
                           e.stopPropagation();
-                          handleViewDocument(inv.filename);
+                          handleViewDocument(inv);
                         }}
                         className="btn-view px-2.5 h-8 rounded-DEFAULT bg-surface-container-lowest border border-primary text-primary hover:bg-sage-soft transition-all text-xs font-semibold inline-flex items-center gap-1 cursor-pointer"
                         title="Consulter dans la visionneuse"
@@ -1559,7 +1597,7 @@ export default function AdminInfoPage({ currentUser }) {
 
                       <button
                         type="button"
-                        onClick={() => handleDownload(inv.filename)}
+                        onClick={() => handleDownload(inv)}
                         className="btn-download px-2.5 h-8 rounded-DEFAULT bg-surface-container-lowest border border-border-subtle text-on-surface-variant hover:text-primary hover:border-primary transition-all text-xs font-semibold inline-flex items-center gap-1 cursor-pointer"
                         title="Télécharger une copie du fichier"
                       >
@@ -1581,7 +1619,8 @@ export default function AdminInfoPage({ currentUser }) {
                   </td>
 
                 </tr>
-              )))}
+              ))
+              )}
             </tbody>
           </table>
         </div>

@@ -252,7 +252,6 @@ export default function MemberTreasurySection({ currentUser, isCoordinator = fal
 
             <div className="text-[11px] text-slate-500 flex items-center justify-between pt-1 border-t border-slate-200/60">
               <span>Bénéficiaire : <strong className="text-slate-700">SCI Hellenvilliers</strong></span>
-              <span className="text-emerald-700 font-medium">Détection &amp; réconciliation automatiques</span>
             </div>
           </div>
         </div>
@@ -354,12 +353,6 @@ export default function MemberTreasurySection({ currentUser, isCoordinator = fal
               </div>
             </div>
 
-            <div className="flex items-center gap-2">
-              <span className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-full text-xs font-semibold bg-emerald-50 text-emerald-900 border border-emerald-200">
-                <span className="w-2 h-2 rounded-full bg-emerald-600 animate-pulse"></span>
-                <span>Lettrage automatique actif</span>
-              </span>
-            </div>
           </div>
 
           {/* Notification feedback de lettrage */}

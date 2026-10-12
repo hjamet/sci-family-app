@@ -41,9 +41,9 @@ SCI_ADDRESS = "8 rue de l'Ancienne Mairie, Hellenvilliers, 27240 Mesnil-sur-Iton
 SCI_EMAIL = "hellenvillierssci@gmail.com"
 DEFAULT_BIC = os.getenv("ENABLE_BANKING_ASPSP_BIC", "SWNBFR22")
 
-# Dossier d'archivage des documents
+# Dossier d'archivage des documents d'appels de fonds (isolé des documents administratifs généraux)
 BASE_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-DOCUMENTS_DIR = os.path.join(BASE_DIR, "uploads", "documents")
+DOCUMENTS_DIR = os.path.join(BASE_DIR, "uploads", "calls_for_funds")
 try:
     os.makedirs(DOCUMENTS_DIR, exist_ok=True)
 except OSError:
