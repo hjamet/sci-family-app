@@ -545,3 +545,107 @@ def test_parental_couple_reconciliation_pooling(test_db, setup_members):
     assert amounts == [300.0, 700.0]
 
 
+# ==============================================================================
+# TESTS DÉTECTION DIRECTE PAR NOM D'ASSOCIÉ (SANS RÉFÉRENCE OBLIGATOIRE)
+# ==============================================================================
+
+def test_reconciliation_direct_member_name_without_reference(test_db, setup_members):
+    """
+    Vérifie que le lettrage Niveau 1 certifié fonctionne SANS aucune référence HLV/AF :
+    1. Détection par nom complet émetteur (debtor_name='Henri Jamet', libellé sans référence).
+    2. Détection par prénom dans le libellé (remittance_information='Virement Marguerite travaux').
+    3. Détection pour Eugénie Ducrocq (debtor_name='Eugénie Ducrocq').
+    4. Détection couple parental sans référence (debtor_name='Elizabeth Jamet' rattaché à Frédéric).
+    """
+    coord = setup_members["coord"]
+    member = setup_members["member"]
+    acc = setup_members["acc"]
+
+    eugenie = Member(
+        name="Eugénie Ducrocq",
+        prenom="Eugénie",
+        email="eugenie_ducrocq@example.com",
+        monthly_contribution=50.0,
+        payment_reference="HLV-EUGENIE",
+        is_coordinator=False
+    )
+    frederic = Member(
+        name="Frédéric Jamet",
+        prenom="Frédéric",
+        email="frdjamet@gmail.com",
+        monthly_contribution=1000.0,
+        payment_reference="HLV-FREDERIC",
+        is_coordinator=False
+    )
+    maman = Member(
+        name="Elizabeth Jamet",
+        prenom="Maman",
+        email="elizabeth_jamet@yahoo.fr",
+        monthly_contribution=0.0,
+        payment_reference="HLV-MAMAN",
+        is_coordinator=False
+    )
+    test_db.add_all([eugenie, frederic, maman])
+    test_db.commit()
+
+    # 1. Henri par émetteur direct
+    tx1 = BankTransaction(
+        transaction_id="TX-DIR-001",
+        account_id=acc.id,
+        booking_date="2026-10-05",
+        amount=50.0,
+        currency="EUR",
+        debtor_name="HENRI JAMET",
+        remittance_information="Virement bancaire mensuel"
+    )
+    # 2. Marguerite par prénom dans libellé
+    tx2 = BankTransaction(
+        transaction_id="TX-DIR-002",
+        account_id=acc.id,
+        booking_date="2026-10-06",
+        amount=50.0,
+        currency="EUR",
+        debtor_name="Compte Joint Inconnu",
+        remittance_information="Virement Marguerite loyer"
+    )
+    # 3. Eugénie Ducrocq par émetteur
+    tx3 = BankTransaction(
+        transaction_id="TX-DIR-003",
+        account_id=acc.id,
+        booking_date="2026-10-07",
+        amount=50.0,
+        currency="EUR",
+        debtor_name="Eugénie Ducrocq",
+        remittance_information="Apport mensuel"
+    )
+    # 4. Maman par émetteur -> rattaché à Frédéric
+    tx4 = BankTransaction(
+        transaction_id="TX-DIR-004",
+        account_id=acc.id,
+        booking_date="2026-10-08",
+        amount=400.0,
+        currency="EUR",
+        debtor_name="Elizabeth Jamet",
+        remittance_information="Participation foyer"
+    )
+    test_db.add_all([tx1, tx2, tx3, tx4])
+    test_db.commit()
+
+    res = ReconciliationService.run_reconciliation(test_db)
+    assert res["success"] is True
+    assert len(res["level_1_matches"]) == 4
+
+    matched_member_ids = [m["member_id"] for m in res["level_1_matches"]]
+    assert coord.id in matched_member_ids
+    assert member.id in matched_member_ids
+    assert eugenie.id in matched_member_ids
+    assert frederic.id in matched_member_ids  # Le virement de Maman a été rattaché à Frédéric !
+
+    # Vérification des soldes de grand livre
+    assert get_member_balance(test_db, coord.id) == 50.0
+    assert get_member_balance(test_db, member.id) == 50.0
+    assert get_member_balance(test_db, eugenie.id) == 50.0
+    assert get_member_balance(test_db, frederic.id) == 400.0
+
+
+

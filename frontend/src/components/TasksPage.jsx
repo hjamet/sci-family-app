@@ -27,7 +27,7 @@ const AUTHENTIC_ASSOCIATES = [
   { id: 'henri', name: 'Henri Jamet', shortName: 'Henri' },
   { id: 'hortense', name: 'Hortense Jamet', shortName: 'Hortense' },
   { id: 'marguerite', name: 'Marguerite Jamet', shortName: 'Marguerite' },
-  { id: 'eugenie', name: 'Eugénie Jamet', shortName: 'Eugénie' },
+  { id: 'eugenie', name: 'Eugénie Ducrocq', shortName: 'Eugénie' },
   { id: 'josephine', name: 'Joséphine Jamet', shortName: 'Joséphine' },
   { id: 'maman', name: 'Maman (Élisabeth) Jamet', shortName: 'Maman' },
   { id: 'frederic', name: 'Frédéric Jamet', shortName: 'Frédéric' },

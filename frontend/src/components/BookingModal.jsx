@@ -66,7 +66,7 @@ const ASSOCIATES_LIST = [
   'Joséphine Jamet',
   'Hortense Jamet',
   'Marguerite Jamet',
-  'Eugénie Jamet',
+  'Eugénie Ducrocq',
 ];
 
 const FAMILY_MEMBERS = [
@@ -76,7 +76,7 @@ const FAMILY_MEMBERS = [
   { id: 'josephine', name: 'Joséphine Jamet', role: 'Coordinatrice', initials: 'JJ', color: 'bg-amber-rich text-white' },
   { id: 'hortense', name: 'Hortense Jamet', role: 'Associée', initials: 'HJ', color: 'bg-lime-700 text-white' },
   { id: 'marguerite', name: 'Marguerite Jamet', role: 'Associée', initials: 'MJ', color: 'bg-teal-800 text-white' },
-  { id: 'eugenie', name: 'Eugénie Jamet', role: 'Associée', initials: 'EJ', color: 'bg-amber-700 text-white' },
+  { id: 'eugenie', name: 'Eugénie Ducrocq', role: 'Associée', initials: 'ED', color: 'bg-amber-700 text-white' },
 ];
 
 const ROOMS = [

@@ -12,7 +12,7 @@ const ASSOCIATES_LIST = [
   { id: 'josephine', label: 'Joséphine Jamet', dotColor: 'bg-sky-600' },
   { id: 'hortense', label: 'Hortense Jamet', dotColor: 'bg-amber-600' },
   { id: 'marguerite', label: 'Marguerite Jamet', dotColor: 'bg-rose-600' },
-  { id: 'eugenie', label: 'Eugénie Jamet', dotColor: 'bg-purple-600' },
+  { id: 'eugenie', label: 'Eugénie Ducrocq', dotColor: 'bg-purple-600' },
 ];
 
 const MONTH_NAMES_FR = [

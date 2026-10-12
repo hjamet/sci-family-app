@@ -1666,8 +1666,10 @@ def send_call_for_funds_email(
                     <p style="font-size: 13px; color: #1e293b; margin: 0 0 10px 0; line-height: 1.6;">
                         • Titulaire : <strong>SCI HELLENVILLIERS</strong><br/>
                         • IBAN : <code style="font-family: monospace; font-size: 13px; background: #ffffff; padding: 2px 6px; border-radius: 4px; border: 1px solid #cbd5e1;">{iban_val}</code><br/>
-                        • BIC : <code style="font-family: monospace;">{bic_val}</code><br/>
-                        • <strong>Motif impératif :</strong> <strong style="color: #064e3b;">{payment_ref}</strong>
+                        • BIC : <code style="font-family: monospace;">{bic_val}</code>
+                    </p>
+                    <p style="font-size: 12.5px; color: #064e3b; margin: 0 0 10px 0; line-height: 1.5; font-weight: 500;">
+                        💡 Il vous suffit d'effectuer votre virement depuis votre compte bancaire personnel (le virement sera automatiquement détecté et affecté à votre trésorerie à votre nom).
                     </p>
                     <p style="font-size: 12px; color: #475569; margin: 0;">
                         📱 <em>Scannez le QR-Code SEPA EPC avec votre application bancaire pour pré-remplir le virement instantanément.</em>

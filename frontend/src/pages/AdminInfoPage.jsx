@@ -27,7 +27,10 @@ import {
   updateDocument,
   deleteDocument,
   fetchBankStatus,
-  fetchMemberExpenses
+  triggerBankSync,
+  fetchMemberExpenses,
+  fetchCallsForFunds,
+  runReconciliation
 } from '../api';
 
 // Palette de 8 couleurs sobres pour les catégories personnalisées (Annotation 5)
@@ -266,64 +269,128 @@ export default function AdminInfoPage({ currentUser }) {
 
   const loadInvoices = async () => {
     try {
-      const expensesList = await fetchMemberExpenses();
-      if (Array.isArray(expensesList)) {
-        const formatted = expensesList.map((exp) => {
-          const isSciToPay = exp.payer_type === 'sci' || exp.status === 'PENDING_SCI_PAYMENT';
-          let statusType = 'pending';
-          let statusLabel = isSciToPay ? 'À régler par la SCI' : 'En attente de validation';
-          if (exp.status === 'VALIDATED') {
-            statusType = 'verified';
-            statusLabel = 'Validé (crédité trésorerie)';
-          } else if (exp.status === 'PAID') {
-            statusType = 'paid';
-            statusLabel = 'Réglé par la SCI';
-          } else if (exp.status === 'REJECTED') {
-            statusType = 'refund';
-            statusLabel = 'Refusé';
-          }
+      const [expensesList, callsList] = await Promise.all([
+        fetchMemberExpenses().catch(() => []),
+        fetchCallsForFunds().catch(() => [])
+      ]);
 
-          let dateFormatted = exp.expense_date || '';
-          if (dateFormatted.length === 10 && dateFormatted.includes('-')) {
-            const [y, m, d] = dateFormatted.split('-');
-            dateFormatted = `${d}/${m}/${y}`;
-          }
+      const formattedCalls = Array.isArray(callsList) ? callsList.map((call) => {
+        const isPaid = call.status === 'REGLE' || call.status === 'COUVERT';
+        const pdfFilename = call.pdf_filename || `SCI ${String(call.month).padStart(2, '0')}${call.year} Avis Appel de Fonds ${call.member_name ? call.member_name.split(' ')[0] : 'Membre'}.pdf`;
+        const pdfUrl = `/api/finances/calls-for-funds/download/${encodeURIComponent(pdfFilename)}`;
 
-          const supplier = exp.title.includes(' - ') ? exp.title.split(' - ')[0] : exp.title;
-          const refName = exp.document_filename || `FAC-${exp.id}`;
+        return {
+          id: `cff-${call.id}`,
+          date: `01/${String(call.month).padStart(2, '0')}/${call.year}`,
+          dueDate: `Échéance ${call.period_label || 'Appel de fonds'}`,
+          dueWarning: !isPaid && Number(call.net_amount !== undefined ? call.net_amount : (call.amount_due || 0)) > 0,
+          supplier: 'SCI Hellenvilliers (Appel de fonds)',
+          reference: call.reference || `AF-${call.year}${String(call.month).padStart(2, '0')}`,
+          amount: `${Number(call.net_amount !== undefined ? call.net_amount : (call.amount_due || 0)).toFixed(2).replace('.', ',')} €`,
+          taxInfo: 'Avis officiel • QR code SEPA EPC',
+          statusType: isPaid ? 'paid' : (call.status === 'EMIS' ? 'pending' : 'verified'),
+          status: call.status === 'REGLE' ? 'Réglé' : (call.status === 'COUVERT' ? 'Couvert par avance' : 'Appel de fonds émis'),
+          filename: pdfFilename,
+          document_url: pdfUrl,
+          file_url: pdfUrl,
+          payerType: 'sci',
+          memberId: call.member_id,
+          memberPrenom: call.member_name ? call.member_name.split(' ')[0] : '',
+          memberName: call.member_name || 'Associé',
+          isCallForFunds: true,
+          rawCall: call
+        };
+      }) : [];
 
-          return {
-            id: exp.id,
-            date: dateFormatted,
-            dueDate: isSciToPay ? 'Facture fournisseur SCI' : 'Avance associée',
-            dueWarning: isSciToPay && exp.status !== 'PAID',
-            supplier: supplier,
-            reference: refName,
-            amount: `${Number(exp.amount || 0).toFixed(2).replace('.', ',')} €`,
-            taxInfo: isSciToPay ? 'Facture SCI' : 'Avance membre',
-            statusType: statusType,
-            status: statusLabel,
-            filename: exp.document_filename || (exp.document_url ? exp.document_url.split('/').pop() : 'Facture.pdf'),
-            document_url: exp.document_url,
-            payerType: exp.payer_type,
-            memberId: exp.member_id,
-            memberPrenom: exp.member_prenom || '',
-            memberName: exp.member_prenom ? `${exp.member_prenom} Jamet` : 'Associé',
-            rawExpense: exp
-          };
-        });
-        setInvoices(formatted);
-      }
+      const formattedExpenses = Array.isArray(expensesList) ? expensesList.map((exp) => {
+        const isSciToPay = exp.payer_type === 'sci' || exp.status === 'PENDING_SCI_PAYMENT';
+        let statusType = 'pending';
+        let statusLabel = isSciToPay ? 'À régler par la SCI' : 'En attente de validation';
+        if (exp.status === 'VALIDATED') {
+          statusType = 'verified';
+          statusLabel = 'Validé (crédité trésorerie)';
+        } else if (exp.status === 'PAID') {
+          statusType = 'paid';
+          statusLabel = 'Réglé par la SCI';
+        } else if (exp.status === 'REJECTED') {
+          statusType = 'refund';
+          statusLabel = 'Refusé';
+        }
+
+        let dateFormatted = exp.expense_date || '';
+        if (dateFormatted.length === 10 && dateFormatted.includes('-')) {
+          const [y, m, d] = dateFormatted.split('-');
+          dateFormatted = `${d}/${m}/${y}`;
+        }
+
+        const supplier = exp.title.includes(' - ') ? exp.title.split(' - ')[0] : exp.title;
+        const refName = exp.document_filename || `FAC-${exp.id}`;
+
+        return {
+          id: exp.id,
+          date: dateFormatted,
+          dueDate: isSciToPay ? 'Facture fournisseur SCI' : 'Avance associée',
+          dueWarning: isSciToPay && exp.status !== 'PAID',
+          supplier: supplier,
+          reference: refName,
+          amount: `${Number(exp.amount || 0).toFixed(2).replace('.', ',')} €`,
+          taxInfo: isSciToPay ? 'Facture SCI' : 'Avance membre',
+          statusType: statusType,
+          status: statusLabel,
+          filename: exp.document_filename || (exp.document_url ? exp.document_url.split('/').pop() : 'Facture.pdf'),
+          document_url: exp.document_url,
+          file_url: exp.document_url,
+          payerType: exp.payer_type,
+          memberId: exp.member_id,
+          memberPrenom: exp.member_prenom || '',
+          memberName: exp.member_prenom ? `${exp.member_prenom} Jamet` : 'Associé',
+          rawExpense: exp
+        };
+      }) : [];
+
+      setInvoices([...formattedCalls, ...formattedExpenses]);
     } catch (err) {
       console.warn('Erreur chargement factures:', err.message);
     }
   };
 
   useEffect(() => {
+    // 1. Chargement et affichage immédiat du solde bancaire en cache
     loadBankStatus();
     loadDocuments();
     loadCategories();
     loadInvoices();
+
+    // 2. Déclenchement automatique de l'automate de lettrage au montage/refresh de la page Admin
+    runReconciliation()
+      .then(() => {
+        loadInvoices();
+      })
+      .catch((recErr) => {
+        console.warn('Auto-réconciliation au montage:', recErr.message);
+      });
+
+    // 3. Déclenchement en arrière-plan (sans bloquer l'UI) d'une synchronisation bancaire Swan
+    triggerBankSync()
+      .then(async () => {
+        try {
+          const freshData = await fetchBankStatus({ forceRefresh: true });
+          if (freshData) {
+            setBankStatus(freshData);
+            if (freshData.total_balance !== undefined && freshData.total_balance !== null && freshData.status === 'ok' && !freshData.needs_reauth) {
+              setFinancialTotals((prev) => ({
+                ...prev,
+                reserves: freshData.total_balance
+              }));
+            }
+          }
+        } catch (refreshErr) {
+          console.warn('Notice actualisation post-sync bancaire:', refreshErr.message);
+        }
+      })
+      .catch((syncErr) => {
+        console.warn('Synchronisation bancaire en tâche de fond non bloquante:', syncErr.message);
+      });
   }, []);
 
   useEffect(() => {
@@ -360,15 +427,17 @@ export default function AdminInfoPage({ currentUser }) {
   const handleViewDocument = (doc) => {
     let resolved = null;
     if (typeof doc === 'string') {
+      const isCall = doc.startsWith('SCI ') && doc.includes('Avis Appel de Fonds');
       resolved = {
         filename: doc,
-        file_url: `/api/documents/${encodeURIComponent(doc)}/download`
+        file_url: doc.startsWith('/api/') ? doc : (isCall ? `/api/finances/calls-for-funds/download/${encodeURIComponent(doc)}` : `/api/documents/${encodeURIComponent(doc)}/download`)
       };
     } else if (doc) {
+      const isCall = doc.isCallForFunds || (doc.filename && doc.filename.startsWith('SCI ') && doc.filename.includes('Avis Appel de Fonds'));
       resolved = {
         ...doc,
         filename: doc.filename || doc.file_name || doc.name || doc.title || 'document.pdf',
-        file_url: doc.file_url || doc.url || (doc.id ? `/api/documents/${doc.id}/download` : '')
+        file_url: doc.file_url || doc.url || doc.document_url || (isCall && doc.filename ? `/api/finances/calls-for-funds/download/${encodeURIComponent(doc.filename)}` : (doc.id ? `/api/documents/${doc.id}/download` : ''))
       };
     }
     if (resolved) {
@@ -383,10 +452,12 @@ export default function AdminInfoPage({ currentUser }) {
     let targetName = 'document.pdf';
     if (typeof doc === 'string') {
       targetName = doc;
-      targetUrl = `/api/documents/${encodeURIComponent(doc)}/download`;
+      const isCall = doc.startsWith('SCI ') && doc.includes('Avis Appel de Fonds');
+      targetUrl = doc.startsWith('/api/') ? doc : (isCall ? `/api/finances/calls-for-funds/download/${encodeURIComponent(doc)}` : `/api/documents/${encodeURIComponent(doc)}/download`);
     } else if (doc) {
-      targetUrl = doc.file_url || doc.url || (doc.id ? `/api/documents/${doc.id}/download` : '');
       targetName = doc.filename || doc.file_name || doc.name || doc.title || 'document.pdf';
+      const isCall = doc.isCallForFunds || (targetName.startsWith('SCI ') && targetName.includes('Avis Appel de Fonds'));
+      targetUrl = doc.file_url || doc.url || doc.document_url || (isCall && targetName ? `/api/finances/calls-for-funds/download/${encodeURIComponent(targetName)}` : (doc.id ? `/api/documents/${doc.id}/download` : ''));
     }
 
     if (targetUrl) {
@@ -808,6 +879,34 @@ export default function AdminInfoPage({ currentUser }) {
         }
       });
   }, [documents, searchQuery, selectedCategory, sortCriteria]);
+
+  // Affichage progressif / Pagination au scroll (Annotation 7 : 20 premiers par défaut, +20 au scroll)
+  const [visibleDocCount, setVisibleDocCount] = useState(20);
+  const loadMoreDocsRef = useRef(null);
+
+  // Réinitialiser la pagination si les filtres ou la recherche changent
+  useEffect(() => {
+    setVisibleDocCount(20);
+  }, [searchQuery, selectedCategory, sortCriteria]);
+
+  const displayedDocuments = useMemo(() => {
+    return filteredDocuments.slice(0, visibleDocCount);
+  }, [filteredDocuments, visibleDocCount]);
+
+  // IntersectionObserver pour charger les 20 documents suivants au scroll
+  useEffect(() => {
+    const sentinel = loadMoreDocsRef.current;
+    if (!sentinel || visibleDocCount >= filteredDocuments.length) return;
+
+    const observer = new IntersectionObserver((entries) => {
+      if (entries[0].isIntersecting) {
+        setVisibleDocCount((prev) => Math.min(prev + 20, filteredDocuments.length));
+      }
+    }, { rootMargin: '300px' });
+
+    observer.observe(sentinel);
+    return () => observer.disconnect();
+  }, [visibleDocCount, filteredDocuments.length]);
 
   // Dynamic Category Counts (comptage par étiquette individuelle)
   const categoryCounts = useMemo(() => {
@@ -1468,7 +1567,7 @@ export default function AdminInfoPage({ currentUser }) {
                         <span>Télécharger</span>
                       </button>
 
-                      {inv.statusType === 'pending' ? (
+                      {inv.statusType === 'pending' && (
                         <button
                           type="button"
                           onClick={() => openPayInvoiceOperation(inv)}
@@ -1477,17 +1576,7 @@ export default function AdminInfoPage({ currentUser }) {
                           <span className="material-symbols-outlined text-[15px]">payments</span>
                           <span>Régler</span>
                         </button>
-                      ) : inv.statusType === 'paid' ? (
-                        <button
-                          type="button"
-                          onClick={() => handleDownload(`Recu-${inv.filename}`)}
-                          className="btn-download px-2.5 h-8 rounded-DEFAULT bg-emerald-50 border border-emerald-200 text-emerald-800 hover:bg-emerald-100 transition-all text-xs font-semibold inline-flex items-center gap-1 cursor-pointer ml-1"
-                          title="Télécharger le reçu"
-                        >
-                          <span className="material-symbols-outlined text-[15px]">verified</span>
-                          <span>Reçu</span>
-                        </button>
-                      ) : null}
+                      )}
                     </div>
                   </td>
 
@@ -1689,7 +1778,7 @@ export default function AdminInfoPage({ currentUser }) {
       ) : viewMode === 'grid' ? (
         /* Grid Layout (4 colonnes) */
         <div id="documents-container" className="mt-space-md grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-gutter transition-opacity duration-200">
-          {filteredDocuments.map((doc) => {
+          {displayedDocuments.map((doc) => {
             const docExt = (doc.filename || doc.file_name || doc.file_url || '').split('.').pop()?.toUpperCase() || 'PDF';
             const docTags = parseDocumentTags(doc);
             const firstTag = docTags.length > 0 ? docTags[0] : (doc.category || 'Général');
@@ -1836,7 +1925,7 @@ export default function AdminInfoPage({ currentUser }) {
       ) : (
         /* List Layout */
         <div id="documents-container" className="mt-space-md flex flex-col gap-3 transition-opacity duration-200">
-          {filteredDocuments.map((doc) => {
+          {displayedDocuments.map((doc) => {
             const docTags = parseDocumentTags(doc);
             const firstTag = docTags.length > 0 ? docTags[0] : (doc.category || 'Général');
             const firstCatObj = categoriesList.find((c) => c.name === firstTag);
@@ -1939,6 +2028,21 @@ export default function AdminInfoPage({ currentUser }) {
               </div>
             );
           })}
+        </div>
+      )}
+
+      {/* Pagination au scroll / chargement progressif des documents (Annotation 7) */}
+      {visibleDocCount < filteredDocuments.length && (
+        <div ref={loadMoreDocsRef} className="mt-8 flex flex-col items-center justify-center p-4">
+          <button
+            type="button"
+            id="btn-load-more-docs"
+            onClick={() => setVisibleDocCount((prev) => Math.min(prev + 20, filteredDocuments.length))}
+            className="inline-flex items-center gap-2 px-6 py-2.5 rounded-DEFAULT bg-surface-container-lowest border-2 border-primary text-primary hover:bg-sage-soft font-label-md text-xs font-bold transition-all shadow-xs cursor-pointer"
+          >
+            <span className="material-symbols-outlined text-[18px]">expand_more</span>
+            <span>Charger les 20 documents suivants ({displayedDocuments.length} affichés sur {filteredDocuments.length})</span>
+          </button>
         </div>
       )}
 

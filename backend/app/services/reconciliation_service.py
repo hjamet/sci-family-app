@@ -28,6 +28,20 @@ def normalize_alphanumeric(text: Optional[str]) -> str:
     return re.sub(r"[^A-Za-z0-9]", "", ascii_text).upper()
 
 
+def normalize_text(text: Optional[str]) -> str:
+    """
+    Supprime les accents (NFKD), remplace les caractères non-alphanumériques par des espaces,
+    et passe la chaîne en majuscules pour une comparaison robuste par frontières de mots.
+    Ex: 'Frédéric Jamet' -> 'FREDERIC JAMET', 'HLV-HENRI' -> 'HLV HENRI'.
+    """
+    if not text:
+        return ""
+    nfkd = unicodedata.normalize("NFKD", text)
+    ascii_text = nfkd.encode("ASCII", "ignore").decode("utf-8")
+    cleaned = re.sub(r"[^A-Za-z0-9_]", " ", ascii_text).upper()
+    return re.sub(r"\s+", " ", cleaned).strip()
+
+
 class ReconciliationService:
     @staticmethod
     def normalize(text: Optional[str]) -> str:
@@ -38,8 +52,12 @@ class ReconciliationService:
         """
         Exécute l'automate de lettrage bancaire sur toutes les transactions créditrices :
         - Vérifie l'unicité stricte (aucune transaction déjà lettrée n'est re-créditée).
-        - Niveau 1 (Certifié) : Référence normalisée (permanente ou mensuelle) trouvée.
-        - Niveau 2 (À vérifier) : Nom de l'émetteur (debtor_name) correspondant à un membre.
+        - Niveau 1 (Certifié immédiat) :
+            1. Référence formelle trouvée (HLV-*, AF-*, CFF-*).
+            2. Détection directe du prénom ou nom complet d'associé dans l'émetteur (debtor_name),
+               le libellé (remittance_information) ou le JSON brut (raw_json) avec frontière de mot.
+        - Règle couple parental : mutualisation automatique de Frédéric & Élisabeth (1 000 €/mois).
+        - Non apparié : transaction sans identification possible versée dans unmatched.
         """
         members = db.query(Member).all()
         # Préparer les signatures des membres
@@ -47,15 +65,40 @@ class ReconciliationService:
         for m in members:
             # Référence permanente
             norm_pref = cls.normalize(m.payment_reference or f"HLV-{m.prenom}")
-            # Prénom normalisé
+            # Prénom normalisé compact
             norm_prenom = cls.normalize(m.prenom)
-            # Nom complet normalisé
+            # Nom complet normalisé compact
             norm_fullname = cls.normalize(m.name)
+
+            # Signatures pour détection textuelle directe avec frontières de mots
+            prenom_tokens = [normalize_text(m.prenom)]
+            fullname_tokens = [normalize_text(m.name)]
+
+            # Variantes pour Maman / Élisabeth
+            if (m.prenom or "").lower() in ("maman", "elisabeth", "elizabeth") or (m.email or "").lower() == "elizabeth_jamet@yahoo.fr":
+                prenom_tokens.extend(["MAMAN", "ELISABETH", "ELIZABETH"])
+                fullname_tokens.extend(["ELISABETH JAMET", "ELIZABETH JAMET", "MAMAN JAMET"])
+
+            # Variantes pour Eugénie (nom d'épouse Ducrocq & nom de jeune fille Jamet)
+            if (m.prenom or "").lower() in ("eugenie", "eugénie"):
+                fullname_tokens.extend(["EUGENIE DUCROCQ", "EUGENIE JAMET"])
+
+            # Variantes pour Frédéric
+            if (m.prenom or "").lower() in ("frederic", "frédéric"):
+                prenom_tokens.extend(["FREDERIC"])
+                fullname_tokens.extend(["FREDERIC JAMET"])
+
+            # Nettoyer et dédupliquer les tokens non vides
+            prenom_tokens = list(dict.fromkeys(t for t in prenom_tokens if t and len(t) >= 3))
+            fullname_tokens = list(dict.fromkeys(t for t in fullname_tokens if t and len(t) >= 4))
+
             member_lookup[m.id] = {
                 "member": m,
                 "norm_pref": norm_pref,
                 "norm_prenom": norm_prenom,
-                "norm_fullname": norm_fullname
+                "norm_fullname": norm_fullname,
+                "prenom_tokens": prenom_tokens,
+                "fullname_tokens": fullname_tokens
             }
 
         # Transactions créditrices (amount > 0)
@@ -82,15 +125,17 @@ class ReconciliationService:
             debtor = tx.debtor_name or ""
             raw_str = tx.raw_json or ""
             
-            combined_text = f"{remittance} {raw_str}"
+            combined_text = f"{remittance} {raw_str} {debtor}"
             norm_combined = cls.normalize(combined_text)
-            norm_debtor = cls.normalize(debtor)
+
+            # Texte unifié normalisé avec espaces pour recherche avec frontières de mots
+            full_searchable = f" {normalize_text(f'{debtor} {remittance} {raw_str}')} "
 
             matched_member = None
             match_type = None
             matched_ref = None
 
-            # --- NIVEAU 1 : RÉFÉRENCE FORMELLE ---
+            # --- NIVEAU 1 : LETTRAGE CERTIFIÉ DIRECT ---
             # 1.1 Recherche par référence permanente (ex: HLV-HENRI -> HLVHENRI)
             for m_id, m_info in member_lookup.items():
                 if m_info["norm_pref"] and m_info["norm_pref"] in norm_combined:
@@ -125,14 +170,47 @@ class ReconciliationService:
                     except Exception:
                         pass
 
+            # 1.4 Détection directe par nom complet d'associé avec frontière de mot
+            if not matched_member:
+                for m_id, m_info in member_lookup.items():
+                    for fn in m_info["fullname_tokens"]:
+                        pattern_fn = rf"(?:\b|_){re.escape(fn)}(?:\b|_)"
+                        if re.search(pattern_fn, full_searchable):
+                            matched_member = m_info["member"]
+                            match_type = "FULLNAME_DIRECT"
+                            matched_ref = f"NOM-{fn.replace(' ', '_')}"
+                            break
+                    if matched_member:
+                        break
+
+            # 1.5 Détection directe par prénom d'associé avec frontière de mot
+            if not matched_member:
+                for m_id, m_info in member_lookup.items():
+                    for pr in m_info["prenom_tokens"]:
+                        pattern_pr = rf"(?:\b|_){re.escape(pr)}(?:\b|_)"
+                        if re.search(pattern_pr, full_searchable):
+                            matched_member = m_info["member"]
+                            match_type = "PRENOM_DIRECT"
+                            matched_ref = f"PRENOM-{pr}"
+                            break
+                    if matched_member:
+                        break
+
             # Si match Niveau 1 certifié
             if matched_member:
                 # Règle couple parental : mutualisation des virements Frédéric & Élisabeth
                 # TOUS les virements de Frédéric OU de Maman alimentent le même solde de foyer (1 000 €/mois).
                 # Tout virement de Maman est rattaché sans condition de montant au compte foyer de Frédéric.
-                is_maman_match = (matched_member.email or "").lower() == "elizabeth_jamet@yahoo.fr" or (matched_member.prenom or "").lower() == "maman"
+                is_maman_match = (
+                    (matched_member.email or "").lower() == "elizabeth_jamet@yahoo.fr"
+                    or (matched_member.prenom or "").lower() in ("maman", "elisabeth", "elizabeth")
+                )
                 if is_maman_match:
-                    frederic_obj = next((m_info["member"] for m_info in member_lookup.values() if (m_info["member"].email or "").lower() == "frdjamet@gmail.com" or (m_info["member"].prenom or "").lower() in ("frédéric", "frederic")), None)
+                    frederic_obj = next((
+                        m_info["member"] for m_info in member_lookup.values()
+                        if (m_info["member"].email or "").lower() == "frdjamet@gmail.com"
+                        or (m_info["member"].prenom or "").lower() in ("frédéric", "frederic")
+                    ), None)
                     if frederic_obj:
                         logger.info(f"[RECONCILIATION] Virement parental de {tx.amount:.2f} € rattaché au compte foyer de Frédéric (#{frederic_obj.id})")
                         matched_member = frederic_obj
@@ -195,50 +273,14 @@ class ReconciliationService:
                 })
                 continue
 
-            # --- NIVEAU 2 : NOM DE L'ÉMETTEUR (DEBTOR_NAME) ---
-            candidate_member = None
-            if norm_debtor:
-                for m_id, m_info in member_lookup.items():
-                    if len(m_info["norm_prenom"]) >= 3 and m_info["norm_prenom"] in norm_debtor:
-                        candidate_member = m_info["member"]
-                        break
-                    elif len(m_info["norm_fullname"]) >= 5 and m_info["norm_fullname"] in norm_debtor:
-                        candidate_member = m_info["member"]
-                        break
-
-            if candidate_member:
-                # Placer dans la file « à vérifier par Henri » sans crédit automatique
-                try:
-                    meta = json.loads(tx.raw_json) if tx.raw_json else {}
-                    meta["reconciliation"] = {
-                        "status": "PENDING_VERIFICATION",
-                        "level": 2,
-                        "candidate_member_id": candidate_member.id,
-                        "candidate_member_prenom": candidate_member.prenom,
-                        "debtor_name": debtor
-                    }
-                    tx.raw_json = json.dumps(meta, ensure_ascii=False)
-                    db.commit()
-                except Exception:
-                    pass
-
-                level_2_pending.append({
-                    "transaction_id": tx.id,
-                    "amount": tx.amount,
-                    "booking_date": tx.booking_date,
-                    "debtor_name": debtor,
-                    "remittance_information": remittance,
-                    "candidate_member_id": candidate_member.id,
-                    "candidate_member_prenom": candidate_member.prenom
-                })
-            else:
-                unmatched.append({
-                    "transaction_id": tx.id,
-                    "amount": tx.amount,
-                    "booking_date": tx.booking_date,
-                    "debtor_name": debtor,
-                    "remittance_information": remittance
-                })
+            # Si aucun match trouvé -> non apparié
+            unmatched.append({
+                "transaction_id": tx.id,
+                "amount": tx.amount,
+                "booking_date": tx.booking_date,
+                "debtor_name": debtor,
+                "remittance_information": remittance
+            })
 
         logger.info(
             f"[RECONCILIATION] {len(level_1_matches)} certifiés (N1), "

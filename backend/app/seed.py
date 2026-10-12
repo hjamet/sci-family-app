@@ -78,7 +78,7 @@ def seed_database(db: Session = None, force: bool = False):
                 ),
                 Member(
                     prenom="Eugénie",
-                    name="Eugénie Jamet",
+                    name="Eugénie Ducrocq",
                     email="eugenie_jamet@yahoo.fr",
                     password=hash_password(os.getenv("USER_EUGENIE_PASS") or os.getenv("MEMBER_PASSWORD_EUGENIE", "R9tY2mK9vL5nR1wP")),
                     role="Membre Associé",

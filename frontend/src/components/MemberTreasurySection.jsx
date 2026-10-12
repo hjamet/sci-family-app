@@ -37,9 +37,16 @@ export default function MemberTreasurySection({ currentUser, isCoordinator = fal
   const [showHistory, setShowHistory] = useState(false);
   const [activeAdminTab, setActiveAdminTab] = useState('members'); // 'members' | 'reconciliation'
 
-  const loadData = async () => {
+  const loadData = async (autoReconcile = isCoordinator) => {
     setIsLoading(true);
     try {
+      if (autoReconcile) {
+        try {
+          await runReconciliation();
+        } catch (recErr) {
+          console.warn('Auto-réconciliation au montage:', recErr.message);
+        }
+      }
       const myRes = await fetchMyTreasury().catch(() => null);
       if (myRes) setMyTreasury(myRes);
 
@@ -187,57 +194,19 @@ export default function MemberTreasurySection({ currentUser, isCoordinator = fal
           </div>
         </div>
 
-        {/* Bloc coordonnées de virement & Référence Permanente */}
-        <div className="mt-4 grid grid-cols-1 md:grid-cols-2 gap-4">
-          
-          {/* Cadre Référence Permanente */}
+        {/* Coordonnées bancaires officielles du compte SCI Swan */}
+        <div className="mt-4">
           <div className="p-4 rounded-xl bg-surface-container-low border border-border-subtle flex flex-col justify-between space-y-3">
             <div>
               <div className="flex items-center justify-between text-xs font-bold text-slate-700 mb-1">
-                <span>Votre référence de virement permanente :</span>
+                <span>Coordonnées bancaires officielles du compte SCI :</span>
                 <span className="text-[10px] text-emerald-700 uppercase font-semibold bg-emerald-50 px-2 py-0.5 rounded border border-emerald-200">
-                  Lettrage immédiat
+                  Swan • Compte Principal
                 </span>
-              </div>
-              <p className="text-xs text-on-surface-variant mb-2">
-                À indiquer impérativement dans le motif/libellé de tout virement vers la SCI :
-              </p>
-              <div className="flex items-center justify-between p-2.5 bg-white dark:bg-slate-900 border-2 border-emerald-500/40 rounded-lg font-mono text-sm sm:text-base font-bold text-forest-deep">
-                <span>{paymentRef}</span>
-                <button
-                  type="button"
-                  onClick={() => copyToClipboard(paymentRef, 'ref')}
-                  className="inline-flex items-center gap-1 px-2.5 py-1 text-xs font-semibold rounded bg-emerald-50 hover:bg-emerald-100 text-emerald-800 border border-emerald-200 transition-colors cursor-pointer"
-                >
-                  {copiedKey === 'ref' ? (
-                    <>
-                      <Check className="w-3.5 h-3.5 text-emerald-600" />
-                      <span>Copié !</span>
-                    </>
-                  ) : (
-                    <>
-                      <Copy className="w-3.5 h-3.5" />
-                      <span>Copier</span>
-                    </>
-                  )}
-                </button>
-              </div>
-            </div>
-
-            <p className="text-[11px] text-slate-500 leading-relaxed">
-              💡 <span className="font-semibold">Virement permanent conseillé :</span> En mettant en place un virement mensuel de 50 € avec ce libellé, vos appels de fonds sont automatiquement soldés chaque 1er du mois sans aucune action de votre part.
-            </p>
-          </div>
-
-          {/* Cadre IBAN / Coordonnées bancaires SCI */}
-          <div className="p-4 rounded-xl bg-surface-container-low border border-border-subtle flex flex-col justify-between space-y-3">
-            <div>
-              <div className="text-xs font-bold text-slate-700 mb-1">
-                Coordonnées bancaires du compte SCI :
               </div>
               
               {iban ? (
-                <div className="space-y-2 mt-2">
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 mt-2">
                   <div>
                     <span className="text-[10px] uppercase text-slate-500 font-bold block">IBAN :</span>
                     <div className="flex items-center justify-between p-2 bg-white dark:bg-slate-900 border border-border-subtle rounded font-mono text-xs font-semibold text-slate-800">
@@ -274,7 +243,7 @@ export default function MemberTreasurySection({ currentUser, isCoordinator = fal
                   <div className="leading-relaxed">
                     <span className="font-bold">Compte bancaire en cours d'ouverture :</span>
                     <p className="mt-0.5 text-amber-900">
-                      Les coordonnées IBAN définitives seront affichées ici dès réception de la confirmation bancaire. Votre référence permanente ({paymentRef}) reste d'ores et déjà attribuée.
+                      Les coordonnées IBAN définitives seront affichées ici dès réception de la confirmation bancaire.
                     </p>
                   </div>
                 </div>
@@ -283,10 +252,9 @@ export default function MemberTreasurySection({ currentUser, isCoordinator = fal
 
             <div className="text-[11px] text-slate-500 flex items-center justify-between pt-1 border-t border-slate-200/60">
               <span>Bénéficiaire : <strong className="text-slate-700">SCI Hellenvilliers</strong></span>
-              <span className="text-emerald-700 font-medium">Cumul illimité</span>
+              <span className="text-emerald-700 font-medium">Détection &amp; réconciliation automatiques</span>
             </div>
           </div>
-
         </div>
 
         {/* Bascule pour voir l'historique des écritures individuelles */}
@@ -387,16 +355,10 @@ export default function MemberTreasurySection({ currentUser, isCoordinator = fal
             </div>
 
             <div className="flex items-center gap-2">
-              <button
-                type="button"
-                id="btn-run-reconciliation"
-                onClick={handleRunReconciliation}
-                disabled={isReconciling}
-                className="inline-flex items-center gap-2 px-4 py-2 rounded-xl bg-primary text-white font-label-md text-xs font-bold hover:bg-forest-deep transition-all shadow-xs cursor-pointer disabled:opacity-50"
-              >
-                <RefreshCw className={`w-3.5 h-3.5 ${isReconciling ? 'animate-spin' : ''}`} />
-                <span>{isReconciling ? 'Lettrage en cours...' : 'Lancer le lettrage'}</span>
-              </button>
+              <span className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-full text-xs font-semibold bg-emerald-50 text-emerald-900 border border-emerald-200">
+                <span className="w-2 h-2 rounded-full bg-emerald-600 animate-pulse"></span>
+                <span>Lettrage automatique actif</span>
+              </span>
             </div>
           </div>
 
@@ -489,10 +451,8 @@ export default function MemberTreasurySection({ currentUser, isCoordinator = fal
                 <thead className="bg-surface-container-low text-slate-600 font-semibold uppercase border-b border-border-subtle">
                   <tr>
                     <th className="py-2.5 px-3">Associé</th>
-                    <th className="py-2.5 px-3">Réf. Permanente</th>
                     <th className="py-2.5 px-3 text-right">Quote-part</th>
                     <th className="py-2.5 px-3 text-right">Solde Actuel</th>
-                    <th className="py-2.5 px-3 text-center">Couverture</th>
                     <th className="py-2.5 px-3 text-center">Statut</th>
                   </tr>
                 </thead>
@@ -510,9 +470,6 @@ export default function MemberTreasurySection({ currentUser, isCoordinator = fal
                             </div>
                           )}
                         </td>
-                        <td className="py-2.5 px-3 font-mono text-slate-600">
-                          {m.payment_reference}
-                        </td>
                         <td className="py-2.5 px-3 text-right font-mono text-slate-500">
                           <div>{m.monthly_contribution.toFixed(2)} €/mois</div>
                           {m.is_joint_couple && (
@@ -525,19 +482,6 @@ export default function MemberTreasurySection({ currentUser, isCoordinator = fal
                           <span className={m.balance > 0 ? 'text-emerald-700' : m.balance < 0 ? 'text-rose-700' : 'text-slate-600'}>
                             {m.balance > 0 ? `+${m.balance.toFixed(2)}` : m.balance.toFixed(2)} €
                           </span>
-                        </td>
-                        <td className="py-2.5 px-3 text-center">
-                          {isMaman ? (
-                            <span className="inline-flex px-2 py-0.5 rounded-full text-[11px] font-bold bg-slate-100 text-slate-700 border border-slate-200">
-                              Foyer à jour
-                            </span>
-                          ) : m.covered_months > 0 ? (
-                            <span className="inline-flex px-2 py-0.5 rounded-full text-[11px] font-bold bg-emerald-100 text-emerald-800">
-                              {m.covered_months} mois couverts
-                            </span>
-                          ) : (
-                            <span className="text-slate-400 text-[11px]">—</span>
-                          )}
                         </td>
                         <td className="py-2.5 px-3 text-center">
                           <span className={`inline-flex px-2 py-0.5 rounded text-[10px] font-bold uppercase ${
