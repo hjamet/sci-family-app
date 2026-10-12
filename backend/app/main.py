@@ -8644,6 +8644,14 @@ def generate_calls_for_funds(
     for mem in members:
         call_obj = generate_and_save_monthly_call(db, mem, y, m)
 
+        # Règle d'exclusion absolue : associé à jour ou solde créditeur
+        if call_obj.net_amount <= 0 or call_obj.status == "COUVERT":
+            logger.info(
+                f"[APPEL DE FONDS EXCLUSION] Associé {mem.name} ({mem.prenom}) sauté : "
+                f"solde suffisant ou créditeur (net_amount={call_obj.net_amount:.2f} €, statut={call_obj.status}). "
+                f"Aucun avis ni email envoyé."
+            )
+
         # Gestion des notifications e-mails
         if request_data.send_notifications and call_obj.status == "EMIS":
             if bank_active and mem.notif_new_invoices and call_obj.net_amount > 0:
@@ -9308,19 +9316,56 @@ async def cron_banking_sync(request: Request, db: Session = Depends(get_db)):
 
 @app.api_route("/api/cron/calls-for-funds", methods=["GET", "POST"], tags=["Crons"])
 async def cron_calls_for_funds(request: Request, db: Session = Depends(get_db)):
-    """Cron mensuel Vercel (1er du mois) : génération idempotente des avis d'échéance."""
+    """Cron mensuel Vercel (1er du mois à 08:00 UTC) : génération idempotente des avis et envoi réel automatique."""
     verify_cron_auth(request)
     now = datetime.utcnow()
-    members = db.query(Member).all()
+    bank_active = is_bank_account_active(db)
+    members = db.query(Member).order_by(Member.id.asc()).all()
     generated = []
+    notifications_sent = 0
+    notifications_skipped = 0
 
     for m in members:
         call_obj = generate_and_save_monthly_call(db, m, now.year, now.month)
+
+        # Règle d'exclusion absolue : associé à jour ou solde créditeur (ex: Frédéric Jamet)
+        if call_obj.net_amount <= 0 or call_obj.status == "COUVERT":
+            logger.info(
+                f"[CRON APPEL DE FONDS EXCLUSION] Associé {m.name} ({m.prenom}) sauté : "
+                f"solde suffisant ou créditeur (net_amount={call_obj.net_amount:.2f} €, statut={call_obj.status}). "
+                f"Aucun avis ni email envoyé."
+            )
+            notifications_skipped += 1
+        elif bank_active and getattr(m, "notif_new_invoices", True) and call_obj.status == "EMIS" and call_obj.net_amount > 0 and not call_obj.notification_sent:
+            details_raw = json.loads(call_obj.details_json) if call_obj.details_json else {}
+            deducted_list = details_raw.get("deducted_expenses", []) if isinstance(details_raw, dict) else (details_raw if isinstance(details_raw, list) else [])
+            call_data = {
+                "reference": call_obj.reference,
+                "period_label": call_obj.period_label,
+                "theoretical_contribution": call_obj.theoretical_contribution,
+                "approved_expenses_total": call_obj.approved_expenses_total,
+                "net_amount": call_obj.net_amount,
+                "payment_reference": call_obj.payment_reference,
+                "deducted_expenses": deducted_list
+            }
+            email_res = send_call_for_funds_email(m, call_data, actually_send=True, db=db)
+            if email_res.get("status") in ("sent", "simulated"):
+                call_obj.notification_sent = True
+                call_obj.notification_sent_at = datetime.utcnow()
+                db.commit()
+                notifications_sent += 1
+            else:
+                notifications_skipped += 1
+        else:
+            notifications_skipped += 1
+
         generated.append({
             "member_id": m.id,
             "member_name": m.name,
             "status": call_obj.status,
-            "amount_due": getattr(call_obj, "amount_due", call_obj.net_amount)
+            "amount_due": getattr(call_obj, "amount_due", call_obj.net_amount),
+            "net_amount": call_obj.net_amount,
+            "notification_sent": call_obj.notification_sent
         })
 
     return {
@@ -9328,7 +9373,10 @@ async def cron_calls_for_funds(request: Request, db: Session = Depends(get_db)):
         "cron": "calls-for-funds",
         "year": now.year,
         "month": now.month,
+        "is_bank_account_active": bank_active,
         "generated_count": len(generated),
+        "notifications_sent": notifications_sent,
+        "notifications_skipped": notifications_skipped,
         "calls": generated
     }
 

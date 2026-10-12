@@ -73,6 +73,7 @@ test_*.py
 !backend/tests/test_chat_notifications_settings.py
 !backend/tests/test_resumable_upload.py
 !backend/tests/test_drive_env_token.py
+!backend/tests/test_calls_for_funds_production_ready.py
 backend/app/uploads/
 backend/archive_scratch_tests/
 uploads/

@@ -31,48 +31,29 @@ FALLBACK_FROM_EMAIL = "SCI Familiale Hellenvilliers <notifications@henri-jamet.c
 SANDBOX_FROM_EMAIL = "SCI Familiale Hellenvilliers <onboarding@resend.dev>"
 
 # ==============================================================================
-# GOUVERNANCE PRODUCTION & COUPE-CIRCUIT D'URGENCE (SECURE BY DEFAULT)
+# GOUVERNANCE PRODUCTION & ENVOI RÉEL PÉRENNE (PRODUCTION READY)
 # ==============================================================================
-# Par défaut absolu, TOUT envoi d'e-mail réel est INTERDIT en environnement local / test.
-# L'envoi physique réel via Resend est STRICTEMENT réservé à la production certifiée (Vercel)
-# où EMAIL_FORCE_REAL_MODE=true, DISABLE_ALL_EMAILS=false et EMAIL_TEST_MODE=false sont configurés.
-# En local ou dans tout script de test/scratch, le coupe-circuit et le mode simulation sont actifs.
-DISABLE_ALL_EMAILS: bool = True
+# EMAIL_FORCE_REAL_MODE est actif en permanence pour la production réelle Resend.
+# Le mode simulation (EMAIL_TEST_MODE) est définitivement désactivé par défaut.
+# DISABLE_ALL_EMAILS sert uniquement de coupe-circuit d'urgence si explicitement activé ('true').
+DISABLE_ALL_EMAILS: bool = False
 
 def is_email_disabled() -> bool:
     """
-    Coupe-circuit d'urgence global & Verrou Hermétique par Défaut :
-    Par défaut, tout envoi d'email est DÉSACTIVÉ (Secure by default).
-    L'envoi n'est actif QUE si :
-      - EMAIL_FORCE_REAL_MODE est explicitement 'true'
-      - ET DISABLE_ALL_EMAILS n'est pas 'true'
-    En local ou test sans configuration explicite de production, 0 appel réseau ne peut sortir.
+    Coupe-circuit d'urgence global :
+    Par défaut, l'envoi d'email est ACTIF en production réelle (EMAIL_FORCE_REAL_MODE=True pérenne).
+    L'envoi est bloqué UNIQUEMENT si le coupe-circuit DISABLE_ALL_EMAILS est explicitement 'true', '1' ou 'yes'.
     """
-    if os.getenv("DISABLE_ALL_EMAILS", "").strip().lower() in ("true", "1", "yes"):
-        return True
-    if os.getenv("EMAIL_FORCE_REAL_MODE", "false").strip().lower() in ("true", "1", "yes"):
-        env_val = os.getenv("DISABLE_ALL_EMAILS", "false").strip().lower()
-        return env_val in ("true", "1", "yes")
-    env_val = os.getenv("DISABLE_ALL_EMAILS", "true").strip().lower()
-    if env_val in ("false", "0", "no"):
-        return False
-    return True
+    return os.getenv("DISABLE_ALL_EMAILS", "false").strip().lower() in ("true", "1", "yes")
 
 def is_test_mode() -> bool:
     """
-    Mode test hermétique :
-    Par défaut (Secure by default), tout envoi est simulé in-memory.
-    Pour activer l'envoi physique réel via Resend (en production Vercel) :
-      - EMAIL_FORCE_REAL_MODE=true
-      - EMAIL_TEST_MODE=false
-    Dans tous les autres cas (dev, test, script scratch local), retourne True.
+    Mode simulation définitivement désactivé :
+    EMAIL_FORCE_REAL_MODE est actif en permanence (envois physiques réels Resend).
+    Ne retourne True que si EMAIL_TEST_MODE est explicitement 'true', '1' ou 'yes' (ex: tests unitaires).
     """
-    if os.getenv("EMAIL_TEST_MODE", "").strip().lower() in ("true", "1", "yes"):
-        return True
-    if os.getenv("EMAIL_FORCE_REAL_MODE", "false").strip().lower() in ("true", "1", "yes"):
-        env_val = os.getenv("EMAIL_TEST_MODE", "false").strip().lower()
-        return env_val in ("true", "1", "yes")
-    return True
+    return os.getenv("EMAIL_TEST_MODE", "false").strip().lower() in ("true", "1", "yes")
+
 
 def get_circuit_breaker_response() -> dict:
     """Retour standardisé du coupe-circuit d'urgence."""
@@ -94,8 +75,8 @@ ALLOWED_RECIPIENTS: Set[str] = {
     "frederic_jamet@orange.fr",
 }
 
-# Circuit Breaker / Hermetic Test Mode
-EMAIL_TEST_MODE: bool = os.getenv("EMAIL_TEST_MODE", "true").lower() in ("true", "1", "yes")
+# Circuit Breaker / Hermetic Test Mode (désactivé par défaut en production)
+EMAIL_TEST_MODE: bool = os.getenv("EMAIL_TEST_MODE", "false").lower() in ("true", "1", "yes")
 EMAIL_TEST_REDIRECT_TO: str = os.getenv("EMAIL_TEST_REDIRECT_TO", "hellenvillierssci@gmail.com").strip() or "hellenvillierssci@gmail.com"
 
 ALLOWED_TEST_RECIPIENTS: Set[str] = set(ALLOWED_RECIPIENTS)
@@ -1548,16 +1529,17 @@ def send_call_for_funds_email(
     )
 
     # 1. RÈGLE ABSOLUE : Solde net <= 0 € -> ZÉRO ÉMISSION & ZÉRO NOTIFICATION
+    # Tout associé à jour ou ayant un solde créditeur (ex: Frédéric Jamet) ne doit STRICTEMENT recevoir AUCUN email.
     net_amount = float(call_data.get("net_amount", 0.0))
     should_issue = call_data.get("should_issue", True)
     if net_amount <= 0.0 or not should_issue:
         logger.info(
-            f"[NEUTRALISATION] Aucun e-mail d'appel de fonds envoyé à {getattr(member, 'name', '')} : "
-            f"solde net <= 0 € ({net_amount:.2f} €). Compensation totale par dépenses."
+            f"[EXCLUSION APPEL DE FONDS] Aucun e-mail d'appel de fonds envoyé à {getattr(member, 'name', '')} : "
+            f"solde net <= 0 € ({net_amount:.2f} €). Associé à jour ou créditeur (ex: Frédéric Jamet), compensation totale."
         )
         return {
             "status": "neutralized_no_email",
-            "message": "Solde net ≤ 0 € : aucun avis ni notification émis (règle absolue de compensation)."
+            "message": "Solde net ≤ 0 € : aucun avis ni notification émis (associé à jour ou solde créditeur)."
         }
 
     # 2. GARDE-FOU BANCAIRE STRICT : IBAN Swan non validé -> ZÉRO E-MAIL ENVOYÉ
