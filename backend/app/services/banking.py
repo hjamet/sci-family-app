@@ -729,9 +729,9 @@ class EnableBankingService:
 
             synced_accounts_count += 1
 
-            # Récupération des transactions (bornée aux 60 derniers jours pour éviter le timeout Vercel)
+            # Récupération des transactions (bornée strictement aux 30 derniers jours selon la directive formelle d'Henri)
             try:
-                date_from = (datetime.utcnow() - timedelta(days=60)).strftime("%Y-%m-%d")
+                date_from = (datetime.utcnow() - timedelta(days=30)).strftime("%Y-%m-%d")
                 tx_list = self.get_account_transactions(acc_id, date_from=date_from)
                 if isinstance(tx_list, list):
                     for tx in tx_list:

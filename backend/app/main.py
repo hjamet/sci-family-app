@@ -76,7 +76,7 @@ from .services.workload_balancer import (
 )
 from .services.vicare_service import ViCareService
 from .services.klereo_service import KlereoService
-from .services.banking import enable_banking_service
+from .services.banking import enable_banking_service, EnableBankingAPIError
 from .services.drive_service import drive_jail_service, SecurityException, escape_drive_query_value
 
 
@@ -8326,20 +8326,7 @@ def get_banking_transactions(
 
 @app.post("/api/banking/sync", response_model=BankSyncResponse, tags=["Banking"])
 def trigger_banking_sync(db: Session = Depends(get_db)):
-    """Déclenche la synchronisation manuelle des comptes et transactions bancaires."""
-    # Garde-fou anti-spam backend : si un compte bancaire a déjà été synchronisé avec succès il y a moins de 3 minutes (< 180s)
-    last_account = db.query(BankAccount).filter(BankAccount.last_synced_at.isnot(None)).order_by(BankAccount.last_synced_at.desc()).first()
-    if last_account and last_account.last_synced_at:
-        elapsed = (datetime.utcnow() - last_account.last_synced_at).total_seconds()
-        if elapsed < 180:
-            logger.info(f"Garde-fou anti-spam bancaire : dernier sync il y a {int(elapsed)}s (< 180s), renvoi direct")
-            return BankSyncResponse(
-                success=True,
-                accounts_synced=db.query(BankAccount).count(),
-                transactions_synced=0,
-                timestamp=last_account.last_synced_at.isoformat()
-            )
-
+    """Déclenche la synchronisation manuelle en direct des comptes et transactions bancaires."""
     try:
         result = enable_banking_service.sync_database(db=db)
         enable_banking_service.clear_status_cache()
@@ -8350,12 +8337,11 @@ def trigger_banking_sync(db: Session = Depends(get_db)):
             timestamp=result.get("timestamp", datetime.utcnow().isoformat())
         )
     except Exception as e:
-        logger.warning(f"Avertissement synchronisation bancaire (fail-soft timeout/réseau) : {e}")
-        return BankSyncResponse(
-            success=False,
-            accounts_synced=db.query(BankAccount).count(),
-            transactions_synced=0,
-            timestamp=datetime.utcnow().isoformat()
+        logger.error(f"Échec de la synchronisation bancaire : {e}", exc_info=True)
+        status_code = status.HTTP_502_BAD_GATEWAY if isinstance(e, EnableBankingAPIError) or "timeout" in str(e).lower() else status.HTTP_500_INTERNAL_SERVER_ERROR
+        raise HTTPException(
+            status_code=status_code,
+            detail=f"Échec de la synchronisation bancaire : {str(e)}"
         )
 
 
