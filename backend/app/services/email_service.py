@@ -69,6 +69,7 @@ ALLOWED_RECIPIENTS: Set[str] = {
     "hellenvillierssci@gmail.com",
     "hortense_jamet@yahoo.fr",
     "marguerite.jamet@orange.fr",
+    "marguerite_jamet@yahoo.fr",
     "eugenie_jamet@yahoo.fr",
     "josephine_jamet@yahoo.fr",
     "elisabeth.jamet@yahoo.fr",
