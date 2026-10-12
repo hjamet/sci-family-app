@@ -130,6 +130,10 @@ class EnableBankingService:
         if (val.startswith('"') and val.endswith('"')) or (val.startswith("'") and val.endswith("'")):
             val = val[1:-1].strip()
 
+        # Rejeter immédiatement les placeholders fictifs (ex: ellipses "..." ou templates)
+        if "..." in val or len(val) < 256:
+            return ""
+
         # Si la chaîne contient directement l'en-tête PEM
         if "-----BEGIN" in val and "PRIVATE KEY" in val:
             val = val.replace("\\n", "\n").replace("\\r", "\r").strip()
@@ -697,12 +701,16 @@ class EnableBankingService:
             except Exception as e:
                 logger.warning(f"Erreur récupération solde pour compte {acc_id} : {e}")
 
+            # Association de l'IBAN officiel pour le compte principal Swan SCI Hellenvilliers si manquant
+            if acc_id == "930a1be0-0796-460a-99cd-c7694e51cc81" and not iban:
+                iban = "FR76 1732 8844 0071 5921 5570 591"
+
             # Upsert BankAccount
             db_account = db.query(BankAccount).filter(BankAccount.account_id == acc_id).first()
             if not db_account and iban:
                 db_account = db.query(BankAccount).filter(BankAccount.iban == iban).first()
 
-            final_name = acc_name or "Compte Swan SCI Hellenvilliers"
+            final_name = acc_name or ("Compte Principal Swan SCI Hellenvilliers" if acc_id == "930a1be0-0796-460a-99cd-c7694e51cc81" else "Compte Swan SCI Hellenvilliers")
 
             if not db_account:
                 db_account = BankAccount(
@@ -723,8 +731,12 @@ class EnableBankingService:
                 db_account.balance_type = balance_type
                 if iban:
                     db_account.iban = iban
+                elif acc_id == "930a1be0-0796-460a-99cd-c7694e51cc81" and not db_account.iban:
+                    db_account.iban = "FR76 1732 8844 0071 5921 5570 591"
                 if acc_name:
                     db_account.name = acc_name
+                elif acc_id == "930a1be0-0796-460a-99cd-c7694e51cc81" and (not db_account.name or db_account.name == "Compte Swan SCI Hellenvilliers"):
+                    db_account.name = "Compte Principal Swan SCI Hellenvilliers"
                 db_account.last_synced_at = datetime.utcnow()
 
             synced_accounts_count += 1
@@ -1071,17 +1083,18 @@ class EnableBankingService:
                                     candidate_accounts.append(uid)
                     except Exception:
                         pass
+        else:
+            # STRICT FALLBACK : uniquement si aucune session active n'existe en base
+            synced_accounts = [a for a in accounts if a.last_synced_at is not None]
+            for a in synced_accounts:
+                uid = self._extract_account_id_str(a.account_id)
+                if uid and uid not in candidate_accounts:
+                    candidate_accounts.append(uid)
 
-        synced_accounts = [a for a in accounts if a.last_synced_at is not None]
-        for a in synced_accounts:
-            uid = self._extract_account_id_str(a.account_id)
-            if uid and uid not in candidate_accounts:
-                candidate_accounts.append(uid)
-
-        for a in accounts:
-            uid = self._extract_account_id_str(a.account_id)
-            if uid and uid not in candidate_accounts:
-                candidate_accounts.append(uid)
+            for a in accounts:
+                uid = self._extract_account_id_str(a.account_id)
+                if uid and uid not in candidate_accounts:
+                    candidate_accounts.append(uid)
 
         is_query_successful = False
         last_err = None
@@ -1094,6 +1107,16 @@ class EnableBankingService:
                     break
                 except Exception as e:
                     last_err = e
+                    # Règle d'or : si quota journalier DSP2 (HTTP 429) atteint, la liaison est 100% active et vivante.
+                    # ARRÊT IMMÉDIAT de la boucle : ne pas continuer vers d'autres comptes pour préserver le statut
+                    if isinstance(e, EnableBankingAPIError) and (e.status_code == 429 or e.is_rate_limit):
+                        logger.info(f"Quota journalier DSP2 Swan atteint (HTTP 429) pour {acc_id} : arrêt immédiat de la vérification des soldes.")
+                        break
+
+                    # Erreur 404 ACCOUNT_DOES_NOT_EXIST : simple avertissement dans les logs
+                    if isinstance(e, EnableBankingAPIError) and e.status_code == 404:
+                        logger.warning(f"Compte {acc_id} inexistant sur Enable Banking (HTTP 404) : {e}")
+
                     continue
 
         if is_query_successful:
@@ -1130,7 +1153,7 @@ class EnableBankingService:
                 error_details = last_err.details or str(last_err)
                 is_auth_error = last_err.is_auth_error
                 is_timeout = last_err.is_network_timeout
-                is_rate_limit = last_err.is_rate_limit
+                is_rate_limit = last_err.is_rate_limit or (last_err.status_code == 429)
             else:
                 raw_error = str(last_err)
                 error_code = "ERROR"
@@ -1206,6 +1229,27 @@ class EnableBankingService:
                 "last_successful_sync": latest_sync,
                 "raw_error": raw_error,
                 "error_code": error_code,
+                "error_details": error_details,
+                "last_sync_attempt": now_iso
+            }
+
+        # Cas D1 : Erreur 404 ACCOUNT_DOES_NOT_EXIST sur un compte mais session AUTHORIZED active
+        if isinstance(last_err, EnableBankingAPIError) and last_err.status_code == 404 and active_sessions:
+            logger.warning(f"Erreur HTTP 404 ACCOUNT_DOES_NOT_EXIST sur un compte candidat mais session AUTHORIZED active ({active_sessions[0].session_id}) : la liaison globale reste valide.")
+            return {
+                "status": "ok",
+                "is_connected": True,
+                "needs_reauth": False,
+                "days_left": days_left,
+                "valid_until": valid_until,
+                "message": "Liaison bancaire Swan active et opérationnelle.",
+                "reauth_url": None,
+                "active_accounts_count": len(accounts),
+                "total_balance": round(total_bal, 2),
+                "last_synced_at": latest_sync,
+                "last_successful_sync": latest_sync,
+                "raw_error": raw_error,
+                "error_code": "ACCOUNT_NOT_FOUND_WARNING",
                 "error_details": error_details,
                 "last_sync_attempt": now_iso
             }

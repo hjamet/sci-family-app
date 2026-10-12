@@ -388,7 +388,7 @@ export default function AdminInfoPage({ currentUser }) {
     triggerBankSync()
       .then(async () => {
         try {
-          const freshData = await fetchBankStatus({ forceRefresh: true });
+          const freshData = await fetchBankStatus({ forceRefresh: false });
           if (freshData) {
             setBankStatus(freshData);
             if (freshData.total_balance !== undefined && freshData.total_balance !== null && freshData.status === 'ok' && !freshData.needs_reauth) {
