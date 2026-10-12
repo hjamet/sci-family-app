@@ -145,7 +145,7 @@ export default function ExternalLinksSection({
                 title="Ajouter ce lien externe"
               >
                 <span className="material-symbols-outlined text-[16px]">add_link</span>
-                <span className="whitespace-nowrap">+ Ajouter</span>
+                <span className="whitespace-nowrap">Ajouter</span>
               </button>
             </div>
           </div>

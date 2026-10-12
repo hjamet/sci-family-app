@@ -3,7 +3,6 @@ import { MarkdownContent } from './common/RichTextEditor';
 import DocumentViewerModal from './DocumentViewerModal';
 import UploadDocumentModal from './UploadDocumentModal';
 import SelectExistingDocumentModal from './SelectExistingDocumentModal';
-import ExternalLinksSection from './common/ExternalLinksSection';
 import KeyValueAttachmentList, { parseKeyValues } from './common/KeyValueAttachmentList';
 import FamilyChat from './common/FamilyChat';
 import WhatsAppPollView, { STATUTORY_ASSOCIATES, parseVotesArray, hasVotedForOption } from './common/WhatsAppPollView';
@@ -1577,16 +1576,6 @@ function VoteRoofModalInner({
                     </div>
                   )}
 
-                  {/* Formulaire d'ajout rapide d'URL web (Annotation 12) */}
-                  <div className="pt-2">
-                    <ExternalLinksSection
-                      links={editExternalLinks}
-                      onChange={setEditExternalLinks}
-                      isEditing={true}
-                      hideList={true}
-                      title="Ajouter un lien web ou une source externe"
-                    />
-                  </div>
 
                   {/* Formulaire d'ajout rapide de clés-valeurs (Annotation 5 : DRY Tâches & Votes) */}
                   <div className="pt-2">

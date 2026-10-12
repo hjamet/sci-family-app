@@ -111,15 +111,24 @@ function resolveKeyValueMeta(keyName = '', value = '') {
     };
   }
 
-  // Lien URL
-  if (v.startsWith('http://') || v.startsWith('https://')) {
+  // Lien URL ou Site web (Annotation 2 : Détection enrichie URL/Site web)
+  const isWebKey = k.includes('site') || k.includes('lien') || k.includes('url') || k.includes('web');
+  const isWebVal = v.startsWith('http://') || v.startsWith('https://') || v.startsWith('www.') ||
+    /\.(fr|com|org|net|io|eu|ch|be|ca|gov|info|app|dev|biz)(\/|$|\?|#|\s)/i.test(v);
+
+  if (isWebKey || isWebVal || v.startsWith('http://') || v.startsWith('https://')) {
+    const rawVal = value.trim();
+    const actionUrl = (rawVal.startsWith('http://') || rawVal.startsWith('https://'))
+      ? rawVal
+      : `https://${rawVal}`;
     return {
       type: 'link',
       icon: 'language',
+      emoji: '🌐',
       badgeColor: 'bg-teal-100 text-teal-800 dark:bg-teal-950/60 dark:text-teal-300 border-teal-200 dark:border-teal-800/60',
       iconColor: 'bg-teal-100 text-teal-700 dark:bg-teal-950/70 dark:text-teal-300 border border-teal-200 dark:border-teal-800',
-      actionUrl: value,
-      actionTitle: 'Ouvrir le lien',
+      actionUrl: actionUrl,
+      actionTitle: 'Ouvrir le site internet',
       actionIcon: 'open_in_new',
     };
   }
@@ -128,6 +137,7 @@ function resolveKeyValueMeta(keyName = '', value = '') {
   return {
     type: 'generic',
     icon: 'label',
+    emoji: null,
     badgeColor: 'bg-violet-100 text-violet-800 dark:bg-violet-950/60 dark:text-violet-300 border border-violet-200 dark:border-violet-800/60',
     iconColor: 'bg-violet-100 text-violet-700 dark:bg-violet-950/70 dark:text-violet-300 border border-violet-200 dark:border-violet-800',
     actionUrl: null,
@@ -135,6 +145,7 @@ function resolveKeyValueMeta(keyName = '', value = '') {
 }
 
 const COMMON_KEY_SUGGESTIONS = [
+  'Site Internet',
   'Entreprise',
   'Téléphone',
   'Email',
@@ -273,8 +284,13 @@ export default function KeyValueAttachmentList({
 
                   <div className="min-w-0">
                     <div className="flex items-center gap-2">
-                      <p className="font-label-md text-xs font-bold text-on-surface break-words">
-                        {item.key}
+                      <p className="font-label-md text-xs font-bold text-on-surface break-words flex items-center gap-1.5">
+                        {meta.emoji && (
+                          <span className="text-sm select-none" title="Site web / Lien en ligne">
+                            {meta.emoji}
+                          </span>
+                        )}
+                        <span>{item.key}</span>
                       </p>
                       <button
                         type="button"
@@ -292,8 +308,8 @@ export default function KeyValueAttachmentList({
                         </span>
                         <span>{copiedKeyIndex === idx ? 'Clé copiée !' : 'Clé'}</span>
                       </button>
-                      <span className={`px-2 py-0.5 rounded-full text-[10px] font-bold shrink-0 border ${meta.badgeColor}`}>
-                        Clé-valeur
+                      <span className={`px-2 py-0.5 rounded-full text-[10px] font-bold shrink-0 border flex items-center gap-1 ${meta.badgeColor}`}>
+                        {meta.type === 'link' ? '🌐 Site web' : 'Clé-valeur'}
                       </span>
                     </div>
 
@@ -303,10 +319,15 @@ export default function KeyValueAttachmentList({
                           href={meta.actionUrl}
                           target={meta.type === 'link' ? '_blank' : undefined}
                           rel={meta.type === 'link' ? 'noopener noreferrer' : undefined}
-                          className="font-body-md text-xs sm:text-sm font-semibold text-primary hover:underline break-words"
+                          className="font-body-md text-xs sm:text-sm font-semibold text-primary hover:underline break-words inline-flex items-center gap-1"
                           title={`${meta.actionTitle || 'Ouvrir'} : ${item.value}`}
                         >
-                          {item.value}
+                          <span>{item.value}</span>
+                          {meta.type === 'link' && (
+                            <span className="material-symbols-outlined text-[14px] shrink-0 text-primary">
+                              open_in_new
+                            </span>
+                          )}
                         </a>
                       ) : (
                         <span
@@ -448,7 +469,7 @@ export default function KeyValueAttachmentList({
                 title="Ajouter cette paire clé-valeur"
               >
                 <span className="material-symbols-outlined text-[16px]">add</span>
-                <span className="whitespace-nowrap">+ Ajouter</span>
+                <span className="whitespace-nowrap">Ajouter</span>
               </button>
             </div>
           </div>

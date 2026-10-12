@@ -37,9 +37,9 @@ import DocumentViewerModal from './DocumentViewerModal';
 import UploadDocumentModal from './UploadDocumentModal';
 import SelectExistingDocumentModal from './SelectExistingDocumentModal';
 import FamilyChat from './common/FamilyChat';
-import ExternalLinksSection from './common/ExternalLinksSection';
 import { MarkdownContent } from './common/RichTextEditor';
 import KeyValueAttachmentList, { parseKeyValues } from './common/KeyValueAttachmentList';
+import { parseTaskMarkdown } from '../utils/taskMarkdownParser';
 
 const SUBJECTS = [
   'Presbytère',
@@ -187,6 +187,16 @@ export default function TaskDetailModal({
     resolvedUserName.toLowerCase().includes('josephine')
   );
 
+  // Détection infaillible d'Henri Jamet (Annotation 3)
+  const isHenri = Boolean(
+    currentUser?.prenom === 'Henri' ||
+    currentUser?.id === 1 ||
+    (currentUser?.name && currentUser.name.toLowerCase().includes('henri')) ||
+    (typeof currentUser === 'string' && currentUser.toLowerCase().includes('henri')) ||
+    resolvedUserName.toLowerCase().includes('henri') ||
+    currentUser?.is_coordinator
+  );
+
   const userMeta = resolveUserMeta(currentUser);
   const currentUserId = currentUser?.id ?? userMeta?.id;
 
@@ -214,6 +224,12 @@ export default function TaskDetailModal({
   const [editAutoAssignByWorkload, setEditAutoAssignByWorkload] = useState(false);
   const [savingEdit, setSavingEdit] = useState(false);
 
+  // Import Markdown (Annotation 3 : Réservé à Henri Jamet)
+  const [isMarkdownImportOpen, setIsMarkdownImportOpen] = useState(false);
+  const [markdownImportText, setMarkdownImportText] = useState('');
+  const [markdownImportError, setMarkdownImportError] = useState('');
+  const [importSuccessBanner, setImportSuccessBanner] = useState('');
+
   // Commentaires (avec message d'accueil si nouvelle création, ou task.comments si existant)
   const [comments, setComments] = useState(() => {
     if (initialTask?.comments && Array.isArray(initialTask.comments) && initialTask.comments.length > 0) {
@@ -239,12 +255,8 @@ export default function TaskDetailModal({
   const [viewerDoc, setViewerDoc] = useState(null);
   const [isViewerOpen, setIsViewerOpen] = useState(false);
 
-  // Recommandations
-  const [recommendations, setRecommendations] = useState([
-    { rank: 1, name: 'Joséphine Jamet', prenom: 'Joséphine', reason: `charge la plus basse dans ${initialTask?.subject || 'Rosings'}` },
-    { rank: 2, name: 'Hortense Jamet', prenom: 'Hortense', reason: 'charge basse' },
-    { rank: 3, name: 'Marguerite Jamet', prenom: 'Marguerite', reason: 'disponible pour ce domaine' },
-  ]);
+  // Recommandations d'équité dynamiques (Annotation 4 : plus de hardcoding Joséphine Jamet)
+  const [recommendations, setRecommendations] = useState([]);
   const [loadingRecs, setLoadingRecs] = useState(false);
   const [selectedValidationMembers, setSelectedValidationMembers] = useState([]);
 
@@ -426,6 +438,67 @@ export default function TaskDetailModal({
     }
     setEditVoteOptions(parsedOptions);
   }
+
+  const handleApplyMarkdownImport = () => {
+    if (!markdownImportText || !markdownImportText.trim()) {
+      setMarkdownImportError("Veuillez coller un texte Markdown ou charger un fichier .md.");
+      return;
+    }
+
+    try {
+      const parsed = parseTaskMarkdown(markdownImportText);
+
+      if (!parsed.title && !parsed.description && (!parsed.checklist || parsed.checklist.length === 0) && (!parsed.keyValues || parsed.keyValues.length === 0)) {
+        setMarkdownImportError("Aucune information exploitable n'a été trouvée dans le texte Markdown.");
+        return;
+      }
+
+      if (parsed.title) {
+        setEditTitle(parsed.title);
+      }
+      if (parsed.description) {
+        setEditDescription(parsed.description);
+      }
+      if (parsed.subject) {
+        setEditSubject(parsed.subject);
+      }
+      if (Array.isArray(parsed.checklist) && parsed.checklist.length > 0) {
+        setEditChecklist(parsed.checklist);
+      }
+      if (Array.isArray(parsed.keyValues) && parsed.keyValues.length > 0) {
+        setEditKeyValues(parsed.keyValues);
+      }
+      if (Array.isArray(parsed.documents) && parsed.documents.length > 0) {
+        setEditDocuments((prev) => {
+          const existingNames = new Set(prev.map((d) => d.name || d.filename));
+          const newDocs = parsed.documents.filter((d) => !existingNames.has(d.name || d.filename));
+          return [...prev, ...newDocs];
+        });
+      }
+      if (Array.isArray(parsed.externalLinks) && parsed.externalLinks.length > 0) {
+        setEditExternalLinks((prev) => {
+          const existingUrls = new Set(prev.map((l) => l.url || l));
+          const newLinks = parsed.externalLinks.filter((l) => !existingUrls.has(l.url));
+          return [...prev, ...newLinks];
+        });
+      }
+      if (parsed.isRecurring) {
+        setEditIsRecurring(true);
+        if (parsed.recurrenceInterval) setEditRecurrenceInterval(parsed.recurrenceInterval);
+        if (parsed.recurrenceUnit) setEditRecurrenceUnit(parsed.recurrenceUnit);
+      }
+
+      setIsMarkdownImportOpen(false);
+      setMarkdownImportText('');
+      setMarkdownImportError('');
+      setImportSuccessBanner("Tâche pré-remplie avec succès depuis l'artefact Markdown !");
+      setTimeout(() => {
+        setImportSuccessBanner('');
+      }, 6000);
+    } catch (err) {
+      setMarkdownImportError(`Erreur lors de l'analyse Markdown : ${err.message || 'Erreur inattendue'}`);
+    }
+  };
 
   async function handleAttachExistingDocs(attachedDocs) {
     if (!Array.isArray(attachedDocs) || attachedDocs.length === 0) return;
@@ -704,6 +777,26 @@ export default function TaskDetailModal({
         });
         if (isMounted && res && Array.isArray(res.recommendations) && res.recommendations.length > 0) {
           setRecommendations(res.recommendations);
+          const top1Name = res.recommendations[0]?.name || res.recommendations[0]?.member_name;
+          if (top1Name) {
+            setSelectedValidationMembers((prev) => {
+              const currentTaskMembers = Array.isArray(task?.assigned_members) && task.assigned_members.length > 0
+                ? task.assigned_members
+                : (task?.assignee ? [task.assignee] : []);
+              if (currentTaskMembers.length === 0 && (!prev || prev.length === 0)) {
+                return [top1Name];
+              }
+              return prev;
+            });
+            if (isNewTask) {
+              setEditMembers((prev) => {
+                if (!prev || prev.length === 0) {
+                  return [top1Name];
+                }
+                return prev;
+              });
+            }
+          }
         }
       } catch (err) {
         console.warn('Erreur chargement recommandations d\'équité:', err);
@@ -2143,23 +2236,57 @@ export default function TaskDetailModal({
                 )}
 
                 {/* Header d'édition (Sans boutons en haut - Annotation 2) */}
-                <div className="bg-canvas-slate/60 border border-slate-200 p-3.5 rounded-xl flex items-center justify-between shadow-xs">
-                  <div className="flex items-center gap-2.5">
-                    <span className="material-symbols-outlined text-primary text-[22px]">
+                <div className="bg-canvas-slate/60 border border-slate-200 p-3.5 rounded-xl flex items-center justify-between gap-3 shadow-xs">
+                  <div className="flex items-center gap-2.5 min-w-0">
+                    <span className="material-symbols-outlined text-primary text-[22px] shrink-0">
                       {isNewTask ? (isVoteInitiative ? 'how_to_vote' : 'add_task') : 'edit_document'}
                     </span>
-                    <div>
-                      <span className="font-bold text-xs sm:text-sm text-forest-deep block">
+                    <div className="min-w-0">
+                      <span className="font-bold text-xs sm:text-sm text-forest-deep block truncate">
                         {isNewTask 
                           ? (isVoteInitiative ? 'Proposer une initiative au vote' : 'Nouvelle tâche — Saisie des informations') 
                           : `Mode Édition — Tâche #${task.ref || task.id}`}
                       </span>
-                      <span className="text-[11px] text-on-surface-variant font-medium">
+                      <span className="text-[11px] text-on-surface-variant font-medium block truncate">
                         {isNewTask ? 'Remplissez le formulaire ci-dessous puis validez en bas de page' : 'Modifiez les champs nécessaires puis enregistrez en bas'}
                       </span>
                     </div>
                   </div>
+
+                  {/* Annotation 3 : Bouton d'import Markdown réservé à Henri Jamet */}
+                  {isHenri && (
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setMarkdownImportError('');
+                        setIsMarkdownImportOpen(true);
+                      }}
+                      className="px-3 py-1.5 rounded-lg bg-emerald-700 hover:bg-emerald-800 text-white text-xs font-semibold flex items-center gap-1.5 transition-all shadow-xs cursor-pointer active:scale-95 shrink-0"
+                      title="Importer les champs depuis un artefact Markdown (sci-task-creator)"
+                    >
+                      <span className="material-symbols-outlined text-[17px]">description</span>
+                      <span className="whitespace-nowrap">Importer depuis Markdown</span>
+                    </button>
+                  )}
                 </div>
+
+                {/* Bannière de confirmation après import Markdown réussi */}
+                {importSuccessBanner && (
+                  <div className="p-3 bg-emerald-50 border border-emerald-300 dark:bg-emerald-950/40 dark:border-emerald-800 rounded-xl flex items-center justify-between gap-2 text-xs font-semibold text-emerald-900 dark:text-emerald-200 animate-in fade-in duration-200 shadow-2xs">
+                    <div className="flex items-center gap-2">
+                      <span className="material-symbols-outlined text-emerald-600 text-[18px]">check_circle</span>
+                      <span>{importSuccessBanner}</span>
+                    </div>
+                    <button
+                      type="button"
+                      onClick={() => setImportSuccessBanner('')}
+                      className="text-emerald-700 hover:text-emerald-900 cursor-pointer"
+                      title="Fermer la notification"
+                    >
+                      <span className="material-symbols-outlined text-[16px]">close</span>
+                    </button>
+                  </div>
+                )}
 
                 {/* Section 1 : Gouvernance & Gestion technique (Pour Henri & Joséphine ou Initiative au vote) */}
                 {(isCoordinator || isVoteInitiative || isNewTask) && (
@@ -2400,7 +2527,7 @@ export default function TaskDetailModal({
                             </div>
 
                             <p className="text-[11px] text-emerald-900/80 dark:text-emerald-300/80 leading-tight">
-                              💡 En mode auto-attribution, la tâche sera automatiquement assignée au n°1 (<strong>{recommendations[0]?.name || 'Joséphine Jamet'}</strong>) lors de l'approbation de la mission.
+                              💡 En mode auto-attribution, la tâche sera automatiquement assignée au n°1 (<strong>{recommendations[0]?.name || sortedAssociatesByEquity[0]?.name || 'Premier membre équitable'}</strong>) lors de l'approbation de la mission.
                             </p>
                           </div>
                         )}
@@ -2760,16 +2887,6 @@ export default function TaskDetailModal({
                     </div>
                   )}
 
-                  {/* Formulaire d'ajout de ressource web directement dans la section Documents (Annotation 14) */}
-                  <div className="pt-3 border-t border-slate-100">
-                    <ExternalLinksSection
-                      links={editExternalLinks}
-                      onChange={setEditExternalLinks}
-                      isEditing={true}
-                      hideList={true}
-                      title="Ajouter un lien web ou ressource en ligne"
-                    />
-                  </div>
 
                   {/* Formulaire d'ajout de clé-valeur (Annotation 5 : DRY Tâches & Votes) */}
                   <div className="pt-3 border-t border-slate-100">
@@ -2957,6 +3074,141 @@ export default function TaskDetailModal({
         alreadyAttachedDocIds={parseTaskDocuments(task?.documents || task?.completion_docs)}
         onAttachSuccess={handleAttachExistingDocs}
       />
+
+      {/* Modale d'importation Markdown pour Henri Jamet (Annotation 3) */}
+      {isMarkdownImportOpen && (
+        <div
+          className="fixed inset-0 z-50 bg-black/60 backdrop-blur-xs flex items-center justify-center p-4 animate-in fade-in duration-150"
+          onClick={() => setIsMarkdownImportOpen(false)}
+        >
+          <div
+            className="bg-white dark:bg-slate-900 rounded-2xl max-w-2xl w-full p-5 sm:p-6 shadow-2xl border border-slate-200 dark:border-slate-800 flex flex-col gap-4 max-h-[90vh] overflow-y-auto"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <div className="flex items-center justify-between border-b border-slate-100 dark:border-slate-800 pb-3">
+              <div className="flex items-center gap-2">
+                <span className="material-symbols-outlined text-emerald-700 text-[24px]">description</span>
+                <h3 className="text-base font-bold text-on-surface">
+                  Importer une tâche depuis Markdown
+                </h3>
+              </div>
+              <button
+                type="button"
+                onClick={() => setIsMarkdownImportOpen(false)}
+                className="w-8 h-8 rounded-full hover:bg-slate-100 dark:hover:bg-slate-800 flex items-center justify-center text-slate-500 cursor-pointer"
+                title="Fermer"
+              >
+                <span className="material-symbols-outlined text-[20px]">close</span>
+              </button>
+            </div>
+
+            <p className="text-xs text-slate-600 dark:text-slate-300 leading-relaxed">
+              Glissez-déposez un fichier d'artefact <code className="bg-slate-100 dark:bg-slate-800 px-1 py-0.5 rounded text-[11px] font-mono">.md</code> (produit par <strong>sci-task-creator</strong>) ou collez son contenu ci-dessous. Le titre, la description, les étapes, les coordonnées clés-valeurs et les documents seront automatiquement extraits et insérés dans le formulaire.
+            </p>
+
+            {/* Zone de drag & drop pour fichier .md */}
+            <div
+              onDragOver={(e) => {
+                e.preventDefault();
+                e.stopPropagation();
+              }}
+              onDrop={(e) => {
+                e.preventDefault();
+                e.stopPropagation();
+                if (e.dataTransfer?.files?.[0]) {
+                  const file = e.dataTransfer.files[0];
+                  const reader = new FileReader();
+                  reader.onload = (event) => {
+                    setMarkdownImportText(event.target?.result || '');
+                    setMarkdownImportError('');
+                  };
+                  reader.readAsText(file);
+                }
+              }}
+              className="border-2 border-dashed border-emerald-300 dark:border-emerald-700/60 rounded-xl p-4 bg-emerald-50/50 dark:bg-emerald-950/20 text-center flex flex-col items-center justify-center gap-1.5 cursor-pointer hover:bg-emerald-50 transition-colors"
+              onClick={() => {
+                const input = document.createElement('input');
+                input.type = 'file';
+                input.accept = '.md,.txt,text/markdown';
+                input.onchange = (e) => {
+                  if (e.target?.files?.[0]) {
+                    const file = e.target.files[0];
+                    const reader = new FileReader();
+                    reader.onload = (event) => {
+                      setMarkdownImportText(event.target?.result || '');
+                      setMarkdownImportError('');
+                    };
+                    reader.readAsText(file);
+                  }
+                };
+                input.click();
+              }}
+            >
+              <span className="material-symbols-outlined text-emerald-700 text-[28px]">upload_file</span>
+              <p className="text-xs font-semibold text-emerald-900 dark:text-emerald-200">
+                Cliquez pour choisir un fichier <span className="font-mono">.md</span> ou glissez-le ici
+              </p>
+              <p className="text-[11px] text-slate-500">
+                Prend en charge tous les fichiers générés par le skill sci-task-creator
+              </p>
+            </div>
+
+            {/* Zone de saisie directe Markdown */}
+            <div className="flex flex-col gap-1.5">
+              <div className="flex items-center justify-between">
+                <label className="text-xs font-bold text-on-surface">
+                  Ou collez directement le texte Markdown :
+                </label>
+                {markdownImportText && (
+                  <button
+                    type="button"
+                    onClick={() => setMarkdownImportText('')}
+                    className="text-[11px] text-rose-600 hover:underline cursor-pointer"
+                  >
+                    Effacer le texte
+                  </button>
+                )}
+              </div>
+              <textarea
+                value={markdownImportText}
+                onChange={(e) => {
+                  setMarkdownImportText(e.target.value);
+                  if (markdownImportError) setMarkdownImportError('');
+                }}
+                rows={9}
+                placeholder="### 1. Titre de la Tâche...&#10;### 2. Description Complète...&#10;### 3. To-Do List...&#10;### 4. Tableau des Informations Importantes..."
+                className="w-full p-3 font-mono text-xs bg-slate-50 dark:bg-slate-950 border border-slate-300 dark:border-slate-700 rounded-xl focus:ring-2 focus:ring-emerald-500 focus:outline-none placeholder:text-slate-400"
+              />
+            </div>
+
+            {markdownImportError && (
+              <div className="p-2.5 bg-rose-50 border border-rose-200 text-rose-700 rounded-lg text-xs font-medium flex items-center gap-1.5">
+                <span className="material-symbols-outlined text-[16px]">error</span>
+                <span>{markdownImportError}</span>
+              </div>
+            )}
+
+            <div className="flex items-center justify-end gap-2 pt-2 border-t border-slate-100 dark:border-slate-800">
+              <button
+                type="button"
+                onClick={() => setIsMarkdownImportOpen(false)}
+                className="px-4 py-2 rounded-xl text-xs font-semibold text-slate-600 hover:bg-slate-100 dark:text-slate-300 dark:hover:bg-slate-800 cursor-pointer"
+              >
+                Annuler
+              </button>
+              <button
+                type="button"
+                onClick={handleApplyMarkdownImport}
+                disabled={!markdownImportText.trim()}
+                className="px-4 py-2 rounded-xl text-xs font-bold bg-emerald-700 hover:bg-emerald-800 text-white flex items-center gap-1.5 transition-all shadow-xs cursor-pointer active:scale-95 disabled:opacity-50 disabled:cursor-not-allowed"
+              >
+                <span className="material-symbols-outlined text-[16px]">check</span>
+                <span>Appliquer l'import</span>
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
 
     </div>
   );
