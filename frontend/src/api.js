@@ -1555,10 +1555,11 @@ export async function fetchBankTransactions(params = {}) {
   return res.json();
 }
 
-export async function triggerBankSync() {
+export async function triggerBankSync(options = {}) {
   const res = await fetch(`${API_BASE}/banking/sync`, {
     method: 'POST',
-    headers: getAuthJsonHeaders()
+    headers: getAuthJsonHeaders(),
+    silentError: options?.silentError ?? true,
   });
   if (!res.ok) {
     let detail = '';

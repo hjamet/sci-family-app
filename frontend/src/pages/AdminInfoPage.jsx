@@ -384,27 +384,37 @@ export default function AdminInfoPage({ currentUser }) {
         console.warn('Auto-réconciliation au montage:', recErr.message);
       });
 
-    // 3. Déclenchement en arrière-plan (sans bloquer l'UI) d'une synchronisation bancaire Swan
-    triggerBankSync()
-      .then(async () => {
-        try {
-          const freshData = await fetchBankStatus({ forceRefresh: true });
-          if (freshData) {
-            setBankStatus(freshData);
-            if (freshData.total_balance !== undefined && freshData.total_balance !== null && freshData.status === 'ok' && !freshData.needs_reauth) {
-              setFinancialTotals((prev) => ({
-                ...prev,
-                reserves: freshData.total_balance
-              }));
-            }
+    // 3. Déclenchement en arrière-plan (sans bloquer l'UI) d'une synchronisation bancaire Swan avec throttling (15 min)
+    const lastSyncTimeStr = localStorage.getItem('sci_last_bank_sync');
+    const lastSyncTime = lastSyncTimeStr ? parseInt(lastSyncTimeStr, 10) : 0;
+    const now = Date.now();
+    const SYNC_THROTTLE_MS = 15 * 60 * 1000; // 15 minutes = 900 000 ms
+
+    if (!lastSyncTime || (now - lastSyncTime) > SYNC_THROTTLE_MS) {
+      triggerBankSync({ silentError: true })
+        .then(async (syncRes) => {
+          if (syncRes && syncRes.success !== false) {
+            localStorage.setItem('sci_last_bank_sync', String(Date.now()));
           }
-        } catch (refreshErr) {
-          console.warn('Notice actualisation post-sync bancaire:', refreshErr.message);
-        }
-      })
-      .catch((syncErr) => {
-        console.warn('Synchronisation bancaire en tâche de fond non bloquante:', syncErr.message);
-      });
+          try {
+            const freshData = await fetchBankStatus({ forceRefresh: true });
+            if (freshData) {
+              setBankStatus(freshData);
+              if (freshData.total_balance !== undefined && freshData.total_balance !== null && freshData.status === 'ok' && !freshData.needs_reauth) {
+                setFinancialTotals((prev) => ({
+                  ...prev,
+                  reserves: freshData.total_balance
+                }));
+              }
+            }
+          } catch (refreshErr) {
+            console.warn('Notice actualisation post-sync bancaire:', refreshErr.message);
+          }
+        })
+        .catch((syncErr) => {
+          console.warn('Synchronisation bancaire en tâche de fond non bloquante:', syncErr.message);
+        });
+    }
   }, []);
 
   useEffect(() => {

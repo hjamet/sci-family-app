@@ -310,7 +310,7 @@ class EnableBankingService:
         endpoint: str,
         data: Optional[Dict[str, Any]] = None,
         timeout: Optional[float] = None,
-        retries: int = 2,
+        retries: int = 1,
         backoff_seconds: float = 2.0
     ) -> Dict[str, Any]:
         """Exécute une requête HTTP authentifiée vers l'API Enable Banking avec retry et timeout sécurisé."""
@@ -323,8 +323,8 @@ class EnableBankingService:
             "User-Agent": "SCI-Hellenvilliers/2.0"
         }
 
-        # Timeout par défaut à 30 secondes (conforme aux exigences de latence ASPSP Swan)
-        req_timeout = timeout if timeout is not None else float(os.getenv("ENABLE_BANKING_TIMEOUT", "30.0"))
+        # Timeout par défaut à 8.0 secondes (conforme aux exigences serverless Vercel)
+        req_timeout = timeout if timeout is not None else float(os.getenv("ENABLE_BANKING_TIMEOUT", "8.0"))
         body_bytes = json.dumps(data).encode("utf-8") if data is not None else None
 
         for attempt in range(retries + 1):
@@ -729,9 +729,10 @@ class EnableBankingService:
 
             synced_accounts_count += 1
 
-            # Récupération des transactions
+            # Récupération des transactions (bornée aux 60 derniers jours pour éviter le timeout Vercel)
             try:
-                tx_list = self.get_account_transactions(acc_id)
+                date_from = (datetime.utcnow() - timedelta(days=60)).strftime("%Y-%m-%d")
+                tx_list = self.get_account_transactions(acc_id, date_from=date_from)
                 if isinstance(tx_list, list):
                     for tx in tx_list:
                         if not isinstance(tx, dict):
