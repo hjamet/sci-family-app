@@ -4105,17 +4105,20 @@ def delete_vademecum_item(item_id: int, db: Session = Depends(get_db)):
 
 def compute_task_progress(task: Task):
     checklist = []
-    if task.checklist:
+    raw_checklist = getattr(task, "checklist", None)
+    if raw_checklist:
         try:
-            checklist = json.loads(task.checklist) if isinstance(task.checklist, str) else task.checklist
+            checklist = json.loads(raw_checklist) if isinstance(raw_checklist, str) else raw_checklist
         except Exception:
             checklist = []
-    total_steps = len(checklist) if isinstance(checklist, list) else 0
+    if not isinstance(checklist, list):
+        checklist = []
+    total_steps = len(checklist)
     completed_steps = sum(1 for step in checklist if isinstance(step, dict) and (step.get("completed") or step.get("done") or step.get("status") in ["done", "completed"])) if total_steps > 0 else 0
     if total_steps > 0:
         pct = round((completed_steps / total_steps) * 100)
     else:
-        st = str(task.status or "").upper()
+        st = str(getattr(task, "status", "") or "").upper()
         if st in ["TERMINE", "ARCHIVEE", "VALIDE"]:
             pct = 100
         else:
@@ -4160,23 +4163,36 @@ def format_task_response(task: Task, include_comments: bool = False) -> dict:
     progress_pct, completed_steps, total_steps = compute_task_progress(task)
 
     assigned_members = []
-    if task.assigned_members:
+    raw_assigned = getattr(task, "assigned_members", None)
+    if raw_assigned:
         try:
-            assigned_members = json.loads(task.assigned_members) if isinstance(task.assigned_members, str) else task.assigned_members
+            parsed = json.loads(raw_assigned) if isinstance(raw_assigned, str) else raw_assigned
+            if isinstance(parsed, list):
+                assigned_members = parsed
+            elif isinstance(parsed, str):
+                assigned_members = [parsed]
+            else:
+                assigned_members = []
         except Exception:
-            assigned_members = [task.assigned_members]
+            assigned_members = [raw_assigned] if isinstance(raw_assigned, str) else []
+    if not isinstance(assigned_members, list):
+        assigned_members = []
 
     checklist = []
-    if task.checklist:
+    raw_checklist = getattr(task, "checklist", None)
+    if raw_checklist:
         try:
-            checklist = json.loads(task.checklist) if isinstance(task.checklist, str) else task.checklist
+            checklist = json.loads(raw_checklist) if isinstance(raw_checklist, str) else raw_checklist
         except Exception:
             checklist = []
+    if not isinstance(checklist, list):
+        checklist = []
 
     documents = []
-    if task.documents:
+    raw_docs = getattr(task, "documents", None)
+    if raw_docs:
         try:
-            documents = json.loads(task.documents) if isinstance(task.documents, str) else task.documents
+            documents = json.loads(raw_docs) if isinstance(raw_docs, str) else raw_docs
         except Exception:
             documents = []
     if not isinstance(documents, list):
@@ -4206,31 +4222,37 @@ def format_task_response(task: Task, include_comments: bool = False) -> dict:
                 })
 
     completion_docs = []
-    if task.completion_docs:
+    raw_comp = getattr(task, "completion_docs", None)
+    if raw_comp:
         try:
-            completion_docs = json.loads(task.completion_docs) if isinstance(task.completion_docs, str) else task.completion_docs
+            completion_docs = json.loads(raw_comp) if isinstance(raw_comp, str) else raw_comp
         except Exception:
-            completion_docs = [task.completion_docs]
+            completion_docs = [raw_comp] if isinstance(raw_comp, str) else []
+    if not isinstance(completion_docs, list):
+        completion_docs = [completion_docs] if completion_docs else []
 
     external_links = []
-    if getattr(task, "external_links", None):
+    raw_ext = getattr(task, "external_links", None)
+    if raw_ext:
         try:
-            external_links = json.loads(task.external_links) if isinstance(task.external_links, str) else list(task.external_links)
+            external_links = json.loads(raw_ext) if isinstance(raw_ext, str) else list(raw_ext)
         except Exception:
             external_links = []
     if not isinstance(external_links, list):
         external_links = []
 
     key_values = []
-    if getattr(task, "key_values", None):
+    raw_kv = getattr(task, "key_values", None)
+    if raw_kv:
         try:
-            key_values = json.loads(task.key_values) if isinstance(task.key_values, str) else list(task.key_values)
+            key_values = json.loads(raw_kv) if isinstance(raw_kv, str) else list(raw_kv)
         except Exception:
             key_values = []
     if not isinstance(key_values, list):
         key_values = []
 
-    comments_list = [format_comment_response(c) for c in task.comments] if task.comments else []
+    raw_comments = getattr(task, "comments", None)
+    comments_list = [format_comment_response(c) for c in raw_comments] if raw_comments else []
 
     expense_id = None
     if isinstance(key_values, list):
@@ -4242,38 +4264,39 @@ def format_task_response(task: Task, include_comments: bool = False) -> dict:
                     pass
                 break
 
+    task_complexity = getattr(task, "complexity", "Modérée") or "Modérée"
     data = {
-        "id": task.id,
-        "ref": task.ref,
-        "title": task.title,
-        "description": task.description,
-        "subject": task.subject,
-        "category": task.category,
-        "priority": task.priority,
-        "status": task.status,
+        "id": getattr(task, "id", None),
+        "ref": getattr(task, "ref", None),
+        "title": getattr(task, "title", ""),
+        "description": getattr(task, "description", ""),
+        "subject": getattr(task, "subject", "SCI"),
+        "category": getattr(task, "category", None),
+        "priority": getattr(task, "priority", "Normale"),
+        "status": getattr(task, "status", "PROPOSED"),
         "expense_id": expense_id,
         "is_recurring": bool(getattr(task, "is_recurring", False)),
-        "recurrence_interval": getattr(task, "recurrence_interval", 1) or 1,
-        "recurrence_unit": getattr(task, "recurrence_unit", "semaines") or "semaines",
+        "recurrence_interval": int(getattr(task, "recurrence_interval", 1) or 1),
+        "recurrence_unit": str(getattr(task, "recurrence_unit", "semaines") or "semaines"),
         "auto_assign_by_workload": bool(getattr(task, "auto_assign_by_workload", False)),
-        "last_completed_at": task.last_completed_at,
-        "complexity": task.complexity,
-        "charge_points": getattr(task, "charge_points", None) or get_task_charge_points(task.complexity),
-        "budget": task.budget,
-        "budget_notes": task.budget_notes,
-        "assignee_id": task.assignee_id,
+        "last_completed_at": getattr(task, "last_completed_at", None),
+        "complexity": task_complexity,
+        "charge_points": getattr(task, "charge_points", None) or get_task_charge_points(task_complexity),
+        "budget": float(getattr(task, "budget", 0.0) or 0.0),
+        "budget_notes": getattr(task, "budget_notes", None),
+        "assignee_id": getattr(task, "assignee_id", None),
         "assigned_members": assigned_members,
-        "deadline": task.deadline,
+        "deadline": getattr(task, "deadline", None),
         "checklist": checklist,
         "documents": documents,
         "external_links": external_links,
         "key_values": key_values,
-        "custom_fields": key_values,
-        "completion_notes": task.completion_notes,
+        "custom_fields": getattr(task, "custom_fields", None) or key_values,
+        "completion_notes": getattr(task, "completion_notes", None),
         "completion_docs": completion_docs,
-        "created_by": task.created_by,
-        "created_at": task.created_at,
-        "updated_at": task.updated_at,
+        "created_by": getattr(task, "created_by", "") or "",
+        "created_at": getattr(task, "created_at", None),
+        "updated_at": getattr(task, "updated_at", None),
         "comments_count": len(comments_list),
         "progress_percent": progress_pct,
         "completed_steps": completed_steps,

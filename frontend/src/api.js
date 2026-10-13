@@ -1075,7 +1075,7 @@ export async function fetchTasks(params = {}, options = {}) {
   const cacheKey = `tasks${qStr ? `?${qStr}` : ''}`;
 
   return swrFetch(cacheKey, async () => {
-    const res = await fetch(`${API_BASE}/tasks?${qStr}`, {
+    const res = await fetch(`${API_BASE}/tasks${qStr ? `?${qStr}` : ''}`, {
       headers: getAuthHeaders()
     });
     if (!res.ok) throw new Error('Erreur lors du chargement des tâches');

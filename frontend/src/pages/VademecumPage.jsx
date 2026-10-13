@@ -243,10 +243,27 @@ export default function VademecumPage({ properties, currentUser, reservations = 
   const [dhwTarget, setDhwTarget] = useState(52.0);
   const [dhwFrostTarget, setDhwFrostTarget] = useState(10.0);
 
-  const [poolTarget, setPoolTarget] = useState(27.0);
+  const [poolTarget, setPoolTarget] = useState(() => {
+    const cached = getCachedData('pool_status');
+    if (cached?.pool_comfort_target != null && cached.pool_comfort_target >= 15.0) {
+      return cached.pool_comfort_target;
+    }
+    if (cached?.target_temperature != null && cached.target_temperature >= 15.0) {
+      return cached.target_temperature;
+    }
+    return 27.0;
+  });
   const [isPoolPumpActive, setIsPoolPumpActive] = useState(true);
   const [isPoolHeatingActive, setIsPoolHeatingActive] = useState(false);
   const [savingThermal, setSavingThermal] = useState(false);
+
+  const isRadioDown = Boolean(
+    klereoRadioAlert ||
+    piscineStatus?.radio_error ||
+    piscineStatus?.radio_link_ok === false ||
+    (piscineStatus?.alerts && piscineStatus.alerts.some(a => (typeof a === 'string' ? a : a.message || '').toLowerCase().includes('injoignable'))) ||
+    (piscineError && (piscineError.toLowerCase().includes('injoignable') || piscineError.toLowerCase().includes('radio')))
+  );
 
   // Horaires programmés pour le séjour (Annotation 8 Stitch 2c313f81e4f5499abb218f5b1dc25c68)
   const [stayPreheatTime, setStayPreheatTime] = useState('10:00');
@@ -344,10 +361,10 @@ export default function VademecumPage({ properties, currentUser, reservations = 
         } else {
           setKlereoRadioAlert(null);
         }
-        if (poolRes.target_temperature != null && poolRes.target_temperature >= 15.0) {
+        if (poolRes.pool_comfort_target != null && poolRes.pool_comfort_target >= 15.0) {
+          setPoolTarget(poolRes.pool_comfort_target);
+        } else if (poolRes.target_temperature != null && poolRes.target_temperature >= 15.0) {
           setPoolTarget(poolRes.target_temperature);
-        } else if (poolRes.frost_protection_target != null && poolRes.frost_protection_target >= 15.0) {
-          setPoolTarget(poolRes.frost_protection_target);
         }
 
         const pumpActive = poolRes.is_pump_active != null
@@ -1938,38 +1955,49 @@ export default function VademecumPage({ properties, currentUser, reservations = 
                   <span className="material-symbols-outlined text-primary text-[22px]">pool</span>
                   <h3 className="font-headline-sm text-headline-sm text-on-surface font-semibold truncate">Piscine (Klereo)</h3>
                 </div>
-                {/* Badge d'état harmonisé Piscine (Annotation 9) */}
-                <span className={`inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full font-label-sm text-[11px] font-bold shrink-0 ${
-                  isPoolHeatingActive && (piscineStatus?.pac_active || piscineStatus?.is_heating_active || piscineStatus?.pac_state?.toLowerCase().includes('chauffe'))
-                    ? 'bg-rose-100 text-rose-800 border border-rose-300 animate-pulse'
-                    : isPoolPumpActive && (piscineStatus?.is_pump_active !== false && (!piscineStatus?.filtration_state || (!piscineStatus.filtration_state.toLowerCase().includes('arrêt') && !piscineStatus.filtration_state.toLowerCase().includes('arret'))))
-                      ? 'bg-emerald-50 text-emerald-800 border border-emerald-300'
-                      : 'bg-slate-100 text-slate-700 border border-slate-200'
-                }`}>
-                  <span className={`w-1.5 h-1.5 rounded-full ${
-                    isPoolHeatingActive && (piscineStatus?.pac_active || piscineStatus?.is_heating_active || piscineStatus?.pac_state?.toLowerCase().includes('chauffe'))
-                      ? 'bg-rose-600 animate-ping'
-                      : isPoolPumpActive && (piscineStatus?.is_pump_active !== false && (!piscineStatus?.filtration_state || (!piscineStatus.filtration_state.toLowerCase().includes('arrêt') && !piscineStatus.filtration_state.toLowerCase().includes('arret'))))
-                        ? 'bg-emerald-600 animate-pulse'
-                        : 'bg-slate-400'
-                  }`}></span>
-                  {isPoolHeatingActive && (piscineStatus?.pac_active || piscineStatus?.is_heating_active || piscineStatus?.pac_state?.toLowerCase().includes('chauffe'))
-                    ? 'Chauffe PAC active'
-                    : isPoolPumpActive && (piscineStatus?.is_pump_active !== false && (!piscineStatus?.filtration_state || (!piscineStatus.filtration_state.toLowerCase().includes('arrêt') && !piscineStatus.filtration_state.toLowerCase().includes('arret'))))
-                      ? 'Filtration active'
-                      : 'En veille (Hivernage)'}
-                </span>
+                {/* Badge d'état harmonisé Piscine */}
+                {isRadioDown ? (
+                  <span className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full font-label-sm text-[11px] font-bold shrink-0 bg-amber-100 text-amber-900 border border-amber-300">
+                    <span className="w-1.5 h-1.5 rounded-full bg-amber-600"></span>
+                    Coffret injoignable (K-Link)
+                  </span>
+                ) : isPoolHeatingActive && (piscineStatus?.pac_active || piscineStatus?.is_heating_active || piscineStatus?.pac_state?.toLowerCase().includes('chauffe')) ? (
+                  <span className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full font-label-sm text-[11px] font-bold shrink-0 bg-rose-100 text-rose-800 border border-rose-300 animate-pulse">
+                    <span className="w-1.5 h-1.5 rounded-full bg-rose-600 animate-ping"></span>
+                    Chauffe PAC active
+                  </span>
+                ) : isPoolPumpActive && (piscineStatus?.is_pump_active !== false && (!piscineStatus?.filtration_state || (!piscineStatus.filtration_state.toLowerCase().includes('arrêt') && !piscineStatus.filtration_state.toLowerCase().includes('arret')))) ? (
+                  <span className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full font-label-sm text-[11px] font-bold shrink-0 bg-emerald-50 text-emerald-800 border border-emerald-300">
+                    <span className="w-1.5 h-1.5 rounded-full bg-emerald-600 animate-pulse"></span>
+                    Filtration active (PAC Arrêt)
+                  </span>
+                ) : (
+                  <span className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full font-label-sm text-[11px] font-bold shrink-0 bg-slate-100 text-slate-700 border border-slate-200">
+                    <span className="w-1.5 h-1.5 rounded-full bg-slate-400"></span>
+                    En veille (Chauffage Arrêt)
+                  </span>
+                )}
               </div>
 
-              {/* Sondes réelles Klereo : Température Eau & Température Air (Annotation 2) */}
+              {/* Sondes réelles Klereo : Température Eau & Température Air */}
               <div className="grid grid-cols-2 gap-3">
                 <div className="p-3 bg-white dark:bg-slate-900 rounded-xl border border-border-subtle flex flex-col gap-0.5 shadow-2xs">
-                  <div className="flex items-center gap-1.5 text-[11px] text-on-surface-variant font-medium">
-                    <span className="material-symbols-outlined text-[16px] text-sky-600">water</span>
-                    <span>Température Eau</span>
+                  <div className="flex items-center justify-between text-[11px] text-on-surface-variant font-medium">
+                    <div className="flex items-center gap-1.5">
+                      <span className="material-symbols-outlined text-[16px] text-sky-600">water</span>
+                      <span>Température Eau</span>
+                    </div>
+                    {isRadioDown && (
+                      <span className="text-[10px] text-amber-700 dark:text-amber-400 font-bold flex items-center gap-0.5" title="Dernière mesure enregistrée avant coupure radio">
+                        <span className="material-symbols-outlined text-[12px]">wifi_off</span> Figée
+                      </span>
+                    )}
                   </div>
                   <span className="font-headline-md text-base sm:text-lg font-bold text-on-surface tabular-nums">
                     {piscineStatus?.water_temperature != null ? `${piscineStatus.water_temperature.toFixed(1)}°C` : '--°C'}
+                  </span>
+                  <span className="text-[10px] text-on-surface-variant">
+                    {isRadioDown ? "Dernière télémesure enregistrée" : "Sonde skimmer réelle"}
                   </span>
                 </div>
                 <div className="p-3 bg-white dark:bg-slate-900 rounded-xl border border-border-subtle flex flex-col gap-0.5 shadow-2xs">
@@ -1981,6 +2009,9 @@ export default function VademecumPage({ properties, currentUser, reservations = 
                     {piscineStatus?.outside_temperature != null
                       ? `${piscineStatus.outside_temperature.toFixed(1)}°C`
                       : (piscineStatus?.air_temperature != null ? `${piscineStatus.air_temperature.toFixed(1)}°C` : '--°C')}
+                  </span>
+                  <span className="text-[10px] text-on-surface-variant">
+                    Sonde extérieure réelle
                   </span>
                 </div>
               </div>
@@ -2012,19 +2043,34 @@ export default function VademecumPage({ properties, currentUser, reservations = 
               <div className="space-y-3">
                 {/* Switch Chauffage Piscine (PAC Inopac 20 kW) */}
                 <div className="space-y-1.5">
-                  <span className="text-[11px] font-bold text-on-surface-variant uppercase tracking-wider block">
-                    Chauffage Piscine (PAC Inopac 20 kW)
-                  </span>
+                  <div className="flex items-center justify-between">
+                    <span className="text-[11px] font-bold text-on-surface-variant uppercase tracking-wider block">
+                      Chauffage Piscine (PAC Inopac 20 kW)
+                    </span>
+                    <span className={`text-[10px] font-bold px-2 py-0.5 rounded-full ${
+                      isPoolHeatingActive
+                        ? 'bg-rose-100 text-rose-800 dark:bg-rose-950 dark:text-rose-200 border border-rose-300'
+                        : 'bg-slate-100 text-slate-700 dark:bg-slate-800 dark:text-slate-300 border border-slate-200'
+                    }`}>
+                      État PAC : {isPoolHeatingActive ? '🔥 En chauffe' : '❄️ À l\'arrêt (Hors-gel 0.5°C)'}
+                    </span>
+                  </div>
                   <ThermalMasterSwitch
                     isActive={isPoolHeatingActive}
                     onChange={handleTogglePoolHeating}
-                    disabled={Boolean(piscineError) || savingThermal}
+                    disabled={Boolean(piscineError && !isRadioDown) || savingThermal}
                     offLabel="Arrêt"
                     onLabel="Marche"
                     offIcon="power_settings_new"
                     onIcon="local_fire_department"
                     ariaLabel="Interrupteur Chauffage Piscine PAC Inopac"
                   />
+                  {isRadioDown && (
+                    <p className="text-[11px] text-amber-700 dark:text-amber-300 flex items-center gap-1 font-medium mt-1">
+                      <span className="material-symbols-outlined text-[14px]">warning</span>
+                      Coffret physique injoignable : commande transmise au Cloud Klereo en attente de reconnexion radio.
+                    </p>
+                  )}
                 </div>
               </div>
 
@@ -2067,31 +2113,51 @@ export default function VademecumPage({ properties, currentUser, reservations = 
                 </div>
               )}
 
-              {/* Réglages des consignes Piscine (Annotation 3 & 4) */}
+              {/* Réglages des consignes Piscine */}
               <div className="flex flex-col gap-2.5">
-                <span className="text-[11px] font-bold text-on-surface-variant uppercase tracking-wider block">
-                  Réglages des Consignes
-                </span>
+                <div className="flex items-center justify-between">
+                  <span className="text-[11px] font-bold text-on-surface-variant uppercase tracking-wider block">
+                    Réglages des Consignes
+                  </span>
+                  {!isPoolHeatingActive && (
+                    <span className="text-[10px] font-bold text-slate-600 dark:text-slate-400 bg-slate-100 dark:bg-slate-800 px-2 py-0.5 rounded-md">
+                      Chauffage coupé • PAC inactive
+                    </span>
+                  )}
+                </div>
 
-                {/* 1. Température en fonctionnement (Baignade) — toujours visible et réglable en permanence */}
+                {!isPoolHeatingActive && (
+                  <div className="p-2.5 bg-slate-50 dark:bg-slate-900/60 rounded-xl border border-border-subtle flex items-start gap-2 text-[11px] text-slate-600 dark:text-slate-400">
+                    <span className="material-symbols-outlined text-slate-500 text-[16px] shrink-0 mt-0.5">info</span>
+                    <span>
+                      <strong>Chauffage à l'arrêt :</strong> Le bassin n'est pas en chauffe (surveillance hors-gel 0.5°C). La consigne ci-dessous ({poolTarget.toFixed(1)}°C) est en réserve et ne sera active que si le chauffage est basculé sur <em>Marche</em>.
+                    </span>
+                  </div>
+                )}
+
+                {/* 1. Température en fonctionnement (Baignade) */}
                 <div className={`p-3.5 bg-white dark:bg-slate-900 rounded-xl border flex items-center justify-between gap-2 shadow-2xs transition-colors ${
-                  isPoolHeatingActive ? 'border-emerald-300 dark:border-emerald-800/80 ring-1 ring-emerald-400/30' : 'border-border-subtle'
+                  isPoolHeatingActive ? 'border-rose-300 dark:border-rose-800/80 ring-1 ring-rose-400/30' : 'border-border-subtle opacity-90'
                 }`}>
                   <div className="flex items-center gap-2.5 min-w-0 pr-1">
-                    <div className="w-8 h-8 rounded-lg bg-emerald-50 dark:bg-emerald-950/50 text-emerald-700 dark:text-emerald-300 flex items-center justify-center shrink-0">
+                    <div className={`w-8 h-8 rounded-lg flex items-center justify-center shrink-0 ${
+                      isPoolHeatingActive ? 'bg-rose-50 dark:bg-rose-950/50 text-rose-700 dark:text-rose-300' : 'bg-slate-100 dark:bg-slate-800 text-slate-500'
+                    }`}>
                       <span className="material-symbols-outlined text-[20px]">pool</span>
                     </div>
                     <div className="flex flex-col min-w-0">
                       <div className="flex items-center gap-1.5 flex-wrap">
-                        <span className="text-xs font-bold text-on-surface leading-tight">En fonctionnement</span>
-                        {!isPoolHeatingActive && (
-                          <span className="inline-flex items-center gap-0.5 px-1.5 py-0.5 rounded-full text-[10px] font-medium bg-slate-100 text-slate-600 dark:bg-slate-800 dark:text-slate-400">
-                            En réserve
-                          </span>
-                        )}
+                        <span className="text-xs font-bold text-on-surface leading-tight">
+                          {isPoolHeatingActive ? 'Consigne de baignade active' : 'Consigne en réserve (PAC Arrêt)'}
+                        </span>
+                        <span className={`inline-flex items-center gap-0.5 px-1.5 py-0.5 rounded-full text-[10px] font-medium ${
+                          isPoolHeatingActive ? 'bg-rose-100 text-rose-800 dark:bg-rose-900/60 dark:text-rose-200' : 'bg-slate-100 text-slate-600 dark:bg-slate-800 dark:text-slate-400'
+                        }`}>
+                          {isPoolHeatingActive ? 'En chauffe' : 'En réserve'}
+                        </span>
                       </div>
                       <span className="text-[10px] text-on-surface-variant">
-                        Consigne de baignade ({isPoolHeatingActive ? 'actif' : 'prévu'})
+                        {isPoolHeatingActive ? `La PAC maintient l'eau vers ${poolTarget.toFixed(1)}°C` : `S'appliquera lors de la mise en marche`}
                       </span>
                     </div>
                   </div>
@@ -2104,12 +2170,16 @@ export default function VademecumPage({ properties, currentUser, reservations = 
                     >
                       <span className="material-symbols-outlined text-[15px]">remove</span>
                     </button>
-                    <span className="font-headline-md text-sm sm:text-base text-primary font-bold tabular-nums w-12 text-center">
+                    <span className={`font-headline-md text-sm sm:text-base font-bold tabular-nums w-12 text-center ${
+                      isPoolHeatingActive ? 'text-primary' : 'text-on-surface-variant'
+                    }`}>
                       {poolTarget.toFixed(1)}<span className="text-xs text-outline font-normal">°C</span>
                     </span>
                     <button
                       aria-label="Augmenter consigne piscine"
-                      className="w-7 h-7 rounded-full bg-primary text-white hover:bg-forest-deep flex items-center justify-center font-bold active:scale-95 transition-transform shadow-2xs cursor-pointer"
+                      className={`w-7 h-7 rounded-full flex items-center justify-center font-bold active:scale-95 transition-transform shadow-2xs cursor-pointer ${
+                        isPoolHeatingActive ? 'bg-primary text-white hover:bg-forest-deep' : 'bg-slate-700 text-white hover:bg-slate-800'
+                      }`}
                       type="button"
                       onClick={() => handlePoolChange(0.5)}
                     >

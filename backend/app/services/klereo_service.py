@@ -424,31 +424,42 @@ class KlereoService:
             # Invariant de résilience absolue : si la liaison radio est établie, aucune fausse alerte radio dans alerts
             if radio_ok:
                 decoded_alerts = [a for a in decoded_alerts if "radio" not in a.lower() and "k-link" not in a.lower()]
+            else:
+                radio_warning = f"Coffret Klereo injoignable : liaison radio K-Link interrompue ({ping_fail} échec(s), dernier ping {last_ping_s}s). La télémesure affichée est figée et les commandes sont suspendues."
+                if radio_warning not in decoded_alerts:
+                    decoded_alerts.insert(0, radio_warning)
 
-            consigne_eau = params.get("ConsigneEau")
-            frost_protection_target = float(consigne_eau) if consigne_eau is not None else None
-
-            # Sémantique Piscine Marche vs Arrêt & Seuil Antigel Klereo (3.0°C) :
-            # - Seuil antigel usine Klereo : 3.0°C (déclenche la circulation forcée de sauvegarde).
-            # - En Mode MARCHE (Confort actif) : maintien de la consigne baignade (28.0°C).
-            # - En Mode ARRÊT (Veille) : aucune limite basse de chauffe, surveillance sécurité antigel Klereo (3.0°C).
+            # Sémantique Piscine Marche vs Arrêt & Seuil Antigel Klereo (0.5°C) :
+            # - Seuil antigel sécurité Klereo : 0.5°C (déclenche la circulation forcée de sauvegarde).
+            # - En Mode MARCHE (Confort actif) : maintien de la consigne baignade (ex: 27.0°C ou ConsigneEau).
+            # - En Mode ARRÊT (Veille) : PAC coupée, maintien seuil antigel sécurité Klereo (0.5°C).
             antifreeze_threshold: float = 0.5  # SeuilHorsGel réel Klereo
-            pool_comfort_target: float = 28.0
+            raw_frost = params.get("SeuilHorsGel", params.get("ConsigneHorsGel"))
+            try:
+                frost_protection_target = float(raw_frost) if raw_frost is not None else antifreeze_threshold
+            except (ValueError, TypeError):
+                frost_protection_target = antifreeze_threshold
+
+            consigne_eau_raw = params.get("ConsigneEau")
+            try:
+                pool_comfort_target = float(consigne_eau_raw) if consigne_eau_raw is not None else 27.0
+            except (ValueError, TypeError):
+                pool_comfort_target = 27.0
 
             is_pac_switch_on = bool(pac_active or (cls.is_read_only_mode() and cls._simulated_heating_state is True))
 
             if pac_active:
                 pac_state_desc = "En chauffe (PAC Inopac 20 kW)"
                 pac_status_label = "Chauffe en cours"
-                pac_status_subtext = "PAC Inopac 20 kW active • Montée en température vers 28.0°C"
+                pac_status_subtext = f"PAC Inopac 20 kW active • Montée en température vers {pool_comfort_target:.1f}°C"
             elif is_pac_switch_on:
-                pac_state_desc = "Au repos (consigne 28.0°C • compresseur éteint)"
-                pac_status_label = "Au repos (consigne 28.0°C)"
-                pac_status_subtext = "Mode Confort actif • Maintien seuil 28.0°C (compresseur PAC au repos)"
+                pac_state_desc = f"Au repos (consigne {pool_comfort_target:.1f}°C • compresseur éteint)"
+                pac_status_label = f"Au repos (consigne {pool_comfort_target:.1f}°C)"
+                pac_status_subtext = f"Mode Confort actif • Maintien seuil {pool_comfort_target:.1f}°C (compresseur PAC au repos)"
             else:
                 pac_state_desc = "Mise en veille / Arrêt consigne"
-                pac_status_label = "Hors-gel actif (seuil sécurité 0.5°C)"
-                pac_status_subtext = "Chauffage coupé • Surveillance antigel active (circulation de sauvegarde sous 0.5°C)"
+                pac_status_label = f"Hors-gel actif (seuil sécurité {frost_protection_target:.1f}°C)"
+                pac_status_subtext = f"Chauffage coupé • Surveillance antigel active (circulation de sauvegarde sous {frost_protection_target:.1f}°C)"
 
             # Timestamp de dernière remontée
             now_ts = sys_0.get("Now", int(time.time()))
@@ -460,12 +471,12 @@ class KlereoService:
                 "ph_value": ph_val,
                 "redox_value": redox_val,
                 "filter_pressure": filter_pressure,
-                "frost_protection_target": frost_protection_target if frost_protection_target is not None else antifreeze_threshold,
+                "frost_protection_target": frost_protection_target,
                 "target_temperature": pool_comfort_target if is_pac_switch_on else frost_protection_target,
                 "antifreeze_threshold": antifreeze_threshold,
                 "frost_protection_threshold": antifreeze_threshold,
                 "pool_comfort_target": pool_comfort_target,
-                "pool_frost_target": antifreeze_threshold,
+                "pool_frost_target": frost_protection_target,
                 "is_pump_active": filtration_active,
                 "is_heating_active": is_pac_switch_on,
                 "pac_active": pac_active,
