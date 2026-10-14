@@ -97,7 +97,8 @@ def test_pool_status_dynamic_alerts_present(mock_post, mock_get, mock_auth):
     assert data["air_temperature"] == 21.5
     assert data["ph_value"] == 7.82
     assert data["redox_value"] == 745.0
-    assert data["frost_protection_target"] == 12.0
+    assert data["frost_protection_target"] == 0.5
+    assert data["pool_comfort_target"] == 12.0
     assert data["radio_link_ok"] is True
     assert data["radio_error"] is False
     assert data["radio_alert"] is None  # Aucun souci radio

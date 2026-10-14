@@ -284,11 +284,23 @@ def test_klereo_pump_mode_arret_mapping():
         assert mock_send.call_args[0][1]["newState"] == "0"
         assert mock_send.call_args[0][1]["newMode"] == "0"
 
-        # Test mode 'on'
+        # Test mode 'on' (Auto Régulé par défaut depuis le site)
         mock_send.reset_mock()
         KlereoService.set_pump_mode(mode="on")
+        assert mock_send.call_args[0][1]["newState"] == "2"
+        assert mock_send.call_args[0][1]["newMode"] == "3"
+
+        # Test mode 'marche' (Auto Régulé par défaut depuis le site)
+        mock_send.reset_mock()
+        KlereoService.set_pump_mode(mode="marche")
+        assert mock_send.call_args[0][1]["newState"] == "2"
+        assert mock_send.call_args[0][1]["newMode"] == "3"
+
+        # Test mode 'manuel_on' (Marche forcée manuelle)
+        mock_send.reset_mock()
+        KlereoService.set_pump_mode(mode="manuel_on")
         assert mock_send.call_args[0][1]["newState"] == "1"
-        assert mock_send.call_args[0][1]["newMode"] == "0"
+        assert mock_send.call_args[0][1]["newMode"] == "1"
 
         # Test mode 'auto'
         mock_send.reset_mock()

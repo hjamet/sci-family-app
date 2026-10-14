@@ -1450,19 +1450,17 @@ export const addTaskMessage = addTaskComment;
 
 // Piscine Telemetry
 export async function fetchPiscineStatus(options = {}) {
-  const force = Boolean(options?.forceRefresh || options?.refresh || options?.force);
-  return swrFetch('pool_status', async () => {
-    const query = force ? '?refresh=true' : '';
-    const res = await fetch(`${API_BASE}/pool/status${query}`, {
-      headers: getAuthHeaders(),
-      silentError: options?.silentError ?? true,
-    });
-    if (!res.ok) {
-      const err = await res.json().catch(() => ({}));
-      throw new Error(err.detail || 'Erreur lors de la récupération du statut piscine Klereo');
-    }
-    return res.json();
-  }, { forceRefresh: force });
+  const res = await fetch(`${API_BASE}/pool/status?refresh=true`, {
+    headers: getAuthHeaders(),
+    silentError: options?.silentError ?? true,
+  });
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({}));
+    throw new Error(err.detail || 'Erreur lors de la récupération du statut piscine Klereo');
+  }
+  const data = await res.json();
+  invalidateApiCache('pool_status');
+  return data;
 }
 
 export async function setPoolPumpMode(modeOrActive) {
@@ -1481,16 +1479,44 @@ export async function setPoolPumpMode(modeOrActive) {
   return res.json();
 }
 
-export async function setPoolHeatingMode(modeOrActive) {
+export async function setPoolHeatingMode(modeOrActive, target_temperature = undefined) {
   const is_active = typeof modeOrActive === 'boolean' ? modeOrActive : modeOrActive !== 'Arrêt' && modeOrActive !== 'arret';
+  const payload = {
+    is_active,
+    mode: is_active ? 'marche' : 'arret',
+  };
+  if (target_temperature !== undefined && target_temperature !== null) {
+    payload.target_temperature = Number(target_temperature);
+  }
   const res = await fetch(`${API_BASE}/pool/heating/mode`, {
     method: 'POST',
     headers: getAuthJsonHeaders(),
-    body: JSON.stringify({ is_active, mode: is_active ? 'marche' : 'arret' }),
+    body: JSON.stringify(payload),
   });
   if (!res.ok) {
     const err = await res.json().catch(() => ({}));
     throw new Error(parseApiError(err, 'Erreur lors du changement de mode du chauffage piscine'));
+  }
+  invalidateApiCache('pool');
+  invalidateApiCache('pool_status');
+  return res.json();
+}
+
+export async function setPoolTemperature(target_temperature, author_name = undefined) {
+  const payload = {
+    target_temperature: Number(target_temperature),
+  };
+  if (author_name !== undefined && author_name !== null) {
+    payload.author_name = author_name;
+  }
+  const res = await fetch(`${API_BASE}/pool/temperature`, {
+    method: 'POST',
+    headers: getAuthJsonHeaders(),
+    body: JSON.stringify(payload),
+  });
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({}));
+    throw new Error(parseApiError(err, 'Erreur lors de la modification de la consigne piscine Klereo'));
   }
   invalidateApiCache('pool');
   invalidateApiCache('pool_status');

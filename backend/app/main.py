@@ -7642,7 +7642,12 @@ def set_pool_heating_mode(req: PoolHeatingModeRequest, db: Session = Depends(get
     Payload: {"mode": "auto" | "on" | "off"} ou {"active": bool}.
     """
     active_input = req.active if req.active is not None else req.is_active
-    result = KlereoService.set_heating_mode(mode=req.mode, active=active_input)
+    target_temp = getattr(req, "target_temperature", None)
+    result = KlereoService.set_heating_mode(
+        mode=req.mode,
+        active=active_input,
+        target_temperature=target_temp
+    )
     author = req.author_name or "Système"
     try:
         active_val = result.get("is_heating_active", False)
@@ -7724,15 +7729,38 @@ def set_piscine_control_interlock(
     if "temperature" in path:
         temp = b.get("target_temperature") or b.get("temperature") or b.get("temp")
         if temp is not None:
-            res = KlereoService.set_temperature(float(temp))
+            f_temp = float(temp)
+            res = KlereoService.set_temperature(f_temp)
+            try:
+                author = b.get("author_name") or "Système"
+                db.add(Log(
+                    action="POOL_TEMPERATURE_UPDATE",
+                    user_name=author,
+                    details=f"Consigne piscine Klereo réglée sur : {f_temp:.1f}°C"
+                ))
+                setting = db.query(ThermalSettings).filter(ThermalSettings.equipment_type == "pool").first()
+                if not setting:
+                    setting = ThermalSettings(equipment_type="pool")
+                    db.add(setting)
+                setting.target_temperature = f_temp
+                setting.updated_by = author
+                setting.updated_at = datetime.utcnow()
+                db.commit()
+            except Exception as log_err:
+                logger.warning(f"[POOL] Log DB temperature non bloquant: {log_err}")
             return PiscineStatusResponse(**res) if isinstance(res, dict) and "is_pump_active" in res else res
         res = KlereoService.get_pool_status(force_refresh=True)
         return PiscineStatusResponse(**res)
     else:
         mode = b.get("mode")
         active = b.get("active") if b.get("active") is not None else b.get("is_active")
+        target_t = b.get("target_temperature")
         if mode is not None or active is not None:
-            res = KlereoService.set_heating_mode(mode=mode, active=active)
+            res = KlereoService.set_heating_mode(
+                mode=mode,
+                active=active,
+                target_temperature=float(target_t) if target_t is not None else None
+            )
             return PiscineStatusResponse(**res) if isinstance(res, dict) and "is_pump_active" in res else res
         res = KlereoService.get_pool_status(force_refresh=True)
         return PiscineStatusResponse(**res)
@@ -7996,18 +8024,29 @@ def update_heating_settings(
 def get_pool_settings(db: Session = Depends(get_db)):
     """Returns currently saved pool consigne and filtration mode."""
     setting = db.query(ThermalSettings).filter(ThermalSettings.equipment_type == "pool").first()
+
+    # Interrogation live Klereo (Zero-Trust)
+    pool_comfort_target = None
+    try:
+        klereo_status = KlereoService.get_pool_status(force_refresh=True)
+        pool_comfort_target = klereo_status.get("pool_comfort_target")
+    except Exception as e:
+        logger.warning(f"[POOL SETTINGS] Erreur lecture Klereo direct: {e}")
+
+    target_temp = pool_comfort_target or (setting.target_temperature if setting and setting.target_temperature is not None else 27.0)
+
     if not setting:
         return PoolSettingsResponse(
-            target_temperature=28.0,
-            antifreeze_threshold=3.0,
+            target_temperature=target_temp,
+            antifreeze_threshold=0.5,
             filtration_mode="auto",
             mode="standby",
             updated_by="Système",
             updated_at=datetime.utcnow()
         )
     return PoolSettingsResponse(
-        target_temperature=setting.target_temperature if setting.target_temperature is not None else 28.0,
-        antifreeze_threshold=3.0,
+        target_temperature=target_temp,
+        antifreeze_threshold=0.5,
         filtration_mode=setting.filtration_mode or "auto",
         mode=setting.mode or "standby",
         updated_by=setting.updated_by or "Coordinateur",
@@ -8024,9 +8063,20 @@ def update_pool_settings(
 ):
     """
     Enregistre les consignes de température et filtration piscine Klereo (Villa Rosing),
+    synchronise Klereo Connect en direct (Fail-Fast),
     et déclenche l'envoi d'un e-mail d'alerte à tous les membres ayant notif_thermal_changes == True.
     """
     author = req.author_name or (current_user.name if current_user else "Henri Jamet (Coordinateur)")
+
+    # Synchronisation obligatoire avec Klereo Connect (Fail-Fast)
+    if req.target_temperature is not None:
+        try:
+            KlereoService.set_temperature(float(req.target_temperature))
+        except HTTPException as klereo_err:
+            if klereo_err.status_code == 403:
+                logger.info("[POOL SETTINGS] Mode lecture seule Klereo actif")
+            else:
+                raise
 
     # 1. Update or create row in thermal_settings
     setting = db.query(ThermalSettings).filter(ThermalSettings.equipment_type == "pool").first()
@@ -8037,7 +8087,7 @@ def update_pool_settings(
     if req.target_temperature is not None:
         setting.target_temperature = req.target_temperature
     elif setting.target_temperature is None:
-        setting.target_temperature = 14.0
+        setting.target_temperature = KlereoService._get_comfort_target()
 
     if req.filtration_mode is not None:
         setting.filtration_mode = req.filtration_mode
@@ -8055,7 +8105,8 @@ def update_pool_settings(
     db.refresh(setting)
 
     # 2. Build human-readable details
-    temp_str = f"{setting.target_temperature:.1f}°C" if setting.target_temperature is not None else "14.0°C"
+    comfort_target = KlereoService._get_comfort_target()
+    temp_str = f"{setting.target_temperature:.1f}°C" if setting.target_temperature is not None else f"{comfort_target:.1f}°C"
     filt_str = setting.filtration_mode or "auto"
     details = req.details or f"Filtration piscine réglée sur '{filt_str}' (Consigne: {temp_str}, Mode: {setting.mode})"
 
@@ -8129,6 +8180,7 @@ def update_pool_settings(
 
     return PoolSettingsResponse(
         target_temperature=setting.target_temperature,
+        antifreeze_threshold=0.5,
         filtration_mode=setting.filtration_mode,
         mode=setting.mode,
         updated_by=setting.updated_by,

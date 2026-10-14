@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import { useLocation } from 'react-router-dom';
 import { BookOpen, Search, Plus, Trash2 } from 'lucide-react';
 import {
@@ -15,6 +15,7 @@ import {
   setDhwTemperature,
   setPoolPumpMode,
   setPoolHeatingMode,
+  setPoolTemperature,
   saveHeatingSettings,
   savePoolSettings,
   validateTask,
@@ -31,6 +32,16 @@ import { ThermalMetricSkeleton, StayCardSkeleton } from '../components/SkeletonL
 import CustomSelect from '../components/CustomSelect';
 import { extractParticipants } from './CalendarPage';
 import { isTaskAssignedToUser, isTaskOpen, isTaskPendingValidation, resolveUserMeta } from '../utils/taskAssignment';
+
+const formatTelemetryAge = (ageSeconds) => {
+  if (ageSeconds == null || isNaN(ageSeconds) || ageSeconds < 0) return null;
+  if (ageSeconds < 120) return 'En direct (< 2 min)';
+  const mins = Math.floor(ageSeconds / 60);
+  if (mins < 60) return `Il y a ${mins} min`;
+  const hours = Math.floor(mins / 60);
+  const remMins = mins % 60;
+  return `Il y a ${hours}h${remMins > 0 ? String(remMins).padStart(2, '0') : ''}`;
+};
 
 function resolveCurrentUserFullName(user) {
   if (typeof user === 'string' && user.trim()) return user.trim();
@@ -229,10 +240,10 @@ export default function VademecumPage({ properties, currentUser, reservations = 
   // Live Telemetry State & Fail-fast (Annotation 4 & 6)
   const [heatingStatus, setHeatingStatus] = useState(() => getCachedData('heating_status') || null);
   const [heatingError, setHeatingError] = useState(null);
-  const [piscineStatus, setPiscineStatus] = useState(() => getCachedData('pool_status') || null);
+  const [piscineStatus, setPiscineStatus] = useState(null);
   const [piscineError, setPiscineError] = useState(null);
   const [klereoRadioAlert, setKlereoRadioAlert] = useState(null);
-  const [telemetryLoading, setTelemetryLoading] = useState(() => !getCachedData('heating_status') && !getCachedData('pool_status'));
+  const [telemetryLoading, setTelemetryLoading] = useState(true);
 
   // Thermal controls state (Refonte Switches XXL Marche/Arrêt & Double Consigne)
   const [isHeatingActive, setIsHeatingActive] = useState(false);
@@ -243,16 +254,8 @@ export default function VademecumPage({ properties, currentUser, reservations = 
   const [dhwTarget, setDhwTarget] = useState(52.0);
   const [dhwFrostTarget, setDhwFrostTarget] = useState(10.0);
 
-  const [poolTarget, setPoolTarget] = useState(() => {
-    const cached = getCachedData('pool_status');
-    if (cached?.pool_comfort_target != null && cached.pool_comfort_target >= 15.0) {
-      return cached.pool_comfort_target;
-    }
-    if (cached?.target_temperature != null && cached.target_temperature >= 15.0) {
-      return cached.target_temperature;
-    }
-    return 27.0;
-  });
+  const [poolTarget, setPoolTarget] = useState(27.0);
+  const poolTempDebounceRef = useRef(null);
   const [isPoolPumpActive, setIsPoolPumpActive] = useState(true);
   const [isPoolHeatingActive, setIsPoolHeatingActive] = useState(false);
   const [savingThermal, setSavingThermal] = useState(false);
@@ -291,7 +294,7 @@ export default function VademecumPage({ properties, currentUser, reservations = 
 
       const [heatResResult, poolResResult, taskResResult, reservationsResResult] = await Promise.allSettled([
         fetchHeatingStatus(),
-        fetchPiscineStatus(),
+        fetchPiscineStatus({ forceRefresh: true, refresh: true }),
         fetchTasks(),
         fetchReservations(),
       ]);
@@ -498,6 +501,46 @@ export default function VademecumPage({ properties, currentUser, reservations = 
     const nextVal = Math.round((poolTarget + delta) * 10) / 10;
     if (nextVal < 15.0 || nextVal > 32.0) return;
     setPoolTarget(nextVal);
+
+    if (poolTempDebounceRef.current) {
+      clearTimeout(poolTempDebounceRef.current);
+    }
+
+    poolTempDebounceRef.current = setTimeout(async () => {
+      try {
+        const res = await setPoolTemperature(nextVal, resolveCurrentUserFullName(currentUser));
+        if (res) {
+          setPiscineStatus(res);
+          if (res?.pool_comfort_target != null) {
+            setPoolTarget(res.pool_comfort_target);
+          }
+        }
+        showToast(`Consigne piscine synchronisée sur Klereo : ${nextVal.toFixed(1)}°C 🎯`);
+        setTimeout(async () => {
+          try {
+            const freshPool = await fetchPiscineStatus({ forceRefresh: true });
+            if (freshPool && !freshPool.error) {
+              setPiscineStatus(freshPool);
+              if (freshPool.pool_comfort_target != null) {
+                setPoolTarget(freshPool.pool_comfort_target);
+              }
+            }
+          } catch (_) {}
+        }, 5000);
+      } catch (err) {
+        const parsedErr = parseApiError(err, 'Erreur lors de la modification de la consigne piscine Klereo');
+        showToast(`⚠️ Échec réglage piscine : ${parsedErr}`);
+        const errLower = parsedErr.toLowerCase();
+        if (errLower.includes('injoignable') || errLower.includes('radio') || errLower.includes('k-link') || errLower.includes('coffret')) {
+          setKlereoRadioAlert(`⚠️ Échec réglage consigne Klereo (${nextVal.toFixed(1)}°C) : ${parsedErr}`);
+        }
+        if (piscineStatus?.pool_comfort_target != null) {
+          setPoolTarget(piscineStatus.pool_comfort_target);
+        } else if (piscineStatus?.target_temperature != null) {
+          setPoolTarget(piscineStatus.target_temperature);
+        }
+      }
+    }, 600);
   };
 
   // Bascule du switch Marche/Arrêt Chauffage avec boucle fermée et réconciliation télémétrique réelle
@@ -672,7 +715,10 @@ export default function VademecumPage({ properties, currentUser, reservations = 
     setIsPoolHeatingActive(targetActive);
     setSavingThermal(true);
     try {
-      await setPoolHeatingMode(targetActive);
+      const res = await setPoolHeatingMode(targetActive, poolTarget);
+      if (res) {
+        setPiscineStatus(res);
+      }
       showToast(
         targetActive
           ? `Commande transmise à la PAC Klereo : chauffe vers ${poolTarget.toFixed(1)}°C (en cours) 🔥`
@@ -739,7 +785,13 @@ export default function VademecumPage({ properties, currentUser, reservations = 
           author_name: resolveCurrentUserFullName(currentUser),
           details: `Réglages consolidés piscine : Pompe ${isPoolPumpActive ? 'Marche' : 'Arrêt'}, PAC ${isPoolHeatingActive ? 'Marche' : 'Arrêt'}, Cible ${poolTarget.toFixed(1)}°C`
         });
-      } catch (_) {}
+      } catch (poolErr) {
+        const parsedErr = parseApiError(poolErr, 'Erreur lors de la synchronisation des réglages piscine Klereo');
+        showToast(`⚠️ Synchronisation piscine : ${parsedErr}`);
+        if (parsedErr.toLowerCase().includes('injoignable') || parsedErr.toLowerCase().includes('radio') || parsedErr.toLowerCase().includes('k-link') || parsedErr.toLowerCase().includes('coffret')) {
+          setKlereoRadioAlert(`⚠️ Liaison radio K-Link injoignable : le coffret physique au local technique ne répond pas. (${parsedErr})`);
+        }
+      }
 
       // Recharger la télémétrie fraîche
       const [freshHeatRes, freshPoolRes] = await Promise.allSettled([
@@ -1961,10 +2013,15 @@ export default function VademecumPage({ properties, currentUser, reservations = 
                     <span className="w-1.5 h-1.5 rounded-full bg-amber-600"></span>
                     Coffret injoignable (K-Link)
                   </span>
-                ) : isPoolHeatingActive && (piscineStatus?.pac_active || piscineStatus?.is_heating_active || piscineStatus?.pac_state?.toLowerCase().includes('chauffe')) ? (
+                ) : isPoolHeatingActive && piscineStatus?.pac_active ? (
                   <span className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full font-label-sm text-[11px] font-bold shrink-0 bg-rose-100 text-rose-800 border border-rose-300 animate-pulse">
                     <span className="w-1.5 h-1.5 rounded-full bg-rose-600 animate-ping"></span>
                     Chauffe PAC active
+                  </span>
+                ) : isPoolHeatingActive && !piscineStatus?.pac_active ? (
+                  <span className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full font-label-sm text-[11px] font-bold shrink-0 bg-amber-100 text-amber-900 border border-amber-300">
+                    <span className="w-1.5 h-1.5 rounded-full bg-amber-600"></span>
+                    PAC en régulation ({poolTarget.toFixed(1)}°C • repos)
                   </span>
                 ) : isPoolPumpActive && (piscineStatus?.is_pump_active !== false && (!piscineStatus?.filtration_state || (!piscineStatus.filtration_state.toLowerCase().includes('arrêt') && !piscineStatus.filtration_state.toLowerCase().includes('arret')))) ? (
                   <span className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full font-label-sm text-[11px] font-bold shrink-0 bg-emerald-50 text-emerald-800 border border-emerald-300">
@@ -1987,8 +2044,8 @@ export default function VademecumPage({ properties, currentUser, reservations = 
                       <span className="material-symbols-outlined text-[16px] text-sky-600">water</span>
                       <span>Température Eau</span>
                     </div>
-                    {isRadioDown && (
-                      <span className="text-[10px] text-amber-700 dark:text-amber-400 font-bold flex items-center gap-0.5" title="Dernière mesure enregistrée avant coupure radio">
+                    {(isRadioDown || piscineStatus?.telemetry_stale || (piscineStatus?.water_temp_age_s != null && piscineStatus.water_temp_age_s > 3600)) && (
+                      <span className="text-[10px] text-amber-700 dark:text-amber-400 font-bold flex items-center gap-0.5" title="Dernière mesure enregistrée">
                         <span className="material-symbols-outlined text-[12px]">wifi_off</span> Figée
                       </span>
                     )}
@@ -1996,25 +2053,67 @@ export default function VademecumPage({ properties, currentUser, reservations = 
                   <span className="font-headline-md text-base sm:text-lg font-bold text-on-surface tabular-nums">
                     {piscineStatus?.water_temperature != null ? `${piscineStatus.water_temperature.toFixed(1)}°C` : '--°C'}
                   </span>
-                  <span className="text-[10px] text-on-surface-variant">
-                    {isRadioDown ? "Dernière télémesure enregistrée" : "Sonde skimmer réelle"}
-                  </span>
+                  <div className="text-[10px] text-on-surface-variant">
+                    {piscineStatus?.water_temp_age_s != null ? (
+                      (piscineStatus?.telemetry_stale || piscineStatus.water_temp_age_s > 3600) ? (
+                        <span className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded bg-amber-100 text-amber-900 dark:bg-amber-950 dark:text-amber-200 font-semibold">
+                          ⚠️ Mesure figée ({formatTelemetryAge(piscineStatus.water_temp_age_s)})
+                        </span>
+                      ) : (
+                        <span>Sonde skimmer • {formatTelemetryAge(piscineStatus.water_temp_age_s)}</span>
+                      )
+                    ) : (
+                      <span>{isRadioDown ? "Dernière télémesure enregistrée" : "Sonde skimmer réelle"}</span>
+                    )}
+                  </div>
                 </div>
                 <div className="p-3 bg-white dark:bg-slate-900 rounded-xl border border-border-subtle flex flex-col gap-0.5 shadow-2xs">
-                  <div className="flex items-center gap-1.5 text-[11px] text-on-surface-variant font-medium">
-                    <span className="material-symbols-outlined text-[16px] text-emerald-600">air</span>
-                    <span>Température Air</span>
+                  <div className="flex items-center justify-between text-[11px] text-on-surface-variant font-medium">
+                    <div className="flex items-center gap-1.5">
+                      <span className="material-symbols-outlined text-[16px] text-emerald-600">air</span>
+                      <span>Température Air</span>
+                    </div>
+                    {(isRadioDown || piscineStatus?.telemetry_stale || (piscineStatus?.air_temp_age_s != null && piscineStatus.air_temp_age_s > 3600)) && (
+                      <span className="text-[10px] text-amber-700 dark:text-amber-400 font-bold flex items-center gap-0.5" title="Dernière mesure enregistrée">
+                        <span className="material-symbols-outlined text-[12px]">wifi_off</span> Figée
+                      </span>
+                    )}
                   </div>
                   <span className="font-headline-md text-base sm:text-lg font-bold text-on-surface tabular-nums">
                     {piscineStatus?.outside_temperature != null
                       ? `${piscineStatus.outside_temperature.toFixed(1)}°C`
                       : (piscineStatus?.air_temperature != null ? `${piscineStatus.air_temperature.toFixed(1)}°C` : '--°C')}
                   </span>
-                  <span className="text-[10px] text-on-surface-variant">
-                    Sonde extérieure réelle
-                  </span>
+                  <div className="text-[10px] text-on-surface-variant">
+                    {piscineStatus?.air_temp_age_s != null ? (
+                      (piscineStatus?.telemetry_stale || piscineStatus.air_temp_age_s > 3600) ? (
+                        <span className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded bg-amber-100 text-amber-900 dark:bg-amber-950 dark:text-amber-200 font-semibold">
+                          ⚠️ Mesure figée ({formatTelemetryAge(piscineStatus.air_temp_age_s)})
+                        </span>
+                      ) : (
+                        <span>Sonde extérieure • {formatTelemetryAge(piscineStatus.air_temp_age_s)}</span>
+                      )
+                    ) : (
+                      <span>Sonde extérieure réelle</span>
+                    )}
+                  </div>
                 </div>
               </div>
+
+              {/* Bandeau d'information télémétrie stale Klereo (radio K-Link 868 MHz) */}
+              {piscineStatus?.telemetry_stale && (
+                <div className="p-3.5 bg-amber-50 dark:bg-amber-950/40 border border-amber-300 dark:border-amber-600 text-amber-950 dark:text-amber-100 rounded-xl text-xs flex items-start gap-2.5 shadow-2xs animate-in fade-in duration-200">
+                  <span className="material-symbols-outlined text-amber-600 dark:text-amber-400 text-[22px] shrink-0 mt-0.5">sensors_off</span>
+                  <div className="flex flex-col gap-0.5 min-w-0">
+                    <span className="font-bold text-xs text-amber-900 dark:text-amber-200">
+                      Télémesure radio 868 MHz en attente d'actualisation
+                    </span>
+                    <span className="text-[11px] text-amber-800 dark:text-amber-300 leading-relaxed font-normal">
+                      Le boîtier Klereo Connect (derrière le piano) est bien connecté au Wi-Fi, mais la dernière remontée radio 868 MHz du coffret piscine remonte à {formatTelemetryAge(piscineStatus.infos_time_s || piscineStatus.water_temp_age_s) || 'plus d\'une heure'}.
+                    </span>
+                  </div>
+                </div>
+              )}
 
               {/* Alerte Radio Klereo si coffret injoignable ou anomalie radio (Question 3) */}
               {(klereoRadioAlert || piscineStatus?.radio_error || piscineStatus?.radio_link_ok === false || (piscineStatus?.radio_alert && !piscineStatus?.radio_link_ok) || (piscineError && (piscineError.toLowerCase().includes('injoignable') || piscineError.toLowerCase().includes('radio')))) && (
@@ -2048,11 +2147,17 @@ export default function VademecumPage({ properties, currentUser, reservations = 
                       Chauffage Piscine (PAC Inopac 20 kW)
                     </span>
                     <span className={`text-[10px] font-bold px-2 py-0.5 rounded-full ${
-                      isPoolHeatingActive
+                      isPoolHeatingActive && piscineStatus?.pac_active
                         ? 'bg-rose-100 text-rose-800 dark:bg-rose-950 dark:text-rose-200 border border-rose-300'
+                        : isPoolHeatingActive && !piscineStatus?.pac_active
+                        ? 'bg-amber-100 text-amber-900 dark:bg-amber-950 dark:text-amber-200 border border-amber-300'
                         : 'bg-slate-100 text-slate-700 dark:bg-slate-800 dark:text-slate-300 border border-slate-200'
                     }`}>
-                      État PAC : {isPoolHeatingActive ? '🔥 En chauffe' : '❄️ À l\'arrêt (Hors-gel 0.5°C)'}
+                      {isPoolHeatingActive && piscineStatus?.pac_active
+                        ? 'État PAC : 🔥 En chauffe (compresseur actif)'
+                        : isPoolHeatingActive && !piscineStatus?.pac_active
+                        ? `État PAC : 🌡️ Marche (Thermostat ${poolTarget.toFixed(1)}°C • repos)`
+                        : 'État PAC : ❄️ À l\'arrêt (Hors-gel 0.5°C)'}
                     </span>
                   </div>
                   <ThermalMasterSwitch
@@ -2203,13 +2308,25 @@ export default function VademecumPage({ properties, currentUser, reservations = 
                   <span className="w-1.5 h-1.5 rounded-full bg-secondary"></span>
                   <span>Filtre : <strong>{piscineStatus?.filter_pressure_mbar != null ? `${piscineStatus.filter_pressure_mbar} mbar` : (piscineStatus?.filter_pressure != null ? `${piscineStatus.filter_pressure} mbar` : '-- mbar')}</strong></span>
                 </div>
-                <div className="inline-flex items-center gap-1 px-2 py-0.5 rounded-md bg-sage-soft text-primary text-[11px] font-semibold">
+                <div className={`inline-flex items-center gap-1 px-2 py-0.5 rounded-md text-[11px] font-semibold ${
+                  piscineStatus?.pump_relay_active
+                    ? 'bg-emerald-100 text-emerald-900 dark:bg-emerald-950 dark:text-emerald-200'
+                    : isPoolPumpActive
+                    ? 'bg-sage-soft text-primary'
+                    : 'bg-slate-100 text-slate-600 dark:bg-slate-800 dark:text-slate-400'
+                }`}>
                   <span className="material-symbols-outlined text-[12px]">sync</span>
-                  Pompe {isPoolPumpActive ? 'ON' : 'OFF'}
+                  Pompe {piscineStatus?.pump_relay_active ? 'ON (En cours)' : (isPoolPumpActive ? 'AUTO (Veille cycle)' : 'OFF')}
                 </div>
-                <div className="inline-flex items-center gap-1 px-2 py-0.5 rounded-md bg-sage-soft text-primary text-[11px] font-semibold">
+                <div className={`inline-flex items-center gap-1 px-2 py-0.5 rounded-md text-[11px] font-semibold ${
+                  piscineStatus?.pac_active
+                    ? 'bg-rose-100 text-rose-900 dark:bg-rose-950 dark:text-rose-200 animate-pulse'
+                    : isPoolHeatingActive
+                    ? 'bg-amber-100 text-amber-900 dark:bg-amber-950 dark:text-amber-200'
+                    : 'bg-slate-100 text-slate-600 dark:bg-slate-800 dark:text-slate-400'
+                }`}>
                   <span className="material-symbols-outlined text-[12px]">hvac</span>
-                  PAC {isPoolHeatingActive ? 'ON' : 'OFF'}
+                  PAC {piscineStatus?.pac_active ? 'ON (Chauffe)' : (isPoolHeatingActive ? 'AUTO (Veille)' : 'OFF')}
                 </div>
               </div>
 

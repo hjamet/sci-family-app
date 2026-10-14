@@ -316,12 +316,16 @@ class KlereoService:
             ph_val = None
             redox_val = None
             filter_pressure = None
+            water_temp_age_s = None
+            air_temp_age_s = None
 
             for p in probes:
                 if not isinstance(p, dict):
                     continue
                 p_type = p.get("type")
+                idx = p.get("index")
                 val = p.get("filteredValue") if p.get("filteredValue") is not None else p.get("directValue")
+                up_time = p.get("updateTime")
                 if val is not None:
                     try:
                         f_val = float(val)
@@ -337,11 +341,28 @@ class KlereoService:
                             filter_pressure = round(f_val, 1)
                     except (ValueError, TypeError):
                         pass
+                if up_time is not None:
+                    try:
+                        age = int(up_time)
+                        if p_type == 5 or idx == 16:
+                            water_temp_age_s = age
+                        elif p_type == 1 or idx == 1:
+                            air_temp_age_s = age
+                    except (ValueError, TypeError):
+                        pass
 
             # Analyse dynamique de la filtration et PAC (via sorties 'outs' et 'params')
             outs = pool_detail.get("outs", [])
             filtration_active = False
+            pump_mode_code = None
+            pump_relay_active = False
+            pump_state_age_s = None
+
             pac_active = False
+            pac_mode_code = None
+            pac_relay_active = False
+            is_pac_switch_on = False
+            pac_state_age_s = None
 
             for out in outs:
                 if not isinstance(out, dict):
@@ -350,26 +371,44 @@ class KlereoService:
                 out_map = out.get("map")
                 real_st = out.get("realStatus") if out.get("realStatus") is not None else out.get("status", 0)
                 if idx == 1 or out_map == 1:
-                    filtration_active = (real_st == 1)
+                    pump_mode_code = int(out.get("mode", 0) or 0)
+                    pump_relay_active = (real_st == 1)
+                    filtration_active = (pump_mode_code in (1, 2, 3)) or pump_relay_active
+                    pump_state_age_s = int(out.get("updateTime")) if out.get("updateTime") is not None else None
                 elif idx == 4 or out_map == 4:
-                    pac_active = (real_st == 1)
+                    pac_mode_code = int(out.get("mode", 0) or 0)
+                    pac_relay_active = (real_st == 1)
+                    pac_active = pac_relay_active
+                    is_pac_switch_on = (pac_mode_code in (1, 2, 3)) or pac_relay_active
+                    pac_state_age_s = int(out.get("updateTime")) if out.get("updateTime") is not None else None
 
             if cls.is_read_only_mode():
                 if cls._simulated_pump_state is not None:
                     filtration_active = cls._simulated_pump_state
+                    pump_relay_active = cls._simulated_pump_state
+                    pump_mode_code = 3 if cls._simulated_pump_state else 0
                 if cls._simulated_heating_state is not None:
+                    is_pac_switch_on = cls._simulated_heating_state
                     pac_active = cls._simulated_heating_state
+                    pac_relay_active = cls._simulated_heating_state
+                    pac_mode_code = 3 if cls._simulated_heating_state else 0
 
             params = pool_detail.get("params", {})
             pool_mode = params.get("PoolMode", sys_0.get("RegulModes", {}).get("PoolMode", 2))
-            mode_desc = "Automatique régulée" if pool_mode == 2 else ("Marche Forcée" if pool_mode == 1 else "Arrêt")
             filt_today_sec = params.get("Filtration_TodayTime", 0)
             filt_today_h = round(filt_today_sec / 3600, 1) if filt_today_sec else 0.0
             
             regul_duree = params.get("RegulDuree")
             filt_target_h = round(float(regul_duree), 1) if regul_duree is not None else None
 
-            filt_state = f"En marche ({mode_desc})" if filtration_active else f"En veille ({mode_desc})"
+            # Libellés de filtration
+            if pump_relay_active:
+                filt_state = "En marche (Filtration active)"
+            elif filtration_active and (pump_mode_code in (2, 3) or pool_mode == 2):
+                filt_state = "Mode Auto (Repos entre cycles • Hors-gel actif)"
+            else:
+                filt_state = "Arrêt manuel"
+
             if filt_target_h is not None:
                 filt_cycle = f"{filt_target_h}h/jour programmées ({filt_today_h}h réalisées aujourd'hui)"
             else:
@@ -395,15 +434,25 @@ class KlereoService:
             except (ValueError, TypeError):
                 last_ping_s = None
 
+            infos_time_s = int(pool_detail.get("infosTime") or sys_0.get("infosTime") or 0)
+            rf_sent = int(pool_detail.get("rfSent", 0) or 0)
+            rf_err = int(pool_detail.get("rfErr", 0) or 0)
+            telemetry_stale = bool((infos_time_s and infos_time_s > 3600) or (water_temp_age_s is not None and water_temp_age_s > 3600))
+
             # Règle de résilience radio (Annotation 7) :
             # Si le dernier contact radio est récent (< 120s), la liaison est pleinement active.
             # pingFail est un compteur cumulé historique du boîtier Klereo qui ne caractérise pas une panne actuelle.
             radio_ok = (last_ping_s is not None and last_ping_s < 120)
             if radio_ok:
-                if ping_fail == 0:
-                    radio_status = f"Liaison radio K-Link active (0 échec, ping {last_ping_s}s)"
+                if telemetry_stale:
+                    hours = infos_time_s // 3600
+                    mins = (infos_time_s % 3600) // 60
+                    radio_status = f"Passerelle Wi-Fi en ligne (ping {last_ping_s}s) • Dernière trame radio coffret il y a {hours}h{mins:02d}"
                 else:
-                    radio_status = f"Liaison radio K-Link active (ping {last_ping_s}s, {ping_fail} échec(s) historiques)"
+                    if ping_fail == 0:
+                        radio_status = f"Liaison radio K-Link active (0 échec, ping {last_ping_s}s)"
+                    else:
+                        radio_status = f"Liaison radio K-Link active (ping {last_ping_s}s, {ping_fail} échec(s) historiques)"
                 radio_alert_msg = None
             else:
                 radio_status = "Liaison radio K-Link dégradée ou interrompue"
@@ -445,15 +494,15 @@ class KlereoService:
                 pool_comfort_target = float(consigne_eau_raw) if consigne_eau_raw is not None else 27.0
             except (ValueError, TypeError):
                 pool_comfort_target = 27.0
+            cls._pool_comfort_target = pool_comfort_target
 
-            is_pac_switch_on = bool(pac_active or (cls.is_read_only_mode() and cls._simulated_heating_state is True))
-
+            # Libellés d'état PAC
             if pac_active:
                 pac_state_desc = "En chauffe (PAC Inopac 20 kW)"
                 pac_status_label = "Chauffe en cours"
                 pac_status_subtext = f"PAC Inopac 20 kW active • Montée en température vers {pool_comfort_target:.1f}°C"
             elif is_pac_switch_on:
-                pac_state_desc = f"Au repos (consigne {pool_comfort_target:.1f}°C • compresseur éteint)"
+                pac_state_desc = f"Thermostat armé (consigne {pool_comfort_target:.1f}°C • compresseur au repos)"
                 pac_status_label = f"Au repos (consigne {pool_comfort_target:.1f}°C)"
                 pac_status_subtext = f"Mode Confort actif • Maintien seuil {pool_comfort_target:.1f}°C (compresseur PAC au repos)"
             else:
@@ -461,9 +510,12 @@ class KlereoService:
                 pac_status_label = f"Hors-gel actif (seuil sécurité {frost_protection_target:.1f}°C)"
                 pac_status_subtext = f"Chauffage coupé • Surveillance antigel active (circulation de sauvegarde sous {frost_protection_target:.1f}°C)"
 
-            # Timestamp de dernière remontée
+            # Timestamp de dernière remontée radio
             now_ts = sys_0.get("Now", int(time.time()))
-            last_update_iso = datetime.fromtimestamp(now_ts).isoformat()
+            if infos_time_s > 0:
+                last_update_iso = datetime.fromtimestamp(max(0, now_ts - infos_time_s)).isoformat()
+            else:
+                last_update_iso = datetime.fromtimestamp(now_ts).isoformat()
 
             return {
                 "water_temperature": water_temp,
@@ -480,6 +532,9 @@ class KlereoService:
                 "is_pump_active": filtration_active,
                 "is_heating_active": is_pac_switch_on,
                 "pac_active": pac_active,
+                "pac_mode_code": pac_mode_code,
+                "pump_mode_code": pump_mode_code,
+                "pump_relay_active": pump_relay_active,
                 "pump_mode": (cls._simulated_pump_mode if (cls.is_read_only_mode() and cls._simulated_pump_mode) else ("auto" if pool_mode == 2 else ("on" if filtration_active else "off"))),
                 "heating_mode": (cls._simulated_heating_mode if (cls.is_read_only_mode() and cls._simulated_heating_mode) else ("auto" if pool_mode == 2 else ("on" if pac_active else "off"))),
                 "pac_state": pac_state_desc,
@@ -499,6 +554,14 @@ class KlereoService:
                 "radio_status": radio_status,
                 "radio_alert": radio_alert_msg,
                 "radio_error": not radio_ok,
+                "infos_time_s": infos_time_s,
+                "water_temp_age_s": water_temp_age_s,
+                "air_temp_age_s": air_temp_age_s,
+                "pac_state_age_s": pac_state_age_s,
+                "pump_state_age_s": pump_state_age_s,
+                "rf_sent": rf_sent,
+                "rf_err": rf_err,
+                "telemetry_stale": telemetry_stale,
                 "test_mode_read_only": cls.is_read_only_mode(),
                 "message": (
                     "Télémétrie Klereo Connect en direct."
@@ -563,25 +626,31 @@ class KlereoService:
         consigne l'action de commande et renvoie le statut réel mis à jour sans fallback factice.
         Fail-Fast : Si l'API Klereo est indisponible, l'erreur est levée et propagée.
         """
-        if active is not None:
-            new_active = bool(active)
-            new_mode = mode or ("on" if new_active else "off")
-        elif mode is not None:
+        if mode is not None:
             norm_mode = mode.lower().strip()
-            if norm_mode in ("on", "marche", "true"):
-                new_active = True
-                new_mode = "on"
-            elif norm_mode in ("off", "arret", "arrêt", "false"):
-                new_active = False
-                new_mode = "off"
+            if norm_mode == "manuel_on":
+                new_active = True if active is None else bool(active)
+                new_mode = "manuel_on" if new_active else "off"
             elif norm_mode == "auto":
-                new_mode = "auto"
-                new_active = True
+                new_active = True if active is None else bool(active)
+                new_mode = "auto" if new_active else "off"
+            elif norm_mode in ("on", "marche", "true"):
+                new_active = True if active is None else bool(active)
+                new_mode = "on" if new_active else "off"
+            elif norm_mode in ("off", "arret", "arrêt", "false"):
+                new_active = False if active is None else bool(active)
+                new_mode = "on" if new_active else "off"
+            elif active is not None:
+                new_active = bool(active)
+                new_mode = "on" if new_active else "off"
             else:
                 raise HTTPException(
                     status_code=status.HTTP_400_BAD_REQUEST,
-                    detail={"error": f"Mode pompe invalide: '{mode}'. Valeurs autorisées: 'auto', 'on', 'off'."}
+                    detail={"error": f"Mode pompe invalide: '{mode}'. Valeurs autorisées: 'auto', 'on', 'marche', 'manuel_on', 'off', 'arret'."}
                 )
+        elif active is not None:
+            new_active = bool(active)
+            new_mode = "on" if new_active else "off"
         else:
             raise HTTPException(
                 status_code=status.HTTP_400_BAD_REQUEST,
@@ -621,19 +690,17 @@ class KlereoService:
             cls._simulated_pump_mode = None
             try:
                 sys_id = cls._get_system_id()
-                # Mapping mode → Klereo outIdx=1 newState
-                state_map = {
-                    "auto": "2",
-                    "on": "1",
-                    "marche": "1",
-                    "true": "1",
-                    "off": "0",
-                    "arret": "0",
-                    "arrêt": "0",
-                    "false": "0"
-                }
-                new_state = state_map.get(new_mode, "0" if not new_active else "2")
-                new_mode_param = "3" if new_mode == "auto" else "0"
+                if new_active:
+                    if new_mode == "manuel_on":
+                        new_state = "1"
+                        new_mode_param = "1"
+                    else:
+                        new_state = "2"
+                        new_mode_param = "3"
+                else:
+                    new_state = "0"
+                    new_mode_param = "0"
+
                 cls._send_command(SET_OUT_URL, {
                     "poolID": str(sys_id),
                     "outIdx": "1",
@@ -648,7 +715,12 @@ class KlereoService:
             return cls.get_pool_status(force_refresh=True)
 
     @classmethod
-    def set_heating_mode(cls, mode: Optional[str] = None, active: Optional[bool] = None) -> Dict[str, Any]:
+    def set_heating_mode(
+        cls,
+        mode: Optional[str] = None,
+        active: Optional[bool] = None,
+        target_temperature: Optional[float] = None
+    ) -> Dict[str, Any]:
         """
         Contrôle du chauffage de la piscine PAC Inopac 20 kW (Marche / Arrêt / Auto).
         En mode test/lecture seule (KLEREO_TEST_MODE_READ_ONLY = True),
@@ -680,11 +752,14 @@ class KlereoService:
                 detail={"error": "Le paramètre 'mode' ou 'active' est requis."}
             )
 
-        logger.info(f"[KLEREO] Commande PAC chauffage piscine : mode={new_mode}, active={new_active} (read_only={cls.is_read_only_mode()})")
+        logger.info(f"[KLEREO] Commande PAC chauffage piscine : mode={new_mode}, active={new_active}, target_temperature={target_temperature} (read_only={cls.is_read_only_mode()})")
 
         if cls.is_read_only_mode():
             cls._simulated_heating_state = new_active
             cls._simulated_heating_mode = new_mode
+            if target_temperature is not None:
+                cls._pool_comfort_target = round(float(target_temperature), 1)
+            target = cls._get_comfort_target()
             try:
                 data = cls.get_pool_status(force_refresh=True)
             except Exception:
@@ -695,21 +770,34 @@ class KlereoService:
                     "redox_value": None,
                     "filter_pressure": None,
                     "frost_protection_target": 0.5,
-                    "target_temperature": 28.0 if new_active else None,
+                    "target_temperature": target if new_active else 0.5,
                     "antifreeze_threshold": 0.5,
                     "frost_protection_threshold": 0.5,
-                    "pool_comfort_target": 28.0,
+                    "pool_comfort_target": target,
                     "pool_frost_target": 0.5,
                     "is_pump_active": bool(cls._simulated_pump_state) if cls._simulated_pump_state is not None else True,
+                    "pac_mode_code": 3 if new_active else 0,
+                    "pump_mode_code": 3 if cls._simulated_pump_state else 0,
+                    "pump_relay_active": bool(cls._simulated_pump_state),
+                    "infos_time_s": 0,
+                    "water_temp_age_s": None,
+                    "air_temp_age_s": None,
+                    "pac_state_age_s": None,
+                    "pump_state_age_s": None,
+                    "rf_sent": None,
+                    "rf_err": None,
+                    "telemetry_stale": False,
                     "test_mode_read_only": True
                 }
             data["is_heating_active"] = new_active
             data["pac_active"] = new_active
+            data["pac_mode_code"] = 3 if new_active else 0
             data["heating_mode"] = new_mode
-            data["target_temperature"] = 28.0 if new_active else 0.5
+            data["target_temperature"] = target if new_active else 0.5
+            data["pool_comfort_target"] = target
             data["pac_state"] = "En chauffe (PAC Inopac 20 kW)" if new_active else "Mise en veille / Arrêt consigne"
             data["pac_status_label"] = "Chauffe en cours" if new_active else "Hors-gel actif (seuil sécurité 0.5°C)"
-            data["pac_status_subtext"] = "PAC Inopac 20 kW active • Montée vers 28.0°C" if new_active else "Chauffage coupé • Surveillance antigel active (circulation de sauvegarde sous 0.5°C)"
+            data["pac_status_subtext"] = f"PAC Inopac 20 kW active • Montée vers {target:.1f}°C" if new_active else "Chauffage coupé • Surveillance antigel active (circulation de sauvegarde sous 0.5°C)"
             data["message"] = f"Action enregistrée (mode lecture seule) : Chauffage PAC Inopac 20 kW '{new_mode}'."
             return data
         else:
@@ -726,15 +814,18 @@ class KlereoService:
                         "newMode": "3",
                         "comMode": "1"
                     })
-                    # Appliquer la consigne de température
-                    target = cls._get_comfort_target()  # 27°C
-                    cls._send_command(SET_PARAM_URL, {
-                        "poolID": str(sys_id),
-                        "paramID": "ConsigneEau",
-                        "newValue": str(target),
-                        "comMode": "1"
-                    })
-                    logger.info(f"[KLEREO] PAC activée, consigne → {target}°C (newMode=3, newState=1)")
+                    # Appliquer la consigne de température SI fournie (sans écraser si None)
+                    if target_temperature is not None:
+                        cls._pool_comfort_target = round(float(target_temperature), 1)
+                        cls._send_command(SET_PARAM_URL, {
+                            "poolID": str(sys_id),
+                            "paramID": "ConsigneEau",
+                            "newValue": str(cls._pool_comfort_target),
+                            "comMode": "1"
+                        })
+                        logger.info(f"[KLEREO] PAC activée, consigne mise à jour → {cls._pool_comfort_target}°C (newMode=3, newState=1)")
+                    else:
+                        logger.info(f"[KLEREO] PAC activée en maintien de consigne existante ({cls._get_comfort_target():.1f}°C)")
                 else:
                     # PAC OFF : SetOut outIdx=4 newState=0 (Stop), newMode=0 (MODE_MANU)
                     cls._send_command(SET_OUT_URL, {
@@ -763,13 +854,15 @@ class KlereoService:
             )
         try:
             sys_id = cls._get_system_id()
+            target_val = round(float(target_temperature), 1)
             cls._send_command(SET_PARAM_URL, {
                 "poolID": str(sys_id),
                 "paramID": "ConsigneEau",
-                "newValue": str(round(float(target_temperature), 1)),
+                "newValue": str(target_val),
                 "comMode": "1"
             })
-            logger.info(f"[KLEREO] Consigne température eau ajustée → {target_temperature}°C")
+            cls._pool_comfort_target = target_val
+            logger.info(f"[KLEREO] Consigne température eau ajustée → {target_val}°C")
             return cls.get_pool_status(force_refresh=True)
         except HTTPException:
             raise

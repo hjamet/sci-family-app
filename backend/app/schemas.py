@@ -824,6 +824,7 @@ class PoolHeatingModeRequest(BaseModel):
     mode: Optional[str] = None  # "auto" | "on" | "off"
     active: Optional[bool] = None
     is_active: Optional[bool] = None
+    target_temperature: Optional[float] = None
     author_name: Optional[str] = None
 
 class PiscineStatusResponse(BaseModel):
@@ -832,20 +833,23 @@ class PiscineStatusResponse(BaseModel):
     ph_value: Optional[float] = None
     redox_value: Optional[float] = None
     filter_pressure: Optional[float] = None
-    frost_protection_target: Optional[float] = 3.0
+    frost_protection_target: Optional[float] = 0.5
     target_temperature: Optional[float] = None
     antifreeze_threshold: float = 0.5  # SeuilHorsGel réel Klereo
     frost_protection_threshold: float = 0.5  # SeuilHorsGel réel Klereo
-    pool_comfort_target: float = 28.0
-    pool_frost_target: float = 3.0
+    pool_comfort_target: Optional[float] = None
+    pool_frost_target: float = 0.5
     is_pump_active: bool = False
     is_heating_active: bool = False
     pac_active: bool = False
+    pac_mode_code: Optional[int] = None
+    pump_mode_code: Optional[int] = None
+    pump_relay_active: bool = False
     pump_mode: Optional[str] = "auto"
     heating_mode: Optional[str] = "auto"
     pac_state: Optional[str] = None
-    pac_status_label: Optional[str] = "Hors-gel actif (seuil sécurité 3.0°C)"
-    pac_status_subtext: Optional[str] = "Chauffage coupé • Surveillance antigel active (circulation de sauvegarde sous 3.0°C)"
+    pac_status_label: Optional[str] = "Hors-gel actif (seuil sécurité 0.5°C)"
+    pac_status_subtext: Optional[str] = "Chauffage coupé • Surveillance antigel active (circulation de sauvegarde sous 0.5°C)"
     pac_power: Optional[str] = "20 kW"
     cover_state: Optional[str] = "Verrouillée & tendue"
     filtration_state: Optional[str] = None
@@ -860,6 +864,14 @@ class PiscineStatusResponse(BaseModel):
     radio_status: Optional[str] = "Liaison radio K-Link active"
     radio_alert: Optional[str] = None
     radio_error: bool = False
+    infos_time_s: Optional[int] = None
+    water_temp_age_s: Optional[int] = None
+    air_temp_age_s: Optional[int] = None
+    pac_state_age_s: Optional[int] = None
+    pump_state_age_s: Optional[int] = None
+    rf_sent: Optional[int] = None
+    rf_err: Optional[int] = None
+    telemetry_stale: bool = False
     test_mode_read_only: bool = False
     message: Optional[str] = "Télémétrie Klereo Connect en direct."
     pool_nickname: Optional[str] = "Ma piscine"
@@ -1314,8 +1326,8 @@ class PoolSettingsRequest(BaseModel):
 
 
 class PoolSettingsResponse(BaseModel):
-    target_temperature: Optional[float] = 28.0
-    antifreeze_threshold: float = 3.0
+    target_temperature: Optional[float] = None
+    antifreeze_threshold: float = 0.5
     filtration_mode: Optional[str] = "auto"
     mode: Optional[str] = "standby"
     updated_by: Optional[str] = None
