@@ -282,6 +282,10 @@ class ReconciliationService:
                 "remittance_information": remittance
             })
 
+        from .call_for_funds_service import reconcile_open_calls_for_member
+        for m in members:
+            reconcile_open_calls_for_member(db, m.id)
+
         logger.info(
             f"[RECONCILIATION] {len(level_1_matches)} certifiés (N1), "
             f"{len(level_2_pending)} à vérifier (N2), {len(unmatched)} non appariés, "
@@ -419,6 +423,9 @@ class ReconciliationService:
             pending_call.bank_transaction_id = tx.id
             pending_call.paid_at = entry_date or datetime.utcnow()
             db.commit()
+
+        from .call_for_funds_service import reconcile_open_calls_for_member
+        reconcile_open_calls_for_member(db, member.id)
 
         # Métadonnées
         try:

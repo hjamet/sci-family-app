@@ -648,4 +648,100 @@ def test_reconciliation_direct_member_name_without_reference(test_db, setup_memb
     assert get_member_balance(test_db, frederic.id) == 400.0
 
 
+def test_settled_call_preservation_and_open_calls_auto_reconciliation_and_kpis(
+    test_db, setup_members, client, coord_headers, member_headers
+):
+    """
+    Vérifie :
+    1. Que generate_and_save_monthly_call préserve status == 'REGLE' et amount_due d'un appel déjà réglé sans régénérer le PDF.
+    2. Que reconcile_open_calls_for_member met à jour approved_expenses_total, amount_due et status (COUVERT / EMIS)
+       lors de l'ajout puis de la suppression d'une écriture AVANCE.
+    3. Que get_all_treasury_summaries retourne bien total_advance_credits, total_remaining_due,
+       members_up_to_date_count et members_total_count.
+    """
+    from app.services.call_for_funds_service import reconcile_open_calls_for_member
+
+    coord = setup_members["coord"]
+    member = setup_members["member"]
+
+    with patch("app.services.call_for_funds_service.is_treasury_contributions_started", return_value=True), \
+         patch("app.services.call_for_funds_service.is_bank_account_active", return_value=True):
+
+        # --- Partie 1 : Préservation d'un appel déjà réglé (REGLE) ---
+        call_settled = generate_and_save_monthly_call(test_db, coord, year=2026, month=10)
+        call_settled.status = "REGLE"
+        call_settled.amount_due = 50.0
+        call_settled.pdf_filename = "SCI 102026 Avis Appel de Fonds Henri.pdf"
+        test_db.commit()
+
+        with patch("app.services.call_for_funds_service.generate_call_for_funds_pdf") as mock_pdf:
+            call_regenerated = generate_and_save_monthly_call(test_db, coord, year=2026, month=10)
+            mock_pdf.assert_not_called()
+            assert call_regenerated.status == "REGLE"
+            assert call_regenerated.amount_due == 50.0
+            assert call_regenerated.pdf_filename == "SCI 102026 Avis Appel de Fonds Henri.pdf"
+
+        # --- Partie 2 : Réconciliation dynamique (EMIS -> partiel -> COUVERT -> suppression -> EMIS) ---
+        call_open = generate_and_save_monthly_call(test_db, member, year=2026, month=10)
+        assert call_open.status == "EMIS"
+        assert call_open.amount_due == 50.0
+        assert get_member_balance(test_db, member.id) == -50.0
+
+        # Ajout et validation d'une 1ère avance partielle de 30 € sur Octobre 2026
+        res_exp1 = client.post(
+            "/api/finances/expenses",
+            data={"member_id": member.id, "title": "Ampoules LED", "amount": 30.0, "expense_date": "2026-10-10"},
+            headers=member_headers
+        )
+        assert res_exp1.status_code == 201
+        exp1_id = res_exp1.json()["id"]
+        val1 = client.post(f"/api/finances/expenses/{exp1_id}/validate", headers=coord_headers)
+        assert val1.status_code == 200
+
+        test_db.expire_all()
+        call_open = test_db.query(CallForFunds).filter(CallForFunds.id == call_open.id).first()
+        assert call_open.approved_expenses_total == 30.0
+        assert call_open.status == "EMIS"
+        assert call_open.amount_due == 20.0
+        assert call_open.net_amount == 20.0
+
+        # Ajout et validation d'une 2ème avance de 40 € (total avances = 70 €, solde = +20 €)
+        res_exp2 = client.post(
+            "/api/finances/expenses",
+            data={"member_id": member.id, "title": "Peinture", "amount": 40.0, "expense_date": "2026-10-12"},
+            headers=member_headers
+        )
+        assert res_exp2.status_code == 201
+        exp2_id = res_exp2.json()["id"]
+        val2 = client.post(f"/api/finances/expenses/{exp2_id}/validate", headers=coord_headers)
+        assert val2.status_code == 200
+
+        test_db.expire_all()
+        call_open = test_db.query(CallForFunds).filter(CallForFunds.id == call_open.id).first()
+        assert call_open.approved_expenses_total == 70.0
+        assert call_open.status == "COUVERT"
+        assert call_open.amount_due == 0.0
+        assert call_open.net_amount == 0.0
+
+        # --- Partie 3 : Vérification des KPIs globaux dans get_all_treasury_summaries ---
+        # À ce stade : coord est à -50.0 € (débiteur), member est à +20.0 € (créditeur)
+        summary_all = get_all_treasury_summaries(test_db)
+        assert summary_all["total_advance_credits"] == 20.0
+        assert summary_all["total_remaining_due"] == 50.0
+        assert summary_all["members_up_to_date_count"] == 1
+        assert summary_all["members_total_count"] == 2
+
+        # Suppression de la 2ème avance (40 €) -> solde repasse à -20 €, l'appel repasse de COUVERT à EMIS (20 € dus)
+        del_res = client.delete(f"/api/finances/expenses/{exp2_id}", headers=coord_headers)
+        assert del_res.status_code == 200
+
+        test_db.expire_all()
+        call_open = test_db.query(CallForFunds).filter(CallForFunds.id == call_open.id).first()
+        assert call_open.approved_expenses_total == 30.0
+        assert call_open.status == "EMIS"
+        assert call_open.amount_due == 20.0
+        assert call_open.net_amount == 20.0
+
+
+
 

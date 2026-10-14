@@ -27,10 +27,13 @@ import {
   updateDocument,
   deleteDocument,
   fetchBankStatus,
+  fetchBankTransactions,
   triggerBankSync,
   fetchMemberExpenses,
   fetchCallsForFunds,
-  runReconciliation
+  validateMemberExpense,
+  rejectMemberExpense,
+  deleteMemberExpense
 } from '../api';
 
 // Palette de 8 couleurs sobres pour les catégories personnalisées (Annotation 5)
@@ -87,6 +90,9 @@ export default function AdminInfoPage({ currentUser }) {
   ) || (typeof activeUser === 'string' ? activeUser : 'Henri Jamet');
   const isCoordinator = Boolean(currentUser?.is_coordinator);
 
+  // Compteur de synchronisation de la section Trésorerie des associés
+  const [treasuryRefreshTrigger, setTreasuryRefreshTrigger] = useState(0);
+
   // KPI Financial Totals (Zéro valeur inventée - initialisé à null)
   const [financialTotals, setFinancialTotals] = useState({
     entrees: null,
@@ -98,16 +104,34 @@ export default function AdminInfoPage({ currentUser }) {
   const [bankStatus, setBankStatus] = useState(null);
   const [isLoadingBank, setIsLoadingBank] = useState(true);
 
-  const loadBankStatus = async () => {
+  const loadBankStatus = async (options = {}) => {
     setIsLoadingBank(true);
     try {
-      const data = await fetchBankStatus();
+      const [data, txData] = await Promise.all([
+        fetchBankStatus(options),
+        fetchBankTransactions({ limit: 200 }).catch(() => [])
+      ]);
       setBankStatus(data);
       if (data && data.total_balance !== undefined && data.total_balance !== null && data.status === 'ok' && !data.needs_reauth) {
-        setFinancialTotals((prev) => ({
-          ...prev,
-          reserves: data.total_balance
-        }));
+        const txList = Array.isArray(data.recent_transactions)
+          ? data.recent_transactions
+          : (Array.isArray(txData) ? txData : []);
+        const computedEntrees = txList
+          .filter((t) => Number(t.amount) > 0)
+          .reduce((acc, t) => acc + Number(t.amount), 0);
+        const computedSorties = txList
+          .filter((t) => Number(t.amount) < 0)
+          .reduce((acc, t) => acc + Math.abs(Number(t.amount)), 0);
+
+        setFinancialTotals({
+          reserves: data.total_balance,
+          entrees: data.entrees !== undefined && data.entrees !== null
+            ? Number(data.entrees)
+            : (data.total_inflows !== undefined && data.total_inflows !== null ? Number(data.total_inflows) : computedEntrees),
+          sorties: data.sorties !== undefined && data.sorties !== null
+            ? Number(data.sorties)
+            : (data.total_outflows !== undefined && data.total_outflows !== null ? Number(data.total_outflows) : computedSorties)
+        });
       }
     } catch (err) {
       console.warn('Bank status load notice:', err.message);
@@ -368,6 +392,17 @@ export default function AdminInfoPage({ currentUser }) {
     }
   };
 
+  const handleSyncBank = async () => {
+    try {
+      await triggerBankSync();
+    } catch (syncErr) {
+      console.warn('Synchronisation bancaire manuelle:', syncErr.message);
+    }
+    await loadBankStatus({ forceRefresh: true });
+    await loadInvoices();
+    setTreasuryRefreshTrigger((prev) => prev + 1);
+  };
+
   useEffect(() => {
     // 1. Chargement et affichage immédiat du solde bancaire en cache
     loadBankStatus();
@@ -375,29 +410,14 @@ export default function AdminInfoPage({ currentUser }) {
     loadCategories();
     loadInvoices();
 
-    // 2. Déclenchement automatique de l'automate de lettrage au montage/refresh de la page Admin
-    runReconciliation()
-      .then(() => {
-        loadInvoices();
-      })
-      .catch((recErr) => {
-        console.warn('Auto-réconciliation au montage:', recErr.message);
-      });
-
-    // 3. Déclenchement systématique en arrière-plan de la synchronisation bancaire en direct à chaque montage / rafraîchissement
+    // 2. Déclenchement systématique en arrière-plan de la synchronisation bancaire en direct à chaque montage / rafraîchissement
+    // (triggerBankSync exécute déjà ReconciliationService.run_reconciliation(db) côté backend)
     triggerBankSync()
       .then(async () => {
         try {
-          const freshData = await fetchBankStatus({ forceRefresh: false });
-          if (freshData) {
-            setBankStatus(freshData);
-            if (freshData.total_balance !== undefined && freshData.total_balance !== null && freshData.status === 'ok' && !freshData.needs_reauth) {
-              setFinancialTotals((prev) => ({
-                ...prev,
-                reserves: freshData.total_balance
-              }));
-            }
-          }
+          await loadBankStatus({ forceRefresh: true });
+          await loadInvoices();
+          setTreasuryRefreshTrigger((prev) => prev + 1);
         } catch (refreshErr) {
           console.warn('Notice actualisation post-sync bancaire:', refreshErr.message);
         }
@@ -415,7 +435,8 @@ export default function AdminInfoPage({ currentUser }) {
       setBankingError(null);
       showToast('Liaison bancaire validée', 'Le consentement DSP2 Indy (Swan) a été renouvelé avec succès.', 'check_circle');
       window.history.replaceState({}, '', window.location.pathname);
-      loadBankStatus();
+      loadBankStatus({ forceRefresh: true });
+      setTreasuryRefreshTrigger((prev) => prev + 1);
     } else if (bankingParam === 'error') {
       const rawMsg = searchParams.get('msg') || 'Le consentement bancaire a été annulé ou a échoué.';
       let msg = rawMsg;
@@ -513,7 +534,48 @@ export default function AdminInfoPage({ currentUser }) {
     try {
       await deleteDocument(docId);
       setDocuments((prev) => prev.filter((d) => d.id !== doc.id && d.filename !== doc.filename));
+      setTreasuryRefreshTrigger((prev) => prev + 1);
       showToast('Document supprimé', `« ${docTitle} » a été supprimé.`, 'delete');
+    } catch (err) {
+      showToast('Erreur suppression', err.message, 'error');
+    }
+  };
+
+  // Actions coordinateur sur les avances/factures membres
+  const handleValidateInvoice = async (inv) => {
+    const expId = inv?.rawExpense?.id ?? inv?.id;
+    if (!expId) return;
+    try {
+      await validateMemberExpense(expId);
+      await loadInvoices();
+      setTreasuryRefreshTrigger((prev) => prev + 1);
+      showToast('Avance validée', 'Le compte courant associé et l\'appel de fonds ont été mis à jour.', 'check_circle');
+    } catch (err) {
+      showToast('Erreur validation', err.message, 'error');
+    }
+  };
+
+  const handleRejectInvoice = async (inv, reason = 'Justificatif non conforme') => {
+    const expId = inv?.rawExpense?.id ?? inv?.id;
+    if (!expId) return;
+    try {
+      await rejectMemberExpense(expId, reason);
+      await loadInvoices();
+      setTreasuryRefreshTrigger((prev) => prev + 1);
+      showToast('Avance refusée', 'La facture a été marquée comme refusée.', 'check_circle');
+    } catch (err) {
+      showToast('Erreur refus', err.message, 'error');
+    }
+  };
+
+  const handleDeleteInvoice = async (inv) => {
+    const expId = inv?.rawExpense?.id ?? inv?.id;
+    if (!expId) return;
+    try {
+      await deleteMemberExpense(expId);
+      await loadInvoices();
+      setTreasuryRefreshTrigger((prev) => prev + 1);
+      showToast('Facture supprimée', 'L\'écriture correspondante a été retirée.', 'delete');
     } catch (err) {
       showToast('Erreur suppression', err.message, 'error');
     }
@@ -744,6 +806,7 @@ export default function AdminInfoPage({ currentUser }) {
     await loadDocuments();
     await loadCategories();
     await loadInvoices();
+    setTreasuryRefreshTrigger((prev) => prev + 1);
     showToast('Document archivé', `« ${newDoc.filename || newDoc.name} » a été archivé avec succès.`, 'cloud_done');
   };
 
@@ -834,6 +897,7 @@ export default function AdminInfoPage({ currentUser }) {
       // Rechargement dynamique des documents pour affichage direct du justificatif
       await loadDocuments();
       await loadInvoices();
+      setTreasuryRefreshTrigger((prev) => prev + 1);
 
       setIsOperationModalOpen(false);
       showToast(
@@ -1294,7 +1358,7 @@ export default function AdminInfoPage({ currentUser }) {
         )}
 
         {/* Bannière d'alerte raccordement bancaire DSP2 réactive */}
-        <BankReauthBanner bankStatus={bankStatus} onRefresh={loadBankStatus} urlError={bankingError} />
+        <BankReauthBanner bankStatus={bankStatus} onRefresh={handleSyncBank} urlError={bankingError} />
 
         {/* Bannière d'alerte stockage Google Drive réactive (Fail-Loud) */}
         <DriveReauthBanner currentUser={currentUser} />
@@ -1428,7 +1492,7 @@ export default function AdminInfoPage({ currentUser }) {
       {/* ========================================================================= */}
       {/* SECTION TRÉSORERIE PAR MEMBRE & RAPPROCHEMENT BANCAIRE                    */}
       {/* ========================================================================= */}
-      <MemberTreasurySection currentUser={currentUser} isCoordinator={isCoordinator} />
+      <MemberTreasurySection currentUser={currentUser} isCoordinator={isCoordinator} refreshTrigger={treasuryRefreshTrigger} />
 
       {/* ========================================================================= */}
       {/* SECTION 2 : TABLEAU DES DERNIÈRES FACTURES & RÈGLEMENTS                   */}

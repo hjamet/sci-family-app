@@ -9245,6 +9245,8 @@ def validate_member_expense_endpoint(
                 description=f"Avance validée : {expense.title}",
                 expense_id=expense.id
             )
+        from .services.call_for_funds_service import reconcile_open_calls_for_member
+        reconcile_open_calls_for_member(db, expense.member_id)
 
     db.refresh(expense)
     return expense
@@ -9293,6 +9295,7 @@ def delete_member_expense_endpoint(
     expense = db.query(MemberExpense).filter(MemberExpense.id == expense_id).first()
     if not expense:
         raise HTTPException(status_code=404, detail="Avance introuvable.")
+    member_id = expense.member_id
     if expense.task_id:
         t = db.query(Task).filter(Task.id == expense.task_id).first()
         if t:
@@ -9300,6 +9303,9 @@ def delete_member_expense_endpoint(
     db.query(MemberLedgerEntry).filter(MemberLedgerEntry.expense_id == expense.id).delete()
     db.delete(expense)
     db.commit()
+    if member_id:
+        from .services.call_for_funds_service import reconcile_open_calls_for_member
+        reconcile_open_calls_for_member(db, member_id)
     return {"success": True, "message": f"Dépense {expense_id} supprimée définitivement."}
 
 
@@ -9432,10 +9438,10 @@ async def cron_banking_sync(request: Request, db: Session = Depends(get_db)):
 
     # 2. Synchro bancaire si un compte existe
     try:
-        from .services.banking import sync_bank_account_transactions
+        from .services.banking import enable_banking_service
         acc = db.query(BankAccount).first()
         if acc:
-            sync_bank_account_transactions(db, acc.id)
+            enable_banking_service.sync_database(db=db)
     except Exception as sync_err:
         logger.warning(f"[CRON] Avertissement sync bancaire : {sync_err}")
 

@@ -238,10 +238,10 @@ def get_member_expenses_for_period(
 
     expenses = []
 
-    # 1. Dépenses spécifiques dans member_expenses (uniquement avances de frais membres, pas les factures directes SCI)
+    # 1. Dépenses spécifiques dans member_expenses (uniquement avances de frais membres validées, pas les factures directes SCI ni les PENDING)
     me_records = db.query(MemberExpense).filter(
         MemberExpense.member_id == member_id,
-        MemberExpense.status != "REJECTED",
+        MemberExpense.status.in_(["VALIDATED", "PAID", "APPROVED"]),
         or_(MemberExpense.payer_type == "member", MemberExpense.payer_type.is_(None)),
         MemberExpense.expense_date.like(f"{prefix_date}%")
     ).all()
@@ -787,13 +787,15 @@ def generate_and_save_monthly_call(
         CallForFunds.year == year,
         CallForFunds.month == month
     ).first()
+    is_already_settled = bool(existing and (existing.status == "REGLE" or existing.bank_transaction_id is not None))
 
     pdf_filename = None
     pdf_url = None
+    pdf_bytes = None
 
-    # Si solde net > 0, on tente de générer le PDF officiel
+    # Si solde net > 0 et non déjà réglé, on tente de générer le PDF officiel
     pdf_error_msg = None
-    if calc["should_issue"]:
+    if calc["should_issue"] and not is_already_settled:
         try:
             pdf_bytes = generate_call_for_funds_pdf(
                 call_data=calc,
@@ -820,7 +822,7 @@ def generate_and_save_monthly_call(
     # Préparation du rapport d'audit et déductions dans details_json
     details_dict = {
         "deducted_expenses": calc["deducted_expenses"],
-        "pdf_status": "GENERATED" if pdf_filename else ("ERROR: " + (pdf_error_msg or "Non requis"))
+        "pdf_status": "PRESERVED_SETTLED" if is_already_settled else ("GENERATED" if pdf_filename else ("ERROR: " + (pdf_error_msg or "Non requis")))
     }
     details_str = json.dumps(details_dict, ensure_ascii=False)
 
@@ -829,15 +831,18 @@ def generate_and_save_monthly_call(
         call_obj = existing
         call_obj.theoretical_contribution = calc["theoretical_contribution"]
         call_obj.approved_expenses_total = calc["approved_expenses_total"]
-        call_obj.balance_before = calc.get("balance_before", 0.0)
-        call_obj.amount_due = calc.get("amount_due", calc["net_amount"])
-        call_obj.net_amount = calc["net_amount"]
-        call_obj.status = calc["status"]
+        if is_already_settled:
+            call_obj.status = "REGLE"
+        else:
+            call_obj.balance_before = calc.get("balance_before", 0.0)
+            call_obj.amount_due = calc.get("amount_due", calc["net_amount"])
+            call_obj.net_amount = calc["net_amount"]
+            call_obj.status = calc["status"]
         call_obj.iban = bank_info.get("iban")
         call_obj.bic = bank_info.get("bic")
         call_obj.payment_reference = calc["payment_reference"]
         call_obj.details_json = details_str
-        if pdf_filename:
+        if pdf_filename and not is_already_settled:
             call_obj.pdf_filename = pdf_filename
             call_obj.pdf_url = pdf_url
         call_obj.updated_at = datetime.utcnow()
@@ -869,7 +874,7 @@ def generate_and_save_monthly_call(
     db.refresh(call_obj)
 
     # Tentative d'archivage sur Google Drive si PDF généré
-    if calc["should_issue"] and pdf_bytes:
+    if calc["should_issue"] and not is_already_settled and pdf_bytes:
         try:
             from .drive_service import GoogleDriveJailService
             # Sous-dossier privé / admin pour les avis d'appels de fonds
@@ -926,4 +931,82 @@ def generate_and_save_monthly_call(
         db.commit()
 
     return call_obj
+
+
+def reconcile_open_calls_for_member(db: Session, member_id: int) -> List[CallForFunds]:
+    """
+    Inspecte et met à jour les avis d'appel de fonds non réglés par virement (EMIS, PENDING_SWAN_IBAN ou COUVERT)
+    d'un membre en fonction de ses avances validées et de son solde de trésorerie courant.
+    """
+    from .treasury_service import get_member_balance
+    from ..models import MemberLedgerEntry
+
+    open_calls = db.query(CallForFunds).filter(
+        CallForFunds.member_id == member_id,
+        CallForFunds.status.in_(["EMIS", "PENDING_SWAN_IBAN", "COUVERT"]),
+        CallForFunds.bank_transaction_id.is_(None)
+    ).order_by(CallForFunds.year.asc(), CallForFunds.month.asc()).all()
+
+    if not open_calls:
+        return []
+
+    balance = get_member_balance(db, member_id)
+    bank_active = is_bank_account_active(db)
+    virements = db.query(MemberLedgerEntry).filter(
+        MemberLedgerEntry.member_id == member_id,
+        MemberLedgerEntry.entry_type == "VIREMENT"
+    ).order_by(MemberLedgerEntry.entry_date.desc(), MemberLedgerEntry.id.desc()).all()
+
+    updated_calls = []
+    for call in open_calls:
+        expenses = get_member_expenses_for_period(db, member_id, call.year, call.month)
+        approved_total = round(sum(e["amount"] for e in expenses), 2)
+        call.approved_expenses_total = approved_total
+
+        try:
+            details_dict = json.loads(call.details_json) if call.details_json else {}
+            if not isinstance(details_dict, dict):
+                details_dict = {}
+            details_dict["deducted_expenses"] = expenses
+            call.details_json = json.dumps(details_dict, ensure_ascii=False)
+        except Exception:
+            pass
+
+        for exp in expenses:
+            if exp.get("source") == "member_expense":
+                exp_rec = db.query(MemberExpense).filter(MemberExpense.id == exp["id"]).first()
+                if exp_rec and not exp_rec.call_for_funds_id:
+                    exp_rec.call_for_funds_id = call.id
+
+        if balance >= 0.0:
+            period_virement = next(
+                (
+                    v for v in virements
+                    if (v.entry_date and v.entry_date.year == call.year and v.entry_date.month == call.month)
+                    or v.call_for_funds_id == call.id
+                ),
+                None
+            )
+            if period_virement:
+                call.status = "REGLE"
+                if not call.paid_at:
+                    call.paid_at = period_virement.entry_date or datetime.utcnow()
+                if not call.bank_transaction_id and period_virement.bank_transaction_id:
+                    call.bank_transaction_id = period_virement.bank_transaction_id
+            else:
+                call.status = "COUVERT"
+                call.amount_due = 0.0
+                call.net_amount = 0.0
+        else:
+            if float(call.theoretical_contribution or 0.0) > 0.0:
+                call.status = "EMIS" if bank_active else "PENDING_SWAN_IBAN"
+                call.amount_due = round(min(float(call.theoretical_contribution), abs(balance)), 2)
+                call.net_amount = call.amount_due
+
+        call.updated_at = datetime.utcnow()
+        updated_calls.append(call)
+
+    db.commit()
+    return updated_calls
+
 

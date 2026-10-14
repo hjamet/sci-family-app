@@ -180,12 +180,20 @@ def get_all_treasury_summaries(db: Session) -> Dict[str, Any]:
 
     total_treasury = round(sum(s["balance"] for s in summaries), 2)
     total_monthly_contributions = round(sum(s["monthly_contribution"] for s in summaries), 2)
+    total_advance_credits = round(sum(max(0.0, s["balance"]) for s in summaries), 2)
+    total_remaining_due = round(sum(abs(min(0.0, s["balance"])) for s in summaries), 2)
+    members_up_to_date_count = sum(1 for s in summaries if s["balance"] >= 0)
+    members_total_count = len(summaries)
     bank_active = is_bank_account_active(db)
     bank_info = get_official_bank_info(db)
 
     return {
         "total_treasury": total_treasury,
         "total_monthly_contributions": total_monthly_contributions,
+        "total_advance_credits": total_advance_credits,
+        "total_remaining_due": total_remaining_due,
+        "members_up_to_date_count": members_up_to_date_count,
+        "members_total_count": members_total_count,
         "is_bank_active": bank_active,
         "bank_status_notice": (
             "Coordonnées bancaires opérationnelles"

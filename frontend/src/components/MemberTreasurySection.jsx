@@ -24,7 +24,7 @@ import {
   assignReconciliation
 } from '../api';
 
-export default function MemberTreasurySection({ currentUser, isCoordinator = false }) {
+export default function MemberTreasurySection({ currentUser, isCoordinator = false, refreshTrigger = 0 }) {
   const [myTreasury, setMyTreasury] = useState(null);
   const [allTreasury, setAllTreasury] = useState(null);
   const [unmatchedData, setUnmatchedData] = useState(null);
@@ -37,14 +37,14 @@ export default function MemberTreasurySection({ currentUser, isCoordinator = fal
   const [showHistory, setShowHistory] = useState(false);
   const [activeAdminTab, setActiveAdminTab] = useState('members'); // 'members' | 'reconciliation'
 
-  const loadData = async (autoReconcile = isCoordinator) => {
+  const loadData = async (autoReconcile = false) => {
     setIsLoading(true);
     try {
       if (autoReconcile) {
         try {
           await runReconciliation();
         } catch (recErr) {
-          console.warn('Auto-réconciliation au montage:', recErr.message);
+          console.warn('Auto-réconciliation:', recErr.message);
         }
       }
       const myRes = await fetchMyTreasury().catch(() => null);
@@ -66,8 +66,14 @@ export default function MemberTreasurySection({ currentUser, isCoordinator = fal
   };
 
   useEffect(() => {
-    loadData();
+    loadData(false);
   }, [currentUser, isCoordinator]);
+
+  useEffect(() => {
+    if (refreshTrigger > 0) {
+      loadData(false);
+    }
+  }, [refreshTrigger]);
 
   const copyToClipboard = (text, key) => {
     if (!text) return;
@@ -88,7 +94,7 @@ export default function MemberTreasurySection({ currentUser, isCoordinator = fal
         type: 'success',
         text: `Lettrage terminé : ${n1Count} virement(s) certifié(s) N1, ${n2Count} à vérifier N2.`
       });
-      await loadData();
+      await loadData(false);
     } catch (err) {
       setReconciliationNotice({
         type: 'error',
@@ -109,7 +115,7 @@ export default function MemberTreasurySection({ currentUser, isCoordinator = fal
     setIsAssigning(prev => ({ ...prev, [txId]: true }));
     try {
       await assignReconciliation(txId, memberId, 'Attribué manuellement par Henri');
-      await loadData();
+      await loadData(true);
     } catch (err) {
       alert(`Erreur lors de l'attribution : ${err.message || 'Impossible d\'attribuer'}`);
     } finally {
@@ -334,7 +340,7 @@ export default function MemberTreasurySection({ currentUser, isCoordinator = fal
       {/* ========================================================================= */}
       {/* SECTION 2 : VUE TRÉSORERIE SCI ADMINISTRATIVE (Pour Henri / Coordinateur) */}
       {/* ========================================================================= */}
-      {isCoordinator && (
+      {isCoordinator && allTreasury && (
         <div className="bg-surface-container-lowest rounded-2xl border border-border-subtle p-space-md shadow-[0_2px_8px_-2px_rgba(6,95,70,0.04),0_6px_20px_-4px_rgba(15,23,42,0.05)] space-y-4">
           
           {/* Header Admin */}
@@ -345,14 +351,23 @@ export default function MemberTreasurySection({ currentUser, isCoordinator = fal
               </div>
               <div>
                 <h3 className="font-headline-sm text-base sm:text-lg text-forest-deep font-bold">
-                  Trésorerie &amp; Rapprochement Bancaire SCI
+                  Synthèse des Comptes Courants d'Associés (Tous les membres)
                 </h3>
                 <p className="font-body-md text-xs text-on-surface-variant">
-                  Supervision globale des soldes associés et automate de lettrage
+                  Associés à jour : {`${allTreasury.members_up_to_date_count ?? allTreasury.members?.filter(m => m.balance >= 0).length ?? 0}/${allTreasury.members_total_count ?? allTreasury.members?.length ?? 7}`} • Reste à encaisser (échéances émises) : {`${(allTreasury.total_remaining_due ?? Math.abs((allTreasury.members || []).reduce((acc, m) => acc + Math.min(0, m.balance || 0), 0))).toLocaleString('fr-FR', { minimumFractionDigits: 2 })} €`} • Crédits d'avances reportables : {`+${(allTreasury.total_advance_credits ?? (allTreasury.members || []).reduce((acc, m) => acc + Math.max(0, m.balance || 0), 0)).toLocaleString('fr-FR', { minimumFractionDigits: 2 })} €`} • Cotisations mensuelles attendues : {`${(allTreasury.total_monthly_contributions || 0).toLocaleString('fr-FR', { minimumFractionDigits: 2 })} €/mois`}
                 </p>
               </div>
             </div>
 
+            <button
+              type="button"
+              onClick={handleRunReconciliation}
+              disabled={isReconciling}
+              className="self-start sm:self-auto inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-forest-deep hover:bg-primary text-white text-xs font-bold transition-colors cursor-pointer disabled:opacity-50 shrink-0"
+            >
+              <RefreshCw className={`w-3.5 h-3.5 ${isReconciling ? 'animate-spin' : ''}`} />
+              <span>{isReconciling ? 'Lettrage...' : 'Actualiser & Lettrer'}</span>
+            </button>
           </div>
 
           {/* Notification feedback de lettrage */}
@@ -374,34 +389,60 @@ export default function MemberTreasurySection({ currentUser, isCoordinator = fal
           )}
 
           {/* Synthèse Trésorerie & Cotisations attendues */}
-          <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3">
             <div className="p-3.5 rounded-xl bg-surface-container-low border border-border-subtle flex items-center justify-between">
               <div>
                 <span className="text-[11px] uppercase tracking-wider text-slate-500 font-bold block">
-                  Cotisations Mensuelles Attendues
+                  Associés à jour
                 </span>
                 <span className="text-xs text-slate-500 mt-0.5 block">
-                  5 × 50 € + 1 000 € (couple parental)
+                  Échéances réglées ou couvertes
                 </span>
               </div>
-              <span className="font-mono text-base font-bold text-forest-deep">
-                {allTreasury?.total_monthly_contributions ? `${allTreasury.total_monthly_contributions.toFixed(2)} €/mois` : '1 250,00 €/mois'}
+              <span className="font-mono text-base font-bold text-emerald-700 dark:text-emerald-400">
+                {`${allTreasury.members_up_to_date_count ?? allTreasury.members?.filter(m => m.balance >= 0).length ?? 0}/${allTreasury.members_total_count ?? allTreasury.members?.length ?? 7}`}
               </span>
             </div>
 
             <div className="p-3.5 rounded-xl bg-surface-container-low border border-border-subtle flex items-center justify-between">
               <div>
                 <span className="text-[11px] uppercase tracking-wider text-slate-500 font-bold block">
-                  Solde Global Trésorerie Associés
+                  Reste à encaisser (échéances émises)
                 </span>
                 <span className="text-xs text-slate-500 mt-0.5 block">
-                  Somme cumulée des comptes courants
+                  Soldes débiteurs en attente
                 </span>
               </div>
-              <span className={`font-mono text-base font-bold ${
-                (allTreasury?.total_treasury ?? 0) >= 0 ? 'text-emerald-700 dark:text-emerald-400' : 'text-rose-700'
-              }`}>
-                {(allTreasury?.total_treasury ?? 0) >= 0 ? `+${(allTreasury?.total_treasury ?? 0).toFixed(2)}` : (allTreasury?.total_treasury ?? 0).toFixed(2)} €
+              <span className="font-mono text-base font-bold text-rose-700">
+                {`${(allTreasury.total_remaining_due ?? Math.abs((allTreasury.members || []).reduce((acc, m) => acc + Math.min(0, m.balance || 0), 0))).toLocaleString('fr-FR', { minimumFractionDigits: 2 })} €`}
+              </span>
+            </div>
+
+            <div className="p-3.5 rounded-xl bg-surface-container-low border border-border-subtle flex items-center justify-between">
+              <div>
+                <span className="text-[11px] uppercase tracking-wider text-slate-500 font-bold block">
+                  Crédits d'avances reportables
+                </span>
+                <span className="text-xs text-slate-500 mt-0.5 block">
+                  Avances validées au crédit CCA
+                </span>
+              </div>
+              <span className="font-mono text-base font-bold text-emerald-700 dark:text-emerald-400">
+                {`+${(allTreasury.total_advance_credits ?? (allTreasury.members || []).reduce((acc, m) => acc + Math.max(0, m.balance || 0), 0)).toLocaleString('fr-FR', { minimumFractionDigits: 2 })} €`}
+              </span>
+            </div>
+
+            <div className="p-3.5 rounded-xl bg-surface-container-low border border-border-subtle flex items-center justify-between">
+              <div>
+                <span className="text-[11px] uppercase tracking-wider text-slate-500 font-bold block">
+                  Cotisations mensuelles attendues
+                </span>
+                <span className="text-xs text-slate-500 mt-0.5 block">
+                  5 × 50 € + 1 000 € (couple parental)
+                </span>
+              </div>
+              <span className="font-mono text-base font-bold text-forest-deep">
+                {`${(allTreasury.total_monthly_contributions || 0).toLocaleString('fr-FR', { minimumFractionDigits: 2 })} €/mois`}
               </span>
             </div>
           </div>

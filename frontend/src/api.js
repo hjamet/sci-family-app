@@ -1525,8 +1525,12 @@ export async function setPoolTemperature(target_temperature, author_name = undef
 
 // Open Banking DSP2 (Enable Banking & Swan France)
 export async function fetchBankStatus(options = {}) {
+  const isForceRefresh = Boolean(options?.forceRefresh || options?.refresh);
+  if (isForceRefresh) {
+    invalidateApiCache('bank_status');
+  }
   return swrFetch('bank_status', async () => {
-    const query = (options?.forceRefresh || options?.refresh) ? '?refresh=true' : '';
+    const query = isForceRefresh ? '?refresh=true' : '';
     const res = await fetch(`${API_BASE}/banking/status${query}`, {
       headers: getAuthHeaders()
     });
@@ -1541,7 +1545,7 @@ export async function fetchBankStatus(options = {}) {
       throw new Error(detail || `Erreur lors de la récupération du statut bancaire (HTTP ${res.status})`);
     }
     return res.json();
-  });
+  }, { forceRefresh: isForceRefresh });
 }
 
 export async function fetchBankAccounts() {
@@ -1597,6 +1601,7 @@ export async function triggerBankSync() {
     throw new Error(detail || `Erreur lors de la synchronisation bancaire (HTTP ${res.status})`);
   }
   invalidateApiCache('bank');
+  invalidateApiCache('bank_status');
   return res.json();
 }
 
