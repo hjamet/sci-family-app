@@ -540,6 +540,9 @@ def fetch_live_telemetry() -> Dict[str, Any]:
             "burner_error_code": burner_error_code,
             "burner_error_details": burner_error_details,
             "burner_error_timestamp": burner_error_timestamp,
+            "heating_mode": active_mode,
+            "target_temp": effective_heating_target,
+            "dhw_target_temp": dhw_active_target,
             "mode": active_mode,
             "active_mode": active_mode,
             "active_program": active_program,
@@ -688,7 +691,7 @@ class ViCareService:
         raise RuntimeError("Aucun équipement chaudière disponible.")
 
     @staticmethod
-    def set_mode(mode: str) -> Dict[str, Any]:
+    def set_mode(mode: str, refresh_status: bool = True) -> Dict[str, Any]:
         """
         Applique un mode de fonctionnement ViCare ('dhw', 'dhwAndHeating', 'standby', 'forcedNormal', 'forcedReduced').
         Protégé par le garde-fou read-only si VICARE_TEST_MODE_READ_ONLY=True.
@@ -712,7 +715,9 @@ class ViCareService:
             if not circuit:
                 raise RuntimeError("Aucun circuit de chauffage détecté.")
             circuit.setMode(mode)
-            return ViCareService.get_status(force_refresh=True)
+            if refresh_status:
+                return ViCareService.get_status(force_refresh=True)
+            return {"status": "ok", "mode": mode}
         except HTTPException:
             raise
         except Exception as e:
@@ -722,7 +727,7 @@ class ViCareService:
             )
 
     @staticmethod
-    def set_temperature(target_temp: float, program: str = "comfort") -> Dict[str, Any]:
+    def set_temperature(target_temp: float, program: str = "comfort", refresh_status: bool = True) -> Dict[str, Any]:
         """
         Ajuste la consigne de température de chauffage ViCare.
         program peut être 'comfort' (fonctionnement), 'reduced' (arrêt/hors-gel), 'normal', ou 'dhw'.
@@ -739,9 +744,9 @@ class ViCareService:
         try:
             boiler, circuit = ViCareService._get_boiler_and_circuit()
             if program == "dhw":
-                if not (10.0 <= target_temp <= 60.0):
-                    raise ValueError("La consigne ECS doit être comprise entre 10°C et 60°C.")
-                boiler.setDomesticHotWaterTemperature(int(target_temp))
+                # Contrainte matérielle VPlusHO1_40 : borne stricte [10, 60]
+                clamped_dhw = max(10, min(60, int(round(target_temp))))
+                boiler.setDomesticHotWaterTemperature(clamped_dhw)
             else:
                 if not (3.0 <= target_temp <= 30.0):
                     raise ValueError("La consigne de chauffage doit être comprise entre 3°C et 30°C.")
@@ -757,7 +762,9 @@ class ViCareService:
                     circuit.setComfortTemperature(target_temp)
                 else:
                     circuit.setComfortTemperature(target_temp)
-            return ViCareService.get_status(force_refresh=True)
+            if refresh_status:
+                return ViCareService.get_status(force_refresh=True)
+            return {"status": "ok", "target_temp": target_temp, "program": program}
         except HTTPException:
             raise
         except Exception as e:
@@ -787,6 +794,7 @@ class ViCareService:
         """
         Active ou désactive l'ECS selon la matrice unifiée.
         Bascule l'ECS ne doit JAMAIS couper le chauffage par inadvertance.
+        Ne force jamais l'abaissement artificiel à 10°C à l'extinction (alignement officiel ViCare).
         """
         if is_heating_active is None:
             try:
@@ -796,33 +804,29 @@ class ViCareService:
                 is_heating_active = False
 
         target_mode = cls.resolve_unified_mode(is_heating=is_heating_active, is_dhw=is_active)
-        cls.set_mode(target_mode)
         if is_active:
+            cls.set_mode(target_mode)
             cls.set_temperature(target_temp=cls._dhw_comfort_temperature, program="dhw")
         else:
-            if is_heating_active:
-                try:
-                    cls.set_temperature(target_temp=10.0, program="dhw")
-                except Exception:
-                    pass
-        return cls.get_status(force_refresh=True)
+            cls.set_mode(target_mode)
+        return cls.get_status(force_refresh=False)
 
     @classmethod
     def trigger_anti_legionella_cycle(cls) -> Dict[str, Any]:
         """
-        Déclenche un cycle anti-légionelle : consigne ECS temporairement à 65°C.
+        Déclenche un cycle anti-légionelle : consigne ECS temporairement à 60°C (plafond matériel VPlusHO1_40).
         Après 30 minutes, la consigne redescend au confort (52°C).
         Protégé par le garde-fou read-only.
         """
         if is_read_only_mode():
             logger.info("[VICARE] Cycle anti-légionelle simulé (read-only mode)")
-            return {"message": "Cycle anti-légionelle simulé (mode lecture seule)", "target": 65.0}
+            return {"message": "Cycle anti-légionelle simulé (mode lecture seule)", "target": 60.0}
 
         try:
             boiler, _ = cls._get_boiler_and_circuit()
-            boiler.setDomesticHotWaterTemperature(65)
-            logger.info("[VICARE] Cycle anti-légionelle démarré : consigne ECS → 65°C")
-            return {"message": "Cycle anti-légionelle démarré (65°C pendant 30 min)", "target": 65.0}
+            boiler.setDomesticHotWaterTemperature(60)
+            logger.info("[VICARE] Cycle anti-légionelle démarré : consigne ECS → 60°C")
+            return {"message": "Cycle anti-légionelle démarré (60°C pendant 30 min)", "target": 60.0}
         except Exception as e:
             logger.error(f"[VICARE] Erreur cycle anti-légionelle : {e}")
             raise

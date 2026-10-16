@@ -7968,23 +7968,37 @@ def update_heating_settings(
     # ──── Commande matérielle ViCare ────
     try:
         import time
-        ViCareService.set_mode(target_mode)
-        time.sleep(1.0)
-        if is_heating:
-            if setting.target_temperature:
-                ViCareService.set_temperature(setting.target_temperature, program="comfort")
-                time.sleep(1.0)
+        prev_status = {}
+        try:
+            prev_status = ViCareService.get_status(force_refresh=False)
+        except Exception as status_err:
+            logger.debug(f"[HEATING SETTINGS] Impossible de lire prev_status: {status_err}")
+
+        curr_target_temp = prev_status.get("target_temp") or prev_status.get("target_temperature") or prev_status.get("comfort_temperature")
+        curr_dhw_temp = prev_status.get("dhw_target_temp") or prev_status.get("dhw_target_temperature") or prev_status.get("dhw_configured_temperature")
+
+        if target_mode == "standby":
+            # Mode standby : envoyer uniquement set_mode("standby") sans toucher aux consignes de température (10°C banni)
+            ViCareService.set_mode("standby")
+        elif target_mode in ("dhw", "dhwAndHeating"):
+            ViCareService.set_mode(target_mode)
+            time.sleep(1.0)
+
+            temp_updated = False
+            if is_heating and setting.target_temperature is not None:
+                if curr_target_temp != setting.target_temperature:
+                    ViCareService.set_temperature(setting.target_temperature, program="normal", refresh_status=False)
+                    temp_updated = True
+                    time.sleep(1.0)
+
             if is_dhw:
                 target_dhw = dhw_setting.target_temperature or ViCareService._dhw_comfort_temperature
-                ViCareService.set_temperature(target_dhw, program="dhw")
-            else:
-                try:
-                    ViCareService.set_temperature(10.0, program="dhw")
-                except Exception:
-                    pass
-        elif is_dhw:
-            target_dhw = dhw_setting.target_temperature or ViCareService._dhw_comfort_temperature
-            ViCareService.set_temperature(target_dhw, program="dhw")
+                if curr_dhw_temp != target_dhw:
+                    ViCareService.set_temperature(target_dhw, program="dhw", refresh_status=False)
+                    temp_updated = True
+
+            if temp_updated:
+                ViCareService.get_status(force_refresh=True)
 
         logger.info(f"[HEATING SETTINGS] Commande ViCare envoyée : mode={target_mode}, heating={is_heating}, dhw={is_dhw}")
     except HTTPException as vicare_err:
@@ -9701,7 +9715,7 @@ def evaluate_and_sync_stay_heating(db: Session, force_sync: bool = False) -> dic
     target_mode = ViCareService.resolve_unified_mode(is_heating=need_heating, is_dhw=need_dhw)
     target_dhw_state = "on" if need_dhw else "off"
     target_temp = 20.0 if need_heating else 5.0
-    target_dhw_temp = 52.0 if need_dhw else 10.0
+    target_dhw_temp = 52.0
 
     # 3. Synchronisation avec ThermalSettings
     setting = db.query(ThermalSettings).filter(ThermalSettings.equipment_type == "heating").first()
@@ -9735,28 +9749,46 @@ def evaluate_and_sync_stay_heating(db: Session, force_sync: bool = False) -> dic
 
         db.commit()
 
-        # Envoi de la commande matérielle ViCare avec temporisation
+        # Envoi de la commande matérielle ViCare sans écriture redondante (alignement app officielle ViCare)
         try:
             import time
-            ViCareService.set_mode(target_mode)
-            time.sleep(1.0)
-            if need_heating:
-                ViCareService.set_temperature(target_temp, program="comfort")
-                time.sleep(1.0)
-            else:
-                ViCareService.set_temperature(target_temp, program="reduced")
-                time.sleep(1.0)
+            current_status = {}
+            try:
+                current_status = ViCareService.get_status(force_refresh=True)
+            except Exception as cs_err:
+                logger.debug(f"[evaluate_and_sync_stay_heating] Erreur lecture current_status: {cs_err}")
 
-            if need_dhw:
-                ViCareService.set_temperature(target_dhw_temp, program="dhw")
-            else:
-                try:
-                    ViCareService.set_temperature(10.0, program="dhw")
-                except Exception:
-                    pass
-            vicare_command_executed = True
+            commands_sent = 0
+            curr_mode = current_status.get("heating_mode") or current_status.get("mode") or current_status.get("active_mode")
+            curr_target_temp = current_status.get("target_temp") or current_status.get("target_temperature")
+            curr_dhw_temp = current_status.get("dhw_target_temp") or current_status.get("dhw_target_temperature") or current_status.get("dhw_configured_temperature")
+
+            if target_mode == "standby":
+                if curr_mode != "standby" or force_sync:
+                    ViCareService.set_mode("standby", refresh_status=True)
+                    commands_sent += 1
+            elif target_mode in ("dhw", "dhwAndHeating"):
+                if curr_mode != target_mode:
+                    ViCareService.set_mode(target_mode, refresh_status=False)
+                    commands_sent += 1
+                    time.sleep(1.0)
+
+                if need_heating and target_temp is not None and curr_target_temp != target_temp:
+                    ViCareService.set_temperature(target_temp, program="normal", refresh_status=False)
+                    commands_sent += 1
+                    time.sleep(1.0)
+
+                if need_dhw and target_dhw_temp is not None and curr_dhw_temp != target_dhw_temp:
+                    ViCareService.set_temperature(target_dhw_temp, program="dhw", refresh_status=False)
+                    commands_sent += 1
+
+                if commands_sent > 0:
+                    ViCareService.get_status(force_refresh=True)
+
+            if commands_sent > 0:
+                vicare_command_executed = True
             logger.info(
-                f"[evaluate_and_sync_stay_heating] Consignes ViCare appliquées : "
+                f"[evaluate_and_sync_stay_heating] Consignes ViCare appliquées ({commands_sent} commandes) : "
                 f"mode={target_mode}, heating={need_heating} ({target_temp}°C), dhw={need_dhw} ({target_dhw_temp}°C)"
             )
         except Exception as v_err:
