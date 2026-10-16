@@ -60,12 +60,14 @@ else:
 SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
 Base = declarative_base()
 
-def init_db(target_engine=None):
+def init_db(target_engine=None, force_init: bool = False):
     """
     Migration automatique et sécurisée du schéma de base de données.
     Vérifie et applique les migrations structurelles indispensables (ex: charge_points sur tasks).
     Garantit l'absence d'erreur 500 sur les endpoints /api/tasks et /api/workload/summary.
     """
+    if os.getenv("VERCEL") and not force_init:
+        return
     eng = target_engine or engine
     from sqlalchemy import text
     try:
@@ -252,16 +254,20 @@ def init_db(target_engine=None):
     except Exception as mig_tasks_err:
         pass
 
-# Auto-migration au chargement du module
-try:
-    init_db(engine)
-except Exception:
-    pass
+# Auto-migration au chargement du module (sauf sur Vercel pour éviter les verrous concurrents)
+if not os.getenv("VERCEL"):
+    try:
+        init_db(engine)
+    except Exception:
+        pass
 
 def get_db():
     db = SessionLocal()
     try:
         yield db
+    except Exception:
+        db.rollback()
+        raise
     finally:
         db.close()
 

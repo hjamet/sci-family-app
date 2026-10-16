@@ -14,12 +14,12 @@ export function isWinterSeason(dateStr) {
     const parts = String(dateStr).split('-');
     if (parts.length >= 2) {
       const month = parseInt(parts[1], 10);
-      return [11, 12, 1, 2, 3].includes(month);
+      return [10, 11, 12, 1, 2, 3, 4].includes(month);
     }
     const d = new Date(dateStr);
     if (isNaN(d.getTime())) return false;
     const m = d.getMonth() + 1;
-    return [11, 12, 1, 2, 3].includes(m);
+    return [10, 11, 12, 1, 2, 3, 4].includes(m);
   } catch (_) {
     return false;
   }

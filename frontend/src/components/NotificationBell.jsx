@@ -117,7 +117,7 @@ export default function NotificationBell({
       let backendNotifs = [];
       const currentMemberId = typeof currentUser === 'object' ? currentUser?.id : null;
       try {
-        const res = await fetchNotifications(currentMemberId);
+        const res = await fetchNotifications(currentMemberId, { silentError: true });
         if (Array.isArray(res)) {
           backendNotifs = res;
         }

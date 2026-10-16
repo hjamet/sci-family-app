@@ -1,0 +1,16 @@
+name: Heating Stay Cron Sync
+
+on:
+  schedule:
+    - cron: '*/30 * * * *'
+  workflow_dispatch:
+
+jobs:
+  sync-heating:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Trigger Heating Stay Sync Endpoint
+        run: |
+          curl -s -X POST https://hellenvilliers.henri-jamet.com/api/cron/heating-stay-sync \
+            -H "Authorization: Bearer ${{ secrets.CRON_SECRET }}" \
+            -H "Content-Type: application/json"

@@ -380,10 +380,12 @@ def fetch_live_telemetry() -> Dict[str, Any]:
         has_burner_error = False
         burner_error_code = None
         burner_error_details = None
+        burner_error_timestamp = None
         if boiler_device:
             try:
                 error_status_prop = boiler_device.getProperty("heating.burners.0.errorStatus")
                 if isinstance(error_status_prop, dict):
+                    burner_error_timestamp = error_status_prop.get("timestamp")
                     props = error_status_prop.get("properties", {})
                     status_val = props.get("status", {}).get("value")
                     err_code_val = props.get("errorCode", {}).get("value")
@@ -537,6 +539,7 @@ def fetch_live_telemetry() -> Dict[str, Any]:
             "has_burner_error": has_burner_error,
             "burner_error_code": burner_error_code,
             "burner_error_details": burner_error_details,
+            "burner_error_timestamp": burner_error_timestamp,
             "mode": active_mode,
             "active_mode": active_mode,
             "active_program": active_program,
@@ -636,6 +639,8 @@ class ViCareService:
             data["burner_error_code"] = None
         if "burner_error_details" not in data:
             data["burner_error_details"] = None
+        if "burner_error_timestamp" not in data:
+            data["burner_error_timestamp"] = None
 
         if data.get("has_burner_error"):
             b_code = data.get("burner_error_code") or 227
@@ -744,8 +749,12 @@ class ViCareService:
                     raise RuntimeError("Aucun circuit de chauffage détecté.")
                 if program == "reduced":
                     circuit.setReducedTemperature(target_temp)
-                elif program == "normal":
+                elif program in ("comfort", "normal"):
+                    # Mettre à jour la température du programme normal (programme actif de la programmation horaire)
+                    # ET du programme comfort avec un délai de 1.0s entre les deux commandes Optolink
                     circuit.setNormalTemperature(target_temp)
+                    time.sleep(1.0)
+                    circuit.setComfortTemperature(target_temp)
                 else:
                     circuit.setComfortTemperature(target_temp)
             return ViCareService.get_status(force_refresh=True)

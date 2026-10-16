@@ -66,6 +66,14 @@ export function triggerEmailNotification(email) {
   }
 }
 
+// Suivi du déchargement de page et de la revalidation d'arrière-plan pour éviter les faux positifs HTTP 0
+let isPageUnloading = false;
+let isBackgroundRevalidating = false;
+if (typeof window !== 'undefined') {
+  window.addEventListener('beforeunload', () => { isPageUnloading = true; });
+  window.addEventListener('pagehide', () => { isPageUnloading = true; });
+}
+
 // Wrapper surveillé pour intercepter toutes les erreurs réseau et réponses HTTP non-ok (4xx, 5xx)
 const _nativeFetch = (typeof window !== 'undefined' ? window.fetch.bind(window) : globalThis.fetch);
 
@@ -77,17 +85,33 @@ async function monitoredFetch(input, init = {}) {
   try {
     res = await _nativeFetch(input, init);
   } catch (netErr) {
-    const errorMsg = netErr?.message || 'Erreur réseau (serveur inaccessible ou connexion interrompue)';
-    emitAppError({
-      url,
-      method,
-      status: 0,
-      message: errorMsg,
-    });
-    try {
-      netErr._handledByGlobalAlert = true;
-    } catch (_) {}
-    throw netErr;
+    const isAbort = netErr?.name === 'AbortError' || netErr?.message?.includes('aborted');
+    if (method === 'GET' && !isAbort && !isPageUnloading) {
+      // 1 retry automatique après 500 ms en cas de micro-coupure réseau transitoire
+      try {
+        await new Promise((resolve) => setTimeout(resolve, 500));
+        res = await _nativeFetch(input, init);
+      } catch (retryErr) {
+        netErr = retryErr;
+      }
+    }
+
+    if (!res) {
+      const errorMsg = netErr?.message || 'Erreur réseau (serveur inaccessible ou connexion interrompue)';
+      const shouldMute = isPageUnloading || isAbort || init?.silentError === true || isBackgroundRevalidating;
+      if (!shouldMute) {
+        emitAppError({
+          url,
+          method,
+          status: 0,
+          message: errorMsg,
+        });
+      }
+      try {
+        netErr._handledByGlobalAlert = true;
+      } catch (_) {}
+      throw netErr;
+    }
   }
 
   // Interception du header HTTP X-Email-Dispatched si présent
@@ -318,6 +342,7 @@ export async function swrFetch(cacheKey, fetcher, options = {}) {
       if (!inFlightRequests.has(cacheKey)) {
         const bgPromise = (async () => {
           try {
+            isBackgroundRevalidating = true;
             const fresh = await fetcher();
             if (fresh !== undefined && fresh !== null) {
               setCachedData(cacheKey, fresh, options.ttl || 120000);
@@ -327,6 +352,7 @@ export async function swrFetch(cacheKey, fetcher, options = {}) {
             // Erreur silencieuse en arrière-plan, la donnée en cache reste valide
             return cached;
           } finally {
+            isBackgroundRevalidating = false;
             inFlightRequests.delete(cacheKey);
           }
         })();
@@ -1883,10 +1909,11 @@ export async function fetchRecentDispatchedEmails() {
 // GOUVERNANCE DES NOTIFICATIONS INTERNES (Annotation 13)
 // ==============================================================================
 
-export async function fetchNotifications(memberId) {
+export async function fetchNotifications(memberId, options = {}) {
   const url = memberId ? `${API_BASE}/notifications?member_id=${encodeURIComponent(memberId)}` : `${API_BASE}/notifications`;
   const res = await fetch(url, {
     headers: getAuthHeaders(),
+    silentError: options?.silentError !== undefined ? options.silentError : true,
   });
   if (!res.ok) throw new Error('Erreur lors de la récupération des notifications');
   return res.json();

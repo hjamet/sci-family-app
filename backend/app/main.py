@@ -162,12 +162,12 @@ if not is_vercel or force_init:
     except Exception as e:
         logger.warning(f"Notice: seed_database could not complete on startup: {e}")
 
-try:
-    run_onboarding_migrations(engine)
-    with next(get_db()) as db:
-        seed_initial_onboarding(db)
-except Exception as e:
-    logger.warning(f"Notice: migration/seed could not complete on startup: {e}")
+    try:
+        run_onboarding_migrations(engine)
+        with next(get_db()) as db:
+            seed_initial_onboarding(db)
+    except Exception as e:
+        logger.warning(f"Notice: migration/seed could not complete on startup: {e}")
 
 app = FastAPI(
     title="SCI Familiale Management API",
@@ -319,8 +319,40 @@ def create_internal_notification(
         return None
 
 
+def sanitize_base64_string(text: Optional[str]) -> Optional[str]:
+    """Exclut ou tronque tout contenu base64 volumineux pour empêcher le gonflement du payload JSON."""
+    if not text:
+        return text
+    if "data:" in text and "base64," in text:
+        return re.sub(r'data:[^;]+;base64,[A-Za-z0-9+/=]{80,}', '[image base64 omise]', text)
+    return text
+
+
+def sanitize_email_data_for_list(data: Any) -> Any:
+    """Allège l'objet e-mail pour la liste /api/notifications en supprimant les payloads binaires et base64 volumineux."""
+    if not data or not isinstance(data, dict):
+        return None
+    cleaned = {}
+    for k, v in data.items():
+        if k == "attachments" and isinstance(v, list):
+            cleaned[k] = [
+                {sub_k: (sub_v if sub_k not in ("content", "data", "base64") else "[omitted]") for sub_k, sub_v in att.items()}
+                if isinstance(att, dict) else att
+                for att in v
+            ]
+        elif k == "html_content" and isinstance(v, str):
+            cleaned[k] = sanitize_base64_string(v)
+        elif isinstance(v, str):
+            cleaned[k] = sanitize_base64_string(v)
+        elif isinstance(v, (dict, list)):
+            cleaned[k] = sanitize_email_data_for_list(v)
+        else:
+            cleaned[k] = v
+    return cleaned
+
+
 def format_notification_response(notif: Notification) -> dict:
-    """Formate une notification avec son objet e-mail complet dé-sérialisé pour le frontend."""
+    """Formate une notification avec son objet e-mail allégé (zéro payload base64 lourd) pour le frontend."""
     email_data = None
     if getattr(notif, "email_entry", None):
         try:
@@ -349,6 +381,8 @@ def format_notification_response(notif: Notification) -> dict:
             email_data["to"] = email_data["recipients"]
         if "recipients" not in email_data and "to" in email_data:
             email_data["recipients"] = email_data["to"]
+        email_data = sanitize_email_data_for_list(email_data)
+
     # Déduction et normalisation de task_id et project_id pour ouverture modale directe (Annotation 6)
     task_id = None
     project_id = None
@@ -381,11 +415,13 @@ def format_notification_response(notif: Notification) -> dict:
         else:
             task_id = notif.link_id
 
+    clean_desc = sanitize_base64_string(notif.description)
+
     return {
         "id": notif.id,
         "member_id": notif.member_id,
         "title": notif.title,
-        "description": notif.description,
+        "description": clean_desc,
         "type": notif.type or "info",
         "link_path": notif.link_path,
         "link_id": notif.link_id,
@@ -399,6 +435,22 @@ def format_notification_response(notif: Notification) -> dict:
 
 
 # --- Auth & Users Dependencies ---
+
+def _fetch_user_from_db(db: Session, user_id: Optional[int], prenom: Optional[str]) -> Optional[User]:
+    user = None
+    if user_id:
+        user = db.query(User).filter(User.id == user_id).first()
+    if not user and prenom:
+        user = db.query(User).filter(func.lower(User.prenom) == prenom.strip().lower()).first()
+        if not user:
+            input_norm = normalize_prenom(prenom)
+            for u in db.query(User).all():
+                u_norm = normalize_prenom(u.prenom)
+                if u_norm == input_norm or (input_norm in ["elisabeth", "maman"] and u_norm in ["elisabeth", "maman"]):
+                    user = u
+                    break
+    return user
+
 
 def get_current_user(request: Request, db: Session = Depends(get_db)) -> User:
     """Dependency to retrieve the currently authenticated User from JWT token."""
@@ -425,17 +477,27 @@ def get_current_user(request: Request, db: Session = Depends(get_db)) -> User:
     user_id = payload.get("user_id")
     prenom = payload.get("sub")
     user = None
-    if user_id:
-        user = db.query(User).filter(User.id == user_id).first()
-    if not user and prenom:
-        user = db.query(User).filter(func.lower(User.prenom) == prenom.strip().lower()).first()
-        if not user:
-            input_norm = normalize_prenom(prenom)
-            for u in db.query(User).all():
-                u_norm = normalize_prenom(u.prenom)
-                if u_norm == input_norm or (input_norm in ["elisabeth", "maman"] and u_norm in ["elisabeth", "maman"]):
-                    user = u
-                    break
+    try:
+        user = _fetch_user_from_db(db, user_id, prenom)
+    except Exception as db_err:
+        logger.warning(f"[get_current_user] Erreur DB transitoire: {db_err}. Tentative de rollback et retry...")
+        try:
+            db.rollback()
+        except Exception:
+            pass
+        import time
+        time.sleep(0.2)
+        try:
+            user = _fetch_user_from_db(db, user_id, prenom)
+        except Exception as retry_err:
+            try:
+                db.rollback()
+            except Exception:
+                pass
+            raise HTTPException(
+                status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+                detail=f"Erreur transitoire de base de données : {retry_err}"
+            )
 
     if not user:
         raise HTTPException(
@@ -2506,6 +2568,11 @@ def create_reservation(res: ReservationCreate, response: Response, db: Session =
         except Exception:
             pass
 
+    try:
+        evaluate_and_sync_stay_heating(db)
+    except Exception as sync_err:
+        logger.warning(f"[create_reservation] Asservissement chauffage non bloquant: {sync_err}")
+
     return db_res
 
 @app.patch("/api/reservations/{reservation_id}", response_model=ReservationResponse)
@@ -2654,6 +2721,11 @@ def update_reservation(reservation_id: int, update: ReservationUpdate, db: Sessi
     if db_res.status == "Confirmée" and old_status != "Confirmée":
         dispatch_stay_confirmation(db_res, db)
 
+    try:
+        evaluate_and_sync_stay_heating(db)
+    except Exception as sync_err:
+        logger.warning(f"[update_reservation] Asservissement chauffage non bloquant: {sync_err}")
+
     return db_res
 
 @app.delete("/api/reservations/{reservation_id}", status_code=status.HTTP_204_NO_CONTENT)
@@ -2664,6 +2736,12 @@ def delete_reservation(reservation_id: int, db: Session = Depends(get_db)):
 
     db.delete(db_res)
     db.commit()
+
+    try:
+        evaluate_and_sync_stay_heating(db)
+    except Exception as sync_err:
+        logger.warning(f"[delete_reservation] Asservissement chauffage non bloquant: {sync_err}")
+
     return None
 
 
@@ -7871,10 +7949,13 @@ def update_heating_settings(
 
     # ──── Commande matérielle ViCare ────
     try:
+        import time
         ViCareService.set_mode(target_mode)
+        time.sleep(1.0)
         if is_heating:
             if setting.target_temperature:
                 ViCareService.set_temperature(setting.target_temperature, program="comfort")
+                time.sleep(1.0)
             if is_dhw:
                 target_dhw = dhw_setting.target_temperature or ViCareService._dhw_comfort_temperature
                 ViCareService.set_temperature(target_dhw, program="dhw")
@@ -7896,23 +7977,6 @@ def update_heating_settings(
     except Exception as vicare_err:
         logger.error(f"[HEATING SETTINGS] Erreur ViCare inattendue : {vicare_err}")
     # ──── FIN COMMANDE MATÉRIELLE ────
-
-    # A5: Cycle anti-légionelle si transition ECS off → on
-    if dhw_was_off and dhw_now_on:
-        try:
-            ViCareService.trigger_anti_legionella_cycle()
-            # Stocker le flag en BDD (résilient Vercel, pas de threading.Timer)
-            leg_setting = db.query(ThermalSettings).filter(ThermalSettings.equipment_type == "dhw_legionella").first()
-            if not leg_setting:
-                leg_setting = ThermalSettings(equipment_type="dhw_legionella")
-                db.add(leg_setting)
-            leg_setting.target_temperature = 65.0
-            leg_setting.updated_at = datetime.utcnow()
-            leg_setting.updated_by = author
-            db.commit()
-            logger.info("[ANTI-LEGIONELLE] Flag BDD posé pour retour confort dans 30 min")
-        except Exception as leg_err:
-            logger.warning(f"[ANTI-LEGIONELLE] Cycle non déclenché : {leg_err}")
 
     # Vérifier si un cycle anti-légionelle précédent doit être terminé (>30 min)
     try:
@@ -9522,6 +9586,206 @@ async def cron_calls_for_funds(request: Request, db: Session = Depends(get_db)):
         "notifications_skipped": notifications_skipped,
         "calls": generated
     }
+
+
+def evaluate_and_sync_stay_heating(db: Session, force_sync: bool = False) -> dict:
+    """
+    Asservissement automatique du chauffage et de l'eau chaude sanitaire aux réservations du Presbytère :
+    - Filtre les réservations confirmées au Presbytère (property_id == 2 ou 'presbyt' in property_name).
+    - Analyse les choix de l'associé dans reservation.notes :
+        wants_dhw: 'Eau Chaude Sanitaire Coupée' absent
+        wants_heating: '20°C' présent et 'Hors-gel' absent
+    - Calcule l'anticipation dynamique (T_lead_hours) en fonction de la température ambiante et extérieure ViCare :
+        Si wants_heating : lead_hours = min(18.0, max(6.0, 6.0 + 1.5 * max(0.0, 20.0 - room_temp) + 0.25 * max(0.0, 12.0 - outside_temp)))
+        Si wants_dhw seul : lead_hours = 2.5
+    - Détermine si un séjour est actif ou dans sa fenêtre de préchauffage [arrival - lead_hours, departure].
+    - Résout le mode unifié (dhwAndHeating, dhw, ou standby).
+    - Met à jour ThermalSettings et commande la chaudière ViCare si l'état change ou si force_sync=True.
+    """
+    from zoneinfo import ZoneInfo
+    tz_paris = ZoneInfo("Europe/Paris")
+    now_paris = datetime.now(tz_paris)
+
+    # 1. Lecture de la télémétrie courante (températures)
+    room_temp = 16.0
+    outside_temp = 12.0
+    try:
+        telemetry = ViCareService.get_status(force_refresh=False)
+        if telemetry.get("room_temperature") is not None:
+            room_temp = float(telemetry["room_temperature"])
+        if telemetry.get("outside_temperature") is not None:
+            outside_temp = float(telemetry["outside_temperature"])
+    except Exception as t_err:
+        logger.debug(f"[evaluate_and_sync_stay_heating] Télémétrie ViCare non disponible (défauts 16°C/12°C): {t_err}")
+
+    # 2. Récupération des réservations confirmées
+    excluded_statuses = ("Annulée", "Refusée")
+    reservations = db.query(Reservation).filter(~Reservation.status.in_(excluded_statuses)).all()
+
+    active_stays = []
+    need_heating = False
+    need_dhw = False
+    evaluated_stays_info = []
+
+    for r in reservations:
+        is_presbytere = (r.property_id == 2) or (r.property_name and "presbyt" in r.property_name.lower())
+        if not is_presbytere:
+            continue
+
+        notes_str = r.notes or ""
+        wants_dhw = "Eau Chaude Sanitaire Coupée" not in notes_str
+        wants_heating = ("20°C" in notes_str) and ("Hors-gel" not in notes_str)
+
+        # Calcul de l'anticipation dynamique
+        if wants_heating:
+            lead_hours = min(18.0, max(6.0, 6.0 + 1.5 * max(0.0, 20.0 - room_temp) + 0.25 * max(0.0, 12.0 - outside_temp)))
+        elif wants_dhw:
+            lead_hours = 2.5
+        else:
+            lead_hours = 0.0
+
+        arr_time = r.arrival_time or "15:00"
+        dep_time = r.departure_time or "11:00"
+        try:
+            arrival_dt = datetime.strptime(f"{r.start_date} {arr_time}", "%Y-%m-%d %H:%M").replace(tzinfo=tz_paris)
+            departure_dt = datetime.strptime(f"{r.end_date} {dep_time}", "%Y-%m-%d %H:%M").replace(tzinfo=tz_paris)
+        except Exception as dt_err:
+            logger.warning(f"[evaluate_and_sync_stay_heating] Erreur parsing date réservation {r.id}: {dt_err}")
+            continue
+
+        window_start = arrival_dt - timedelta(hours=lead_hours)
+        window_end = departure_dt
+
+        is_in_window = (window_start <= now_paris <= window_end)
+
+        evaluated_stays_info.append({
+            "id": r.id,
+            "user_name": r.user_name,
+            "start_date": r.start_date,
+            "end_date": r.end_date,
+            "arrival_time": arr_time,
+            "departure_time": dep_time,
+            "wants_heating": wants_heating,
+            "wants_dhw": wants_dhw,
+            "lead_hours": round(lead_hours, 2),
+            "window_start": window_start.isoformat(),
+            "window_end": window_end.isoformat(),
+            "is_in_window": is_in_window
+        })
+
+        if is_in_window:
+            active_stays.append(r)
+            if wants_heating:
+                need_heating = True
+            if wants_dhw:
+                need_dhw = True
+
+    target_mode = ViCareService.resolve_unified_mode(is_heating=need_heating, is_dhw=need_dhw)
+    target_dhw_state = "on" if need_dhw else "off"
+    target_temp = 20.0 if need_heating else 5.0
+    target_dhw_temp = 52.0 if need_dhw else 10.0
+
+    # 3. Synchronisation avec ThermalSettings
+    setting = db.query(ThermalSettings).filter(ThermalSettings.equipment_type == "heating").first()
+    if not setting:
+        setting = ThermalSettings(equipment_type="heating")
+        db.add(setting)
+
+    dhw_setting = db.query(ThermalSettings).filter(ThermalSettings.equipment_type == "dhw").first()
+    if not dhw_setting:
+        dhw_setting = ThermalSettings(equipment_type="dhw")
+        db.add(dhw_setting)
+
+    current_heating_mode = setting.mode or "standby"
+    current_dhw_mode = dhw_setting.mode or "off"
+
+    mode_changed = (current_heating_mode != target_mode) or (current_dhw_mode != target_dhw_state)
+
+    vicare_command_executed = False
+    vicare_error = None
+
+    if mode_changed or force_sync:
+        setting.mode = target_mode
+        setting.target_temperature = target_temp
+        setting.updated_by = "Système Automatique (Asservissement Séjours)"
+        setting.updated_at = datetime.utcnow()
+
+        dhw_setting.mode = target_dhw_state
+        dhw_setting.target_temperature = target_dhw_temp
+        dhw_setting.updated_by = "Système Automatique (Asservissement Séjours)"
+        dhw_setting.updated_at = datetime.utcnow()
+
+        db.commit()
+
+        # Envoi de la commande matérielle ViCare avec temporisation
+        try:
+            import time
+            ViCareService.set_mode(target_mode)
+            time.sleep(1.0)
+            if need_heating:
+                ViCareService.set_temperature(target_temp, program="comfort")
+                time.sleep(1.0)
+            else:
+                ViCareService.set_temperature(target_temp, program="reduced")
+                time.sleep(1.0)
+
+            if need_dhw:
+                ViCareService.set_temperature(target_dhw_temp, program="dhw")
+            else:
+                try:
+                    ViCareService.set_temperature(10.0, program="dhw")
+                except Exception:
+                    pass
+            vicare_command_executed = True
+            logger.info(
+                f"[evaluate_and_sync_stay_heating] Consignes ViCare appliquées : "
+                f"mode={target_mode}, heating={need_heating} ({target_temp}°C), dhw={need_dhw} ({target_dhw_temp}°C)"
+            )
+        except Exception as v_err:
+            vicare_error = str(v_err)
+            logger.warning(f"[evaluate_and_sync_stay_heating] Erreur commande ViCare : {v_err}")
+
+    return {
+        "status": "success",
+        "now_paris": now_paris.isoformat(),
+        "room_temperature": room_temp,
+        "outside_temperature": outside_temp,
+        "active_stays_count": len(active_stays),
+        "need_heating": need_heating,
+        "need_dhw": need_dhw,
+        "target_mode": target_mode,
+        "target_temperature": target_temp,
+        "target_dhw_temperature": target_dhw_temp,
+        "mode_changed": mode_changed,
+        "vicare_command_executed": vicare_command_executed,
+        "vicare_error": vicare_error,
+        "evaluated_stays": evaluated_stays_info
+    }
+
+
+@app.api_route("/api/cron/heating-stay-sync", methods=["GET", "POST"], tags=["Crons"])
+async def cron_heating_stay_sync(request: Request, force: bool = Query(False), db: Session = Depends(get_db)):
+    """
+    Cron d'automatisation thermique asservi aux séjours (Vercel Cron + GitHub Actions toutes les 30 min) :
+    - Évalue les réservations confirmées au Presbytère
+    - Calcule l'anticipation dynamique (~12h selon température)
+    - Aligne la chaudière ViCare sur le mode requis (dhwAndHeating, dhw, standby)
+    """
+    if os.getenv("CRON_SECRET"):
+        auth_header = request.headers.get("Authorization", "")
+        token = auth_header.replace("Bearer ", "", 1).strip() if auth_header.startswith("Bearer ") else ""
+        cron_secret = os.getenv("CRON_SECRET", "")
+        is_cron_token = bool(token and secrets.compare_digest(token, cron_secret))
+        if not is_cron_token:
+            try:
+                user = get_current_user(request, db)
+                if not user:
+                    verify_cron_auth(request)
+            except Exception:
+                verify_cron_auth(request)
+
+    result = evaluate_and_sync_stay_heating(db, force_sync=force)
+    return result
 
 
 
