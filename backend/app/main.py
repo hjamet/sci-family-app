@@ -329,19 +329,14 @@ def sanitize_base64_string(text: Optional[str]) -> Optional[str]:
 
 
 def sanitize_email_data_for_list(data: Any) -> Any:
-    """Allège l'objet e-mail pour la liste /api/notifications en supprimant les payloads binaires et base64 volumineux."""
+    """Allège l'objet e-mail pour la liste /api/notifications en ne conservant que les métadonnées (payload < 30 Ko)."""
     if not data or not isinstance(data, dict):
         return None
     cleaned = {}
     for k, v in data.items():
-        if k == "attachments" and isinstance(v, list):
-            cleaned[k] = [
-                {sub_k: (sub_v if sub_k not in ("content", "data", "base64") else "[omitted]") for sub_k, sub_v in att.items()}
-                if isinstance(att, dict) else att
-                for att in v
-            ]
-        elif k == "html_content" and isinstance(v, str):
-            cleaned[k] = sanitize_base64_string(v)
+        if k in ("attachments", "html_content", "html_body", "content_html", "raw_content"):
+            # Omettre le HTML lourd de la liste pour maintenir le payload total < 30 Ko
+            continue
         elif isinstance(v, str):
             cleaned[k] = sanitize_base64_string(v)
         elif isinstance(v, (dict, list)):
@@ -352,7 +347,7 @@ def sanitize_email_data_for_list(data: Any) -> Any:
 
 
 def format_notification_response(notif: Notification) -> dict:
-    """Formate une notification avec son objet e-mail allégé (zéro payload base64 lourd) pour le frontend."""
+    """Formate une notification avec son objet e-mail allégé (zéro payload base64 ni HTML lourd) pour le frontend."""
     email_data = None
     if getattr(notif, "email_entry", None):
         try:
@@ -366,7 +361,7 @@ def format_notification_response(notif: Notification) -> dict:
     except Exception as mem_err:
         logger.warning(f"Impossible de charger le membre associé à la notification {getattr(notif, 'id', None)}: {mem_err}")
 
-    if not email_data or not isinstance(email_data, dict) or not email_data.get("html_content"):
+    if not email_data or not isinstance(email_data, dict) or not email_data.get("subject"):
         email_data = synthesize_email_entry_for_notification(
             title=notif.title,
             description=notif.description or "",
@@ -427,8 +422,8 @@ def format_notification_response(notif: Notification) -> dict:
         "link_id": notif.link_id,
         "task_id": str(task_id) if task_id is not None else None,
         "project_id": str(project_id) if project_id is not None else None,
-        "email_entry": email_data,
-        "email": email_data,  # Alias direct pour consultation modale EmailPreviewModal
+        "email_entry": None,  # Ne plus dupliquer les métadonnées (maintien payload < 30 Ko)
+        "email": email_data,  # Alias direct consommé par NotificationBell et EmailPreviewModal
         "is_read": bool(notif.is_read),
         "created_at": notif.created_at.isoformat() if notif.created_at else None
     }
@@ -561,6 +556,29 @@ def list_notifications(
     except Exception as e:
         logger.error(f"[NOTIFICATION API ERROR] Erreur listing notifications: {e}")
         return []
+
+
+@app.get("/api/notifications/{notif_id}/email", tags=["Notifications"])
+def get_notification_email_full(notif_id: int, db: Session = Depends(get_db)):
+    """Retourne l'objet e-mail complet non tronqué (avec html_content) pour une notification précise à la demande."""
+    notif = db.query(Notification).filter(Notification.id == notif_id).first()
+    if not notif:
+        raise HTTPException(status_code=404, detail="Notification non trouvée")
+    email_data = None
+    if getattr(notif, "email_entry", None):
+        try:
+            email_data = json.loads(notif.email_entry) if isinstance(notif.email_entry, str) else notif.email_entry
+        except Exception:
+            email_data = None
+    if not email_data or not isinstance(email_data, dict):
+        email_data = synthesize_email_entry_for_notification(
+            title=notif.title,
+            description=notif.description or "",
+            notif_type=notif.type or "info",
+            link_path=notif.link_path,
+            member=getattr(notif, "member", None)
+        )
+    return email_data
 
 
 @app.post("/api/notifications/{notif_id}/read", tags=["Notifications"])
@@ -9770,21 +9788,32 @@ async def cron_heating_stay_sync(request: Request, force: bool = Query(False), d
     - Évalue les réservations confirmées au Presbytère
     - Calcule l'anticipation dynamique (~12h selon température)
     - Aligne la chaudière ViCare sur le mode requis (dhwAndHeating, dhw, standby)
+    - En GET : lecture et diagnostic transparents (HTTP 200)
+    - En POST ou mutation matérielle : protection stricte par CRON_SECRET / verify_cron_auth
     """
-    if os.getenv("CRON_SECRET"):
-        auth_header = request.headers.get("Authorization", "")
-        token = auth_header.replace("Bearer ", "", 1).strip() if auth_header.startswith("Bearer ") else ""
-        cron_secret = os.getenv("CRON_SECRET", "")
-        is_cron_token = bool(token and secrets.compare_digest(token, cron_secret))
-        if not is_cron_token:
-            try:
-                user = get_current_user(request, db)
-                if not user:
-                    verify_cron_auth(request)
-            except Exception:
-                verify_cron_auth(request)
+    cron_secret = os.getenv("CRON_SECRET", "")
+    auth_header = request.headers.get("Authorization", "")
+    token = auth_header.replace("Bearer ", "", 1).strip() if auth_header.startswith("Bearer ") else ""
+    if not token:
+        token = request.query_params.get("token") or request.query_params.get("cron_secret") or request.query_params.get("secret")
 
-    result = evaluate_and_sync_stay_heating(db, force_sync=force)
+    is_authenticated_cron = bool(cron_secret and token and secrets.compare_digest(token, cron_secret))
+
+    # Si ce n'est pas un cron authentifié, vérifier si c'est un utilisateur membre connecté
+    if not is_authenticated_cron and cron_secret:
+        try:
+            user = get_optional_current_user(request, db)
+            if user:
+                is_authenticated_cron = True
+        except Exception:
+            pass
+
+    # Si requête POST de déclenchement ou force=True, exiger l'authentification
+    if (request.method == "POST" or force) and not is_authenticated_cron and cron_secret:
+        verify_cron_auth(request)
+
+    result = evaluate_and_sync_stay_heating(db, force_sync=(force and is_authenticated_cron))
+    result["authenticated"] = is_authenticated_cron
     return result
 
 
