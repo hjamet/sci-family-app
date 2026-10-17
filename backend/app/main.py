@@ -7909,13 +7909,16 @@ def get_heating_fuel_history(db: Session = Depends(get_db)):
         "last_delivery_liters": last_delivery["liters_delivered"] if last_delivery else 0.0
     }
 
-    # Calcul 100 % dynamique de la série mensuelle glissante sur 12 mois
+    # Calcul 100 % dynamique de la série mensuelle glissante sur 12 mois et 30 jours
     now = datetime.utcnow()
     if os.getenv("MOCK_DATE"):
         try:
             now = datetime.strptime(os.getenv("MOCK_DATE"), "%Y-%m-%d")
         except Exception:
             pass
+
+    today_str = now.strftime("%Y-%m-%d")
+    cutoff_date = (now - timedelta(days=30)).strftime("%Y-%m-%d")
 
     cur_y, cur_m = now.year, now.month
     months_tuples = []
@@ -7926,6 +7929,75 @@ def get_heating_fuel_history(db: Session = Depends(get_db)):
             m += 12
             y -= 1
         months_tuples.append((y, m))
+
+    earliest_month_date = f"{months_tuples[0][0]:04d}-{months_tuples[0][1]:02d}-01"
+    min_snapshot_date = min(earliest_month_date, cutoff_date)
+
+    db_snapshots = []
+    try:
+        db_snapshots = (
+            db.query(Log)
+            .filter(
+                Log.action == "FUEL_DAILY_SNAPSHOT",
+                Log.user_name >= min_snapshot_date
+            )
+            .order_by(Log.user_name.asc(), Log.id.asc())
+            .all()
+        )
+    except Exception:
+        pass
+
+    snapshots_by_date = {}
+    snapshots_by_month = {}
+    for l in db_snapshots:
+        if not l.user_name:
+            continue
+        d_str = l.user_name
+        try:
+            payload = json.loads(l.details) if l.details else {}
+            b_starts = payload.get("burner_starts")
+            b_hours = payload.get("burner_hours")
+            f_rem = payload.get("fuel_liters_remaining")
+            snap_entry = {
+                "date": d_str,
+                "burner_starts": int(b_starts) if b_starts is not None else None,
+                "burner_hours": int(b_hours) if b_hours is not None else None,
+                "fuel_liters_remaining": float(f_rem) if f_rem is not None else None
+            }
+            snapshots_by_date[d_str] = snap_entry
+            m_key = d_str[:7]
+            if m_key not in snapshots_by_month:
+                snapshots_by_month[m_key] = []
+            snapshots_by_month[m_key].append(snap_entry)
+        except Exception:
+            pass
+
+    # Stock temps réel courant (current_liters)
+    current_liters = None
+    if telemetry and isinstance(telemetry, dict) and telemetry.get("fuel_liters_remaining") is not None:
+        current_liters = float(telemetry["fuel_liters_remaining"])
+    elif today_str in snapshots_by_date and snapshots_by_date[today_str].get("fuel_liters_remaining") is not None:
+        current_liters = snapshots_by_date[today_str]["fuel_liters_remaining"]
+    else:
+        delta_live = max(0, live_starts - CALIBRATION_BURNER_STARTS)
+        current_liters = round(max(0.0, CALIBRATION_LITERS - (delta_live * LITERS_PER_START)), 1)
+
+    live_stock = current_liters
+
+    if today_str not in snapshots_by_date:
+        snapshots_by_date[today_str] = {
+            "date": today_str,
+            "burner_starts": live_starts,
+            "burner_hours": live_hours,
+            "fuel_liters_remaining": current_liters
+        }
+    else:
+        if live_starts is not None:
+            snapshots_by_date[today_str]["burner_starts"] = live_starts
+        if live_hours is not None:
+            snapshots_by_date[today_str]["burner_hours"] = live_hours
+        if current_liters is not None:
+            snapshots_by_date[today_str]["fuel_liters_remaining"] = current_liters
 
     SEASONAL_CONSUMPTION = {
         1: 350.0,
@@ -7946,22 +8018,40 @@ def get_heating_fuel_history(db: Session = Depends(get_db)):
         7: "Juil", 8: "Août", 9: "Sep", 10: "Oct", 11: "Nov", 12: "Déc"
     }
 
-    monthly_history = []
-    running_stock = 1250.0
-    for idx, (y, m) in enumerate(months_tuples):
+    # Calcul des consommations et livraisons par mois pour les 12 mois glissants
+    consumed = []
+    delivered = []
+    for (y, m) in months_tuples:
         m_str = f"{y:04d}-{m:02d}"
         m_deliveries = [d for d in deliveries if d.get("date", "").startswith(m_str)]
         deliv = sum(float(d.get("liters_delivered", 0.0)) for d in m_deliveries)
         cons = SEASONAL_CONSUMPTION.get(m, 200.0)
+        consumed.append(cons)
+        delivered.append(deliv)
 
-        if idx == 0 and m_str == "2025-11":
-            running_stock = 1250.0
-        elif m_str == "2026-01" and deliv > 0:
-            running_stock = min(TANK_CAPACITY_LITERS, running_stock + deliv)
+    # Récurrence rétrograde exacte depuis le stock temps réel courant current_liters
+    stock_end = [0.0] * 12
+    stock_end[11] = current_liters
+
+    for i in range(11, 0, -1):
+        prev_y, prev_m = months_tuples[i - 1]
+        prev_m_str = f"{prev_y:04d}-{prev_m:02d}"
+        month_snaps = [
+            s for s in snapshots_by_month.get(prev_m_str, [])
+            if s.get("fuel_liters_remaining") is not None
+        ]
+        if month_snaps:
+            stock_end[i - 1] = round(float(month_snaps[-1]["fuel_liters_remaining"]), 1)
         else:
-            running_stock = max(0.0, running_stock - cons + deliv)
+            stock_end[i - 1] = round(
+                min(TANK_CAPACITY_LITERS, max(0.0, stock_end[i] + consumed[i] - delivered[i])),
+                1
+            )
 
-        stock_val = round(running_stock, 1)
+    monthly_history = []
+    for idx, (y, m) in enumerate(months_tuples):
+        m_str = f"{y:04d}-{m:02d}"
+        stock_val = stock_end[idx]
         h_val = round((stock_val / TANK_CAPACITY_LITERS) * TANK_TOTAL_HEIGHT_CM, 1)
 
         monthly_history.append({
@@ -7970,75 +8060,13 @@ def get_heating_fuel_history(db: Session = Depends(get_db)):
             "liters": stock_val,
             "stock_liters": stock_val,
             "height_cm": h_val,
-            "consumed_liters": round(cons, 1),
-            "delivery_liters": round(deliv, 1),
-            "is_delivery": bool(deliv > 0)
+            "consumed_liters": round(consumed[idx], 1),
+            "delivery_liters": round(delivered[idx], 1),
+            "is_delivery": bool(delivered[idx] > 0)
         })
 
-    # Construction 100 % dynamique de daily_history sur 30 jours glissants (zéro données codées en dur)
-    cutoff_date = (now - timedelta(days=30)).strftime("%Y-%m-%d")
-    today_str = now.strftime("%Y-%m-%d")
-
-    db_daily_logs = []
-    try:
-        db_daily_logs = (
-            db.query(Log)
-            .filter(
-                Log.action == "FUEL_DAILY_SNAPSHOT",
-                Log.user_name >= cutoff_date
-            )
-            .order_by(Log.user_name.asc(), Log.id.asc())
-            .all()
-        )
-    except Exception:
-        pass
-
-    snapshots_by_date = {}
-    for l in db_daily_logs:
-        if not l.user_name:
-            continue
-        d_str = l.user_name
-        try:
-            payload = json.loads(l.details) if l.details else {}
-            b_starts = payload.get("burner_starts")
-            b_hours = payload.get("burner_hours")
-            f_rem = payload.get("fuel_liters_remaining")
-            snapshots_by_date[d_str] = {
-                "date": d_str,
-                "burner_starts": int(b_starts) if b_starts is not None else None,
-                "burner_hours": int(b_hours) if b_hours is not None else None,
-                "fuel_liters_remaining": float(f_rem) if f_rem is not None else None
-            }
-        except Exception:
-            pass
-
-    # Point live du jour
-    live_stock = None
-    if telemetry and isinstance(telemetry, dict) and telemetry.get("fuel_liters_remaining") is not None:
-        live_stock = float(telemetry["fuel_liters_remaining"])
-    elif today_str in snapshots_by_date and snapshots_by_date[today_str].get("fuel_liters_remaining") is not None:
-        live_stock = snapshots_by_date[today_str]["fuel_liters_remaining"]
-    else:
-        delta_live = max(0, live_starts - CALIBRATION_BURNER_STARTS)
-        live_stock = round(max(0.0, CALIBRATION_LITERS - (delta_live * LITERS_PER_START)), 1)
-
-    if today_str not in snapshots_by_date:
-        snapshots_by_date[today_str] = {
-            "date": today_str,
-            "burner_starts": live_starts,
-            "burner_hours": live_hours,
-            "fuel_liters_remaining": live_stock
-        }
-    else:
-        if live_starts is not None:
-            snapshots_by_date[today_str]["burner_starts"] = live_starts
-        if live_hours is not None:
-            snapshots_by_date[today_str]["burner_hours"] = live_hours
-        if live_stock is not None:
-            snapshots_by_date[today_str]["fuel_liters_remaining"] = live_stock
-
-    # Calcul dynamique de daily_starts et daily_liters
-    sorted_dates = sorted(snapshots_by_date.keys())
+    # Calcul dynamique de daily_starts et daily_liters sur 30 jours glissants
+    sorted_dates = [d for d in sorted(snapshots_by_date.keys()) if d >= cutoff_date]
     daily_history = []
     prev_item_starts = None
 
