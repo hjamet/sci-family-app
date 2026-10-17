@@ -782,6 +782,12 @@ class HeatingStatusResponse(BaseModel):
     fuel_level_percent: Optional[float] = None
     fuel_liters_remaining: Optional[float] = None
     fuel_capacity_liters: Optional[float] = None
+    fuel_height_cm: Optional[float] = 46.0
+    fuel_tank_height_cm: Optional[float] = 130.0
+    fuel_liters_per_start: Optional[float] = 0.293
+    fuel_liters_per_hour: Optional[float] = 1.62
+    fuel_nozzle_spec: Optional[str] = "Danfoss 0,50 / 80° H LEV DA (1,62 L/h • 0,293 L/allumage)"
+    fuel_calibration_info: Optional[str] = "Jauge M. Bompais 17/10/2026 : 46 cm / 130 cm (1 062 L) • Dernier plein Josse : 21/01/2026 (+2 014 L)"
     fuel_supplier: Optional[str] = None
     test_mode_read_only: Optional[bool] = None
     message: Optional[str] = None

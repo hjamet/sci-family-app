@@ -21,6 +21,44 @@ logger = logging.getLogger(__name__)
 # Timeout strict de 3.5s max sur les requêtes pour éviter tout blocage réseau de 30 secondes.
 HTTP_TIMEOUT_SECONDS: float = 3.5
 
+# --- Constantes de Calibration Physique & Empirique du Fioul (Josse / Bompais) ---
+TANK_CAPACITY_LITERS: float = 3000.0
+TANK_TOTAL_HEIGHT_CM: float = 130.0
+CALIBRATION_DATE: str = "2026-10-17"
+CALIBRATION_HEIGHT_CM: float = 46.0
+CALIBRATION_LITERS: float = 1062.0
+CALIBRATION_BURNER_HOURS: int = 4531
+CALIBRATION_BURNER_STARTS: int = 25072
+NOZZLE_SPEC: str = "Danfoss 0,50 / 80° H LEV DA"
+FLOW_LITERS_PER_HOUR: float = 1.62
+LITERS_PER_START: float = 0.293
+
+
+def calculate_fuel_telemetry(burner_hours: Optional[int], burner_starts: Optional[int]) -> Dict[str, Any]:
+    """
+    Calcule la jauge de fioul exacte basée sur la calibration physique de M. Bompais (17/10/2026)
+    et les compteurs officiels Viessmann (allumages & heures brûleur).
+    """
+    delta_starts = max(0, (int(burner_starts) if burner_starts is not None else CALIBRATION_BURNER_STARTS) - CALIBRATION_BURNER_STARTS)
+    delta_hours = max(0, (int(burner_hours) if burner_hours is not None else CALIBRATION_BURNER_HOURS) - CALIBRATION_BURNER_HOURS)
+    consumed_liters = round(max(delta_starts * LITERS_PER_START, delta_hours * FLOW_LITERS_PER_HOUR), 2)
+    fuel_liters_remaining = round(max(0.0, CALIBRATION_LITERS - consumed_liters), 1)
+    fuel_level_percent = round((fuel_liters_remaining / TANK_CAPACITY_LITERS) * 100.0, 1)
+    fuel_height_cm = round((fuel_liters_remaining / TANK_CAPACITY_LITERS) * TANK_TOTAL_HEIGHT_CM, 1)
+
+    return {
+        "fuel_level_percent": fuel_level_percent,
+        "fuel_liters_remaining": fuel_liters_remaining,
+        "fuel_capacity_liters": TANK_CAPACITY_LITERS,
+        "fuel_height_cm": fuel_height_cm,
+        "fuel_tank_height_cm": TANK_TOTAL_HEIGHT_CM,
+        "fuel_liters_per_start": LITERS_PER_START,
+        "fuel_liters_per_hour": FLOW_LITERS_PER_HOUR,
+        "fuel_nozzle_spec": f"{NOZZLE_SPEC} ({FLOW_LITERS_PER_HOUR} L/h • {LITERS_PER_START} L/allumage)",
+        "fuel_calibration_info": f"Jauge M. Bompais 17/10/2026 : {CALIBRATION_HEIGHT_CM:.0f} cm / {TANK_TOTAL_HEIGHT_CM:.0f} cm (1 062 L) • Dernier plein Josse : 21/01/2026 (+2 014 L)",
+        "fuel_supplier": "Éts JOSSE SAS",
+    }
+
 
 def is_read_only_mode() -> bool:
     """
@@ -546,10 +584,7 @@ def fetch_live_telemetry() -> Dict[str, Any]:
             "mode": active_mode,
             "active_mode": active_mode,
             "active_program": active_program,
-            "fuel_level_percent": 68.0,
-            "fuel_liters_remaining": 2720.0,
-            "fuel_capacity_liters": 3000.0,
-            "fuel_supplier": "Éts JOSSE SAS",
+            **calculate_fuel_telemetry(burner_hours, burner_starts),
             "test_mode_read_only": is_read_only_mode()
         }
     except HTTPException:
@@ -651,6 +686,11 @@ class ViCareService:
                 data["heating_status_state"] = "error"
                 data["heating_status_label"] = f"En dérangement (Code {b_code})"
                 data["heating_status_subtext"] = "Défaut brûleur (sécurité de combustion verrouillée) • Réarmement physique requis sur la chaudière"
+
+        fuel_defaults = calculate_fuel_telemetry(data.get("burner_hours"), data.get("burner_starts"))
+        for k, v in fuel_defaults.items():
+            if k not in data:
+                data[k] = v
 
         read_only = is_read_only_mode()
         msg = (

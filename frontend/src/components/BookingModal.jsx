@@ -454,21 +454,27 @@ function BookingModalContent({
         setPoolHeating(true);
       }
       let initDhw = false;
-      if (rawNotes.toLowerCase().includes('eau chaude') || rawNotes.toLowerCase().includes('ecs')) {
+      const lowerRawNotes = rawNotes.toLowerCase();
+      const isDhwCutOff = lowerRawNotes.includes('coupée') || lowerRawNotes.includes('coupee');
+      if ((lowerRawNotes.includes('eau chaude') || lowerRawNotes.includes('ecs')) && !isDhwCutOff) {
         initDhw = true;
         setDhwHeating(true);
         setDhwHeatingManual(true);
       }
       let initPresb = false;
       if (
-        rawNotes.toLowerCase().includes('chauffage presbytère') ||
-        rawNotes.toLowerCase().includes('chauffage presbytere') ||
-        rawNotes.toLowerCase().includes('presbytère 20°c') ||
-        rawNotes.toLowerCase().includes('presbytere 20°c')
+        lowerRawNotes.includes('chauffage presbytère') ||
+        lowerRawNotes.includes('chauffage presbytere') ||
+        lowerRawNotes.includes('presbytère 20°c') ||
+        lowerRawNotes.includes('presbytere 20°c')
       ) {
         initPresb = true;
         setPresbytereHeating(true);
         setPresbytereHeatingManual(true);
+        // Cocher presbytereHeating active obligatoirement l'ECS
+        initDhw = true;
+        setDhwHeating(true);
+        setDhwHeatingManual(true);
       }
 
       const domotiqueMatch = rawNotes.match(/\[Domotique:\s*([^\]]+)\]/i);
@@ -712,8 +718,10 @@ function BookingModalContent({
 
       // Notes enrichies avec les consignes domotiques et participants
       const domotiqueTags = [];
-      if (dhwHeating) {
+      if (dhwHeating || presbytereHeating) {
         domotiqueTags.push('Eau Chaude Sanitaire 52°C');
+      } else {
+        domotiqueTags.push('Eau Chaude Sanitaire Coupée');
       }
       if (presbytereHeating) {
         domotiqueTags.push('Chauffage Presbytère 20°C');
@@ -1184,19 +1192,19 @@ function BookingModalContent({
                     Eau Chaude Sanitaire (Ballon 250L)
                   </span>
                   <span className={`px-2 py-0.5 rounded-full text-xs font-semibold ${
-                    dhwHeating
+                    dhwHeating || presbytereHeating
                       ? 'bg-sage-soft text-primary-container border border-sage-border'
                       : 'bg-surface-container-high text-on-surface-variant border border-border-subtle'
                   }`}>
-                    {dhwHeating ? 'Active (52°C)' : 'Veille économique (10°C)'}
+                    {presbytereHeating ? 'Inclus dans le chauffage (52°C)' : (dhwHeating ? 'Active (52°C)' : 'Veille économique (10°C)')}
                   </span>
                 </div>
                 <label
                   htmlFor="dhw-heater-checkbox"
                   className={`flex items-start gap-2.5 p-2.5 rounded-DEFAULT border transition-all select-none ${
-                    isReadOnly ? 'cursor-default opacity-85' : 'cursor-pointer'
+                    isReadOnly || presbytereHeating ? 'cursor-default opacity-90' : 'cursor-pointer'
                   } ${
-                    dhwHeating
+                    dhwHeating || presbytereHeating
                       ? 'bg-sage-soft/60 border-primary-container/40 hover:bg-sage-soft'
                       : 'bg-surface-container-lowest border-border-subtle hover:border-outline'
                   }`}
@@ -1204,10 +1212,10 @@ function BookingModalContent({
                   <input
                     id="dhw-heater-checkbox"
                     type="checkbox"
-                    disabled={isReadOnly}
-                    checked={dhwHeating}
+                    disabled={isReadOnly || presbytereHeating}
+                    checked={dhwHeating || presbytereHeating}
                     onChange={(e) => {
-                      if (!isReadOnly) {
+                      if (!isReadOnly && !presbytereHeating) {
                         setDhwHeating(e.target.checked);
                         setDhwHeatingManual(true);
                       }
@@ -1215,12 +1223,18 @@ function BookingModalContent({
                     className="mt-0.5 w-5 h-5 rounded accent-primary-container cursor-pointer shrink-0 disabled:cursor-not-allowed"
                   />
                   <div className="flex flex-col min-w-0">
-                    <span className={`font-label-md text-label-md font-semibold ${dhwHeating ? 'text-forest-deep' : 'text-on-surface'}`}>
+                    <span className={`font-label-md text-label-md font-semibold ${dhwHeating || presbytereHeating ? 'text-forest-deep' : 'text-on-surface'}`}>
                       Eau Chaude Sanitaire
                     </span>
                     <span className="font-body-md text-xs text-on-surface-variant mt-0.5">
                       Ballon 250L chauffé à 52°C pour douches et sanitaires. Pré-coché si une chambre Presbytère est occupée.
                     </span>
+                    {presbytereHeating && (
+                      <span className="inline-flex items-center gap-1 text-[11px] font-semibold text-primary mt-1">
+                        <span className="material-symbols-outlined text-[14px]">lock</span>
+                        Inclus automatiquement avec le chauffage du Presbytère
+                      </span>
+                    )}
                   </div>
                 </label>
               </div>
@@ -1257,8 +1271,13 @@ function BookingModalContent({
                     checked={presbytereHeating}
                     onChange={(e) => {
                       if (!isReadOnly) {
-                        setPresbytereHeating(e.target.checked);
+                        const checked = e.target.checked;
+                        setPresbytereHeating(checked);
                         setPresbytereHeatingManual(true);
+                        if (checked) {
+                          setDhwHeating(true);
+                          setDhwHeatingManual(true);
+                        }
                       }
                     }}
                     className="mt-0.5 w-5 h-5 rounded accent-primary-container cursor-pointer shrink-0 disabled:cursor-not-allowed"

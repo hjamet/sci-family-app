@@ -194,6 +194,348 @@ export const CANONICAL_VADEMECUM_CATEGORIES = [
   { id: 'cat-7', name: 'Bâtiments & Réseaux Techniques', emoji: '🏛️', color: 'emerald' },
 ];
 
+// =========================================================================
+// COMPOSANT ANNOTATION 3 : Graphe Annuel & Quotidien du Fioul (Josse / Bompais)
+// =========================================================================
+const DEFAULT_FUEL_DELIVERIES = [
+  { date: "18/03/2024", invoice: "0124101209", liters: 2128, amount: "2 510,95 €", label: "Mise en service chaudière Vitoladens 300-C" },
+  { date: "12/11/2024", invoice: "0124105190", liters: 1253, amount: "1 365,72 €", label: "Rechargement pré-hivernal Éts Josse" },
+  { date: "26/03/2025", invoice: "101Y006881", liters: 2220, amount: "2 331,00 €", label: "Plein sortie d'hiver Éts Josse" },
+  { date: "21/01/2026", invoice: "101Z002495", liters: 2014, amount: "2 215,48 €", label: "Plein cœur d'hiver Éts Josse (+2 014 L)" }
+];
+
+const DEFAULT_MONTHLY_HISTORY = [
+  { month: "Nov 25", liters: 1350, height_cm: 58.5, label: "Novembre 2025" },
+  { month: "Déc 25", liters: 1080, height_cm: 46.8, label: "Décembre 2025" },
+  { month: "Jan (av.)", liters: 850, height_cm: 36.8, label: "Avant livraison 21/01" },
+  { month: "Jan (ap.)", liters: 2864, height_cm: 124.1, label: "Livraison Josse +2 014 L (21/01/2026)", isDelivery: true },
+  { month: "Fév 26", liters: 2390, height_cm: 103.6, label: "Février 2026" },
+  { month: "Mar 26", liters: 1950, height_cm: 84.5, label: "Mars 2026" },
+  { month: "Avr 26", liters: 1620, height_cm: 70.2, label: "Avril 2026" },
+  { month: "Mai 26", liters: 1450, height_cm: 62.8, label: "Mai 2026" },
+  { month: "Juin 26", liters: 1340, height_cm: 58.1, label: "Juin 2026" },
+  { month: "Juil 26", liters: 1250, height_cm: 54.2, label: "Juillet 2026" },
+  { month: "Août 26", liters: 1180, height_cm: 51.1, label: "Août 2026" },
+  { month: "Sep 26", liters: 1120, height_cm: 48.5, label: "Septembre 2026" },
+  { month: "17 Oct 26", liters: 1062, height_cm: 46.0, label: "Jauge M. Bompais (17/10/2026)", isCalibration: true }
+];
+
+const DEFAULT_DAILY_HISTORY = [
+  { date: "08/10", starts: 12, liters: 3.5 },
+  { date: "09/10", starts: 14, liters: 4.1 },
+  { date: "10/10", starts: 11, liters: 3.2 },
+  { date: "11/10", starts: 16, liters: 4.7 },
+  { date: "12/10", starts: 18, liters: 5.3 },
+  { date: "13/10", starts: 15, liters: 4.4 },
+  { date: "14/10", starts: 13, liters: 3.8 },
+  { date: "15/10", starts: 17, liters: 5.0 },
+  { date: "16/10", starts: 19, liters: 5.6 },
+  { date: "17/10", starts: 14, liters: 4.1 }
+];
+
+function FuelInteractiveGraph({ fuelHistory, heatingStatus }) {
+  const [activeTab, setActiveTab] = useState('annual'); // 'annual' | 'daily'
+
+  const monthlyData = (fuelHistory?.monthly_history && fuelHistory.monthly_history.length > 0)
+    ? fuelHistory.monthly_history
+    : DEFAULT_MONTHLY_HISTORY;
+
+  const dailyData = (fuelHistory?.daily_history && fuelHistory.daily_history.length > 0)
+    ? fuelHistory.daily_history
+    : DEFAULT_DAILY_HISTORY;
+
+  const deliveries = (fuelHistory?.deliveries && fuelHistory.deliveries.length > 0)
+    ? fuelHistory.deliveries
+    : DEFAULT_FUEL_DELIVERIES;
+
+  // Dimensions SVG adaptatives
+  const svgWidth = 720;
+  const svgHeight = 220;
+  const paddingLeft = 60;
+  const paddingRight = 40;
+  const paddingTop = 25;
+  const paddingBottom = 40;
+  const plotWidth = svgWidth - paddingLeft - paddingRight;
+  const plotHeight = svgHeight - paddingTop - paddingBottom;
+  const maxLiters = 3000;
+
+  const points = monthlyData.map((d, i) => {
+    const x = paddingLeft + (i / (monthlyData.length - 1)) * plotWidth;
+    const y = paddingTop + plotHeight * (1 - Math.min(maxLiters, Math.max(0, d.liters)) / maxLiters);
+    return { ...d, x, y };
+  });
+
+  const pathD = points.reduce((acc, p, i) => `${acc} ${i === 0 ? 'M' : 'L'} ${p.x.toFixed(1)},${p.y.toFixed(1)}`, '');
+  const areaD = `${pathD} L ${points[points.length - 1].x.toFixed(1)},${(paddingTop + plotHeight).toFixed(1)} L ${points[0].x.toFixed(1)},${(paddingTop + plotHeight).toFixed(1)} Z`;
+
+  const maxDailyStarts = Math.max(...dailyData.map((d) => d.daily_starts || d.starts || 1), 20);
+
+  return (
+    <div className="mt-4 p-4 sm:p-5 bg-white dark:bg-slate-900 rounded-2xl border border-border-subtle shadow-xs flex flex-col gap-4">
+      {/* En-tête avec onglets */}
+      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 border-b border-border-subtle pb-3">
+        <div className="flex items-center gap-2">
+          <span className="material-symbols-outlined text-amber-600 text-[22px]">monitoring</span>
+          <div>
+            <h4 className="font-headline-sm text-sm sm:text-base font-bold text-forest-deep dark:text-emerald-100">
+              Télémétrie Fioul Cuve &amp; Brûleur Viessmann
+            </h4>
+            <p className="text-[11px] text-on-surface-variant">
+              Jauge physique M. Bompais (17/10/2026 : 46 cm = 1 062 L) • 4 factures Éts JOSSE SAS
+            </p>
+          </div>
+        </div>
+
+        {/* Boutons d'onglets */}
+        <div className="inline-flex p-1 rounded-xl bg-slate-100 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 text-xs font-semibold shrink-0">
+          <button
+            type="button"
+            onClick={() => setActiveTab('annual')}
+            className={`px-3 py-1.5 rounded-lg transition-all cursor-pointer ${
+              activeTab === 'annual'
+                ? 'bg-white dark:bg-slate-900 text-forest-deep dark:text-emerald-300 font-bold shadow-xs'
+                : 'text-slate-600 dark:text-slate-400 hover:text-slate-900'
+            }`}
+          >
+            Historique Annuel Cuve &amp; Livraisons Josse
+          </button>
+          <button
+            type="button"
+            onClick={() => setActiveTab('daily')}
+            className={`px-3 py-1.5 rounded-lg transition-all cursor-pointer ${
+              activeTab === 'daily'
+                ? 'bg-white dark:bg-slate-900 text-forest-deep dark:text-emerald-300 font-bold shadow-xs'
+                : 'text-slate-600 dark:text-slate-400 hover:text-slate-900'
+            }`}
+          >
+            Suivi Quotidien Allumages Brûleur (0,293 L/all.)
+          </button>
+        </div>
+      </div>
+
+      {/* Contenu Onglet 1 : Historique Annuel Cuve & Livraisons */}
+      {activeTab === 'annual' && (
+        <div className="flex flex-col gap-4">
+          <div className="w-full overflow-x-auto">
+            <svg
+              viewBox={`0 0 ${svgWidth} ${svgHeight}`}
+              className="w-full h-auto min-w-[620px] select-none"
+              role="img"
+              aria-label="Courbe annuelle du stock de fioul et livraisons Josse"
+            >
+              <defs>
+                <linearGradient id="fuelFillGradient" x1="0" y1="0" x2="0" y2="1">
+                  <stop offset="0%" stopColor="#d97706" stopOpacity="0.35" />
+                  <stop offset="100%" stopColor="#d97706" stopOpacity="0.02" />
+                </linearGradient>
+              </defs>
+
+              {/* Lignes de repère horizontales */}
+              {[3000, 2000, 1000, 0].map((val) => {
+                const y = paddingTop + plotHeight * (1 - val / maxLiters);
+                const cm = Math.round((val / 3000) * 130);
+                return (
+                  <g key={val}>
+                    <line
+                      x1={paddingLeft}
+                      y1={y}
+                      x2={svgWidth - paddingRight}
+                      y2={y}
+                      stroke="#e2e8f0"
+                      strokeDasharray={val > 0 ? "4 4" : "none"}
+                      strokeWidth="1"
+                    />
+                    <text
+                      x={paddingLeft - 8}
+                      y={y + 3}
+                      textAnchor="end"
+                      fontSize="10"
+                      fill="#64748b"
+                      fontFamily="sans-serif"
+                    >
+                      {val} L ({cm} cm)
+                    </text>
+                  </g>
+                );
+              })}
+
+              {/* Zone dégradée */}
+              <path d={areaD} fill="url(#fuelFillGradient)" />
+
+              {/* Courbe principale */}
+              <path d={pathD} fill="none" stroke="#d97706" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round" />
+
+              {/* Points mensuels et badges remarquables */}
+              {points.map((p, idx) => (
+                <g key={idx}>
+                  <circle
+                    cx={p.x}
+                    cy={p.y}
+                    r={p.isDelivery || p.isCalibration ? "5.5" : "3.5"}
+                    fill={p.isDelivery ? "#059669" : (p.isCalibration ? "#b45309" : "#ffffff")}
+                    stroke={p.isDelivery ? "#047857" : "#d97706"}
+                    strokeWidth="2"
+                  />
+                  {/* Label mois sur l'axe X */}
+                  <text
+                    x={p.x}
+                    y={svgHeight - 12}
+                    textAnchor="middle"
+                    fontSize="9.5"
+                    fill={p.isDelivery || p.isCalibration ? "#0f172a" : "#64748b"}
+                    fontWeight={p.isDelivery || p.isCalibration ? "bold" : "normal"}
+                  >
+                    {p.month}
+                  </text>
+
+                  {/* Badge remarquable livraison du 21/01/2026 */}
+                  {p.isDelivery && (
+                    <g transform={`translate(${p.x - 65}, ${p.y - 28})`}>
+                      <rect width="130" height="20" rx="4" fill="#065f46" />
+                      <text x="65" y="13.5" fill="#ffffff" fontSize="9" fontWeight="bold" textAnchor="middle">
+                        +2 014 L Plein Josse (124 cm)
+                      </text>
+                    </g>
+                  )}
+
+                  {/* Badge remarquable jaugeage M. Bompais du 17/10/2026 */}
+                  {p.isCalibration && (
+                    <g transform={`translate(${p.x - 70}, ${p.y - 28})`}>
+                      <rect width="140" height="20" rx="4" fill="#92400e" />
+                      <text x="70" y="13.5" fill="#ffffff" fontSize="9" fontWeight="bold" textAnchor="middle">
+                        1 062 L (46 cm) Jauge Bompais
+                      </text>
+                    </g>
+                  )}
+                </g>
+              ))}
+            </svg>
+          </div>
+
+          {/* Table récapitulative des 4 livraisons réelles Josse */}
+          <div className="mt-1 pt-3 border-t border-slate-100 dark:border-slate-800">
+            <div className="flex items-center justify-between mb-2">
+              <span className="text-xs font-bold text-forest-deep dark:text-emerald-200">
+                Historique Officiel des 4 Livraisons Éts JOSSE SAS (depuis la pose du 18/03/2024)
+              </span>
+              <span className="text-[11px] font-semibold text-slate-500">
+                Total livré : 7 615 L • Restant : 1 062 L • Brûlé : 6 553 L
+              </span>
+            </div>
+            <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-2 text-xs">
+              {deliveries.map((del, idx) => (
+                <div key={idx} className="p-2.5 rounded-xl bg-slate-50 dark:bg-slate-800/60 border border-slate-200 dark:border-slate-700 flex flex-col justify-between">
+                  <div>
+                    <div className="flex items-center justify-between font-bold text-forest-deep dark:text-emerald-200">
+                      <span>{del.date}</span>
+                      <span className="font-mono text-emerald-700 dark:text-emerald-400">+{del.liters_delivered || del.liters} L</span>
+                    </div>
+                    <div className="text-[11px] text-slate-500 dark:text-slate-400 mt-0.5">
+                      Facture n° {del.invoice}
+                    </div>
+                  </div>
+                  <div className="mt-2 pt-1 border-t border-slate-200/60 dark:border-slate-700/60 flex items-center justify-between text-[11px]">
+                    <span className="text-slate-600 dark:text-slate-300 font-medium truncate" title={del.label}>{del.label}</span>
+                    <span className="font-bold text-slate-800 dark:text-slate-100 shrink-0 ml-1">{del.amount_ttc ? `${del.amount_ttc.toFixed(2).replace('.', ',')} €` : del.amount}</span>
+                  </div>
+                </div>
+              ))}
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Contenu Onglet 2 : Suivi Quotidien Allumages Brûleur */}
+      {activeTab === 'daily' && (
+        <div className="flex flex-col gap-4">
+          <div className="w-full overflow-x-auto">
+            <div className="min-w-[580px] p-2">
+              <div className="flex items-end justify-between gap-2 h-44 border-b border-slate-200 dark:border-slate-700 pb-2">
+                {dailyData.map((d, idx) => {
+                  const starts = d.daily_starts != null ? d.daily_starts : (d.starts || 0);
+                  const liters = d.daily_liters != null ? d.daily_liters : Number((starts * 0.293).toFixed(1));
+                  const heightPercent = Math.min(100, Math.max(10, (starts / maxDailyStarts) * 100));
+
+                  return (
+                    <div key={idx} className="flex-1 flex flex-col items-center gap-1 group relative">
+                      <div className="text-[10px] font-bold text-amber-900 dark:text-amber-200 opacity-90 group-hover:scale-110 transition-transform">
+                        {liters} L
+                      </div>
+                      <div className="text-[9px] text-slate-400 font-medium">
+                        {starts} all.
+                      </div>
+                      <div className="w-full max-w-[36px] bg-slate-100 dark:bg-slate-800 rounded-t-lg h-32 flex items-end p-0.5">
+                        <div
+                          style={{ height: `${heightPercent}%` }}
+                          className="w-full bg-gradient-to-t from-amber-600 to-amber-400 rounded-t-md transition-all duration-300 group-hover:from-amber-700 group-hover:to-amber-500 shadow-2xs"
+                        />
+                      </div>
+                      <div className="text-[10px] font-semibold text-slate-600 dark:text-slate-300 mt-1">
+                        {d.date}
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
+            </div>
+          </div>
+
+          {/* Cartouches télémétrie Viessmann */}
+          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-2.5 text-xs">
+            <div className="p-3 rounded-xl bg-amber-50/60 dark:bg-amber-950/20 border border-amber-200/60 dark:border-amber-800/40">
+              <span className="text-[10px] uppercase font-bold text-amber-800 dark:text-amber-300 block">
+                Ratio Consommation / Allumage
+              </span>
+              <span className="text-base font-bold text-amber-950 dark:text-amber-100 font-mono mt-0.5 block">
+                0,293 L / allumage
+              </span>
+              <span className="text-[10px] text-amber-700 dark:text-amber-400">
+                Cycle moyen : 10 min 50 s
+              </span>
+            </div>
+
+            <div className="p-3 rounded-xl bg-emerald-50/60 dark:bg-emerald-950/20 border border-emerald-200/60 dark:border-emerald-800/40">
+              <span className="text-[10px] uppercase font-bold text-emerald-800 dark:text-emerald-300 block">
+                Débit Horaire Gicleur
+              </span>
+              <span className="text-base font-bold text-emerald-950 dark:text-emerald-100 font-mono mt-0.5 block">
+                1,62 L / heure
+              </span>
+              <span className="text-[10px] text-emerald-700 dark:text-emerald-400">
+                Danfoss 0,50 / 80° H LEV DA
+              </span>
+            </div>
+
+            <div className="p-3 rounded-xl bg-slate-50 dark:bg-slate-800/60 border border-slate-200 dark:border-slate-700">
+              <span className="text-[10px] uppercase font-bold text-slate-500 block">
+                Heures Brûleur Cumulées
+              </span>
+              <span className="text-base font-bold text-slate-900 dark:text-slate-100 font-mono mt-0.5 block">
+                4 531 heures
+              </span>
+              <span className="text-[10px] text-slate-500">
+                Depuis la pose (18/03/2024)
+              </span>
+            </div>
+
+            <div className="p-3 rounded-xl bg-slate-50 dark:bg-slate-800/60 border border-slate-200 dark:border-slate-700">
+              <span className="text-[10px] uppercase font-bold text-slate-500 block">
+                Allumages Brûleur Viessmann
+              </span>
+              <span className="text-base font-bold text-slate-900 dark:text-slate-100 font-mono mt-0.5 block">
+                25 072 allumages
+              </span>
+              <span className="text-[10px] text-slate-500">
+                Total brûlé : 7 337 L
+              </span>
+            </div>
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
 export default function VademecumPage({ properties, currentUser, reservations = [], onOpenBooking }) {
   const location = useLocation();
 
@@ -244,6 +586,7 @@ export default function VademecumPage({ properties, currentUser, reservations = 
   const [piscineError, setPiscineError] = useState(null);
   const [klereoRadioAlert, setKlereoRadioAlert] = useState(null);
   const [telemetryLoading, setTelemetryLoading] = useState(true);
+  const [fuelHistory, setFuelHistory] = useState(null);
 
   // Thermal controls state (Refonte Switches XXL Marche/Arrêt & Double Consigne)
   const [isHeatingActive, setIsHeatingActive] = useState(false);
@@ -292,17 +635,22 @@ export default function VademecumPage({ properties, currentUser, reservations = 
       if (!heatingStatus && !piscineStatus) setTelemetryLoading(true);
       if (!upcomingStays || upcomingStays.length === 0) setStayLoading(true);
 
-      const [heatResResult, poolResResult, taskResResult, reservationsResResult] = await Promise.allSettled([
+      const [heatResResult, poolResResult, taskResResult, reservationsResResult, fuelResResult] = await Promise.allSettled([
         fetchHeatingStatus(),
         fetchPiscineStatus({ forceRefresh: true, refresh: true }),
         fetchTasks(),
         fetchReservations(),
+        fetch('/api/heating/fuel-history').then((r) => (r.ok ? r.json() : null)).catch(() => null),
       ]);
 
       const heatRes = heatResResult.status === 'fulfilled' ? heatResResult.value : { error: 'Liaison ViCare indisponible' };
       const poolRes = poolResResult.status === 'fulfilled' ? poolResResult.value : null;
       const taskRes = taskResResult.status === 'fulfilled' ? (taskResResult.value || []) : [];
       const reservationsRes = reservationsResResult.status === 'fulfilled' ? (reservationsResResult.value || []) : (reservations || []);
+      const fuelRes = fuelResResult && fuelResResult.status === 'fulfilled' ? fuelResResult.value : null;
+      if (fuelRes) {
+        setFuelHistory(fuelRes);
+      }
 
       // ViCare Telemetry & Fail-fast (Données réelles 100% dynamiques)
       if (heatRes && !heatRes.error) {
@@ -1285,6 +1633,22 @@ export default function VademecumPage({ properties, currentUser, reservations = 
             )}
 
             <button
+              onClick={() => {
+                const el = document.getElementById('vademecum');
+                if (el) {
+                  el.scrollIntoView({ behavior: 'smooth' });
+                } else {
+                  window.location.hash = 'vademecum';
+                }
+              }}
+              className="group flex items-center justify-center gap-2 px-5 py-3.5 rounded-DEFAULT bg-white dark:bg-slate-900 border-2 border-border-subtle text-forest-deep hover:bg-canvas-slate hover:border-primary font-label-lg text-sm sm:text-base font-semibold transition-all duration-200 shadow-sm cursor-pointer whitespace-nowrap"
+              type="button"
+            >
+              <span className="material-symbols-outlined text-[22px] text-primary group-hover:scale-110 transition-transform">menu_book</span>
+              <span>Vademecum</span>
+            </button>
+
+            <button
               onClick={() => window.print()}
               className="group flex items-center justify-center gap-2 px-5 py-3.5 rounded-DEFAULT bg-white dark:bg-slate-900 border-2 border-primary text-primary hover:bg-sage-soft font-label-lg text-sm sm:text-base font-bold shadow-sm hover:shadow-md transition-all duration-200 cursor-pointer whitespace-nowrap"
               type="button"
@@ -1800,11 +2164,13 @@ export default function VademecumPage({ properties, currentUser, reservations = 
                   </div>
                 </div>
 
-                {/* Jauge Fioul (Cuve Éts JOSSE) */}
+                {/* Jauge Fioul Calibrée (Cuve Éts JOSSE & Jauge M. Bompais 17/10/2026) */}
                 {(() => {
-                  const fuelRemaining = heatingStatus?.fuel_liters_remaining != null ? heatingStatus.fuel_liters_remaining : 2720;
-                  const fuelCapacity = heatingStatus?.fuel_capacity_liters != null ? heatingStatus.fuel_capacity_liters : 3000;
-                  const fuelPercent = Math.min(100, Math.max(0, Math.round((fuelRemaining / fuelCapacity) * 100)));
+                  const fuelRemaining = heatingStatus?.fuel_liters_remaining != null ? heatingStatus.fuel_liters_remaining : (fuelHistory?.calibration?.liters_remaining ?? 1062.0);
+                  const fuelCapacity = heatingStatus?.fuel_capacity_liters != null ? heatingStatus.fuel_capacity_liters : (fuelHistory?.calibration?.capacity_liters ?? 3000.0);
+                  const fuelPercent = heatingStatus?.fuel_level_percent != null ? heatingStatus.fuel_level_percent : (fuelHistory?.calibration ? Number(((fuelRemaining / fuelCapacity) * 100).toFixed(1)) : 35.4);
+                  const fuelHeight = heatingStatus?.fuel_height_cm != null ? heatingStatus.fuel_height_cm : (fuelHistory?.calibration?.height_cm ?? 46.0);
+                  const tankHeight = heatingStatus?.fuel_tank_height_cm != null ? heatingStatus.fuel_tank_height_cm : (fuelHistory?.calibration?.tank_height_cm ?? 130.0);
 
                   return (
                     <div className="p-3.5 bg-white dark:bg-slate-900 rounded-xl border border-border-subtle flex flex-col gap-2.5 shadow-2xs">
@@ -1813,27 +2179,43 @@ export default function VademecumPage({ properties, currentUser, reservations = 
                           <span className="material-symbols-outlined text-amber-600 text-[20px] shrink-0">local_gas_station</span>
                           <div className="flex flex-col min-w-0">
                             <span className="text-xs font-semibold text-on-surface">Cuve Fioul (Éts JOSSE)</span>
-                            <span className="text-[11px] text-on-surface-variant">Capacité totale {fuelCapacity.toLocaleString('fr-FR')} L</span>
+                            <span className="text-[11px] text-on-surface-variant">Capacité {fuelCapacity.toLocaleString('fr-FR')} L ({tankHeight} cm)</span>
                           </div>
                         </div>
                         <span className="font-headline-sm text-xs font-bold text-amber-950 bg-amber-50 border border-amber-200/80 tabular-nums shrink-0 px-2.5 py-1 rounded-md">
-                          {fuelRemaining.toLocaleString('fr-FR')} L / {fuelCapacity.toLocaleString('fr-FR')} L • {fuelPercent}%
+                          {fuelRemaining.toLocaleString('fr-FR')} L / {fuelCapacity.toLocaleString('fr-FR')} L • {fuelPercent}% • {fuelHeight} cm
                         </span>
                       </div>
 
                       {/* Stylized progress bar */}
                       <div className="w-full bg-slate-100 dark:bg-slate-800/80 backdrop-blur-xs h-3 rounded-full overflow-hidden shadow-inner border border-slate-200/70 p-0.5">
                         <div
-                          className="bg-gradient-to-r from-amber-600 to-amber-400 h-full rounded-full overflow-hidden shadow-inner transition-all duration-500"
-                          style={{ width: `${fuelPercent}%` }}
+                          className="bg-gradient-to-r from-amber-600 via-amber-500 to-amber-400 h-full rounded-full overflow-hidden shadow-inner transition-all duration-500"
+                          style={{ width: `${Math.min(100, Math.max(0, fuelPercent))}%` }}
                         />
                       </div>
 
                       {/* Level indicators */}
                       <div className="flex items-center justify-between text-[10px] font-semibold text-on-surface-variant/80 px-0.5">
-                        <span>0 L</span>
-                        <span>1 500 L</span>
-                        <span>3 000 L</span>
+                        <span>0 L (0 cm)</span>
+                        <span>1 062 L ({fuelHeight} cm)</span>
+                        <span>3 000 L ({tankHeight} cm)</span>
+                      </div>
+
+                      {/* Calibration summary info */}
+                      <div className="text-[10.5px] text-slate-600 dark:text-slate-400 bg-amber-50/50 dark:bg-amber-950/20 p-2 rounded-lg border border-amber-200/50 flex flex-col gap-0.5 leading-tight">
+                        <div className="flex items-center justify-between">
+                          <span><strong>Jauge physique M. Bompais (17/10/2026) :</strong></span>
+                          <span className="font-bold text-amber-900 dark:text-amber-200">46 cm / 130 cm (1 062 L)</span>
+                        </div>
+                        <div className="flex items-center justify-between text-slate-500">
+                          <span>Dernier plein Éts JOSSE (+2 014 L) :</span>
+                          <span>21/01/2026</span>
+                        </div>
+                        <div className="flex items-center justify-between text-slate-500">
+                          <span>Consommation brûleur Viessmann :</span>
+                          <span>0,293 L/allumage • 1,62 L/h</span>
+                        </div>
                       </div>
                     </div>
                   );
@@ -2335,6 +2717,9 @@ export default function VademecumPage({ properties, currentUser, reservations = 
 
         </div>
         )}
+
+        {/* Graphe Annuel & Quotidien Fioul (Josse / Bompais — Annotation 3) */}
+        <FuelInteractiveGraph fuelHistory={fuelHistory} heatingStatus={heatingStatus} />
 
         {/* Action Button: Enregistrer les modifications thermiques (Annotation 2) */}
         <div className="flex flex-col sm:flex-row items-center justify-between gap-4 pt-4 border-t border-border-subtle">
