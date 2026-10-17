@@ -860,7 +860,7 @@ function FuelInteractiveGraph({ fuelHistory, heatingStatus, onRefreshFuel }) {
                 Allumages Brûleur Viessmann
               </span>
               <span className="text-base font-bold text-slate-900 dark:text-slate-100 font-mono mt-0.5 block">
-                {heatingStatus?.burner_starts != null ? `${heatingStatus.burner_starts.toLocaleString('fr-FR')} all.` : '—'}
+                {heatingStatus?.burner_starts != null ? `${heatingStatus.burner_starts.toLocaleString('fr-FR')} allumages` : '—'}
               </span>
               <span className="text-[10px] text-slate-500">
                 {heatingStatus?.burner_starts != null ? `Total estimé : ${Math.round(heatingStatus.burner_starts * 0.293).toLocaleString('fr-FR')} L` : '—'}

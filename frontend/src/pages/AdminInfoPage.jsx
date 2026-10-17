@@ -221,7 +221,6 @@ export default function AdminInfoPage({ currentUser }) {
   const [selectedRenamingDoc, setSelectedRenamingDoc] = useState(null);
   const [renameInputValue, setRenameInputValue] = useState('');
   const [renameDocTags, setRenameDocTags] = useState([]);
-  const [isSwanQrModalOpen, setIsSwanQrModalOpen] = useState(false);
 
   // Upload Modal State (Annotation 5 : Organisme, Titre, Format Canonique, Catégories Custom)
   const [uploadOrganisme, setUploadOrganisme] = useState('');

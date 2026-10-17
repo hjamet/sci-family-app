@@ -8084,9 +8084,21 @@ def get_heating_fuel_history(db: Session = Depends(get_db)):
 
     post_delivery_indices = list(range(last_deliv_idx + 1, 12)) if last_deliv_idx is not None and last_deliv_idx < 11 else list(range(0, 12))
     total_post_days = sum(days_per_month[i] for i in post_delivery_indices)
-    total_post_consumption = 1802.0
 
-    daily_rate = total_post_consumption / total_post_days if total_post_days > 0 else (1802.0 / 259.0)
+    # Calcul dynamique de la consommation depuis la dernière livraison
+    ref_delivery_stock = 2864.0
+    if deliveries:
+        last_d = deliveries[-1]
+        if last_d.get("stock_after"):
+            try:
+                ref_delivery_stock = float(last_d["stock_after"])
+            except (ValueError, TypeError):
+                ref_delivery_stock = 2864.0
+    ref_stock = min(TANK_CAPACITY_LITERS, ref_delivery_stock)
+    curr_l = current_liters if current_liters is not None else 1062.0
+    total_post_consumption = max(0.0, round(ref_stock - curr_l, 1))
+
+    daily_rate = total_post_consumption / total_post_days if total_post_days > 0 else (total_post_consumption / 259.0 if total_post_consumption > 0 else 0.0)
 
     consumed = [0.0] * 12
     delivered = [0.0] * 12
@@ -9862,6 +9874,167 @@ def _generate_call_pdf_response(call_obj: CallForFunds, db: Session, safe_name: 
     raise HTTPException(status_code=500, detail="Échec de la génération dynamique du document PDF.")
 
 
+def _generate_pure_python_invoice_pdf_14(
+    call_id: Optional[int] = None,
+    member_name: Optional[str] = None,
+    period: Optional[str] = None,
+    amount: Optional[float] = None,
+    ref: Optional[str] = None,
+    status_label: Optional[str] = None
+) -> bytes:
+    """
+    Générateur PDF 1.4 vectoriel pur Python sans aucune dépendance externe,
+    dessinant l'en-tête officiel SCI Hellenvilliers, les détails financiers et le bandeau Swan SEPA.
+    """
+    m_name = member_name or "Associé"
+    p_label = period or datetime.utcnow().strftime("%B %Y")
+    amt = float(amount) if amount is not None else 180.0
+    r_code = ref or (f"CFF-{call_id}" if call_id else f"CFF-{datetime.utcnow().strftime('%Y%m')}")
+    st_label = status_label or "Avis d'Appel de Fonds"
+    today_str = datetime.utcnow().strftime("%d/%m/%Y")
+
+    def _esc_pdf(text: str) -> str:
+        raw = str(text or "").encode("cp1252", errors="replace")
+        out = []
+        for b in raw:
+            if b == 0x28:
+                out.append(b"\\(")
+            elif b == 0x29:
+                out.append(b"\\)")
+            elif b == 0x5C:
+                out.append(b"\\\\")
+            elif 32 <= b <= 126:
+                out.append(bytes([b]))
+            else:
+                out.append(f"\\{b:03o}".encode("ascii"))
+        return b"".join(out).decode("latin1")
+
+    s_title_1 = _esc_pdf("SCI HELLENVILLIERS")
+    s_siret = _esc_pdf("SIRET 977 529 312 00018 • Capital 390 000,00 € • R.C.S. Évreux")
+    s_address = _esc_pdf("8 rue de l'Ancienne Mairie, Hellenvilliers, 27240 Mesnil-sur-Iton")
+    s_doc_title = _esc_pdf("AVIS D'APPEL DE FONDS / FACTURE MENSUELLE")
+    s_emission = _esc_pdf(f"Date d'émission : {today_str} • Réf. pièce : {r_code}")
+    s_dest = _esc_pdf("DESTINATAIRE (ASSOCIÉ) :")
+    s_dest_name = _esc_pdf(f"M. / Mme {m_name}")
+    s_dest_period = _esc_pdf(f"Période concernée : {p_label} • Statut : {st_label}")
+    s_col_des = _esc_pdf("Désignation")
+    s_col_amt = _esc_pdf("Montant")
+    s_row_desc = _esc_pdf(f"Appel de fonds mensuel de trésorerie ({p_label})")
+    s_row_amt = _esc_pdf(f"{amt:.2f} €")
+    s_tot_lbl = _esc_pdf("TOTAL NET À RÉGLER :")
+    s_tot_amt = _esc_pdf(f"{amt:.2f} €")
+    s_bank_title = _esc_pdf("COORDONNÉES BANCAIRES OFFICIELLES POUR RÈGLEMENT SEPA :")
+    s_bank_ben = _esc_pdf("Bénéficiaire : SCI HELLENVILLIERS • Banque : Swan Bank")
+    s_bank_iban = _esc_pdf("IBAN : FR76 1732 8844 0071 5921 5570 591   •   BIC : SWNBFR22")
+    s_bank_ref = _esc_pdf(f"Référence obligatoire à indiquer en motif de virement : {r_code}")
+    s_foot_1 = _esc_pdf("SCI HELLENVILLIERS — Société Civile Immobilière au capital de 390 000,00 € — SIRET 977 529 312 00018")
+    s_foot_2 = _esc_pdf("Ce document tient lieu d'avis officiel d'appel de fonds et de justificatif comptable pour les associés de la SCI.")
+
+    content_ops = [
+        "q",
+        "0.05 0.45 0.35 rg",
+        "40 732 515 70 re f",
+        "1 1 1 rg",
+        f"BT /F2 16 Tf 55 774 Td ({s_title_1}) Tj ET",
+        "0.9 0.95 0.9 rg",
+        f"BT /F1 9 Tf 55 758 Td ({s_siret}) Tj ET",
+        f"BT /F1 9 Tf 55 744 Td ({s_address}) Tj ET",
+        "Q",
+        "q",
+        "0.05 0.45 0.35 rg",
+        f"BT /F2 14 Tf 40 697 Td ({s_doc_title}) Tj ET",
+        "0.4 0.4 0.4 rg",
+        f"BT /F1 9 Tf 40 680 Td ({s_emission}) Tj ET",
+        "Q",
+        "q",
+        "0.85 0.85 0.85 RG 0.98 0.98 0.98 rg 0.75 w",
+        "40 587 515 75 re B",
+        "0.05 0.45 0.35 rg",
+        f"BT /F2 10 Tf 55 640 Td ({s_dest}) Tj ET",
+        "0.1 0.1 0.1 rg",
+        f"BT /F2 12 Tf 55 620 Td ({s_dest_name}) Tj ET",
+        "0.3 0.3 0.3 rg",
+        f"BT /F1 9 Tf 55 602 Td ({s_dest_period}) Tj ET",
+        "Q",
+        "q",
+        "0.8 0.85 0.8 RG 0.96 0.98 0.96 rg 0.75 w",
+        "40 477 515 90 re B",
+        "0.05 0.45 0.35 rg",
+        f"BT /F2 10 Tf 55 544 Td ({s_col_des}) Tj ET",
+        f"BT /F2 10 Tf 460 544 Td ({s_col_amt}) Tj ET",
+        "0.8 0.85 0.8 RG 1 w 55 537 m 540 537 l S",
+        "0.1 0.1 0.1 rg",
+        f"BT /F1 10 Tf 55 517 Td ({s_row_desc}) Tj ET",
+        f"BT /F1 10 Tf 460 517 Td ({s_row_amt}) Tj ET",
+        "0.8 0.85 0.8 RG 1 w 55 507 m 540 507 l S",
+        "0.05 0.45 0.35 rg",
+        f"BT /F2 11 Tf 55 490 Td ({s_tot_lbl}) Tj ET",
+        f"BT /F2 12 Tf 460 490 Td ({s_tot_amt}) Tj ET",
+        "Q",
+        "q",
+        "0.75 0.85 0.8 RG 0.94 0.98 0.96 rg 0.75 w",
+        "40 362 515 95 re B",
+        "0.05 0.45 0.35 rg",
+        f"BT /F2 10 Tf 55 434 Td ({s_bank_title}) Tj ET",
+        "0.15 0.15 0.15 rg",
+        f"BT /F1 9 Tf 55 414 Td ({s_bank_ben}) Tj ET",
+        "0.05 0.4 0.3 rg",
+        f"BT /F2 10 Tf 55 398 Td ({s_bank_iban}) Tj ET",
+        "0.3 0.3 0.3 rg",
+        f"BT /F1 9 Tf 55 380 Td ({s_bank_ref}) Tj ET",
+        "Q",
+        "q",
+        "0.85 0.85 0.85 RG 0.5 w 40 62 m 555 62 l S",
+        "0.5 0.5 0.5 rg",
+        f"BT /F1 8 Tf 40 47 Td ({s_foot_1}) Tj ET",
+        f"BT /F1 8 Tf 40 35 Td ({s_foot_2}) Tj ET",
+        "Q"
+    ]
+
+    stream_content = "\n".join(content_ops).encode("latin1")
+    stream_len = len(stream_content)
+
+    objects = [
+        b"<< /Type /Catalog /Pages 2 0 R >>",
+        b"<< /Type /Pages /Kids [3 0 R] /Count 1 >>",
+        (
+            b"<< /Type /Page /Parent 2 0 R /MediaBox [0 0 595.28 841.89] "
+            b"/Contents 6 0 R /Resources << /Font << /F1 4 0 R /F2 5 0 R >> >> >>"
+        ),
+        b"<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica /Encoding /WinAnsiEncoding >>",
+        b"<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica-Bold /Encoding /WinAnsiEncoding >>",
+        (
+            f"<< /Length {stream_len} >>\nstream\n".encode("ascii")
+            + stream_content
+            + b"\nendstream"
+        )
+    ]
+
+    pdf_parts = [b"%PDF-1.4\n%\xe2\xe3\xcf\xd3\n"]
+    offsets = []
+    curr_offset = len(pdf_parts[0])
+
+    for i, obj in enumerate(objects, 1):
+        offsets.append(curr_offset)
+        obj_header = f"{i} 0 obj\n".encode("ascii")
+        obj_footer = b"\nendobj\n"
+        pdf_parts.append(obj_header + obj + obj_footer)
+        curr_offset += len(obj_header) + len(obj) + len(obj_footer)
+
+    xref_offset = curr_offset
+    xref_lines = [b"xref\n", f"0 {len(objects) + 1}\n".encode("ascii")]
+    xref_lines.append(b"0000000000 65535 f \n")
+    for off in offsets:
+        xref_lines.append(f"{off:010d} 00000 n \n".encode("ascii"))
+
+    trailer = (
+        f"trailer\n<< /Size {len(objects) + 1} /Root 1 0 R >>\n"
+        f"startxref\n{xref_offset}\n%%EOF\n"
+    ).encode("ascii")
+
+    return b"".join(pdf_parts) + b"".join(xref_lines) + trailer
+
+
 def generate_official_invoice_pdf_bytes(
     call_id: Optional[int] = None,
     member_name: Optional[str] = None,
@@ -9871,61 +10044,73 @@ def generate_official_invoice_pdf_bytes(
     status_label: Optional[str] = None
 ) -> bytes:
     """
-    Génération à la volée avec fitz (PyMuPDF) d'un PDF A4 officiel d'Avis d'Appel de Fonds
+    Génération à la volée d'un PDF A4 officiel d'Avis d'Appel de Fonds
     / Facture Mensuelle SCI Hellenvilliers avec coordonnées Swan, BIC, SIRET.
+    Utilise PyMuPDF (fitz) si disponible, ou le générateur PDF 1.4 vectoriel pur Python
+    sans aucune dépendance externe garantissant 100% de disponibilité sur Vercel Serverless.
     """
-    if fitz is None:
-        raise RuntimeError("PyMuPDF (fitz) n'est pas disponible pour générer le PDF.")
+    if fitz is not None:
+        try:
+            doc = fitz.open()
+            page = doc.new_page(width=595, height=842)
 
-    doc = fitz.open()
-    page = doc.new_page(width=595, height=842)
+            m_name = member_name or "Associé"
+            p_label = period or datetime.utcnow().strftime("%B %Y")
+            amt = float(amount) if amount is not None else 180.0
+            r_code = ref or (f"CFF-{call_id}" if call_id else f"CFF-{datetime.utcnow().strftime('%Y%m')}")
+            st_label = status_label or "Avis d'Appel de Fonds"
 
-    m_name = member_name or "Associé"
-    p_label = period or datetime.utcnow().strftime("%B %Y")
-    amt = float(amount) if amount is not None else 180.0
-    r_code = ref or (f"CFF-{call_id}" if call_id else f"CFF-{datetime.utcnow().strftime('%Y%m')}")
-    st_label = status_label or "Avis d'Appel de Fonds"
+            # Bandeau d'en-tête émeraude
+            page.draw_rect(fitz.Rect(40, 40, 555, 110), color=None, fill=(0.05, 0.45, 0.35))
+            page.insert_text((55, 68), "SCI HELLENVILLIERS", fontsize=16, color=(1, 1, 1))
+            page.insert_text((55, 84), "SIRET 977 529 312 00018 • Capital 390 000,00 € • R.C.S. Évreux", fontsize=9, color=(0.9, 0.95, 0.9))
+            page.insert_text((55, 98), "8 rue de l'Ancienne Mairie, Hellenvilliers, 27240 Mesnil-sur-Iton", fontsize=9, color=(0.9, 0.95, 0.9))
 
-    # Bandeau d'en-tête émeraude
-    page.draw_rect(fitz.Rect(40, 40, 555, 110), color=None, fill=(0.05, 0.45, 0.35))
-    page.insert_text((55, 68), "SCI HELLENVILLIERS", fontsize=16, color=(1, 1, 1))
-    page.insert_text((55, 84), "SIRET 977 529 312 00018 • Capital 390 000,00 € • R.C.S. Évreux", fontsize=9, color=(0.9, 0.95, 0.9))
-    page.insert_text((55, 98), "8 rue de l'Ancienne Mairie, Hellenvilliers, 27240 Mesnil-sur-Iton", fontsize=9, color=(0.9, 0.95, 0.9))
+            # Titre du document
+            page.insert_text((40, 145), "AVIS D'APPEL DE FONDS / FACTURE MENSUELLE", fontsize=14, color=(0.05, 0.45, 0.35))
+            page.insert_text((40, 162), f"Date d'émission : {datetime.utcnow().strftime('%d/%m/%Y')} • Réf. pièce : {r_code}", fontsize=9, color=(0.4, 0.4, 0.4))
 
-    # Titre du document
-    page.insert_text((40, 145), "AVIS D'APPEL DE FONDS / FACTURE MENSUELLE", fontsize=14, color=(0.05, 0.45, 0.35))
-    page.insert_text((40, 162), f"Date d'émission : {datetime.utcnow().strftime('%d/%m/%Y')} • Réf. pièce : {r_code}", fontsize=9, color=(0.4, 0.4, 0.4))
+            # Bloc Destinataire
+            page.draw_rect(fitz.Rect(40, 180, 555, 255), color=(0.85, 0.85, 0.85), fill=(0.98, 0.98, 0.98))
+            page.insert_text((55, 202), "DESTINATAIRE (ASSOCIÉ) :", fontsize=10, color=(0.05, 0.45, 0.35))
+            page.insert_text((55, 222), f"M. / Mme {m_name}", fontsize=12, color=(0.1, 0.1, 0.1))
+            page.insert_text((55, 240), f"Période concernée : {p_label} • Statut : {st_label}", fontsize=9, color=(0.3, 0.3, 0.3))
 
-    # Bloc Destinataire
-    page.draw_rect(fitz.Rect(40, 180, 555, 255), color=(0.85, 0.85, 0.85), fill=(0.98, 0.98, 0.98))
-    page.insert_text((55, 202), "DESTINATAIRE (ASSOCIÉ) :", fontsize=10, color=(0.05, 0.45, 0.35))
-    page.insert_text((55, 222), f"M. / Mme {m_name}", fontsize=12, color=(0.1, 0.1, 0.1))
-    page.insert_text((55, 240), f"Période concernée : {p_label} • Statut : {st_label}", fontsize=9, color=(0.3, 0.3, 0.3))
+            # Tableau / Détail financier
+            page.draw_rect(fitz.Rect(40, 275, 555, 365), color=(0.8, 0.85, 0.8), fill=(0.96, 0.98, 0.96))
+            page.insert_text((55, 298), "Désignation", fontsize=10, color=(0.05, 0.45, 0.35))
+            page.insert_text((460, 298), "Montant", fontsize=10, color=(0.05, 0.45, 0.35))
+            page.draw_line(fitz.Point(55, 305), fitz.Point(540, 305), color=(0.8, 0.85, 0.8), width=1)
+            page.insert_text((55, 325), f"Appel de fonds mensuel de trésorerie ({p_label})", fontsize=10, color=(0.1, 0.1, 0.1))
+            page.insert_text((460, 325), f"{amt:.2f} €", fontsize=10, color=(0.1, 0.1, 0.1))
+            page.draw_line(fitz.Point(55, 335), fitz.Point(540, 335), color=(0.8, 0.85, 0.8), width=1)
+            page.insert_text((55, 352), "TOTAL NET À RÉGLER :", fontsize=11, color=(0.05, 0.45, 0.35))
+            page.insert_text((460, 352), f"{amt:.2f} €", fontsize=12, color=(0.05, 0.45, 0.35))
 
-    # Tableau / Détail financier
-    page.draw_rect(fitz.Rect(40, 275, 555, 365), color=(0.8, 0.85, 0.8), fill=(0.96, 0.98, 0.96))
-    page.insert_text((55, 298), "Désignation", fontsize=10, color=(0.05, 0.45, 0.35))
-    page.insert_text((460, 298), "Montant", fontsize=10, color=(0.05, 0.45, 0.35))
-    page.draw_line(fitz.Point(55, 305), fitz.Point(540, 305), color=(0.8, 0.85, 0.8), width=1)
-    page.insert_text((55, 325), f"Appel de fonds mensuel de trésorerie ({p_label})", fontsize=10, color=(0.1, 0.1, 0.1))
-    page.insert_text((460, 325), f"{amt:.2f} €", fontsize=10, color=(0.1, 0.1, 0.1))
-    page.draw_line(fitz.Point(55, 335), fitz.Point(540, 335), color=(0.8, 0.85, 0.8), width=1)
-    page.insert_text((55, 352), "TOTAL NET À RÉGLER :", fontsize=11, color=(0.05, 0.45, 0.35))
-    page.insert_text((460, 352), f"{amt:.2f} €", fontsize=12, color=(0.05, 0.45, 0.35))
+            # Coordonnées bancaires Swan
+            page.draw_rect(fitz.Rect(40, 385, 555, 480), color=(0.75, 0.85, 0.8), fill=(0.94, 0.98, 0.96))
+            page.insert_text((55, 408), "COORDONNÉES BANCAIRES OFFICIELLES POUR RÈGLEMENT SEPA :", fontsize=10, color=(0.05, 0.45, 0.35))
+            page.insert_text((55, 428), "Bénéficiaire : SCI HELLENVILLIERS • Banque : Swan Bank", fontsize=9, color=(0.15, 0.15, 0.15))
+            page.insert_text((55, 444), "IBAN : FR76 1732 8844 0071 5921 5570 591   •   BIC : SWNBFR22", fontsize=10, color=(0.05, 0.4, 0.3))
+            page.insert_text((55, 462), f"Référence obligatoire à indiquer en motif de virement : {r_code}", fontsize=9, color=(0.3, 0.3, 0.3))
 
-    # Coordonnées bancaires Swan
-    page.draw_rect(fitz.Rect(40, 385, 555, 480), color=(0.75, 0.85, 0.8), fill=(0.94, 0.98, 0.96))
-    page.insert_text((55, 408), "COORDONNÉES BANCAIRES OFFICIELLES POUR RÈGLEMENT SEPA :", fontsize=10, color=(0.05, 0.45, 0.35))
-    page.insert_text((55, 428), "Bénéficiaire : SCI HELLENVILLIERS • Banque : Swan Bank", fontsize=9, color=(0.15, 0.15, 0.15))
-    page.insert_text((55, 444), "IBAN : FR76 1732 8844 0071 5921 5570 591   •   BIC : SWNBFR22", fontsize=10, color=(0.05, 0.4, 0.3))
-    page.insert_text((55, 462), f"Référence obligatoire à indiquer en motif de virement : {r_code}", fontsize=9, color=(0.3, 0.3, 0.3))
+            # Pied de page légal
+            page.draw_line(fitz.Point(40, 780), fitz.Point(555, 780), color=(0.85, 0.85, 0.85), width=0.5)
+            page.insert_text((40, 795), "SCI HELLENVILLIERS — Société Civile Immobilière au capital de 390 000,00 € — SIRET 977 529 312 00018", fontsize=8, color=(0.5, 0.5, 0.5))
+            page.insert_text((40, 807), "Ce document tient lieu d'avis officiel d'appel de fonds et de justificatif comptable pour les associés de la SCI.", fontsize=8, color=(0.5, 0.5, 0.5))
 
-    # Pied de page légal
-    page.draw_line(fitz.Point(40, 780), fitz.Point(555, 780), color=(0.85, 0.85, 0.85), width=0.5)
-    page.insert_text((40, 795), "SCI HELLENVILLIERS — Société Civile Immobilière au capital de 390 000,00 € — SIRET 977 529 312 00018", fontsize=8, color=(0.5, 0.5, 0.5))
-    page.insert_text((40, 807), "Ce document tient lieu d'avis officiel d'appel de fonds et de justificatif comptable pour les associés de la SCI.", fontsize=8, color=(0.5, 0.5, 0.5))
+            return doc.tobytes()
+        except Exception:
+            pass
 
-    return doc.tobytes()
+    return _generate_pure_python_invoice_pdf_14(
+        call_id=call_id,
+        member_name=member_name,
+        period=period,
+        amount=amount,
+        ref=ref,
+        status_label=status_label
+    )
 
 
 @app.get("/api/finances/invoices/generate-pdf", tags=["Finances"])
