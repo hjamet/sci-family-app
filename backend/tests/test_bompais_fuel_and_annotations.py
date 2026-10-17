@@ -421,3 +421,139 @@ def test_update_task_notifies_new_assignees():
     finally:
         app.dependency_overrides.pop(get_current_user, None)
         db.close()
+
+
+# ============================================================================
+# 6. Tests Résolution Annotations Phase 6 (Factures 422 & Documents Existants Fioul)
+# ============================================================================
+
+def test_generate_invoice_pdf_french_comma_and_prefixed_call_id():
+    """
+    Vérifie que GET /api/finances/invoices/generate-pdf?amount=50,00&call_id=cff-1
+    renvoie bien 200 OK et un PDF valide au lieu de 422 (Annotation 10).
+    """
+    res = client.get("/api/finances/invoices/generate-pdf?amount=50,00&call_id=cff-1")
+    assert res.status_code == 200
+    assert res.headers["content-type"] == "application/pdf"
+    assert "inline" in res.headers["content-disposition"]
+    assert res.content.startswith(b"%PDF-")
+    assert len(res.content) > 500
+
+
+def test_download_document_prefixed_ids_generate_pdf_without_422_or_404():
+    """
+    Vérifie que GET /api/documents/{raw_id}/download accepte cff-1 et inv-99
+    en générant le document officiel au lieu de rejeter en 422 ou 404 (Annotation 10).
+    """
+    res_cff = client.get("/api/documents/cff-1/download")
+    assert res_cff.status_code == 200
+    assert res_cff.headers["content-type"] == "application/pdf"
+    assert res_cff.content.startswith(b"%PDF-")
+
+    res_inv = client.get("/api/documents/inv-42/download")
+    assert res_inv.status_code == 200
+    assert res_inv.headers["content-type"] == "application/pdf"
+    assert res_inv.content.startswith(b"%PDF-")
+
+
+def test_create_fuel_delivery_with_existing_document_ids():
+    """
+    Vérifie le support de existing_document_ids (sélection de documents déjà indexés)
+    dans POST /api/heating/fuel-deliveries (Annotation 3).
+    """
+    from app.database import SessionLocal
+    from app.models import AdminDocument
+    db = SessionLocal()
+    doc1 = None
+    doc2 = None
+    try:
+        # Création de deux documents administratifs existants
+        doc1 = AdminDocument(
+            title="Facture Josse Janvier 2026 Test",
+            category="Travaux & Factures",
+            file_url="/api/documents/temp",
+            file_name="Facture_Josse_Jan2026_Test.pdf",
+            file_type="application/pdf",
+            file_size=1024,
+            source_type="MANUAL",
+            notes="Test doc existing 1"
+        )
+        doc2 = AdminDocument(
+            title="Bon de livraison Fioul 2026 Test",
+            category="Travaux & Factures",
+            file_url="/api/documents/temp",
+            file_name="BL_Fioul_2026_Test.pdf",
+            file_type="application/pdf",
+            file_size=2048,
+            source_type="MANUAL",
+            notes="Test doc existing 2"
+        )
+        db.add_all([doc1, doc2])
+        db.commit()
+        db.refresh(doc1)
+        db.refresh(doc2)
+
+        # 1. Test via multipart/form-data avec existing_document_ids au format JSON
+        form_data = {
+            "date": "2026-10-27",
+            "liters_delivered": "1200",
+            "amount_ttc": "1350.00",
+            "invoice": "101Z777777",
+            "existing_document_ids": json.dumps([doc1.id, doc2.id])
+        }
+        res_form = client.post("/api/heating/fuel-deliveries", data=form_data)
+        assert res_form.status_code == 200
+        resp_form_data = res_form.json()
+        assert resp_form_data["status"] == "ok"
+        deliv = resp_form_data["delivery"]
+        assert deliv["invoice"] == "101Z777777"
+        assert deliv["document_id"] == doc1.id
+        assert deliv["document_url"] == f"/api/documents/{doc1.id}/download"
+        assert len(deliv["documents"]) == 2
+        attached_ids = [d["id"] for d in deliv["documents"]]
+        assert doc1.id in attached_ids
+        assert doc2.id in attached_ids
+
+        # 2. Test via JSON payload direct
+        json_data = {
+            "date": "2026-10-28",
+            "liters_delivered": 1000.0,
+            "amount_ttc": 1100.0,
+            "invoice": "101Z666666",
+            "existing_document_ids": [doc2.id]
+        }
+        res_json = client.post("/api/heating/fuel-deliveries", json=json_data)
+        assert res_json.status_code == 200
+        deliv_json = res_json.json()["delivery"]
+        assert deliv_json["document_id"] == doc2.id
+        assert len(deliv_json["documents"]) == 1
+        assert deliv_json["documents"][0]["id"] == doc2.id
+
+    finally:
+        db.rollback()
+        db.query(Log).filter(Log.action == "FUEL_DELIVERY", Log.user_name.in_(["2026-10-27", "2026-10-28"])).delete()
+        if doc1 and doc1.id:
+            db.query(AdminDocument).filter(AdminDocument.id == doc1.id).delete()
+        if doc2 and doc2.id:
+            db.query(AdminDocument).filter(AdminDocument.id == doc2.id).delete()
+        db.commit()
+        db.close()
+
+
+def test_heating_fuel_history_linear_uniform_distribution_without_seasonal_weights():
+    """
+    Vérifie que la consommation passée est répartie de manière purement uniforme
+    au prorata du nombre de jours réels sans poids saisonniers arbitraires (Annotation 7).
+    """
+    res = client.get("/api/heating/fuel-history")
+    assert res.status_code == 200
+    data = res.json()
+    monthly = data["monthly_history"]
+
+    # Février (28j) vs Mars (31j) : la consommation doit être strictement proportionnelle au nombre de jours
+    feb = next(m for m in monthly if m["month"] == "2026-02")
+    mar = next(m for m in monthly if m["month"] == "2026-03")
+    # Ratio 28 / 31 = ~0.9032
+    ratio = feb["consumed_liters"] / mar["consumed_liters"]
+    assert 0.89 <= ratio <= 0.92
+    assert feb["consumed_liters"] < mar["consumed_liters"]

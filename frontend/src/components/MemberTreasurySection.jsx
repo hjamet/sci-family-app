@@ -14,8 +14,10 @@ import {
   UserCheck,
   ShieldCheck,
   ChevronDown,
-  ChevronUp
+  ChevronUp,
+  X
 } from 'lucide-react';
+import { SwanSepaQrCodeSvg } from '../pages/AdminInfoPage';
 import {
   fetchMyTreasury,
   fetchAllTreasurySummary,
@@ -24,7 +26,13 @@ import {
   assignReconciliation
 } from '../api';
 
-export default function MemberTreasurySection({ currentUser, isCoordinator = false, refreshTrigger = 0 }) {
+export default function MemberTreasurySection({
+  currentUser,
+  isCoordinator = false,
+  refreshTrigger = 0,
+  onDeclarePayment = null,
+  onDeclareExpense = null,
+}) {
   const [myTreasury, setMyTreasury] = useState(null);
   const [allTreasury, setAllTreasury] = useState(null);
   const [unmatchedData, setUnmatchedData] = useState(null);
@@ -35,6 +43,7 @@ export default function MemberTreasurySection({ currentUser, isCoordinator = fal
   const [selectedAssignments, setSelectedAssignments] = useState({});
   const [isAssigning, setIsAssigning] = useState({});
   const [showHistory, setShowHistory] = useState(false);
+  const [isSwanQrModalOpen, setIsSwanQrModalOpen] = useState(false);
   const [activeAdminTab, setActiveAdminTab] = useState('members'); // 'members' | 'reconciliation'
 
   const loadData = async (autoReconcile = false) => {
@@ -140,6 +149,16 @@ export default function MemberTreasurySection({ currentUser, isCoordinator = fal
   const bic = myTreasury?.bic || "SWNBFR22";
   const entries = myTreasury?.recent_entries || [];
 
+  const totalAppele = entries
+    .filter((e) => e.entry_type === 'ECHEANCE')
+    .reduce((acc, e) => acc + Math.abs(Number(e.amount || 0)), 0);
+  const totalRegle = entries
+    .filter((e) => e.entry_type === 'VIREMENT')
+    .reduce((acc, e) => acc + Number(e.amount || 0), 0);
+  const totalAvances = entries
+    .filter((e) => e.entry_type === 'AVANCE')
+    .reduce((acc, e) => acc + Number(e.amount || 0), 0);
+
   return (
     <div className="mt-space-lg space-y-6">
       
@@ -200,67 +219,144 @@ export default function MemberTreasurySection({ currentUser, isCoordinator = fal
           </div>
         </div>
 
-        {/* Coordonnées bancaires officielles du compte SCI Swan */}
-        <div className="mt-4">
-          <div className="p-4 rounded-xl bg-surface-container-low border border-border-subtle flex flex-col justify-between space-y-3">
-            <div>
-              <div className="flex items-center justify-between text-xs font-bold text-slate-700 mb-1">
-                <span>Coordonnées bancaires officielles du compte SCI :</span>
-                <span className="text-[10px] text-emerald-700 uppercase font-semibold bg-emerald-50 px-2 py-0.5 rounded border border-emerald-200">
-                  Swan • Compte Principal
-                </span>
-              </div>
-              
-              {iban ? (
-                <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 mt-2">
-                  <div>
-                    <span className="text-[10px] uppercase text-slate-500 font-bold block">IBAN :</span>
-                    <div className="flex items-center justify-between p-2 bg-white dark:bg-slate-900 border border-border-subtle rounded font-mono text-xs font-semibold text-slate-800">
-                      <span className="break-all">{iban}</span>
-                      <button
-                        type="button"
-                        onClick={() => copyToClipboard(iban, 'iban')}
-                        className="ml-2 inline-flex items-center gap-1 px-2 py-0.5 text-[11px] font-semibold rounded bg-slate-100 hover:bg-slate-200 text-slate-700 shrink-0 cursor-pointer"
-                      >
-                        {copiedKey === 'iban' ? 'Copié' : 'Copier'}
-                      </button>
-                    </div>
-                  </div>
-
-                  {bic && (
-                    <div>
-                      <span className="text-[10px] uppercase text-slate-500 font-bold block">BIC / SWIFT :</span>
-                      <div className="flex items-center justify-between p-2 bg-white dark:bg-slate-900 border border-border-subtle rounded font-mono text-xs font-semibold text-slate-800">
-                        <span>{bic}</span>
-                        <button
-                          type="button"
-                          onClick={() => copyToClipboard(bic, 'bic')}
-                          className="ml-2 inline-flex items-center gap-1 px-2 py-0.5 text-[11px] font-semibold rounded bg-slate-100 hover:bg-slate-200 text-slate-700 shrink-0 cursor-pointer"
-                        >
-                          {copiedKey === 'bic' ? 'Copié' : 'Copier'}
-                        </button>
-                      </div>
-                    </div>
-                  )}
-                </div>
-              ) : (
-                <div className="p-3 bg-amber-50/80 border border-amber-200 rounded-lg text-xs text-amber-950 flex items-start gap-2.5">
-                  <AlertCircle className="w-4 h-4 text-amber-700 shrink-0 mt-0.5" />
-                  <div className="leading-relaxed">
-                    <span className="font-bold">Compte bancaire en cours d'ouverture :</span>
-                    <p className="mt-0.5 text-amber-900">
-                      Les coordonnées IBAN définitives seront affichées ici dès réception de la confirmation bancaire.
-                    </p>
-                  </div>
-                </div>
-              )}
-            </div>
-
-            <div className="text-[11px] text-slate-500 flex items-center justify-between pt-1 border-t border-slate-200/60">
-              <span>Bénéficiaire : <strong className="text-slate-700">SCI Hellenvilliers</strong></span>
-            </div>
+        {/* Synthèse des flux du compte individuel */}
+        <div className="mt-3 grid grid-cols-1 sm:grid-cols-3 gap-2.5 text-xs">
+          <div className="p-2.5 rounded-xl bg-slate-50 dark:bg-slate-800/60 border border-slate-200 dark:border-slate-700 flex items-center justify-between">
+            <span className="text-slate-500 font-medium">Total appelé :</span>
+            <span className="font-mono font-bold text-slate-800 dark:text-slate-200">
+              {totalAppele > 0 ? `${totalAppele.toFixed(2)} €` : '0,00 €'}
+            </span>
+          </div>
+          <div className="p-2.5 rounded-xl bg-sky-50/70 dark:bg-sky-950/30 border border-sky-200 dark:border-sky-800/50 flex items-center justify-between">
+            <span className="text-sky-900 dark:text-sky-300 font-medium">Total réglé (virements) :</span>
+            <span className="font-mono font-bold text-sky-800 dark:text-sky-300">
+              {totalRegle > 0 ? `${totalRegle.toFixed(2)} €` : '0,00 €'}
+            </span>
+          </div>
+          <div className="p-2.5 rounded-xl bg-emerald-50/70 dark:bg-emerald-950/30 border border-emerald-200 dark:border-emerald-800/50 flex items-center justify-between">
+            <span className="text-emerald-900 dark:text-emerald-300 font-medium">Total avances :</span>
+            <span className="font-mono font-bold text-emerald-800 dark:text-emerald-300">
+              {totalAvances > 0 ? `${totalAvances.toFixed(2)} €` : '0,00 €'}
+            </span>
           </div>
         </div>
+
+        {/* Encadré émeraude officiel du compte Swan unifié avec QR Code cliquable */}
+        <div className="mt-3 p-3.5 sm:p-4 bg-emerald-50/80 dark:bg-emerald-950/30 border border-emerald-200 dark:border-emerald-800/60 rounded-xl flex flex-col md:flex-row md:items-center justify-between gap-3 text-xs text-forest-deep dark:text-emerald-100 shadow-2xs">
+          <div className="flex items-start sm:items-center gap-2.5 min-w-0">
+            <div className="w-9 h-9 rounded-lg bg-emerald-100 dark:bg-emerald-900/60 text-emerald-800 dark:text-emerald-200 flex items-center justify-center shrink-0">
+              <Landmark className="w-5 h-5 text-emerald-800 dark:text-emerald-200" />
+            </div>
+            <div className="min-w-0">
+              <div className="flex items-center gap-2 font-bold text-forest-deep dark:text-emerald-100">
+                <span>Coordonnées officielles du compte Swan :</span>
+                <span className="text-[10px] uppercase font-semibold bg-emerald-100 dark:bg-emerald-900/40 text-emerald-800 dark:text-emerald-200 px-2 py-0.5 rounded border border-emerald-300 dark:border-emerald-700">
+                  Compte Principal
+                </span>
+              </div>
+              <div className="flex flex-wrap items-center gap-x-3 gap-y-1 mt-1 text-slate-700 dark:text-slate-300">
+                <span className="font-mono font-bold text-emerald-950 dark:text-emerald-100 text-xs sm:text-sm">
+                  {iban}
+                </span>
+                <span className="font-semibold text-slate-600 dark:text-slate-400">• BIC : {bic}</span>
+                <span className="font-semibold text-emerald-800 dark:text-emerald-300">• Réf : {paymentRef}</span>
+              </div>
+            </div>
+          </div>
+
+          <div className="flex items-center gap-2 self-start md:self-auto shrink-0 flex-wrap">
+            <button
+              type="button"
+              onClick={() => copyToClipboard(iban, 'iban')}
+              className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-white dark:bg-slate-900 hover:bg-emerald-100 dark:hover:bg-slate-800 text-emerald-900 dark:text-emerald-200 border border-emerald-300 dark:border-emerald-700 font-semibold shadow-2xs transition-all cursor-pointer text-xs"
+            >
+              {copiedKey === 'iban' ? <Check className="w-3.5 h-3.5 text-emerald-600" /> : <Copy className="w-3.5 h-3.5" />}
+              <span>{copiedKey === 'iban' ? 'Copié !' : "Copier l'IBAN Swan"}</span>
+            </button>
+            <button
+              type="button"
+              onClick={() => copyToClipboard(paymentRef, 'ref')}
+              className="inline-flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg bg-white dark:bg-slate-900 hover:bg-emerald-100 dark:hover:bg-slate-800 text-slate-700 dark:text-slate-200 border border-slate-300 dark:border-slate-700 font-semibold shadow-2xs transition-all cursor-pointer text-xs"
+              title="Copier la référence de virement"
+            >
+              {copiedKey === 'ref' ? <Check className="w-3.5 h-3.5 text-emerald-600" /> : <Copy className="w-3.5 h-3.5" />}
+              <span>{copiedKey === 'ref' ? 'Réf copiée' : 'Réf virement'}</span>
+            </button>
+            <button
+              type="button"
+              onClick={() => setIsSwanQrModalOpen(true)}
+              className="group p-1 bg-white dark:bg-slate-900 hover:bg-emerald-50 dark:hover:bg-slate-800 border border-emerald-300 dark:border-emerald-700 rounded-lg shadow-2xs transition-all cursor-pointer shrink-0 flex items-center justify-center"
+              title="Agrandir le QR Code SEPA EPC pour scanner avec votre application bancaire"
+            >
+              <SwanSepaQrCodeSvg size={48} className="rounded" />
+            </button>
+          </div>
+        </div>
+
+        {/* Boutons d'action : Déclarer un virement / Déclarer une dépense */}
+        {(onDeclarePayment || onDeclareExpense) && (
+          <div className="mt-3 flex flex-wrap items-center gap-2.5">
+            {onDeclarePayment && (
+              <button
+                type="button"
+                onClick={onDeclarePayment}
+                className="inline-flex items-center gap-1.5 px-3.5 py-2 rounded-xl bg-primary hover:bg-forest-deep text-white text-xs font-bold shadow-xs hover:shadow-sm transition-all cursor-pointer"
+              >
+                <ArrowDownLeft className="w-4 h-4" />
+                <span>Déclarer un virement effectué</span>
+              </button>
+            )}
+            {onDeclareExpense && (
+              <button
+                type="button"
+                onClick={onDeclareExpense}
+                className="inline-flex items-center gap-1.5 px-3.5 py-2 rounded-xl bg-white dark:bg-slate-900 hover:bg-slate-50 dark:hover:bg-slate-800 text-slate-800 dark:text-slate-200 border border-slate-300 dark:border-slate-700 text-xs font-bold shadow-xs hover:shadow-sm transition-all cursor-pointer"
+              >
+                <ArrowUpRight className="w-4 h-4 text-amber-600" />
+                <span>Déclarer une dépense / avance</span>
+              </button>
+            )}
+          </div>
+        )}
+
+        {/* Modale d'agrandissement QR Code SEPA EPC Swan */}
+        {isSwanQrModalOpen && (
+          <div
+            className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-xs p-4 animate-in fade-in duration-200"
+            onClick={() => setIsSwanQrModalOpen(false)}
+          >
+            <div
+              className="bg-white dark:bg-slate-900 rounded-2xl max-w-sm w-full p-6 shadow-2xl border border-emerald-200 dark:border-emerald-800 text-center relative"
+              onClick={(e) => e.stopPropagation()}
+            >
+              <button
+                type="button"
+                onClick={() => setIsSwanQrModalOpen(false)}
+                className="absolute top-4 right-4 p-1.5 rounded-full bg-slate-100 hover:bg-slate-200 text-slate-600 transition-colors cursor-pointer"
+                title="Fermer"
+              >
+                <X className="w-5 h-5" />
+              </button>
+              <div className="flex items-center justify-center gap-2 mb-2 text-emerald-800 dark:text-emerald-300">
+                <span className="material-symbols-outlined text-[24px]">qr_code_2</span>
+                <h3 className="font-headline-sm text-base font-bold text-forest-deep dark:text-emerald-100">
+                  QR Code SEPA EPC Swan
+                </h3>
+              </div>
+              <p className="text-xs text-on-surface-variant mb-4">
+                Scannez ce QR Code avec votre application bancaire pour préparer le virement instantané sur le compte SCI Hellenvilliers.
+              </p>
+              <div className="bg-white p-3 rounded-xl border border-emerald-200 shadow-inner inline-flex items-center justify-center mx-auto mb-4">
+                <SwanSepaQrCodeSvg size={180} />
+              </div>
+              <div className="text-xs space-y-1 text-slate-700 dark:text-slate-300 font-mono bg-emerald-50/60 dark:bg-emerald-950/40 p-2.5 rounded-lg border border-emerald-200/60">
+                <div className="font-bold text-forest-deep dark:text-emerald-200">{iban}</div>
+                <div className="text-[11px] text-slate-500">BIC : {bic} • SCI HELLENVILLIERS</div>
+                <div className="text-[11px] text-emerald-700 dark:text-emerald-300 font-semibold">Référence : {paymentRef}</div>
+              </div>
+            </div>
+          </div>
+        )}
 
         {/* Bascule pour voir l'historique des écritures individuelles */}
         <div className="mt-4 pt-3 border-t border-border-subtle flex items-center justify-between">

@@ -26,6 +26,7 @@ import {
 import ThermalMasterSwitch from '../components/common/ThermalMasterSwitch';
 import CategoryManageModal, { COLOR_OPTIONS, EMOJI_PRESETS } from '../components/common/CategoryManageModal';
 import TaskDetailModal from '../components/TaskDetailModal';
+import SelectExistingDocumentModal from '../components/SelectExistingDocumentModal';
 import TaskCard from '../components/common/TaskCard';
 import BookingModal from '../components/BookingModal';
 import { ThermalMetricSkeleton, StayCardSkeleton } from '../components/SkeletonLoaders';
@@ -204,9 +205,10 @@ function FuelDeliveryModal({ isOpen, onClose, onSuccess }) {
   const [date, setDate] = useState(() => new Date().toISOString().split('T')[0]);
   const [liters, setLiters] = useState('');
   const [amount, setAmount] = useState('');
-  const [invoice, setInvoice] = useState('');
-  const [heightCm, setHeightCm] = useState('');
+  const [existingDocs, setExistingDocs] = useState([]);
   const [files, setFiles] = useState([]);
+  const [isSelectExistingDocOpen, setIsSelectExistingDocOpen] = useState(false);
+  const fileInputRef = useRef(null);
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [error, setError] = useState(null);
 
@@ -234,11 +236,9 @@ function FuelDeliveryModal({ isOpen, onClose, onSuccess }) {
       formData.append('date', date);
       formData.append('liters_delivered', String(parsedLiters));
       formData.append('amount_ttc', String(parsedAmount));
-      if (invoice.trim()) {
-        formData.append('invoice', invoice.trim());
-      }
-      if (heightCm.trim() && !isNaN(parseFloat(heightCm))) {
-        formData.append('height_cm_after', String(parseFloat(heightCm)));
+
+      if (existingDocs.length > 0) {
+        formData.append('existing_document_ids', JSON.stringify(existingDocs.map((d) => d.id)));
       }
       if (files && files.length > 0) {
         for (let i = 0; i < files.length; i++) {
@@ -276,145 +276,202 @@ function FuelDeliveryModal({ isOpen, onClose, onSuccess }) {
   };
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-900/60 backdrop-blur-sm animate-in fade-in duration-200">
-      <div className="bg-surface-container-lowest border border-border-subtle rounded-3xl max-w-lg w-full p-6 sm:p-8 shadow-2xl relative text-on-surface">
-        <div className="flex items-center justify-between pb-3 mb-4 border-b border-border-subtle">
-          <div className="flex items-center gap-2">
-            <span className="material-symbols-outlined text-emerald-700 text-[24px]">local_shipping</span>
-            <h3 className="text-lg font-bold text-primary">Enregistrer une livraison de fioul</h3>
-          </div>
-          <button
-            type="button"
-            onClick={onClose}
-            className="w-8 h-8 rounded-full flex items-center justify-center text-slate-400 hover:text-slate-600 hover:bg-slate-100 transition-colors cursor-pointer"
-          >
-            <span className="material-symbols-outlined text-[20px]">close</span>
-          </button>
-        </div>
-
-        {error && (
-          <div className="mb-4 p-3 rounded-xl bg-rose-50 border border-rose-300 text-rose-900 text-xs font-semibold flex items-center gap-2">
-            <span className="material-symbols-outlined text-rose-600 text-[18px] shrink-0">error</span>
-            <span>{error}</span>
-          </div>
-        )}
-
-        <form onSubmit={handleSubmit} className="space-y-4">
-          <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-            <div>
-              <label className="block text-xs font-bold text-on-surface mb-1">Date de livraison *</label>
-              <input
-                type="date"
-                value={date}
-                onChange={(e) => setDate(e.target.value)}
-                className="w-full h-10 px-3 bg-canvas-slate border border-border-subtle rounded-xl text-xs text-on-surface focus:outline-none focus:border-primary"
-                required
-              />
+    <>
+      <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-900/60 backdrop-blur-sm animate-in fade-in duration-200">
+        <div className="bg-surface-container-lowest border border-border-subtle rounded-3xl max-w-lg w-full p-6 sm:p-8 shadow-2xl relative text-on-surface">
+          <div className="flex items-center justify-between pb-3 mb-4 border-b border-border-subtle">
+            <div className="flex items-center gap-2">
+              <span className="material-symbols-outlined text-emerald-700 text-[24px]">local_shipping</span>
+              <h3 className="text-lg font-bold text-primary">Enregistrer une livraison de fioul</h3>
             </div>
-            <div>
-              <label className="block text-xs font-bold text-on-surface mb-1">Litres livrés (L) *</label>
-              <input
-                type="number"
-                placeholder="ex: 2000"
-                min="1"
-                step="1"
-                value={liters}
-                onChange={(e) => setLiters(e.target.value)}
-                className="w-full h-10 px-3 bg-canvas-slate border border-border-subtle rounded-xl text-xs text-on-surface focus:outline-none focus:border-primary"
-                required
-              />
-            </div>
-          </div>
-
-          <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-            <div>
-              <label className="block text-xs font-bold text-on-surface mb-1">Prix TTC (€) *</label>
-              <input
-                type="number"
-                placeholder="ex: 2200.50"
-                min="0.01"
-                step="0.01"
-                value={amount}
-                onChange={(e) => setAmount(e.target.value)}
-                className="w-full h-10 px-3 bg-canvas-slate border border-border-subtle rounded-xl text-xs text-on-surface focus:outline-none focus:border-primary"
-                required
-              />
-            </div>
-            <div>
-              <label className="block text-xs font-bold text-on-surface mb-1">N° de Facture / Référence</label>
-              <input
-                type="text"
-                placeholder="ex: 101Z002495"
-                value={invoice}
-                onChange={(e) => setInvoice(e.target.value)}
-                className="w-full h-10 px-3 bg-canvas-slate border border-border-subtle rounded-xl text-xs text-on-surface focus:outline-none focus:border-primary"
-              />
-            </div>
-          </div>
-
-          <div>
-            <label className="block text-xs font-bold text-on-surface mb-1">
-              Hauteur jauge après livraison (cm, sur 130 cm)
-              <span className="text-[10.5px] font-normal text-on-surface-variant ml-1">(optionnel)</span>
-            </label>
-            <input
-              type="number"
-              placeholder="ex: 110 (si jauge physique effectuée)"
-              min="0"
-              max="130"
-              step="0.5"
-              value={heightCm}
-              onChange={(e) => setHeightCm(e.target.value)}
-              className="w-full h-10 px-3 bg-canvas-slate border border-border-subtle rounded-xl text-xs text-on-surface focus:outline-none focus:border-primary"
-            />
-            <span className="text-[10px] text-on-surface-variant mt-0.5 block">
-              Si non renseigné, le niveau en cuve est augmenté automatiquement du volume livré.
-            </span>
-          </div>
-
-          <div>
-            <label className="block text-xs font-bold text-on-surface mb-1">
-              Documents justificatifs (Facture PDF, Bon de livraison)
-            </label>
-            <input
-              type="file"
-              multiple
-              accept=".pdf,image/*"
-              onChange={(e) => setFiles(Array.from(e.target.files || []))}
-              className="w-full text-xs text-slate-500 file:mr-3 file:py-2 file:px-3 file:rounded-xl file:border-0 file:text-xs file:font-semibold file:bg-emerald-50 file:text-emerald-700 hover:file:bg-emerald-100 cursor-pointer"
-            />
-          </div>
-
-          <div className="flex items-center justify-end gap-3 pt-4 border-t border-border-subtle">
             <button
               type="button"
               onClick={onClose}
-              disabled={isSubmitting}
-              className="px-5 py-2.5 rounded-full text-xs font-semibold text-on-surface hover:bg-canvas-slate cursor-pointer disabled:opacity-50"
+              className="w-8 h-8 rounded-full flex items-center justify-center text-slate-400 hover:text-slate-600 hover:bg-slate-100 transition-colors cursor-pointer"
             >
-              Annuler
-            </button>
-            <button
-              type="submit"
-              disabled={isSubmitting}
-              className="px-6 py-2.5 rounded-full bg-primary hover:bg-forest-deep text-white text-xs font-bold shadow-sm transition disabled:opacity-50 flex items-center gap-1.5 cursor-pointer"
-            >
-              {isSubmitting ? (
-                <>
-                  <span className="material-symbols-outlined animate-spin text-[16px]">progress_activity</span>
-                  <span>Enregistrement...</span>
-                </>
-              ) : (
-                <>
-                  <span className="material-symbols-outlined text-[16px]">save</span>
-                  <span>Enregistrer la livraison</span>
-                </>
-              )}
+              <span className="material-symbols-outlined text-[20px]">close</span>
             </button>
           </div>
-        </form>
+
+          {error && (
+            <div className="mb-4 p-3 rounded-xl bg-rose-50 border border-rose-300 text-rose-900 text-xs font-semibold flex items-center gap-2">
+              <span className="material-symbols-outlined text-rose-600 text-[18px] shrink-0">error</span>
+              <span>{error}</span>
+            </div>
+          )}
+
+          <form onSubmit={handleSubmit} className="space-y-4">
+            <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+              <div>
+                <label className="block text-xs font-bold text-on-surface mb-1">Date *</label>
+                <input
+                  type="date"
+                  value={date}
+                  onChange={(e) => setDate(e.target.value)}
+                  className="w-full h-10 px-3 bg-canvas-slate border border-border-subtle rounded-xl text-xs text-on-surface focus:outline-none focus:border-primary"
+                  required
+                />
+              </div>
+              <div>
+                <label className="block text-xs font-bold text-on-surface mb-1">Litres (L) *</label>
+                <input
+                  type="number"
+                  placeholder="ex: 2000"
+                  min="1"
+                  step="1"
+                  value={liters}
+                  onChange={(e) => setLiters(e.target.value)}
+                  className="w-full h-10 px-3 bg-canvas-slate border border-border-subtle rounded-xl text-xs text-on-surface focus:outline-none focus:border-primary"
+                  required
+                />
+              </div>
+              <div>
+                <label className="block text-xs font-bold text-on-surface mb-1">Prix TTC (€) *</label>
+                <input
+                  type="number"
+                  placeholder="ex: 2200.50"
+                  min="0.01"
+                  step="0.01"
+                  value={amount}
+                  onChange={(e) => setAmount(e.target.value)}
+                  className="w-full h-10 px-3 bg-canvas-slate border border-border-subtle rounded-xl text-xs text-on-surface focus:outline-none focus:border-primary"
+                  required
+                />
+              </div>
+            </div>
+
+            <div>
+              <label className="block text-xs font-bold text-on-surface mb-2">
+                Documents justificatifs (Facture PDF, Bon de livraison)
+              </label>
+              <div className="flex flex-wrap items-center gap-2 mb-2">
+                <button
+                  type="button"
+                  onClick={() => setIsSelectExistingDocOpen(true)}
+                  className="inline-flex items-center gap-1.5 px-3 py-2 rounded-xl bg-surface-container-low hover:bg-slate-100 dark:hover:bg-slate-800 text-slate-800 dark:text-slate-200 border border-border-subtle text-xs font-semibold shadow-2xs transition-all cursor-pointer"
+                >
+                  <span className="material-symbols-outlined text-[16px]">search</span>
+                  <span>Associer un document existant</span>
+                </button>
+                <button
+                  type="button"
+                  onClick={() => fileInputRef.current?.click()}
+                  className="inline-flex items-center gap-1.5 px-3 py-2 rounded-xl bg-emerald-50 dark:bg-emerald-950/40 hover:bg-emerald-100 text-emerald-800 dark:text-emerald-300 border border-emerald-200/80 text-xs font-semibold shadow-2xs transition-all cursor-pointer"
+                >
+                  <span className="material-symbols-outlined text-[16px]">add</span>
+                  <span>Ajouter un document</span>
+                </button>
+                <input
+                  type="file"
+                  ref={fileInputRef}
+                  className="hidden"
+                  multiple
+                  accept=".pdf,image/*"
+                  onChange={(e) => {
+                    const newFiles = Array.from(e.target.files || []);
+                    setFiles((prev) => [...prev, ...newFiles]);
+                    e.target.value = '';
+                  }}
+                />
+              </div>
+
+              {/* Puces des documents sélectionnés */}
+              {(existingDocs.length > 0 || files.length > 0) && (
+                <div className="flex flex-wrap gap-2 p-2.5 rounded-xl bg-slate-50 dark:bg-slate-800/40 border border-slate-200 dark:border-slate-700/60 max-h-36 overflow-y-auto">
+                  {existingDocs.map((doc) => (
+                    <div
+                      key={`exist-${doc.id}`}
+                      className="inline-flex items-center gap-1.5 pl-2.5 pr-1.5 py-1 rounded-lg bg-white dark:bg-slate-900 border border-emerald-300/80 text-xs text-forest-deep dark:text-emerald-300 font-medium shadow-2xs"
+                    >
+                      <span className="material-symbols-outlined text-[15px] text-emerald-600">description</span>
+                      <span className="truncate max-w-[180px]" title={doc.title || doc.name || doc.filename || `Doc #${doc.id}`}>
+                        {doc.title || doc.name || doc.filename || `Doc #${doc.id}`}
+                      </span>
+                      <span className="text-[10px] uppercase font-bold text-emerald-700 dark:text-emerald-400 bg-emerald-50 dark:bg-emerald-950/60 px-1 py-0.2 rounded">
+                        Existant
+                      </span>
+                      <button
+                        type="button"
+                        onClick={() => setExistingDocs((prev) => prev.filter((d) => d.id !== doc.id))}
+                        className="p-0.5 rounded-md hover:bg-slate-100 dark:hover:bg-slate-800 text-slate-400 hover:text-rose-600 transition-colors cursor-pointer"
+                        title="Retirer ce document"
+                      >
+                        <span className="material-symbols-outlined text-[14px]">close</span>
+                      </button>
+                    </div>
+                  ))}
+
+                  {files.map((file, idx) => (
+                    <div
+                      key={`file-${idx}-${file.name}`}
+                      className="inline-flex items-center gap-1.5 pl-2.5 pr-1.5 py-1 rounded-lg bg-white dark:bg-slate-900 border border-slate-300 dark:border-slate-700 text-xs text-slate-700 dark:text-slate-300 font-medium shadow-2xs"
+                    >
+                      <span className="material-symbols-outlined text-[15px] text-slate-500">upload_file</span>
+                      <span className="truncate max-w-[180px]" title={file.name}>
+                        {file.name}
+                      </span>
+                      <span className="text-[10px] text-slate-400">
+                        ({Math.round(file.size / 1024)} ko)
+                      </span>
+                      <button
+                        type="button"
+                        onClick={() => setFiles((prev) => prev.filter((_, i) => i !== idx))}
+                        className="p-0.5 rounded-md hover:bg-slate-100 dark:hover:bg-slate-800 text-slate-400 hover:text-rose-600 transition-colors cursor-pointer"
+                        title="Retirer ce fichier"
+                      >
+                        <span className="material-symbols-outlined text-[14px]">close</span>
+                      </button>
+                    </div>
+                  ))}
+                </div>
+              )}
+            </div>
+
+            <div className="flex items-center justify-end gap-3 pt-4 border-t border-border-subtle">
+              <button
+                type="button"
+                onClick={onClose}
+                disabled={isSubmitting}
+                className="px-5 py-2.5 rounded-full text-xs font-semibold text-on-surface hover:bg-canvas-slate cursor-pointer disabled:opacity-50"
+              >
+                Annuler
+              </button>
+              <button
+                type="submit"
+                disabled={isSubmitting}
+                className="px-6 py-2.5 rounded-full bg-primary hover:bg-forest-deep text-white text-xs font-bold shadow-sm transition disabled:opacity-50 flex items-center gap-1.5 cursor-pointer"
+              >
+                {isSubmitting ? (
+                  <>
+                    <span className="material-symbols-outlined animate-spin text-[16px]">progress_activity</span>
+                    <span>Enregistrement...</span>
+                  </>
+                ) : (
+                  <>
+                    <span className="material-symbols-outlined text-[16px]">save</span>
+                    <span>Enregistrer la livraison</span>
+                  </>
+                )}
+              </button>
+            </div>
+          </form>
+        </div>
       </div>
-    </div>
+
+      {/* Modale de sélection de document existant */}
+      <SelectExistingDocumentModal
+        isOpen={isSelectExistingDocOpen}
+        onClose={() => setIsSelectExistingDocOpen(false)}
+        alreadyAttachedDocIds={existingDocs.map((d) => d.id)}
+        onAttachSuccess={(selected) => {
+          setExistingDocs((prev) => {
+            const existingIds = new Set(prev.map((d) => d.id));
+            const fresh = (selected || []).filter((s) => !existingIds.has(s.id));
+            return [...prev, ...fresh];
+          });
+        }}
+      />
+    </>
   );
 }
 
@@ -661,15 +718,20 @@ function FuelInteractiveGraph({ fuelHistory, heatingStatus, onRefreshFuel }) {
             {deliveries.length === 0 ? (
               <p className="text-xs text-slate-500 italic py-2">Aucune livraison enregistrée pour le moment.</p>
             ) : (
-              <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-2 text-xs">
-                {deliveries.map((del, idx) => {
-                  const liters = Number(del.liters_delivered ?? del.liters ?? 0);
-                  const amount = Number(del.amount_ttc ?? (typeof del.amount === 'number' ? del.amount : parseFloat(String(del.amount || '').replace(/[^\d.,]/g, '').replace(',', '.')) || 0));
-                  const pricePerLiter = liters > 0 && amount > 0 ? (amount / liters).toFixed(3).replace('.', ',') : null;
-                  const docUrl = del.document_url || (del.document_id ? `/api/documents/${del.document_id}/download` : null);
+              <div className="flex overflow-x-auto gap-3 pb-1.5 snap-x snap-mandatory text-xs">
+                {[...deliveries]
+                  .sort((a, b) => String(b.date || '').localeCompare(String(a.date || '')))
+                  .map((del, idx) => {
+                    const liters = Number(del.liters_delivered ?? del.liters ?? 0);
+                    const amount = Number(del.amount_ttc ?? (typeof del.amount === 'number' ? del.amount : parseFloat(String(del.amount || '').replace(/[^\d.,]/g, '').replace(',', '.')) || 0));
+                    const pricePerLiter = liters > 0 && amount > 0 ? (amount / liters).toFixed(3).replace('.', ',') : null;
+                    const docUrl = del.document_url || (del.document_id ? `/api/documents/${del.document_id}/download` : null);
 
-                  return (
-                    <div key={idx} className="p-2.5 rounded-xl bg-slate-50 dark:bg-slate-800/60 border border-slate-200 dark:border-slate-700 flex flex-col justify-between gap-2">
+                    return (
+                      <div
+                        key={del.id || idx}
+                        className="w-full sm:w-[calc(50%-0.375rem)] lg:w-[calc(33.333%-0.5rem)] shrink-0 snap-start p-2.5 rounded-xl bg-slate-50 dark:bg-slate-800/60 border border-slate-200 dark:border-slate-700 flex flex-col justify-between gap-2"
+                      >
                       <div>
                         <div className="flex items-center justify-between font-bold text-forest-deep dark:text-emerald-200">
                           <span>{del.date}</span>
@@ -736,7 +798,7 @@ function FuelInteractiveGraph({ fuelHistory, heatingStatus, onRefreshFuel }) {
                           {liters} L
                         </div>
                         <div className="text-[9px] text-slate-400 font-medium">
-                          {starts} all.
+                          {starts} allumage{starts > 1 ? 's' : ''}
                         </div>
                         <div className="w-full max-w-[36px] bg-slate-100 dark:bg-slate-800 rounded-t-lg h-32 flex items-end p-0.5">
                           <div
