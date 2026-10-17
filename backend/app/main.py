@@ -7865,6 +7865,30 @@ def get_heating_fuel_history(db: Session = Depends(get_db)):
     except Exception:
         pass
 
+    # Récupération des valeurs live courantes pour le brûleur et le stock
+    live_starts = None
+    live_hours = None
+    if telemetry and isinstance(telemetry, dict):
+        live_starts = telemetry.get("burner_starts")
+        live_hours = telemetry.get("burner_hours")
+
+    if live_starts is None or live_hours is None:
+        last_snap = db.query(Log).filter(Log.action == "FUEL_DAILY_SNAPSHOT").order_by(Log.user_name.desc(), Log.id.desc()).first()
+        if last_snap and last_snap.details:
+            try:
+                snap_data = json.loads(last_snap.details)
+                if live_starts is None and snap_data.get("burner_starts") is not None:
+                    live_starts = int(snap_data["burner_starts"])
+                if live_hours is None and snap_data.get("burner_hours") is not None:
+                    live_hours = int(snap_data["burner_hours"])
+            except Exception:
+                pass
+
+    if live_starts is None:
+        live_starts = CALIBRATION_BURNER_STARTS
+    if live_hours is None:
+        live_hours = CALIBRATION_BURNER_HOURS
+
     deliveries = get_or_seed_fuel_deliveries(db)
     last_delivery = deliveries[-1] if deliveries else None
 
@@ -7878,11 +7902,11 @@ def get_heating_fuel_history(db: Session = Depends(get_db)):
         "flow_l_per_h": FLOW_LITERS_PER_HOUR,
         "liters_per_start": LITERS_PER_START,
         "avg_minutes_per_start": 10.8,
-        "burner_hours": CALIBRATION_BURNER_HOURS,
-        "burner_starts": CALIBRATION_BURNER_STARTS,
-        "total_consumed_since_install_liters": 7337,
-        "last_delivery_date": last_delivery["date"] if last_delivery else "2026-01-21",
-        "last_delivery_liters": last_delivery["liters_delivered"] if last_delivery else 2014
+        "burner_hours": live_hours,
+        "burner_starts": live_starts,
+        "total_consumed_since_install_liters": round(live_starts * LITERS_PER_START, 1),
+        "last_delivery_date": last_delivery["date"] if last_delivery else None,
+        "last_delivery_liters": last_delivery["liters_delivered"] if last_delivery else 0.0
     }
 
     # Calcul 100 % dynamique de la série mensuelle glissante sur 12 mois
@@ -7922,13 +7946,6 @@ def get_heating_fuel_history(db: Session = Depends(get_db)):
         7: "Juil", 8: "Août", 9: "Sep", 10: "Oct", 11: "Nov", 12: "Déc"
     }
 
-    # Récupérer tous les snapshots en base
-    db_snapshots = []
-    try:
-        db_snapshots = db.query(Log).filter(Log.action == "FUEL_DAILY_SNAPSHOT").all()
-    except Exception:
-        pass
-
     monthly_history = []
     running_stock = 1250.0
     for idx, (y, m) in enumerate(months_tuples):
@@ -7958,62 +7975,106 @@ def get_heating_fuel_history(db: Session = Depends(get_db)):
             "is_delivery": bool(deliv > 0)
         })
 
-    # Calcul 100 % dynamique de daily_history
-    baseline_daily = [
-        {"date": "2026-10-08", "burner_starts": 24944, "daily_starts": 14, "daily_liters": 4.1, "fuel_liters_remaining": 1099.6},
-        {"date": "2026-10-09", "burner_starts": 24958, "daily_starts": 14, "daily_liters": 4.1, "fuel_liters_remaining": 1095.5},
-        {"date": "2026-10-10", "burner_starts": 24973, "daily_starts": 15, "daily_liters": 4.4, "fuel_liters_remaining": 1091.1},
-        {"date": "2026-10-11", "burner_starts": 24989, "daily_starts": 16, "daily_liters": 4.7, "fuel_liters_remaining": 1086.4},
-        {"date": "2026-10-12", "burner_starts": 25003, "daily_starts": 14, "daily_liters": 4.1, "fuel_liters_remaining": 1082.3},
-        {"date": "2026-10-13", "burner_starts": 25016, "daily_starts": 13, "daily_liters": 3.8, "fuel_liters_remaining": 1078.5},
-        {"date": "2026-10-14", "burner_starts": 25031, "daily_starts": 15, "daily_liters": 4.4, "fuel_liters_remaining": 1074.1},
-        {"date": "2026-10-15", "burner_starts": 25045, "daily_starts": 14, "daily_liters": 4.1, "fuel_liters_remaining": 1070.0},
-        {"date": "2026-10-16", "burner_starts": 25059, "daily_starts": 14, "daily_liters": 4.1, "fuel_liters_remaining": 1065.9},
-        {"date": "2026-10-17", "burner_starts": 25072, "daily_starts": 13, "daily_liters": 3.8, "fuel_liters_remaining": 1062.0},
-    ]
-    daily_map = {d["date"]: d for d in baseline_daily}
+    # Construction 100 % dynamique de daily_history sur 30 jours glissants (zéro données codées en dur)
+    cutoff_date = (now - timedelta(days=30)).strftime("%Y-%m-%d")
+    today_str = now.strftime("%Y-%m-%d")
 
-    for l in db_snapshots:
-        if l.user_name and l.details:
-            try:
-                payload = json.loads(l.details)
-                d_str = l.user_name
-                b_starts = payload.get("burner_starts")
-                f_rem = payload.get("fuel_liters_remaining")
-                if d_str in daily_map:
-                    if b_starts is not None:
-                        daily_map[d_str]["burner_starts"] = b_starts
-                    if f_rem is not None:
-                        daily_map[d_str]["fuel_liters_remaining"] = f_rem
-                else:
-                    prev_date = max([k for k in daily_map.keys() if k < d_str], default=None)
-                    prev_starts = daily_map[prev_date]["burner_starts"] if prev_date else 25072
-                    d_starts = max(0, (b_starts or prev_starts) - prev_starts)
-                    daily_map[d_str] = {
-                        "date": d_str,
-                        "burner_starts": b_starts or 25072,
-                        "daily_starts": d_starts,
-                        "daily_liters": round(d_starts * LITERS_PER_START, 2),
-                        "fuel_liters_remaining": f_rem if f_rem is not None else 1062.0
-                    }
-            except Exception:
-                pass
+    db_daily_logs = []
+    try:
+        db_daily_logs = (
+            db.query(Log)
+            .filter(
+                Log.action == "FUEL_DAILY_SNAPSHOT",
+                Log.user_name >= cutoff_date
+            )
+            .order_by(Log.user_name.asc(), Log.id.asc())
+            .all()
+        )
+    except Exception:
+        pass
 
+    snapshots_by_date = {}
+    for l in db_daily_logs:
+        if not l.user_name:
+            continue
+        d_str = l.user_name
+        try:
+            payload = json.loads(l.details) if l.details else {}
+            b_starts = payload.get("burner_starts")
+            b_hours = payload.get("burner_hours")
+            f_rem = payload.get("fuel_liters_remaining")
+            snapshots_by_date[d_str] = {
+                "date": d_str,
+                "burner_starts": int(b_starts) if b_starts is not None else None,
+                "burner_hours": int(b_hours) if b_hours is not None else None,
+                "fuel_liters_remaining": float(f_rem) if f_rem is not None else None
+            }
+        except Exception:
+            pass
+
+    # Point live du jour
+    live_stock = None
+    if telemetry and isinstance(telemetry, dict) and telemetry.get("fuel_liters_remaining") is not None:
+        live_stock = float(telemetry["fuel_liters_remaining"])
+    elif today_str in snapshots_by_date and snapshots_by_date[today_str].get("fuel_liters_remaining") is not None:
+        live_stock = snapshots_by_date[today_str]["fuel_liters_remaining"]
+    else:
+        delta_live = max(0, live_starts - CALIBRATION_BURNER_STARTS)
+        live_stock = round(max(0.0, CALIBRATION_LITERS - (delta_live * LITERS_PER_START)), 1)
+
+    if today_str not in snapshots_by_date:
+        snapshots_by_date[today_str] = {
+            "date": today_str,
+            "burner_starts": live_starts,
+            "burner_hours": live_hours,
+            "fuel_liters_remaining": live_stock
+        }
+    else:
+        if live_starts is not None:
+            snapshots_by_date[today_str]["burner_starts"] = live_starts
+        if live_hours is not None:
+            snapshots_by_date[today_str]["burner_hours"] = live_hours
+        if live_stock is not None:
+            snapshots_by_date[today_str]["fuel_liters_remaining"] = live_stock
+
+    # Calcul dynamique de daily_starts et daily_liters
+    sorted_dates = sorted(snapshots_by_date.keys())
     daily_history = []
-    for k in sorted(daily_map.keys()):
-        item = daily_map[k]
-        starts_cnt = item.get("daily_starts", item.get("starts_count", 0))
-        liters_cons = round(starts_cnt * LITERS_PER_START, 2)
-        rem = item.get("fuel_liters_remaining", item.get("liters_remaining", 1062.0))
+    prev_item_starts = None
+
+    for idx, d_str in enumerate(sorted_dates):
+        item_data = snapshots_by_date[d_str]
+        item_starts = item_data.get("burner_starts")
+        if item_starts is None:
+            item_starts = CALIBRATION_BURNER_STARTS
+
+        if idx == 0:
+            daily_starts = max(0, item_starts - CALIBRATION_BURNER_STARTS)
+        else:
+            ref_starts = prev_item_starts if prev_item_starts is not None else CALIBRATION_BURNER_STARTS
+            daily_starts = max(0, item_starts - ref_starts)
+
+        prev_item_starts = item_starts
+        daily_liters = round(daily_starts * LITERS_PER_START, 2)
+
+        rem = item_data.get("fuel_liters_remaining")
+        if rem is None:
+            delta_starts = max(0, item_starts - CALIBRATION_BURNER_STARTS)
+            rem = round(max(0.0, CALIBRATION_LITERS - (delta_starts * LITERS_PER_START)), 1)
+
         h_cm = round((rem / TANK_CAPACITY_LITERS) * TANK_TOTAL_HEIGHT_CM, 1)
-        item["starts_count"] = starts_cnt
-        item["daily_starts"] = starts_cnt
-        item["liters_consumed"] = liters_cons
-        item["daily_liters"] = liters_cons
-        item["liters_remaining"] = rem
-        item["fuel_liters_remaining"] = rem
-        item["height_cm"] = h_cm
-        daily_history.append(item)
+
+        daily_history.append({
+            "date": d_str,
+            "burner_starts": item_starts,
+            "daily_starts": daily_starts,
+            "starts_count": daily_starts,
+            "daily_liters": daily_liters,
+            "liters_consumed": daily_liters,
+            "fuel_liters_remaining": rem,
+            "liters_remaining": rem,
+            "height_cm": h_cm
+        })
 
     return {
         "calibration": calibration,

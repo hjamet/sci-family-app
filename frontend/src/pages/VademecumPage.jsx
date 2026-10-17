@@ -718,33 +718,40 @@ function FuelInteractiveGraph({ fuelHistory, heatingStatus, onRefreshFuel }) {
         <div className="flex flex-col gap-4">
           <div className="w-full overflow-x-auto">
             <div className="min-w-[580px] p-2">
-              <div className="flex items-end justify-between gap-2 h-44 border-b border-slate-200 dark:border-slate-700 pb-2">
-                {dailyData.map((d, idx) => {
-                  const starts = d.daily_starts != null ? d.daily_starts : (d.starts || 0);
-                  const liters = d.daily_liters != null ? d.daily_liters : Number((starts * 0.293).toFixed(1));
-                  const heightPercent = Math.min(100, Math.max(10, (starts / maxDailyStarts) * 100));
+              {dailyData.length === 0 ? (
+                <div className="h-44 flex items-center justify-center text-xs text-slate-500 italic border-b border-slate-200 dark:border-slate-700">
+                  Aucun relevé quotidien de brûleur enregistré pour le moment.
+                </div>
+              ) : (
+                <div className={`flex items-end ${dailyData.length > 1 ? 'justify-between' : 'justify-center'} gap-2 h-44 border-b border-slate-200 dark:border-slate-700 pb-2`}>
+                  {dailyData.map((d, idx) => {
+                    const starts = d.daily_starts != null ? d.daily_starts : (d.starts || 0);
+                    const liters = d.daily_liters != null ? d.daily_liters : Number((starts * 0.293).toFixed(1));
+                    const safeMaxDaily = Math.max(maxDailyStarts, 1);
+                    const heightPercent = Math.min(100, Math.max(10, (starts / safeMaxDaily) * 100));
 
-                  return (
-                    <div key={idx} className="flex-1 flex flex-col items-center gap-1 group relative">
-                      <div className="text-[10px] font-bold text-amber-900 dark:text-amber-200 opacity-90 group-hover:scale-110 transition-transform">
-                        {liters} L
+                    return (
+                      <div key={idx} className={`${dailyData.length > 1 ? 'flex-1' : 'w-28'} flex flex-col items-center gap-1 group relative`}>
+                        <div className="text-[10px] font-bold text-amber-900 dark:text-amber-200 opacity-90 group-hover:scale-110 transition-transform">
+                          {liters} L
+                        </div>
+                        <div className="text-[9px] text-slate-400 font-medium">
+                          {starts} all.
+                        </div>
+                        <div className="w-full max-w-[36px] bg-slate-100 dark:bg-slate-800 rounded-t-lg h-32 flex items-end p-0.5">
+                          <div
+                            style={{ height: `${heightPercent}%` }}
+                            className="w-full bg-gradient-to-t from-amber-600 to-amber-400 rounded-t-md transition-all duration-300 group-hover:from-amber-700 group-hover:to-amber-500 shadow-2xs"
+                          />
+                        </div>
+                        <div className="text-[10px] font-semibold text-slate-600 dark:text-slate-300 mt-1">
+                          {d.date}
+                        </div>
                       </div>
-                      <div className="text-[9px] text-slate-400 font-medium">
-                        {starts} all.
-                      </div>
-                      <div className="w-full max-w-[36px] bg-slate-100 dark:bg-slate-800 rounded-t-lg h-32 flex items-end p-0.5">
-                        <div
-                          style={{ height: `${heightPercent}%` }}
-                          className="w-full bg-gradient-to-t from-amber-600 to-amber-400 rounded-t-md transition-all duration-300 group-hover:from-amber-700 group-hover:to-amber-500 shadow-2xs"
-                        />
-                      </div>
-                      <div className="text-[10px] font-semibold text-slate-600 dark:text-slate-300 mt-1">
-                        {d.date}
-                      </div>
-                    </div>
-                  );
-                })}
-              </div>
+                    );
+                  })}
+                </div>
+              )}
             </div>
           </div>
 
