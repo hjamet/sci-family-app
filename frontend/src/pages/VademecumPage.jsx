@@ -197,78 +197,296 @@ export const CANONICAL_VADEMECUM_CATEGORIES = [
 // =========================================================================
 // COMPOSANT ANNOTATION 3 : Graphe Annuel & Quotidien du Fioul (Josse / Bompais)
 // =========================================================================
-const DEFAULT_FUEL_DELIVERIES = [
-  { date: "18/03/2024", invoice: "0124101209", liters: 2128, amount: "2 510,95 €", label: "Mise en service chaudière Vitoladens 300-C" },
-  { date: "12/11/2024", invoice: "0124105190", liters: 1253, amount: "1 365,72 €", label: "Rechargement pré-hivernal Éts Josse" },
-  { date: "26/03/2025", invoice: "101Y006881", liters: 2220, amount: "2 331,00 €", label: "Plein sortie d'hiver Éts Josse" },
-  { date: "21/01/2026", invoice: "101Z002495", liters: 2014, amount: "2 215,48 €", label: "Plein cœur d'hiver Éts Josse (+2 014 L)" }
-];
+// =========================================================================
+// COMPOSANT ANNOTATION 3 : Graphe Annuel & Quotidien du Fioul & Enregistrement
+// =========================================================================
+function FuelDeliveryModal({ isOpen, onClose, onSuccess }) {
+  const [date, setDate] = useState(() => new Date().toISOString().split('T')[0]);
+  const [liters, setLiters] = useState('');
+  const [amount, setAmount] = useState('');
+  const [invoice, setInvoice] = useState('');
+  const [heightCm, setHeightCm] = useState('');
+  const [files, setFiles] = useState([]);
+  const [isSubmitting, setIsSubmitting] = useState(false);
+  const [error, setError] = useState(null);
 
-const DEFAULT_MONTHLY_HISTORY = [
-  { month: "Nov 25", liters: 1350, height_cm: 58.5, label: "Novembre 2025" },
-  { month: "Déc 25", liters: 1080, height_cm: 46.8, label: "Décembre 2025" },
-  { month: "Jan (av.)", liters: 850, height_cm: 36.8, label: "Avant livraison 21/01" },
-  { month: "Jan (ap.)", liters: 2864, height_cm: 124.1, label: "Livraison Josse +2 014 L (21/01/2026)", isDelivery: true },
-  { month: "Fév 26", liters: 2390, height_cm: 103.6, label: "Février 2026" },
-  { month: "Mar 26", liters: 1950, height_cm: 84.5, label: "Mars 2026" },
-  { month: "Avr 26", liters: 1620, height_cm: 70.2, label: "Avril 2026" },
-  { month: "Mai 26", liters: 1450, height_cm: 62.8, label: "Mai 2026" },
-  { month: "Juin 26", liters: 1340, height_cm: 58.1, label: "Juin 2026" },
-  { month: "Juil 26", liters: 1250, height_cm: 54.2, label: "Juillet 2026" },
-  { month: "Août 26", liters: 1180, height_cm: 51.1, label: "Août 2026" },
-  { month: "Sep 26", liters: 1120, height_cm: 48.5, label: "Septembre 2026" },
-  { month: "17 Oct 26", liters: 1062, height_cm: 46.0, label: "Jauge M. Bompais (17/10/2026)", isCalibration: true }
-];
+  if (!isOpen) return null;
 
-const DEFAULT_DAILY_HISTORY = [
-  { date: "08/10", starts: 12, liters: 3.5 },
-  { date: "09/10", starts: 14, liters: 4.1 },
-  { date: "10/10", starts: 11, liters: 3.2 },
-  { date: "11/10", starts: 16, liters: 4.7 },
-  { date: "12/10", starts: 18, liters: 5.3 },
-  { date: "13/10", starts: 15, liters: 4.4 },
-  { date: "14/10", starts: 13, liters: 3.8 },
-  { date: "15/10", starts: 17, liters: 5.0 },
-  { date: "16/10", starts: 19, liters: 5.6 },
-  { date: "17/10", starts: 14, liters: 4.1 }
-];
+  const handleSubmit = async (e) => {
+    e.preventDefault();
+    setError(null);
 
-function FuelInteractiveGraph({ fuelHistory, heatingStatus }) {
+    const parsedLiters = parseFloat(liters);
+    const parsedAmount = parseFloat(amount);
+
+    if (isNaN(parsedLiters) || parsedLiters <= 0) {
+      setError('Veuillez renseigner un volume de fioul valide (> 0 L).');
+      return;
+    }
+    if (isNaN(parsedAmount) || parsedAmount <= 0) {
+      setError('Veuillez renseigner un montant TTC valide (> 0 €).');
+      return;
+    }
+
+    try {
+      setIsSubmitting(true);
+      const formData = new FormData();
+      formData.append('date', date);
+      formData.append('liters_delivered', String(parsedLiters));
+      formData.append('amount_ttc', String(parsedAmount));
+      if (invoice.trim()) {
+        formData.append('invoice', invoice.trim());
+      }
+      if (heightCm.trim() && !isNaN(parseFloat(heightCm))) {
+        formData.append('height_cm_after', String(parseFloat(heightCm)));
+      }
+      if (files && files.length > 0) {
+        for (let i = 0; i < files.length; i++) {
+          formData.append('files', files[i]);
+        }
+      }
+
+      const res = await fetch('/api/heating/fuel-deliveries', {
+        method: 'POST',
+        body: formData,
+      });
+
+      if (!res.ok) {
+        let errMessage = "Erreur lors de l'enregistrement de la livraison";
+        try {
+          const errJson = await res.json();
+          if (errJson.detail) errMessage = errJson.detail;
+        } catch (_) {
+          const txt = await res.text();
+          if (txt) errMessage = txt;
+        }
+        throw new Error(errMessage);
+      }
+
+      if (onSuccess) {
+        await onSuccess();
+      }
+      onClose();
+    } catch (err) {
+      console.error('Erreur enregistrement livraison:', err);
+      setError(err.message || "Une erreur est survenue lors de l'enregistrement.");
+    } finally {
+      setIsSubmitting(false);
+    }
+  };
+
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-900/60 backdrop-blur-sm animate-in fade-in duration-200">
+      <div className="bg-surface-container-lowest border border-border-subtle rounded-3xl max-w-lg w-full p-6 sm:p-8 shadow-2xl relative text-on-surface">
+        <div className="flex items-center justify-between pb-3 mb-4 border-b border-border-subtle">
+          <div className="flex items-center gap-2">
+            <span className="material-symbols-outlined text-emerald-700 text-[24px]">local_shipping</span>
+            <h3 className="text-lg font-bold text-primary">Enregistrer une livraison de fioul</h3>
+          </div>
+          <button
+            type="button"
+            onClick={onClose}
+            className="w-8 h-8 rounded-full flex items-center justify-center text-slate-400 hover:text-slate-600 hover:bg-slate-100 transition-colors cursor-pointer"
+          >
+            <span className="material-symbols-outlined text-[20px]">close</span>
+          </button>
+        </div>
+
+        {error && (
+          <div className="mb-4 p-3 rounded-xl bg-rose-50 border border-rose-300 text-rose-900 text-xs font-semibold flex items-center gap-2">
+            <span className="material-symbols-outlined text-rose-600 text-[18px] shrink-0">error</span>
+            <span>{error}</span>
+          </div>
+        )}
+
+        <form onSubmit={handleSubmit} className="space-y-4">
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+            <div>
+              <label className="block text-xs font-bold text-on-surface mb-1">Date de livraison *</label>
+              <input
+                type="date"
+                value={date}
+                onChange={(e) => setDate(e.target.value)}
+                className="w-full h-10 px-3 bg-canvas-slate border border-border-subtle rounded-xl text-xs text-on-surface focus:outline-none focus:border-primary"
+                required
+              />
+            </div>
+            <div>
+              <label className="block text-xs font-bold text-on-surface mb-1">Litres livrés (L) *</label>
+              <input
+                type="number"
+                placeholder="ex: 2000"
+                min="1"
+                step="1"
+                value={liters}
+                onChange={(e) => setLiters(e.target.value)}
+                className="w-full h-10 px-3 bg-canvas-slate border border-border-subtle rounded-xl text-xs text-on-surface focus:outline-none focus:border-primary"
+                required
+              />
+            </div>
+          </div>
+
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+            <div>
+              <label className="block text-xs font-bold text-on-surface mb-1">Prix TTC (€) *</label>
+              <input
+                type="number"
+                placeholder="ex: 2200.50"
+                min="0.01"
+                step="0.01"
+                value={amount}
+                onChange={(e) => setAmount(e.target.value)}
+                className="w-full h-10 px-3 bg-canvas-slate border border-border-subtle rounded-xl text-xs text-on-surface focus:outline-none focus:border-primary"
+                required
+              />
+            </div>
+            <div>
+              <label className="block text-xs font-bold text-on-surface mb-1">N° de Facture / Référence</label>
+              <input
+                type="text"
+                placeholder="ex: 101Z002495"
+                value={invoice}
+                onChange={(e) => setInvoice(e.target.value)}
+                className="w-full h-10 px-3 bg-canvas-slate border border-border-subtle rounded-xl text-xs text-on-surface focus:outline-none focus:border-primary"
+              />
+            </div>
+          </div>
+
+          <div>
+            <label className="block text-xs font-bold text-on-surface mb-1">
+              Hauteur jauge après livraison (cm, sur 130 cm)
+              <span className="text-[10.5px] font-normal text-on-surface-variant ml-1">(optionnel)</span>
+            </label>
+            <input
+              type="number"
+              placeholder="ex: 110 (si jauge physique effectuée)"
+              min="0"
+              max="130"
+              step="0.5"
+              value={heightCm}
+              onChange={(e) => setHeightCm(e.target.value)}
+              className="w-full h-10 px-3 bg-canvas-slate border border-border-subtle rounded-xl text-xs text-on-surface focus:outline-none focus:border-primary"
+            />
+            <span className="text-[10px] text-on-surface-variant mt-0.5 block">
+              Si non renseigné, le niveau en cuve est augmenté automatiquement du volume livré.
+            </span>
+          </div>
+
+          <div>
+            <label className="block text-xs font-bold text-on-surface mb-1">
+              Documents justificatifs (Facture PDF, Bon de livraison)
+            </label>
+            <input
+              type="file"
+              multiple
+              accept=".pdf,image/*"
+              onChange={(e) => setFiles(Array.from(e.target.files || []))}
+              className="w-full text-xs text-slate-500 file:mr-3 file:py-2 file:px-3 file:rounded-xl file:border-0 file:text-xs file:font-semibold file:bg-emerald-50 file:text-emerald-700 hover:file:bg-emerald-100 cursor-pointer"
+            />
+          </div>
+
+          <div className="flex items-center justify-end gap-3 pt-4 border-t border-border-subtle">
+            <button
+              type="button"
+              onClick={onClose}
+              disabled={isSubmitting}
+              className="px-5 py-2.5 rounded-full text-xs font-semibold text-on-surface hover:bg-canvas-slate cursor-pointer disabled:opacity-50"
+            >
+              Annuler
+            </button>
+            <button
+              type="submit"
+              disabled={isSubmitting}
+              className="px-6 py-2.5 rounded-full bg-primary hover:bg-forest-deep text-white text-xs font-bold shadow-sm transition disabled:opacity-50 flex items-center gap-1.5 cursor-pointer"
+            >
+              {isSubmitting ? (
+                <>
+                  <span className="material-symbols-outlined animate-spin text-[16px]">progress_activity</span>
+                  <span>Enregistrement...</span>
+                </>
+              ) : (
+                <>
+                  <span className="material-symbols-outlined text-[16px]">save</span>
+                  <span>Enregistrer la livraison</span>
+                </>
+              )}
+            </button>
+          </div>
+        </form>
+      </div>
+    </div>
+  );
+}
+
+function FuelInteractiveGraph({ fuelHistory, heatingStatus, onRefreshFuel }) {
   const [activeTab, setActiveTab] = useState('annual'); // 'annual' | 'daily'
+  const [isDeliveryModalOpen, setIsDeliveryModalOpen] = useState(false);
+
+  // Tant que fuelHistory est null, conteneur fixe h-[250px] pour éviter tout saut de layout
+  if (!fuelHistory) {
+    return (
+      <div className="mt-4 p-4 sm:p-5 bg-white dark:bg-slate-900 rounded-2xl border border-border-subtle shadow-xs flex flex-col gap-4">
+        <div className="flex items-center gap-2 border-b border-border-subtle pb-3">
+          <span className="material-symbols-outlined text-amber-600 text-[22px]">monitoring</span>
+          <h4 className="font-headline-sm text-sm sm:text-base font-bold text-forest-deep dark:text-emerald-100">
+            Télémétrie Fioul Cuve &amp; Brûleur Viessmann
+          </h4>
+        </div>
+        <div className="w-full h-[250px] flex items-center justify-center bg-slate-50/70 dark:bg-slate-900/60 rounded-xl border border-slate-200/80 dark:border-slate-800">
+          <div className="flex items-center gap-2 text-xs text-on-surface-variant font-medium">
+            <span className="material-symbols-outlined animate-spin text-[20px] text-amber-600">progress_activity</span>
+            <span>Chargement de la télémétrie et historique fioul...</span>
+          </div>
+        </div>
+      </div>
+    );
+  }
 
   const monthlyData = (fuelHistory?.monthly_history && fuelHistory.monthly_history.length > 0)
     ? fuelHistory.monthly_history
-    : DEFAULT_MONTHLY_HISTORY;
+    : [];
 
   const dailyData = (fuelHistory?.daily_history && fuelHistory.daily_history.length > 0)
     ? fuelHistory.daily_history
-    : DEFAULT_DAILY_HISTORY;
+    : [];
 
   const deliveries = (fuelHistory?.deliveries && fuelHistory.deliveries.length > 0)
     ? fuelHistory.deliveries
-    : DEFAULT_FUEL_DELIVERIES;
+    : [];
 
-  // Dimensions SVG adaptatives
-  const svgWidth = 720;
-  const svgHeight = 220;
+  // Dimensions SVG adaptatives (Exigence #1 : stabilité géométrique h-[250px], overflow-hidden et paddingTop = 44)
+  const svgWidth = 760;
+  const svgHeight = 250;
   const paddingLeft = 60;
   const paddingRight = 40;
-  const paddingTop = 25;
+  const paddingTop = 44;
   const paddingBottom = 40;
   const plotWidth = svgWidth - paddingLeft - paddingRight;
   const plotHeight = svgHeight - paddingTop - paddingBottom;
   const maxLiters = 3000;
 
   const points = monthlyData.map((d, i) => {
-    const x = paddingLeft + (i / (monthlyData.length - 1)) * plotWidth;
-    const y = paddingTop + plotHeight * (1 - Math.min(maxLiters, Math.max(0, d.liters)) / maxLiters);
-    return { ...d, x, y };
+    const rawLiters = Number(d.liters ?? d.stock_liters ?? 0);
+    const clampedLiters = Math.min(maxLiters, Math.max(0, rawLiters));
+    const x = paddingLeft + (monthlyData.length > 1 ? (i / (monthlyData.length - 1)) * plotWidth : plotWidth / 2);
+    const rawY = paddingTop + plotHeight * (1 - clampedLiters / maxLiters);
+    const y = Math.min(svgHeight - paddingBottom, Math.max(paddingTop, rawY));
+    return { ...d, liters: clampedLiters, rawLiters, x, y };
   });
 
-  const pathD = points.reduce((acc, p, i) => `${acc} ${i === 0 ? 'M' : 'L'} ${p.x.toFixed(1)},${p.y.toFixed(1)}`, '');
-  const areaD = `${pathD} L ${points[points.length - 1].x.toFixed(1)},${(paddingTop + plotHeight).toFixed(1)} L ${points[0].x.toFixed(1)},${(paddingTop + plotHeight).toFixed(1)} Z`;
+  const pathD = points.length > 0
+    ? points.reduce((acc, p, i) => `${acc} ${i === 0 ? 'M' : 'L'} ${p.x.toFixed(1)},${p.y.toFixed(1)}`, '')
+    : '';
+  const areaD = points.length > 0
+    ? `${pathD} L ${points[points.length - 1].x.toFixed(1)},${(paddingTop + plotHeight).toFixed(1)} L ${points[0].x.toFixed(1)},${(paddingTop + plotHeight).toFixed(1)} Z`
+    : '';
 
   const maxDailyStarts = Math.max(...dailyData.map((d) => d.daily_starts || d.starts || 1), 20);
+
+  const totalDelivered = deliveries.reduce((acc, d) => acc + Number(d.liters_delivered ?? d.liters ?? 0), 0);
+  const remainingLiters = heatingStatus?.fuel_liters_remaining != null
+    ? heatingStatus.fuel_liters_remaining
+    : (fuelHistory?.calibration?.liters_remaining ?? (points.length > 0 ? points[points.length - 1].liters : 0));
 
   return (
     <div className="mt-4 p-4 sm:p-5 bg-white dark:bg-slate-900 rounded-2xl border border-border-subtle shadow-xs flex flex-col gap-4">
@@ -281,7 +499,7 @@ function FuelInteractiveGraph({ fuelHistory, heatingStatus }) {
               Télémétrie Fioul Cuve &amp; Brûleur Viessmann
             </h4>
             <p className="text-[11px] text-on-surface-variant">
-              Jauge physique M. Bompais (17/10/2026 : 46 cm = 1 062 L) • 4 factures Éts JOSSE SAS
+              Calcul temps réel asservi aux démarrages du brûleur ({heatingStatus?.burner_starts?.toLocaleString('fr-FR') || '—'} démarrages • {heatingStatus?.burner_hours?.toLocaleString('fr-FR') || '—'} h)
             </p>
           </div>
         </div>
@@ -297,7 +515,7 @@ function FuelInteractiveGraph({ fuelHistory, heatingStatus }) {
                 : 'text-slate-600 dark:text-slate-400 hover:text-slate-900'
             }`}
           >
-            Historique Annuel Cuve &amp; Livraisons Josse
+            Historique Annuel Cuve &amp; Livraisons
           </button>
           <button
             type="button"
@@ -316,12 +534,12 @@ function FuelInteractiveGraph({ fuelHistory, heatingStatus }) {
       {/* Contenu Onglet 1 : Historique Annuel Cuve & Livraisons */}
       {activeTab === 'annual' && (
         <div className="flex flex-col gap-4">
-          <div className="w-full overflow-x-auto">
+          <div className="relative w-full h-[250px] overflow-hidden rounded-xl bg-slate-50/70 dark:bg-slate-900/60 border border-slate-200/80 dark:border-slate-800 p-2">
             <svg
               viewBox={`0 0 ${svgWidth} ${svgHeight}`}
-              className="w-full h-auto min-w-[620px] select-none"
+              className="w-full h-full select-none"
               role="img"
-              aria-label="Courbe annuelle du stock de fioul et livraisons Josse"
+              aria-label="Courbe annuelle du stock de fioul et livraisons"
             >
               <defs>
                 <linearGradient id="fuelFillGradient" x1="0" y1="0" x2="0" y2="1">
@@ -332,7 +550,7 @@ function FuelInteractiveGraph({ fuelHistory, heatingStatus }) {
 
               {/* Lignes de repère horizontales */}
               {[3000, 2000, 1000, 0].map((val) => {
-                const y = paddingTop + plotHeight * (1 - val / maxLiters);
+                const y = Math.min(svgHeight - paddingBottom, Math.max(paddingTop, paddingTop + plotHeight * (1 - val / maxLiters)));
                 const cm = Math.round((val / 3000) * 130);
                 return (
                   <g key={val}>
@@ -341,7 +559,7 @@ function FuelInteractiveGraph({ fuelHistory, heatingStatus }) {
                       y1={y}
                       x2={svgWidth - paddingRight}
                       y2={y}
-                      stroke="#e2e8f0"
+                      stroke="#cbd5e1"
                       strokeDasharray={val > 0 ? "4 4" : "none"}
                       strokeWidth="1"
                     />
@@ -360,87 +578,137 @@ function FuelInteractiveGraph({ fuelHistory, heatingStatus }) {
               })}
 
               {/* Zone dégradée */}
-              <path d={areaD} fill="url(#fuelFillGradient)" />
+              {areaD && <path d={areaD} fill="url(#fuelFillGradient)" />}
 
               {/* Courbe principale */}
-              <path d={pathD} fill="none" stroke="#d97706" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round" />
+              {pathD && <path d={pathD} fill="none" stroke="#d97706" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round" />}
 
-              {/* Points mensuels et badges remarquables */}
-              {points.map((p, idx) => (
-                <g key={idx}>
-                  <circle
-                    cx={p.x}
-                    cy={p.y}
-                    r={p.isDelivery || p.isCalibration ? "5.5" : "3.5"}
-                    fill={p.isDelivery ? "#059669" : (p.isCalibration ? "#b45309" : "#ffffff")}
-                    stroke={p.isDelivery ? "#047857" : "#d97706"}
-                    strokeWidth="2"
-                  />
-                  {/* Label mois sur l'axe X */}
-                  <text
-                    x={p.x}
-                    y={svgHeight - 12}
-                    textAnchor="middle"
-                    fontSize="9.5"
-                    fill={p.isDelivery || p.isCalibration ? "#0f172a" : "#64748b"}
-                    fontWeight={p.isDelivery || p.isCalibration ? "bold" : "normal"}
-                  >
-                    {p.month}
-                  </text>
+              {/* Points mensuels et badges */}
+              {points.map((p, idx) => {
+                const hasDelivery = Boolean(p.is_delivery || p.isDelivery || (p.delivery_liters && p.delivery_liters > 0));
+                const hasCalibration = Boolean(p.is_calibration || p.isCalibration);
+                const badgeY = Math.max(6, p.y - 28);
+                const badgeX = Math.min(svgWidth - 140, Math.max(paddingLeft, p.x - 65));
 
-                  {/* Badge remarquable livraison du 21/01/2026 */}
-                  {p.isDelivery && (
-                    <g transform={`translate(${p.x - 65}, ${p.y - 28})`}>
-                      <rect width="130" height="20" rx="4" fill="#065f46" />
-                      <text x="65" y="13.5" fill="#ffffff" fontSize="9" fontWeight="bold" textAnchor="middle">
-                        +2 014 L Plein Josse (124 cm)
-                      </text>
-                    </g>
-                  )}
+                return (
+                  <g key={idx}>
+                    <circle
+                      cx={p.x}
+                      cy={p.y}
+                      r={hasDelivery || hasCalibration ? "5.5" : "3.5"}
+                      fill={hasDelivery ? "#059669" : (hasCalibration ? "#b45309" : "#ffffff")}
+                      stroke={hasDelivery ? "#047857" : "#d97706"}
+                      strokeWidth="2"
+                    />
+                    {/* Label mois sur l'axe X */}
+                    <text
+                      x={p.x}
+                      y={svgHeight - 12}
+                      textAnchor="middle"
+                      fontSize="9.5"
+                      fill={hasDelivery || hasCalibration ? "#0f172a" : "#64748b"}
+                      fontWeight={hasDelivery || hasCalibration ? "bold" : "normal"}
+                    >
+                      {p.label || p.month}
+                    </text>
 
-                  {/* Badge remarquable jaugeage M. Bompais du 17/10/2026 */}
-                  {p.isCalibration && (
-                    <g transform={`translate(${p.x - 70}, ${p.y - 28})`}>
-                      <rect width="140" height="20" rx="4" fill="#92400e" />
-                      <text x="70" y="13.5" fill="#ffffff" fontSize="9" fontWeight="bold" textAnchor="middle">
-                        1 062 L (46 cm) Jauge Bompais
-                      </text>
-                    </g>
-                  )}
-                </g>
-              ))}
+                    {/* Badge dynamique livraison */}
+                    {hasDelivery && (
+                      <g transform={`translate(${badgeX}, ${badgeY})`}>
+                        <rect width="130" height="20" rx="4" fill="#065f46" />
+                        <text x="65" y="13.5" fill="#ffffff" fontSize="9" fontWeight="bold" textAnchor="middle">
+                          +{p.delivery_liters || p.liters_delivered || ''} L ({p.liters} L)
+                        </text>
+                      </g>
+                    )}
+
+                    {/* Badge dynamique calibration */}
+                    {hasCalibration && !hasDelivery && (
+                      <g transform={`translate(${badgeX}, ${badgeY})`}>
+                        <rect width="140" height="20" rx="4" fill="#92400e" />
+                        <text x="70" y="13.5" fill="#ffffff" fontSize="9" fontWeight="bold" textAnchor="middle">
+                          {p.liters} L ({p.height_cm || Math.round((p.liters / 3000) * 130)} cm)
+                        </text>
+                      </g>
+                    )}
+                  </g>
+                );
+              })}
             </svg>
           </div>
 
-          {/* Table récapitulative des 4 livraisons réelles Josse */}
+          {/* Section Historique des livraisons de fioul */}
           <div className="mt-1 pt-3 border-t border-slate-100 dark:border-slate-800">
-            <div className="flex items-center justify-between mb-2">
-              <span className="text-xs font-bold text-forest-deep dark:text-emerald-200">
-                Historique Officiel des 4 Livraisons Éts JOSSE SAS (depuis la pose du 18/03/2024)
-              </span>
-              <span className="text-[11px] font-semibold text-slate-500">
-                Total livré : 7 615 L • Restant : 1 062 L • Brûlé : 6 553 L
-              </span>
+            <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 mb-3">
+              <div>
+                <span className="text-xs font-bold text-forest-deep dark:text-emerald-200 block">
+                  Historique des livraisons de fioul ({deliveries.length})
+                </span>
+                <span className="text-[11px] font-semibold text-slate-500">
+                  Total livré : {totalDelivered.toLocaleString('fr-FR')} L • Restant : {Math.round(remainingLiters).toLocaleString('fr-FR')} L
+                </span>
+              </div>
+              <button
+                type="button"
+                onClick={() => setIsDeliveryModalOpen(true)}
+                className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-emerald-700 hover:bg-emerald-800 text-white text-xs font-bold shadow-xs hover:shadow-sm transition-all cursor-pointer shrink-0 self-start sm:self-auto"
+              >
+                <span className="material-symbols-outlined text-[16px]">local_shipping</span>
+                <span>+ Enregistrer une livraison</span>
+              </button>
             </div>
-            <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-2 text-xs">
-              {deliveries.map((del, idx) => (
-                <div key={idx} className="p-2.5 rounded-xl bg-slate-50 dark:bg-slate-800/60 border border-slate-200 dark:border-slate-700 flex flex-col justify-between">
-                  <div>
-                    <div className="flex items-center justify-between font-bold text-forest-deep dark:text-emerald-200">
-                      <span>{del.date}</span>
-                      <span className="font-mono text-emerald-700 dark:text-emerald-400">+{del.liters_delivered || del.liters} L</span>
+
+            {deliveries.length === 0 ? (
+              <p className="text-xs text-slate-500 italic py-2">Aucune livraison enregistrée pour le moment.</p>
+            ) : (
+              <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-2 text-xs">
+                {deliveries.map((del, idx) => {
+                  const liters = Number(del.liters_delivered ?? del.liters ?? 0);
+                  const amount = Number(del.amount_ttc ?? (typeof del.amount === 'number' ? del.amount : parseFloat(String(del.amount || '').replace(/[^\d.,]/g, '').replace(',', '.')) || 0));
+                  const pricePerLiter = liters > 0 && amount > 0 ? (amount / liters).toFixed(3).replace('.', ',') : null;
+                  const docUrl = del.document_url || (del.document_id ? `/api/documents/${del.document_id}/download` : null);
+
+                  return (
+                    <div key={idx} className="p-2.5 rounded-xl bg-slate-50 dark:bg-slate-800/60 border border-slate-200 dark:border-slate-700 flex flex-col justify-between gap-2">
+                      <div>
+                        <div className="flex items-center justify-between font-bold text-forest-deep dark:text-emerald-200">
+                          <span>{del.date}</span>
+                          <span className="font-mono text-emerald-700 dark:text-emerald-400">+{liters.toLocaleString('fr-FR')} L</span>
+                        </div>
+                        {del.invoice && (
+                          <div className="text-[11px] text-slate-500 dark:text-slate-400 mt-0.5">
+                            Facture n° {del.invoice}
+                          </div>
+                        )}
+                      </div>
+                      <div className="mt-1 pt-1 border-t border-slate-200/60 dark:border-slate-700/60 flex items-center justify-between text-[11px] flex-wrap gap-1">
+                        <div className="flex flex-col">
+                          <span className="font-bold text-slate-800 dark:text-slate-100">
+                            {amount > 0 ? `${amount.toLocaleString('fr-FR', { minimumFractionDigits: 2, maximumFractionDigits: 2 })} €` : '—'}
+                          </span>
+                          {pricePerLiter && (
+                            <span className="text-[10px] text-slate-500 dark:text-slate-400">
+                              {pricePerLiter} €/L
+                            </span>
+                          )}
+                        </div>
+                        {docUrl && (
+                          <a
+                            href={docUrl}
+                            target="_blank"
+                            rel="noopener noreferrer"
+                            className="inline-flex items-center gap-1 px-2 py-0.5 rounded-md bg-emerald-50 dark:bg-emerald-950/40 text-emerald-800 dark:text-emerald-300 hover:bg-emerald-100 border border-emerald-200/60 text-[10px] font-semibold transition-colors"
+                          >
+                            <span className="material-symbols-outlined text-[13px]">description</span>
+                            <span>Facture PDF</span>
+                          </a>
+                        )}
+                      </div>
                     </div>
-                    <div className="text-[11px] text-slate-500 dark:text-slate-400 mt-0.5">
-                      Facture n° {del.invoice}
-                    </div>
-                  </div>
-                  <div className="mt-2 pt-1 border-t border-slate-200/60 dark:border-slate-700/60 flex items-center justify-between text-[11px]">
-                    <span className="text-slate-600 dark:text-slate-300 font-medium truncate" title={del.label}>{del.label}</span>
-                    <span className="font-bold text-slate-800 dark:text-slate-100 shrink-0 ml-1">{del.amount_ttc ? `${del.amount_ttc.toFixed(2).replace('.', ',')} €` : del.amount}</span>
-                  </div>
-                </div>
-              ))}
-            </div>
+                  );
+                })}
+              </div>
+            )}
           </div>
         </div>
       )}
@@ -511,10 +779,10 @@ function FuelInteractiveGraph({ fuelHistory, heatingStatus }) {
                 Heures Brûleur Cumulées
               </span>
               <span className="text-base font-bold text-slate-900 dark:text-slate-100 font-mono mt-0.5 block">
-                4 531 heures
+                {heatingStatus?.burner_hours != null ? `${heatingStatus.burner_hours.toLocaleString('fr-FR')} h` : '—'}
               </span>
               <span className="text-[10px] text-slate-500">
-                Depuis la pose (18/03/2024)
+                Compteur temps réel ViCare
               </span>
             </div>
 
@@ -523,15 +791,22 @@ function FuelInteractiveGraph({ fuelHistory, heatingStatus }) {
                 Allumages Brûleur Viessmann
               </span>
               <span className="text-base font-bold text-slate-900 dark:text-slate-100 font-mono mt-0.5 block">
-                25 072 allumages
+                {heatingStatus?.burner_starts != null ? `${heatingStatus.burner_starts.toLocaleString('fr-FR')} all.` : '—'}
               </span>
               <span className="text-[10px] text-slate-500">
-                Total brûlé : 7 337 L
+                {heatingStatus?.burner_starts != null ? `Total estimé : ${Math.round(heatingStatus.burner_starts * 0.293).toLocaleString('fr-FR')} L` : '—'}
               </span>
             </div>
           </div>
         </div>
       )}
+
+      {/* Modale d'enregistrement de livraison */}
+      <FuelDeliveryModal
+        isOpen={isDeliveryModalOpen}
+        onClose={() => setIsDeliveryModalOpen(false)}
+        onSuccess={onRefreshFuel}
+      />
     </div>
   );
 }
@@ -1180,6 +1455,25 @@ export default function VademecumPage({ properties, currentUser, reservations = 
       showToast(`Erreur : ${parseApiError(err)}`);
     } finally {
       setSavingThermal(false);
+    }
+  };
+
+  // Rafraîchissement direct de la télémétrie fioul et des livraisons
+  const refreshFuelTelemetry = async () => {
+    try {
+      const [freshHeatRes, freshFuelRes] = await Promise.allSettled([
+        fetchHeatingStatus({ forceRefresh: true, force: true }),
+        fetch('/api/heating/fuel-history').then((r) => (r.ok ? r.json() : null)).catch(() => null),
+      ]);
+      if (freshHeatRes.status === 'fulfilled' && freshHeatRes.value && !freshHeatRes.value.error) {
+        setHeatingStatus(freshHeatRes.value);
+        setHeatingError(null);
+      }
+      if (freshFuelRes.status === 'fulfilled' && freshFuelRes.value) {
+        setFuelHistory(freshFuelRes.value);
+      }
+    } catch (err) {
+      console.error('Erreur rafraîchissement télémétrie fioul:', err);
     }
   };
 
@@ -2164,13 +2458,17 @@ export default function VademecumPage({ properties, currentUser, reservations = 
                   </div>
                 </div>
 
-                {/* Jauge Fioul Calibrée (Cuve Éts JOSSE & Jauge M. Bompais 17/10/2026) */}
+                {/* Jauge Fioul Calibrée (Cuve Éts JOSSE & Télémétrie Dynamique) */}
                 {(() => {
                   const fuelRemaining = heatingStatus?.fuel_liters_remaining != null ? heatingStatus.fuel_liters_remaining : (fuelHistory?.calibration?.liters_remaining ?? 1062.0);
                   const fuelCapacity = heatingStatus?.fuel_capacity_liters != null ? heatingStatus.fuel_capacity_liters : (fuelHistory?.calibration?.capacity_liters ?? 3000.0);
                   const fuelPercent = heatingStatus?.fuel_level_percent != null ? heatingStatus.fuel_level_percent : (fuelHistory?.calibration ? Number(((fuelRemaining / fuelCapacity) * 100).toFixed(1)) : 35.4);
                   const fuelHeight = heatingStatus?.fuel_height_cm != null ? heatingStatus.fuel_height_cm : (fuelHistory?.calibration?.height_cm ?? 46.0);
                   const tankHeight = heatingStatus?.fuel_tank_height_cm != null ? heatingStatus.fuel_tank_height_cm : (fuelHistory?.calibration?.tank_height_cm ?? 130.0);
+                  const lastDelivery = (fuelHistory?.deliveries && fuelHistory.deliveries.length > 0)
+                    ? fuelHistory.deliveries[fuelHistory.deliveries.length - 1]
+                    : null;
+                  const todayLiters = heatingStatus?.today_fuel_liters ?? (fuelHistory?.daily_history && fuelHistory.daily_history.length > 0 ? fuelHistory.daily_history[fuelHistory.daily_history.length - 1]?.liters : null);
 
                   return (
                     <div className="p-3.5 bg-white dark:bg-slate-900 rounded-xl border border-border-subtle flex flex-col gap-2.5 shadow-2xs">
@@ -2198,24 +2496,26 @@ export default function VademecumPage({ properties, currentUser, reservations = 
                       {/* Level indicators */}
                       <div className="flex items-center justify-between text-[10px] font-semibold text-on-surface-variant/80 px-0.5">
                         <span>0 L (0 cm)</span>
-                        <span>1 062 L ({fuelHeight} cm)</span>
-                        <span>3 000 L ({tankHeight} cm)</span>
+                        <span className="text-amber-700 dark:text-amber-400 font-bold">{Math.round(fuelRemaining).toLocaleString('fr-FR')} L ({fuelHeight} cm)</span>
+                        <span>{fuelCapacity.toLocaleString('fr-FR')} L ({tankHeight} cm)</span>
                       </div>
 
-                      {/* Calibration summary info */}
-                      <div className="text-[10.5px] text-slate-600 dark:text-slate-400 bg-amber-50/50 dark:bg-amber-950/20 p-2 rounded-lg border border-amber-200/50 flex flex-col gap-0.5 leading-tight">
-                        <div className="flex items-center justify-between">
-                          <span><strong>Jauge physique M. Bompais (17/10/2026) :</strong></span>
-                          <span className="font-bold text-amber-900 dark:text-amber-200">46 cm / 130 cm (1 062 L)</span>
+                      {/* Indicateurs calculés en temps réel */}
+                      <div className="text-[10.5px] text-slate-600 dark:text-slate-400 bg-slate-50 dark:bg-slate-800/60 p-2 rounded-lg border border-border-subtle flex flex-col gap-1 leading-tight">
+                        <div className="flex items-center justify-between flex-wrap gap-1">
+                          <span>Débit brûleur : <strong className="text-on-surface">0,293 L / démarrage • 1,62 L / h</strong></span>
+                          {todayLiters != null && (
+                            <span className="font-semibold text-amber-700 dark:text-amber-400">Aujourd'hui : {todayLiters} L</span>
+                          )}
                         </div>
-                        <div className="flex items-center justify-between text-slate-500">
-                          <span>Dernier plein Éts JOSSE (+2 014 L) :</span>
-                          <span>21/01/2026</span>
-                        </div>
-                        <div className="flex items-center justify-between text-slate-500">
-                          <span>Consommation brûleur Viessmann :</span>
-                          <span>0,293 L/allumage • 1,62 L/h</span>
-                        </div>
+                        {lastDelivery && (
+                          <div className="flex items-center justify-between text-[10px] text-slate-500 dark:text-slate-400 pt-0.5 border-t border-slate-200/50 dark:border-slate-700/50">
+                            <span>Dernière livraison enregistrée :</span>
+                            <span className="font-medium text-slate-700 dark:text-slate-200">
+                              {lastDelivery.date} (+{Number(lastDelivery.liters_delivered ?? lastDelivery.liters ?? 0).toLocaleString('fr-FR')} L)
+                            </span>
+                          </div>
+                        )}
                       </div>
                     </div>
                   );
@@ -2718,10 +3018,7 @@ export default function VademecumPage({ properties, currentUser, reservations = 
         </div>
         )}
 
-        {/* Graphe Annuel & Quotidien Fioul (Josse / Bompais — Annotation 3) */}
-        <FuelInteractiveGraph fuelHistory={fuelHistory} heatingStatus={heatingStatus} />
-
-        {/* Action Button: Enregistrer les modifications thermiques (Annotation 2) */}
+        {/* Action Button: Enregistrer les consignes thermiques (Annotation 1 & 2) */}
         <div className="flex flex-col sm:flex-row items-center justify-between gap-4 pt-4 border-t border-border-subtle">
           <div className="flex items-center gap-2 text-xs text-on-surface-variant">
             <span className="material-symbols-outlined text-primary text-[18px]">mail</span>
@@ -2734,9 +3031,13 @@ export default function VademecumPage({ properties, currentUser, reservations = 
             className="w-full sm:w-auto px-6 py-3 rounded-xl bg-primary hover:bg-forest-deep text-white font-bold text-sm shadow-sm hover:shadow-md transition-all flex items-center justify-center gap-2 cursor-pointer disabled:opacity-50 whitespace-nowrap"
           >
             <span className="material-symbols-outlined text-[20px]">save</span>
-            <span>{savingThermal ? 'Enregistrement en cours...' : 'Enregistrer les modifications thermiques'}</span>
+            <span>{savingThermal ? 'Enregistrement en cours...' : 'Enregistrer les consignes thermiques'}</span>
           </button>
         </div>
+
+        {/* Graphe Annuel & Quotidien Fioul (Josse / Bompais — Annotation 3) */}
+        <FuelInteractiveGraph fuelHistory={fuelHistory} heatingStatus={heatingStatus} onRefreshFuel={refreshFuelTelemetry} />
+
 
       </section>
 

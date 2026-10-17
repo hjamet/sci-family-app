@@ -34,15 +34,23 @@ FLOW_LITERS_PER_HOUR: float = 1.62
 LITERS_PER_START: float = 0.293
 
 
-def calculate_fuel_telemetry(burner_hours: Optional[int], burner_starts: Optional[int]) -> Dict[str, Any]:
+def calculate_fuel_telemetry(
+    burner_hours: Optional[int],
+    burner_starts: Optional[int],
+    base_liters: float = CALIBRATION_LITERS,
+    base_starts: int = CALIBRATION_BURNER_STARTS,
+    base_hours: int = CALIBRATION_BURNER_HOURS,
+    added_liters_since_base: float = 0.0,
+    calibration_info: Optional[str] = None
+) -> Dict[str, Any]:
     """
     Calcule la jauge de fioul exacte basée sur la calibration physique de M. Bompais (17/10/2026)
-    et les compteurs officiels Viessmann (allumages & heures brûleur).
+    ou toute nouvelle livraison/calibration, et les compteurs officiels Viessmann (allumages & heures brûleur).
     """
-    delta_starts = max(0, (int(burner_starts) if burner_starts is not None else CALIBRATION_BURNER_STARTS) - CALIBRATION_BURNER_STARTS)
-    delta_hours = max(0, (int(burner_hours) if burner_hours is not None else CALIBRATION_BURNER_HOURS) - CALIBRATION_BURNER_HOURS)
+    delta_starts = max(0, (int(burner_starts) if burner_starts is not None else base_starts) - base_starts)
+    delta_hours = max(0, (int(burner_hours) if burner_hours is not None else base_hours) - base_hours)
     consumed_liters = round(max(delta_starts * LITERS_PER_START, delta_hours * FLOW_LITERS_PER_HOUR), 2)
-    fuel_liters_remaining = round(max(0.0, CALIBRATION_LITERS - consumed_liters), 1)
+    fuel_liters_remaining = round(min(TANK_CAPACITY_LITERS, max(0.0, base_liters + added_liters_since_base - consumed_liters)), 1)
     fuel_level_percent = round((fuel_liters_remaining / TANK_CAPACITY_LITERS) * 100.0, 1)
     fuel_height_cm = round((fuel_liters_remaining / TANK_CAPACITY_LITERS) * TANK_TOTAL_HEIGHT_CM, 1)
 
@@ -55,7 +63,7 @@ def calculate_fuel_telemetry(burner_hours: Optional[int], burner_starts: Optiona
         "fuel_liters_per_start": LITERS_PER_START,
         "fuel_liters_per_hour": FLOW_LITERS_PER_HOUR,
         "fuel_nozzle_spec": f"{NOZZLE_SPEC} ({FLOW_LITERS_PER_HOUR} L/h • {LITERS_PER_START} L/allumage)",
-        "fuel_calibration_info": f"Jauge M. Bompais 17/10/2026 : {CALIBRATION_HEIGHT_CM:.0f} cm / {TANK_TOTAL_HEIGHT_CM:.0f} cm (1 062 L) • Dernier plein Josse : 21/01/2026 (+2 014 L)",
+        "fuel_calibration_info": calibration_info,
         "fuel_supplier": "Éts JOSSE SAS",
     }
 

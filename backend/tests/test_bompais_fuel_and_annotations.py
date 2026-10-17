@@ -58,7 +58,7 @@ def test_fuel_telemetry_calculation_exact_bompais_calibration():
     assert base["fuel_liters_per_start"] == 0.293
     assert base["fuel_liters_per_hour"] == 1.62
     assert "Danfoss 0,50" in base["fuel_nozzle_spec"]
-    assert "1 062 L" in base["fuel_calibration_info"]
+    assert base["fuel_calibration_info"] is None
 
     # 2. Simulation d'augmentation des allumages (+10 allumages -> 2.93 L brûlés)
     res_starts = calculate_fuel_telemetry(CALIBRATION_BURNER_HOURS, CALIBRATION_BURNER_STARTS + 10)
@@ -77,6 +77,16 @@ def test_fuel_telemetry_calculation_exact_bompais_calibration():
     assert none_res["fuel_liters_remaining"] == 1062.0
     assert none_res["fuel_level_percent"] == 35.4
     assert none_res["fuel_height_cm"] == 46.0
+
+    # 5. Calcul avec livraison additionnelle dynamique (ex: +500 L)
+    res_added = calculate_fuel_telemetry(CALIBRATION_BURNER_HOURS, CALIBRATION_BURNER_STARTS, added_liters_since_base=500.0)
+    assert res_added["fuel_liters_remaining"] == 1562.0
+    assert res_added["fuel_level_percent"] == 52.1
+
+    # 6. Bornage à la capacité maximale de la cuve (3000 L)
+    res_overflow = calculate_fuel_telemetry(CALIBRATION_BURNER_HOURS, CALIBRATION_BURNER_STARTS, added_liters_since_base=3000.0)
+    assert res_overflow["fuel_liters_remaining"] == 3000.0
+    assert res_overflow["fuel_level_percent"] == 100.0
 
 
 def test_fuel_telemetry_in_vicare_get_status():
@@ -122,24 +132,32 @@ def test_heating_fuel_history_endpoint():
 
     # Vérification livraisons officielles Éts JOSSE SAS
     deliveries = data["deliveries"]
-    assert len(deliveries) == 4
-    total_delivered = sum(d["liters_delivered"] for d in deliveries)
+    assert len(deliveries) >= 4
+    total_delivered = sum(d["liters_delivered"] for d in deliveries[:4])
     assert total_delivered == 2128 + 1253 + 2220 + 2014
     invoices = [d["invoice"] for d in deliveries]
     assert "0124101209" in invoices
     assert "101Z002495" in invoices
+    # Vérification absence de labels narratifs
+    for d in deliveries:
+        assert d.get("label", "") == ""
 
     # Vérification série mensuelle (12 mois avec pic janvier 2026 et jauge octobre 2026)
     monthly = data["monthly_history"]
     assert len(monthly) == 12
     jan_2026 = next(m for m in monthly if m["month"] == "2026-01")
     assert jan_2026["stock_liters"] == 2864.0
+    assert jan_2026["liters"] == 2864.0
     assert jan_2026["height_cm"] == 124.1
     assert jan_2026["delivery_liters"] == 2014
+    assert jan_2026["is_delivery"] is True
+    assert "event" not in jan_2026
 
     oct_2026 = next(m for m in monthly if m["month"] == "2026-10")
     assert oct_2026["stock_liters"] == 1062.0
+    assert oct_2026["liters"] == 1062.0
     assert oct_2026["height_cm"] == 46.0
+    assert "event" not in oct_2026
 
     # Vérification suivi quotidien
     daily = data["daily_history"]
@@ -148,6 +166,74 @@ def test_heating_fuel_history_endpoint():
     assert day_17 is not None
     assert day_17["burner_starts"] >= 25072
     assert day_17["fuel_liters_remaining"] <= 1062.0
+    assert day_17["liters_remaining"] <= 1062.0
+
+
+def test_create_fuel_delivery_json():
+    """Vérifie l'enregistrement d'une livraison via payload JSON et mise à jour immédiate du stock."""
+    from app.database import SessionLocal
+    db = SessionLocal()
+    try:
+        payload = {
+            "date": "2026-10-25",
+            "liters_delivered": 1500.0,
+            "amount_ttc": 1650.00,
+            "invoice": "101Z999999",
+            "height_cm_after": 111.0
+        }
+        res = client.post("/api/heating/fuel-deliveries", json=payload)
+        assert res.status_code == 200
+        data = res.json()
+        assert data["status"] == "ok"
+        assert data["fuel_height_cm"] == 111.0
+        assert data["fuel_liters_remaining"] == round((111.0 / 130.0) * 3000.0, 1)
+
+        # Vérifier dans GET /api/heating/fuel-history
+        hist_res = client.get("/api/heating/fuel-history")
+        assert hist_res.status_code == 200
+        hist_data = hist_res.json()
+        invs = [d["invoice"] for d in hist_data["deliveries"]]
+        assert "101Z999999" in invs
+    finally:
+        db.query(Log).filter(Log.action == "FUEL_DELIVERY", Log.user_name == "2026-10-25").delete()
+        db.commit()
+        db.close()
+
+
+def test_create_fuel_delivery_multipart_with_document():
+    """Vérifie l'enregistrement d'une livraison via multipart/form-data avec fichier justificatif PDF."""
+    from app.database import SessionLocal
+    from app.models import AdminDocument
+    db = SessionLocal()
+    try:
+        dummy_pdf = b"%PDF-1.4 dummy fuel invoice content"
+        files = {
+            "files": ("Facture_Josse_Test.pdf", dummy_pdf, "application/pdf")
+        }
+        data = {
+            "date": "2026-10-26",
+            "liters_delivered": "800",
+            "amount_ttc": "920.50",
+            "invoice": "101Z888888"
+        }
+        res = client.post("/api/heating/fuel-deliveries", data=data, files=files)
+        assert res.status_code == 200
+        resp_data = res.json()
+        assert resp_data["status"] == "ok"
+        deliv = resp_data["delivery"]
+        assert deliv["invoice"] == "101Z888888"
+        assert deliv["document_id"] is not None
+        assert deliv["document_url"].startswith("/api/documents/")
+
+        # Vérifier que le document a été indexé dans AdminDocument
+        doc = db.query(AdminDocument).filter(AdminDocument.id == deliv["document_id"]).first()
+        assert doc is not None
+        assert doc.category == "Travaux & Factures"
+    finally:
+        db.query(Log).filter(Log.action == "FUEL_DELIVERY", Log.user_name == "2026-10-26").delete()
+        db.query(AdminDocument).filter(AdminDocument.notes.ilike("%101Z888888%")).delete()
+        db.commit()
+        db.close()
 
 
 def test_record_daily_fuel_snapshot():
