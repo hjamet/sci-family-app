@@ -8055,100 +8055,157 @@ def get_heating_fuel_history(db: Session = Depends(get_db)):
         if current_liters is not None:
             snapshots_by_date[today_str]["fuel_liters_remaining"] = current_liters
 
-    FRENCH_MONTH_NAMES = {
-        1: "Jan", 2: "Fév", 3: "Mar", 4: "Avr", 5: "Mai", 6: "Juin",
-        7: "Juil", 8: "Août", 9: "Sep", 10: "Oct", 11: "Nov", 12: "Déc"
-    }
-
-    # Calcul du nombre de jours de chaque mois dans les 12 mois glissants
-    days_per_month = []
-    for (y, m) in months_tuples:
-        if y == cur_y and m == cur_m:
-            days = max(1, now.day)
-        else:
-            if m == 12:
-                next_date = datetime(y + 1, 1, 1)
-            else:
-                next_date = datetime(y, m + 1, 1)
-            days = (next_date - datetime(y, m, 1)).days
-        days_per_month.append(days)
-
-    # Répartition purement uniforme au prorata du nombre de jours réels
-    # entre la dernière livraison (2014 L livrés en janv. 2026) et le stock mesuré (1062 L en oct. 2026),
-    # sans inventer de pondération saisonnière arbitraire (Annotation 7)
-    last_deliv_idx = None
-    for idx, (y, m) in enumerate(months_tuples):
-        m_str = f"{y:04d}-{m:02d}"
-        if any(d.get("date", "").startswith(m_str) for d in deliveries if float(d.get("liters_delivered", 0)) > 0):
-            last_deliv_idx = idx
-
-    post_delivery_indices = list(range(last_deliv_idx + 1, 12)) if last_deliv_idx is not None and last_deliv_idx < 11 else list(range(0, 12))
-    total_post_days = sum(days_per_month[i] for i in post_delivery_indices)
-
-    # Calcul dynamique de la consommation depuis la dernière livraison
-    ref_delivery_stock = 2864.0
-    if deliveries:
-        last_d = deliveries[-1]
-        if last_d.get("stock_after"):
-            try:
-                ref_delivery_stock = float(last_d["stock_after"])
-            except (ValueError, TypeError):
-                ref_delivery_stock = 2864.0
-    ref_stock = min(TANK_CAPACITY_LITERS, ref_delivery_stock)
-    curr_l = current_liters if current_liters is not None else 1062.0
-    total_post_consumption = max(0.0, round(ref_stock - curr_l, 1))
-
-    daily_rate = total_post_consumption / total_post_days if total_post_days > 0 else (total_post_consumption / 259.0 if total_post_consumption > 0 else 0.0)
-
-    consumed = [0.0] * 12
-    delivered = [0.0] * 12
-
-    for idx, (y, m) in enumerate(months_tuples):
-        m_str = f"{y:04d}-{m:02d}"
-        m_deliveries = [d for d in deliveries if d.get("date", "").startswith(m_str)]
-        delivered[idx] = sum(float(d.get("liters_delivered", 0.0)) for d in m_deliveries)
-        consumed[idx] = round(days_per_month[idx] * daily_rate, 1)
-
-    if post_delivery_indices:
-        diff_post = round(total_post_consumption - sum(consumed[i] for i in post_delivery_indices), 1)
-        if diff_post != 0.0:
-            consumed[post_delivery_indices[-1]] = round(consumed[post_delivery_indices[-1]] + diff_post, 1)
-
-    # Récurrence rétrograde exacte depuis le stock temps réel courant current_liters
-    stock_end = [0.0] * 12
-    stock_end[11] = current_liters
-
-    for i in range(11, 0, -1):
-        prev_y, prev_m = months_tuples[i - 1]
-        prev_m_str = f"{prev_y:04d}-{prev_m:02d}"
-        month_snaps = [
-            s for s in snapshots_by_month.get(prev_m_str, [])
-            if s.get("fuel_liters_remaining") is not None
-        ]
-        if month_snaps:
-            stock_end[i - 1] = round(float(month_snaps[-1]["fuel_liters_remaining"]), 1)
-        else:
-            stock_end[i - 1] = round(
-                min(TANK_CAPACITY_LITERS, max(0.0, stock_end[i] + consumed[i] - delivered[i])),
-                1
-            )
+    def fmt_short_date(d_str: str) -> str:
+        if not d_str:
+            return ""
+        parts = d_str.split("-")
+        if len(parts) == 3:
+            return f"{parts[2]}/{parts[1]}/{parts[0][-2:]}"
+        return d_str
 
     monthly_history = []
-    for idx, (y, m) in enumerate(months_tuples):
-        m_str = f"{y:04d}-{m:02d}"
-        stock_val = stock_end[idx]
-        h_val = round((stock_val / TANK_CAPACITY_LITERS) * TANK_TOTAL_HEIGHT_CM, 1)
+
+    # 1. Livraisons antérieures au début de la télémétrie quotidienne (date < CALIBRATION_DATE)
+    hist_deliveries = [d for d in deliveries if d.get("date", "") < CALIBRATION_DATE]
+    hist_deliveries.sort(key=lambda d: d.get("date", ""))
+
+    for idx, d in enumerate(hist_deliveries):
+        d_date = d.get("date", "")
+        liters_deliv = float(d.get("liters_delivered", 0.0))
+        stock_after = float(d.get("stock_after", 2864.0))
+        stock_before = round(max(0.0, stock_after - liters_deliv), 1)
+
+        # Si ce n'est pas la toute première livraison de mise en service (idx > 0), point avant livraison
+        if idx > 0:
+            monthly_history.append({
+                "date": d_date,
+                "month": d_date[:7],
+                "label": f"{fmt_short_date(d_date)} (av. plein)",
+                "axis_label": "",
+                "liters": stock_before,
+                "stock_liters": stock_before,
+                "height_cm": round((stock_before / TANK_CAPACITY_LITERS) * TANK_TOTAL_HEIGHT_CM, 1),
+                "consumed_liters": liters_deliv,
+                "delivery_liters": 0.0,
+                "is_delivery": False,
+                "is_telemetry": False,
+                "point_type": "pre_delivery"
+            })
+
+        # Point après livraison
+        monthly_history.append({
+            "date": d_date,
+            "month": d_date[:7],
+            "label": f"{fmt_short_date(d_date)} (+{int(round(liters_deliv))} L)",
+            "axis_label": fmt_short_date(d_date),
+            "liters": stock_after,
+            "stock_liters": stock_after,
+            "height_cm": round((stock_after / TANK_CAPACITY_LITERS) * TANK_TOTAL_HEIGHT_CM, 1),
+            "consumed_liters": 0.0,
+            "delivery_liters": liters_deliv,
+            "is_delivery": True,
+            "is_telemetry": False,
+            "point_type": "delivery"
+        })
+
+    # 2. Point d'ancrage de la jauge physique (17/10/2026)
+    calib_consumed = round(2864.0 - CALIBRATION_LITERS, 1)
+    monthly_history.append({
+        "date": CALIBRATION_DATE,
+        "month": CALIBRATION_DATE[:7],
+        "label": "17/10/2026 (Jauge 46 cm)",
+        "axis_label": "17/10/26 (Jauge)",
+        "liters": CALIBRATION_LITERS,
+        "stock_liters": CALIBRATION_LITERS,
+        "height_cm": CALIBRATION_HEIGHT_CM,
+        "consumed_liters": calib_consumed,
+        "delivery_liters": 0.0,
+        "is_delivery": False,
+        "is_telemetry": True,
+        "point_type": "calibration"
+    })
+
+    # 3. Points de télémétrie réelle depuis le 17/10/2026 (livraisons >= CALIBRATION_DATE et snapshots)
+    post_deliveries = [d for d in deliveries if d.get("date", "") >= CALIBRATION_DATE]
+    post_deliveries.sort(key=lambda d: d.get("date", ""))
+
+    for d in post_deliveries:
+        d_date = d.get("date", "")
+        liters_deliv = float(d.get("liters_delivered", 0.0))
+        stock_after = float(d.get("stock_after", 2864.0))
+        stock_before = round(max(0.0, stock_after - liters_deliv), 1)
 
         monthly_history.append({
-            "month": m_str,
-            "label": f"{FRENCH_MONTH_NAMES.get(m, str(m))} {y}",
-            "liters": stock_val,
-            "stock_liters": stock_val,
-            "height_cm": h_val,
-            "consumed_liters": round(consumed[idx], 1),
-            "delivery_liters": round(delivered[idx], 1),
-            "is_delivery": bool(delivered[idx] > 0)
+            "date": d_date,
+            "month": d_date[:7],
+            "label": f"{fmt_short_date(d_date)} (av. plein)",
+            "axis_label": "",
+            "liters": stock_before,
+            "stock_liters": stock_before,
+            "height_cm": round((stock_before / TANK_CAPACITY_LITERS) * TANK_TOTAL_HEIGHT_CM, 1),
+            "consumed_liters": liters_deliv,
+            "delivery_liters": 0.0,
+            "is_delivery": False,
+            "is_telemetry": True,
+            "point_type": "pre_delivery"
         })
+        monthly_history.append({
+            "date": d_date,
+            "month": d_date[:7],
+            "label": f"{fmt_short_date(d_date)} (+{int(round(liters_deliv))} L)",
+            "axis_label": fmt_short_date(d_date),
+            "liters": stock_after,
+            "stock_liters": stock_after,
+            "height_cm": round((stock_after / TANK_CAPACITY_LITERS) * TANK_TOTAL_HEIGHT_CM, 1),
+            "consumed_liters": 0.0,
+            "delivery_liters": liters_deliv,
+            "is_delivery": True,
+            "is_telemetry": True,
+            "point_type": "delivery"
+        })
+
+    deliv_dates_post = {d.get("date", "") for d in post_deliveries}
+    post_snapshots = [
+        s for d_str, s in sorted(snapshots_by_date.items())
+        if d_str > CALIBRATION_DATE and d_str != today_str and s.get("fuel_liters_remaining") is not None
+    ]
+    for s in post_snapshots:
+        s_date = s["date"]
+        if s_date in deliv_dates_post:
+            continue
+        s_liters = round(float(s["fuel_liters_remaining"]), 1)
+        monthly_history.append({
+            "date": s_date,
+            "month": s_date[:7],
+            "label": fmt_short_date(s_date),
+            "axis_label": fmt_short_date(s_date),
+            "liters": s_liters,
+            "stock_liters": s_liters,
+            "height_cm": round((s_liters / TANK_CAPACITY_LITERS) * TANK_TOTAL_HEIGHT_CM, 1),
+            "consumed_liters": 0.0,
+            "delivery_liters": 0.0,
+            "is_delivery": False,
+            "is_telemetry": True,
+            "point_type": "snapshot"
+        })
+
+    # Point Temps Réel Aujourd'hui (Live)
+    live_stock_val = current_liters if current_liters is not None else CALIBRATION_LITERS
+    live_h = round((live_stock_val / TANK_CAPACITY_LITERS) * TANK_TOTAL_HEIGHT_CM, 1)
+    monthly_history.append({
+        "date": today_str,
+        "month": today_str[:7],
+        "label": "Aujourd'hui (Live)",
+        "axis_label": "Aujourd'hui (Live)",
+        "liters": live_stock_val,
+        "stock_liters": live_stock_val,
+        "height_cm": live_h,
+        "consumed_liters": round(max(0.0, CALIBRATION_LITERS - live_stock_val), 1),
+        "delivery_liters": 0.0,
+        "is_delivery": False,
+        "is_telemetry": True,
+        "point_type": "live"
+    })
 
     # Calcul dynamique de daily_starts et daily_liters sur 30 jours glissants
     sorted_dates = [d for d in sorted(snapshots_by_date.keys()) if d >= cutoff_date]

@@ -142,24 +142,40 @@ def test_heating_fuel_history_endpoint():
     for d in deliveries:
         assert d.get("label", "") == ""
 
-    # Vérification série mensuelle (12 mois avec pic janvier 2026 et jauge octobre 2026)
+    # Vérification des vrais points mesurés (livraisons, calibration, live, sans mois fictifs)
     monthly = data["monthly_history"]
-    assert len(monthly) == 12
-    jan_2026 = next(m for m in monthly if m["month"] == "2026-01")
-    assert jan_2026["stock_liters"] <= 2864.0
-    assert jan_2026["liters"] == jan_2026["stock_liters"]
-    assert jan_2026["height_cm"] == round((jan_2026["stock_liters"] / 3000.0) * 130.0, 1)
-    assert jan_2026["delivery_liters"] == 2014
-    assert jan_2026["is_delivery"] is True
-    assert "event" not in jan_2026
+    months_present = [m.get("month") for m in monthly]
+    assert "2026-02" not in months_present
+    assert "2026-05" not in months_present
+    assert "2026-08" not in months_present
 
-    oct_2026 = next(m for m in monthly if m["month"] == "2026-10")
-    assert oct_2026["stock_liters"] <= 1062.0
-    assert oct_2026["liters"] == oct_2026["stock_liters"]
-    assert oct_2026["height_cm"] == round((oct_2026["stock_liters"] / 3000.0) * 130.0, 1)
-    assert jan_2026["stock_liters"] == 2864.0
-    assert round(jan_2026["stock_liters"] - oct_2026["stock_liters"], 1) >= 1800.0
-    assert "event" not in oct_2026
+    # Point livraison de janvier 2026
+    jan_deliv = next(m for m in monthly if m["date"] == "2026-01-21" and m["point_type"] == "delivery")
+    assert jan_deliv["stock_liters"] == 2864.0
+    assert jan_deliv["delivery_liters"] == 2014.0
+    assert jan_deliv["is_delivery"] is True
+    assert jan_deliv["is_telemetry"] is False
+
+    # Point avant livraison de janvier 2026
+    jan_pre = next(m for m in monthly if m["date"] == "2026-01-21" and m["point_type"] == "pre_delivery")
+    assert jan_pre["stock_liters"] == 850.0
+    assert jan_pre["is_delivery"] is False
+    assert jan_pre["is_telemetry"] is False
+
+    # Point de calibration jauge du 17/10/2026
+    calib_pt = next(m for m in monthly if m["point_type"] == "calibration")
+    assert calib_pt["date"] == "2026-10-17"
+    assert calib_pt["stock_liters"] == 1062.0
+    assert calib_pt["height_cm"] == 46.0
+    assert calib_pt["is_telemetry"] is True
+    assert calib_pt["is_delivery"] is False
+
+    # Point temps réel Live
+    live_pt = next(m for m in monthly if m["point_type"] == "live")
+    assert live_pt["is_telemetry"] is True
+    assert live_pt["label"] == "Aujourd'hui (Live)"
+    assert live_pt["axis_label"] == "Aujourd'hui (Live)"
+    assert live_pt["stock_liters"] <= 1062.0
 
     # Vérification suivi quotidien
     daily = data["daily_history"]
@@ -541,23 +557,40 @@ def test_create_fuel_delivery_with_existing_document_ids():
         db.close()
 
 
-def test_heating_fuel_history_linear_uniform_distribution_without_seasonal_weights():
+def test_heating_fuel_history_only_real_measured_points_without_synthetic_interpolation():
     """
-    Vérifie que la consommation passée est répartie de manière purement uniforme
-    au prorata du nombre de jours réels sans poids saisonniers arbitraires (Annotation 7).
+    Vérifie que GET /api/heating/fuel-history ne génère aucun mois synthétique interpolé
+    (Phase 7 Option 2) et contient uniquement les vrais points mesurés :
+    livraisons avec saut vertical (pre_delivery/delivery), calibration charnière et point live.
     """
     res = client.get("/api/heating/fuel-history")
     assert res.status_code == 200
     data = res.json()
     monthly = data["monthly_history"]
 
-    # Février (28j) vs Mars (31j) : la consommation doit être strictement proportionnelle au nombre de jours
-    feb = next(m for m in monthly if m["month"] == "2026-02")
-    mar = next(m for m in monthly if m["month"] == "2026-03")
-    # Ratio 28 / 31 = ~0.9032
-    ratio = feb["consumed_liters"] / mar["consumed_liters"]
-    assert 0.89 <= ratio <= 0.92
-    assert feb["consumed_liters"] < mar["consumed_liters"]
+    # Aucun mois synthétique non mesuré
+    months_present = {m["month"] for m in monthly}
+    assert "2026-02" not in months_present
+    assert "2026-03" not in months_present
+    assert "2026-04" not in months_present
+    assert "2026-05" not in months_present
+    assert "2026-06" not in months_present
+    assert "2026-07" not in months_present
+    assert "2026-08" not in months_present
+    assert "2026-09" not in months_present
+
+    # Présence des points réels
+    pre_points = [m for m in monthly if m["point_type"] == "pre_delivery"]
+    deliv_points = [m for m in monthly if m["point_type"] == "delivery"]
+    assert len(pre_points) >= 3
+    assert len(deliv_points) >= 4
+
+    calib_pt = next(m for m in monthly if m["point_type"] == "calibration")
+    assert calib_pt["date"] == "2026-10-17"
+    assert calib_pt["is_telemetry"] is True
+
+    live_pt = next(m for m in monthly if m["point_type"] == "live")
+    assert live_pt["is_telemetry"] is True
 
 
 def test_generate_invoice_pdf_without_pymupdf_serverless_fallback(monkeypatch):

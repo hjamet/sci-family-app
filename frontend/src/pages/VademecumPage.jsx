@@ -525,11 +525,23 @@ function FuelInteractiveGraph({ fuelHistory, heatingStatus, onRefreshFuel }) {
   const points = monthlyData.map((d, i) => {
     const rawLiters = Number(d.liters ?? d.stock_liters ?? 0);
     const clampedLiters = Math.min(maxLiters, Math.max(0, rawLiters));
-    const x = paddingLeft + (monthlyData.length > 1 ? (i / (monthlyData.length - 1)) * plotWidth : plotWidth / 2);
+    let x = paddingLeft + (monthlyData.length > 1 ? (i / (monthlyData.length - 1)) * plotWidth : plotWidth / 2);
+    // Décaler légèrement en X (+4 px) le point after_delivery / delivery lorsqu'il partage la même date que pre_delivery
+    if (i > 0 && monthlyData[i - 1].date === d.date && (monthlyData[i - 1].point_type === 'pre_delivery' || d.point_type === 'delivery' || d.point_type === 'after_delivery' || d.is_delivery)) {
+      x = Math.min(svgWidth - paddingRight, x + 4);
+    }
     const rawY = paddingTop + plotHeight * (1 - clampedLiters / maxLiters);
     const y = Math.min(svgHeight - paddingBottom, Math.max(paddingTop, rawY));
     return { ...d, liters: clampedLiters, rawLiters, x, y };
   });
+
+  const firstTelemetryIdx = points.findIndex((p) => Boolean(p.is_telemetry));
+  const historicalPoints = firstTelemetryIdx === -1
+    ? points
+    : points.slice(0, firstTelemetryIdx + 1);
+  const telemetryPoints = firstTelemetryIdx === -1
+    ? []
+    : points.slice(firstTelemetryIdx);
 
   const pathD = points.length > 0
     ? points.reduce((acc, p, i) => `${acc} ${i === 0 ? 'M' : 'L'} ${p.x.toFixed(1)},${p.y.toFixed(1)}`, '')
@@ -590,7 +602,23 @@ function FuelInteractiveGraph({ fuelHistory, heatingStatus, onRefreshFuel }) {
 
       {/* Contenu Onglet 1 : Historique Annuel Cuve & Livraisons */}
       {activeTab === 'annual' && (
-        <div className="flex flex-col gap-4">
+        <div className="flex flex-col gap-3">
+          {/* Légende bi-régime */}
+          <div className="flex flex-wrap items-center justify-end gap-x-4 gap-y-1.5 text-xs text-slate-600 dark:text-slate-400 px-1">
+            <div className="inline-flex items-center gap-2">
+              <svg width="24" height="6" className="shrink-0" aria-hidden="true">
+                <line x1="0" y1="3" x2="24" y2="3" stroke="#d97706" strokeWidth="2.2" strokeDasharray="6,4" strokeLinecap="round" />
+              </svg>
+              <span>Livraisons &amp; jauge (avant télémétrie quotidienne)</span>
+            </div>
+            <div className="inline-flex items-center gap-2">
+              <svg width="24" height="6" className="shrink-0" aria-hidden="true">
+                <line x1="0" y1="3" x2="24" y2="3" stroke="#059669" strokeWidth="3" strokeLinecap="round" />
+              </svg>
+              <span className="font-medium text-emerald-800 dark:text-emerald-300">Télémétrie réelle brûleur (depuis le 17/10/2026)</span>
+            </div>
+          </div>
+
           <div className="relative w-full h-[250px] overflow-hidden rounded-xl bg-slate-50/70 dark:bg-slate-900/60 border border-slate-200/80 dark:border-slate-800 p-2">
             <svg
               viewBox={`0 0 ${svgWidth} ${svgHeight}`}
@@ -637,15 +665,39 @@ function FuelInteractiveGraph({ fuelHistory, heatingStatus, onRefreshFuel }) {
               {/* Zone dégradée */}
               {areaD && <path d={areaD} fill="url(#fuelFillGradient)" />}
 
-              {/* Courbe principale */}
-              {pathD && <path d={pathD} fill="none" stroke="#d97706" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round" />}
+              {/* Courbes bi-régime : pointillés historiques + trait plein télémétrie */}
+              {historicalPoints.length > 1 && (
+                <polyline
+                  fill="none"
+                  stroke="#d97706"
+                  strokeWidth="2.2"
+                  strokeDasharray="6,4"
+                  strokeLinecap="round"
+                  strokeLinejoin="round"
+                  opacity="0.85"
+                  points={historicalPoints.map((p) => `${p.x.toFixed(1)},${p.y.toFixed(1)}`).join(' ')}
+                />
+              )}
+              {telemetryPoints.length > 1 && (
+                <polyline
+                  fill="none"
+                  stroke="#059669"
+                  strokeWidth="3"
+                  strokeLinecap="round"
+                  strokeLinejoin="round"
+                  points={telemetryPoints.map((p) => `${p.x.toFixed(1)},${p.y.toFixed(1)}`).join(' ')}
+                />
+              )}
 
               {/* Points mensuels et badges */}
               {points.map((p, idx) => {
-                const hasDelivery = Boolean(p.is_delivery || p.isDelivery || (p.delivery_liters && p.delivery_liters > 0));
-                const hasCalibration = Boolean(p.is_calibration || p.isCalibration);
+                const hasDelivery = Boolean(p.is_delivery || p.isDelivery || (p.delivery_liters && p.delivery_liters > 0) || p.point_type === 'delivery' || p.point_type === 'after_delivery');
+                const hasCalibration = Boolean(p.is_calibration || p.isCalibration || p.point_type === 'calibration');
+                const isTelemetry = Boolean(p.is_telemetry);
                 const badgeY = Math.max(6, p.y - 28);
                 const badgeX = Math.min(svgWidth - 140, Math.max(paddingLeft, p.x - 65));
+                const shouldShowAxisLabel = p.axis_label !== "" && p.point_type !== 'pre_delivery';
+                const axisLabel = p.axis_label ?? p.month ?? p.label;
 
                 return (
                   <g key={idx}>
@@ -653,21 +705,23 @@ function FuelInteractiveGraph({ fuelHistory, heatingStatus, onRefreshFuel }) {
                       cx={p.x}
                       cy={p.y}
                       r={hasDelivery || hasCalibration ? "5.5" : "3.5"}
-                      fill={hasDelivery ? "#059669" : (hasCalibration ? "#b45309" : "#ffffff")}
-                      stroke={hasDelivery ? "#047857" : "#d97706"}
+                      fill={hasDelivery ? "#059669" : (hasCalibration ? "#b45309" : (isTelemetry ? "#059669" : "#ffffff"))}
+                      stroke={hasDelivery ? "#047857" : (hasCalibration ? "#92400e" : (isTelemetry ? "#059669" : "#d97706"))}
                       strokeWidth="2"
                     />
-                    {/* Label mois sur l'axe X */}
-                    <text
-                      x={p.x}
-                      y={svgHeight - 12}
-                      textAnchor="middle"
-                      fontSize="9.5"
-                      fill={hasDelivery || hasCalibration ? "#0f172a" : "#64748b"}
-                      fontWeight={hasDelivery || hasCalibration ? "bold" : "normal"}
-                    >
-                      {p.label || p.month}
-                    </text>
+                    {/* Label sur l'axe X */}
+                    {shouldShowAxisLabel && axisLabel && (
+                      <text
+                        x={p.x}
+                        y={svgHeight - 12}
+                        textAnchor="middle"
+                        fontSize="9.5"
+                        fill={isTelemetry ? "#065f46" : (hasDelivery || hasCalibration ? "#0f172a" : "#64748b")}
+                        fontWeight={hasDelivery || hasCalibration || isTelemetry ? "bold" : "normal"}
+                      >
+                        {axisLabel}
+                      </text>
+                    )}
 
                     {/* Badge dynamique livraison */}
                     {hasDelivery && (
