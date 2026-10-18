@@ -222,6 +222,9 @@ export default function TaskDetailModal({
   const [editRecurrenceInterval, setEditRecurrenceInterval] = useState(1);
   const [editRecurrenceUnit, setEditRecurrenceUnit] = useState('semaines');
   const [editAutoAssignByWorkload, setEditAutoAssignByWorkload] = useState(false);
+  const [editBudget, setEditBudget] = useState(
+    initialTask?.budget && Number(initialTask.budget) > 0 ? String(initialTask.budget) : ''
+  );
   const [savingEdit, setSavingEdit] = useState(false);
 
   // Import Markdown (Annotation 3 : Réservé à Henri Jamet)
@@ -351,6 +354,8 @@ export default function TaskDetailModal({
     if (editDocuments.length !== parseTaskDocuments(task?.documents || task?.completion_docs).length) return true;
     if (editExternalLinks.length !== (Array.isArray(task?.external_links) ? task.external_links.length : 0)) return true;
     if (JSON.stringify(editKeyValues) !== JSON.stringify(parseKeyValues(task?.key_values))) return true;
+    const origBudget = task?.budget && Number(task.budget) > 0 ? String(task.budget) : '';
+    if (editBudget.trim() !== origBudget.trim()) return true;
     return false;
   }
 
@@ -421,6 +426,7 @@ export default function TaskDetailModal({
     setEditRecurrenceInterval(t.recurrence_interval || 1);
     setEditRecurrenceUnit(t.recurrence_unit || 'semaines');
     setEditAutoAssignByWorkload(Boolean(t.auto_assign_by_workload));
+    setEditBudget(t.budget && Number(t.budget) > 0 ? String(t.budget) : '');
 
     let parsedOptions = [];
     if (Array.isArray(t.options)) {
@@ -486,6 +492,9 @@ export default function TaskDetailModal({
         setEditIsRecurring(true);
         if (parsed.recurrenceInterval) setEditRecurrenceInterval(parsed.recurrenceInterval);
         if (parsed.recurrenceUnit) setEditRecurrenceUnit(parsed.recurrenceUnit);
+      }
+      if (parsed.budget !== undefined && parsed.budget !== null) {
+        setEditBudget(String(parsed.budget));
       }
 
       setIsMarkdownImportOpen(false);
@@ -969,6 +978,9 @@ export default function TaskDetailModal({
         subject: editSubject,
         category: editSubject,
         complexity: isVoteInitiative ? 'Modérée' : editComplexity,
+        budget: editBudget !== '' && !isNaN(parseFloat(String(editBudget).replace(',', '.')))
+          ? Math.max(0, parseFloat(String(editBudget).replace(',', '.')))
+          : 0,
         assigned_members: isVoteInitiative
           ? [currentUserName || 'Henri Jamet']
           : (editMembers && editMembers.length > 0 ? editMembers : []),
@@ -1002,6 +1014,9 @@ export default function TaskDetailModal({
               description: editDescription.trim(),
               category: editSubject,
               property_id: 1,
+              budget: editBudget !== '' && !isNaN(parseFloat(String(editBudget).replace(',', '.')))
+                ? Math.max(0, parseFloat(String(editBudget).replace(',', '.')))
+                : 0,
               submitted_by: currentUserName || 'Henri Jamet',
               status: 'PROPOSED',
               checklist: editChecklist,
@@ -1631,6 +1646,12 @@ export default function TaskDetailModal({
                       <span className="px-3 py-1 bg-sky-50 text-sky-900 border border-sky-200 font-label-sm text-xs rounded-full flex items-center gap-1 font-semibold">
                         <span className="material-symbols-outlined text-[14px] text-sky-700">holiday_village</span>
                         Sur place
+                      </span>
+                    )}
+                    {Number(task.budget) > 0 && (
+                      <span className="px-3 py-1 bg-canvas-slate text-on-surface-variant border border-slate-200 font-label-sm text-xs rounded-full flex items-center gap-1 font-semibold">
+                        <span className="material-symbols-outlined text-[15px] text-primary">payments</span>
+                        Devis : ~{Number(task.budget).toLocaleString('fr-FR')} €
                       </span>
                     )}
                   </div>
@@ -2300,7 +2321,7 @@ export default function TaskDetailModal({
                       </div>
                     </div>
 
-                    <div className={`grid gap-4 ${isVoteInitiative ? 'grid-cols-1' : 'grid-cols-1 sm:grid-cols-2'}`}>
+                    <div className={`grid gap-4 ${isVoteInitiative ? 'grid-cols-1 sm:grid-cols-2' : 'grid-cols-1 sm:grid-cols-3'}`}>
                       <div className="flex flex-col gap-1">
                         <label className="font-label-md text-xs font-semibold text-on-surface">Sujet / Emplacement</label>
                         <CustomSelect
@@ -2324,6 +2345,39 @@ export default function TaskDetailModal({
                           />
                         </div>
                       )}
+
+                      {/* Prix estimé / Devis (€) */}
+                      <div className="flex flex-col gap-1">
+                        <label htmlFor="input-task-budget" className="font-label-md text-xs font-semibold text-on-surface flex items-center gap-1">
+                          <span className="material-symbols-outlined text-[16px] text-primary">payments</span>
+                          <span>Prix estimé / Devis (€)</span>
+                        </label>
+                        <div className="relative flex items-center">
+                          <input
+                            type="number"
+                            id="input-task-budget"
+                            min="0"
+                            step="0.01"
+                            placeholder="Ex : 2049 (optionnel)"
+                            value={editBudget}
+                            onChange={(e) => setEditBudget(e.target.value)}
+                            className="w-full h-10 px-3 pr-8 text-xs sm:text-sm bg-white border border-slate-300 rounded-xl focus:outline-none focus:ring-2 focus:ring-primary font-medium"
+                          />
+                          {editBudget !== '' && (
+                            <button
+                              type="button"
+                              onClick={() => setEditBudget('')}
+                              className="absolute right-2.5 text-slate-400 hover:text-slate-600 cursor-pointer p-0.5"
+                              title="Effacer le montant"
+                            >
+                              <span className="material-symbols-outlined text-[16px]">close</span>
+                            </button>
+                          )}
+                        </div>
+                        <span className="text-[11px] text-on-surface-variant">
+                          Affiché sous forme de badge « Devis : ~… € » sur la carte de la tâche
+                        </span>
+                      </div>
                     </div>
 
                     {/* Annotation 8 & 17 : Membres attribués en mode tâche (gérés par les coordinateurs) */}

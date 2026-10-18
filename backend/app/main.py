@@ -71,6 +71,19 @@ except ImportError:
         fitz = None
 
 
+if not hasattr(ThermalSettings, "schedule_json"):
+    from sqlalchemy import Column, Text
+    ThermalSettings.schedule_json = Column(Text, nullable=True)
+
+try:
+    PiscineStatusResponse.model_config["extra"] = "allow"
+    PiscineStatusResponse.model_rebuild(force=True)
+    PoolSettingsResponse.model_config["extra"] = "allow"
+    PoolSettingsResponse.model_rebuild(force=True)
+except Exception:
+    pass
+
+
 from .onboarding_service import (
     run_onboarding_migrations, seed_initial_onboarding,
     get_current_release, has_member_seen_release, mark_release_viewed
@@ -8578,32 +8591,223 @@ async def create_fuel_delivery(
 
 # --- Piscine Rosing Telemetry & Controls Endpoints (PAC Rosing F08) ---
 
+def ensure_pool_schedule_column(db: Session):
+    """Garantit l'existence de la colonne schedule_json dans thermal_settings."""
+    try:
+        from sqlalchemy import text
+        bind = db.get_bind()
+        if bind.dialect.name == "sqlite":
+            res = db.execute(text("PRAGMA table_info(thermal_settings)"))
+            cols = {r[1] for r in res.fetchall()}
+            if "schedule_json" not in cols:
+                db.execute(text("ALTER TABLE thermal_settings ADD COLUMN schedule_json TEXT;"))
+                db.commit()
+        elif bind.dialect.name == "postgresql":
+            db.execute(text("ALTER TABLE thermal_settings ADD COLUMN IF NOT EXISTS schedule_json TEXT;"))
+            db.commit()
+    except Exception as exc:
+        logger.debug(f"[POOL] ensure_pool_schedule_column: {exc}")
+
+
+def get_pool_pending_sync(setting: Optional[ThermalSettings]) -> dict:
+    """Retourne l'état pending_sync de la file d'attente commandes piscine."""
+    if not setting or not getattr(setting, "schedule_json", None):
+        return {"has_pending": False}
+    try:
+        data = json.loads(setting.schedule_json)
+        if isinstance(data, dict):
+            return data
+    except Exception:
+        pass
+    return {"has_pending": False}
+
+
+def retry_pending_pool_commands(db: Session) -> dict:
+    """
+    Réessaie d'appliquer les commandes de filtration et chauffage piscine
+    mises en file d'attente suite à une coupure radio Klereo K-Link.
+    """
+    ensure_pool_schedule_column(db)
+    setting = db.query(ThermalSettings).filter(ThermalSettings.equipment_type == "pool").first()
+    if not setting:
+        return {"has_pending": False, "status": "no_pool_setting"}
+
+    pending = get_pool_pending_sync(setting)
+    if not pending.get("has_pending"):
+        return {"has_pending": False, "status": "no_pending_commands"}
+
+    # 1. Vérification de l'état réel actuel via Klereo
+    status_data = None
+    try:
+        status_data = KlereoService.get_pool_status(force_refresh=True)
+    except Exception as exc:
+        logger.warning(f"[POOL RETRY] Échec consultation Klereo: {exc}")
+
+    # Si get_pool_status montre que l'état réel du coffret avec infos_time_s < 3600 correspond déjà à la consigne
+    if status_data:
+        infos_time_s = status_data.get("infos_time_s")
+        radio_ok = status_data.get("radio_link_ok", False)
+        real_heating = status_data.get("is_heating_active")
+        real_pump = status_data.get("is_pump_active")
+
+        want_heating = pending.get("heating_active")
+        want_pump = pending.get("filtration_active")
+
+        if radio_ok and infos_time_s is not None and infos_time_s < 3600:
+            heating_matched = (want_heating is None or real_heating == want_heating)
+            pump_matched = (want_pump is None or real_pump == want_pump)
+            if heating_matched and pump_matched:
+                pending["has_pending"] = False
+                pending["resolved_at"] = datetime.utcnow().isoformat()
+                setting.schedule_json = json.dumps(pending)
+                db.commit()
+                db.add(Log(
+                    action="POOL_PENDING_COMMAND_SYNCED",
+                    user_name=pending.get("requested_by") or "Système",
+                    details="✅ Consigne piscine déjà appliquée sur le coffret physique (détectée via trame radio récente)."
+                ))
+                db.commit()
+                return {"has_pending": False, "status": "already_applied", "pool_status": status_data}
+
+    # 2. Tentative d'application des commandes
+    retry_count = pending.get("retry_count", 0) + 1
+    pending["retry_count"] = retry_count
+    pending["last_retry_at"] = datetime.utcnow().isoformat()
+
+    try:
+        # Pompe
+        if pending.get("filtration_active") is not None or pending.get("filtration_mode") is not None:
+            KlereoService.set_pump_mode(
+                mode=pending.get("filtration_mode"),
+                active=pending.get("filtration_active")
+            )
+        # Chauffage
+        if pending.get("heating_active") is not None or pending.get("heating_mode") is not None:
+            KlereoService.set_heating_mode(
+                mode=pending.get("heating_mode"),
+                active=pending.get("heating_active"),
+                target_temperature=pending.get("target_temp")
+            )
+
+        pending["has_pending"] = False
+        pending["applied_at"] = datetime.utcnow().isoformat()
+        setting.schedule_json = json.dumps(pending)
+        db.commit()
+
+        db.add(Log(
+            action="POOL_PENDING_COMMAND_APPLIED",
+            user_name=pending.get("requested_by") or "Système",
+            details="✅ Consigne piscine appliquée automatiquement suite à la reconnexion radio du coffret."
+        ))
+        db.commit()
+        return {"has_pending": False, "status": "applied_successfully", "retry_count": retry_count}
+    except Exception as exc:
+        err_msg = str(exc)
+        logger.warning(f"[POOL RETRY] Échec réessai commande (tentative {retry_count}): {err_msg}")
+        pending["last_error"] = err_msg
+        setting.schedule_json = json.dumps(pending)
+        db.commit()
+        return {"has_pending": True, "status": "retry_failed", "error": err_msg, "retry_count": retry_count}
+
+
+@app.api_route("/api/pool/cron-check", methods=["GET", "POST"], tags=["Pool"])
+def pool_cron_check(request: Request, db: Session = Depends(get_db)):
+    """
+    Endpoint de surveillance et de réessai des consignes piscine Klereo en attente.
+    Vérifie l'état de synchronisation radio et tente d'exécuter les consignes en file d'attente.
+    """
+    return retry_pending_pool_commands(db)
+
+
 @app.get("/api/pool/status", response_model=PiscineStatusResponse, tags=["Pool"])
 @app.get("/api/klereo/status", response_model=PiscineStatusResponse, tags=["Pool"])
-def get_klereo_pool_status(refresh: bool = Query(False), force_refresh: bool = Query(False)):
+def get_klereo_pool_status(refresh: bool = Query(False), force_refresh: bool = Query(False), db: Session = Depends(get_db)):
     """Returns Klereo Connect live passive telemetry without simulation."""
+    ensure_pool_schedule_column(db)
     is_refresh = refresh or force_refresh
     telemetry = KlereoService.get_pool_status(force_refresh=is_refresh)
+
+    setting = db.query(ThermalSettings).filter(ThermalSettings.equipment_type == "pool").first()
+    pending = get_pool_pending_sync(setting)
+
+    if pending.get("has_pending"):
+        infos_time_s = telemetry.get("infos_time_s")
+        last_retry_iso = pending.get("last_retry_at")
+        is_stale_retry = True
+        if last_retry_iso:
+            try:
+                last_retry_dt = datetime.fromisoformat(last_retry_iso)
+                if (datetime.utcnow() - last_retry_dt).total_seconds() < 600:
+                    is_stale_retry = False
+            except Exception:
+                pass
+
+        if (infos_time_s is not None and infos_time_s < 3600) or is_stale_retry:
+            try:
+                retry_res = retry_pending_pool_commands(db)
+                if not retry_res.get("has_pending"):
+                    pending = {"has_pending": False}
+                    try:
+                        telemetry = KlereoService.get_pool_status(force_refresh=True)
+                    except Exception:
+                        pass
+                else:
+                    pending = get_pool_pending_sync(setting)
+            except Exception as retry_err:
+                logger.warning(f"[POOL] Erreur retry_pending_pool_commands dans get_pool_status: {retry_err}")
+
+    telemetry["pending_sync"] = pending
+    telemetry["queued_for_retry"] = bool(pending.get("has_pending"))
     return PiscineStatusResponse(**telemetry)
+
 
 @app.get("/api/piscine/status", response_model=PiscineStatusResponse, tags=["Pool"])
-def get_piscine_status(live: bool = True, refresh: bool = Query(False), force_refresh: bool = Query(False)):
+def get_piscine_status(live: bool = True, refresh: bool = Query(False), force_refresh: bool = Query(False), db: Session = Depends(get_db)):
     """Returns PAC Rosing passive telemetry directly from live Klereo Connect API."""
-    is_refresh = refresh or force_refresh
-    telemetry = KlereoService.get_pool_status(force_refresh=is_refresh)
-    return PiscineStatusResponse(**telemetry)
+    return get_klereo_pool_status(refresh=refresh, force_refresh=force_refresh, db=db)
 
+
+@app.post("/api/pool/pump", response_model=PiscineStatusResponse, tags=["Pool"])
 @app.post("/api/pool/pump/mode", response_model=PiscineStatusResponse, tags=["Pool"])
+@app.post("/api/piscine/pump", response_model=PiscineStatusResponse, tags=["Pool"])
 @app.post("/api/piscine/pump/mode", response_model=PiscineStatusResponse, tags=["Pool"])
 def set_pool_pump_mode(req: PoolPumpModeRequest, db: Session = Depends(get_db)):
     """
     Arbitrage et contrôle de la pompe de filtration piscine Klereo.
     Payload: {"mode": "auto" | "on" | "off"} ou {"active": bool}.
     """
+    ensure_pool_schedule_column(db)
     active_input = req.active if req.active is not None else req.is_active
-    result = KlereoService.set_pump_mode(mode=req.mode, active=active_input)
+    mode_input = req.mode
     author = req.author_name or "Système"
+
+    if active_input is None and mode_input is not None:
+        norm_m = mode_input.lower().strip()
+        want_active = (norm_m in ("on", "marche", "auto", "manuel_on", "true"))
+    else:
+        want_active = bool(active_input) if active_input is not None else False
+    want_mode = mode_input or ("on" if want_active else "off")
+
+    # 1. Enregistrer d'abord la consigne voulue dans ThermalSettings (equipment_type == "pool")
+    setting = db.query(ThermalSettings).filter(ThermalSettings.equipment_type == "pool").first()
+    if not setting:
+        setting = ThermalSettings(equipment_type="pool")
+        db.add(setting)
+    setting.filtration_mode = "marche" if want_active else "arret"
+    setting.updated_by = author
+    setting.updated_at = datetime.utcnow()
+    db.commit()
+
+    # 2. Tenter l'appel KlereoService.set_pump_mode
     try:
+        result = KlereoService.set_pump_mode(mode=req.mode, active=active_input)
+        pending_sync = {"has_pending": False, "applied_at": datetime.utcnow().isoformat()}
+        setting.schedule_json = json.dumps(pending_sync)
+        db.commit()
+
+        result["queued_for_retry"] = False
+        result["pending_sync"] = pending_sync
+
         active_val = result.get("is_pump_active", False)
         mode_val = result.get("pump_mode") or req.mode or ("on" if active_val else "off")
         details = f"Pompe filtration piscine réglée sur : {mode_val} (active={active_val})"
@@ -8612,13 +8816,6 @@ def set_pool_pump_mode(req: PoolPumpModeRequest, db: Session = Depends(get_db)):
             user_name=author,
             details=details
         ))
-        setting = db.query(ThermalSettings).filter(ThermalSettings.equipment_type == "pool").first()
-        if not setting:
-            setting = ThermalSettings(equipment_type="pool")
-            db.add(setting)
-        setting.filtration_mode = "marche" if active_val else "arret"
-        setting.updated_by = author
-        setting.updated_at = datetime.utcnow()
         db.commit()
 
         subscribed_members = db.query(Member).filter(
@@ -8649,12 +8846,53 @@ def set_pool_pump_mode(req: PoolPumpModeRequest, db: Session = Depends(get_db)):
             link_path="/sejour",
             email_entry=dispatched_email
         )
-    except Exception as e:
-        logger.warning(f"[POOL] Log DB pompe non bloquant: {e}")
-    return PiscineStatusResponse(**result)
+        return PiscineStatusResponse(**result)
+    except Exception as err:
+        if isinstance(err, HTTPException) and err.status_code not in (status.HTTP_502_BAD_GATEWAY, status.HTTP_504_GATEWAY_TIMEOUT):
+            raise
+        err_msg = str(getattr(err, "detail", err))
+        logger.warning(f"[POOL PUMP] Coupure/indisponibilité Klereo: {err_msg}")
+        pending_sync = {
+            "has_pending": True,
+            "heating_active": (setting.mode == "confort"),
+            "heating_mode": setting.mode or "standby",
+            "target_temp": setting.target_temperature or 27.0,
+            "filtration_active": want_active,
+            "filtration_mode": want_mode,
+            "requested_by": author,
+            "requested_at": datetime.utcnow().isoformat(),
+            "last_retry_at": datetime.utcnow().isoformat(),
+            "retry_count": 1,
+            "last_error": err_msg
+        }
+        setting.schedule_json = json.dumps(pending_sync)
+        db.commit()
 
+        db.add(Log(
+            action="POOL_COMMAND_QUEUED",
+            user_name=author,
+            details=f"⏳ Consigne pompe mise en file d'attente (liaison radio interrompue) — réessai automatique activé ({err_msg})"
+        ))
+        db.commit()
+
+        try:
+            current_status = KlereoService.get_pool_status(force_refresh=False)
+        except Exception:
+            current_status = {}
+        current_status["queued_for_retry"] = True
+        current_status["radio_link_ok"] = False
+        current_status["pending_sync"] = pending_sync
+        current_status["message"] = (
+            "⏳ Consigne enregistrée en file d'attente — Le coffret piscine étant momentanément "
+            "déconnecté en radio, le site réessaie automatiquement toutes les 15 à 30 minutes et activera votre consigne dès la reconnexion."
+        )
+        return PiscineStatusResponse(**current_status)
+
+
+@app.post("/api/pool/heating", response_model=PiscineStatusResponse, tags=["Pool"])
 @app.post("/api/pool/heating/mode", response_model=PiscineStatusResponse, tags=["Pool"])
 @app.post("/api/pool/pac/mode", response_model=PiscineStatusResponse, tags=["Pool"])
+@app.post("/api/piscine/heating", response_model=PiscineStatusResponse, tags=["Pool"])
 @app.post("/api/piscine/heating/mode", response_model=PiscineStatusResponse, tags=["Pool"])
 @app.post("/api/piscine/pac/mode", response_model=PiscineStatusResponse, tags=["Pool"])
 def set_pool_heating_mode(req: PoolHeatingModeRequest, db: Session = Depends(get_db)):
@@ -8662,15 +8900,50 @@ def set_pool_heating_mode(req: PoolHeatingModeRequest, db: Session = Depends(get
     Arbitrage et contrôle du chauffage PAC Inopac 20 kW piscine Klereo.
     Payload: {"mode": "auto" | "on" | "off"} ou {"active": bool}.
     """
+    ensure_pool_schedule_column(db)
     active_input = req.active if req.active is not None else req.is_active
     target_temp = getattr(req, "target_temperature", None)
-    result = KlereoService.set_heating_mode(
-        mode=req.mode,
-        active=active_input,
-        target_temperature=target_temp
-    )
+    mode_input = req.mode
     author = req.author_name or "Système"
+
+    if active_input is None and mode_input is not None:
+        norm_m = mode_input.lower().strip()
+        want_active = (norm_m in ("on", "marche", "auto", "confort", "true"))
+    else:
+        want_active = bool(active_input) if active_input is not None else False
+    want_mode = "confort" if want_active else (mode_input or "standby")
+
+    # 1. Enregistrer d'abord la consigne voulue dans ThermalSettings
+    setting = db.query(ThermalSettings).filter(ThermalSettings.equipment_type == "pool").first()
+    if not setting:
+        setting = ThermalSettings(equipment_type="pool")
+        db.add(setting)
+    setting.mode = want_mode
+    if target_temp is not None:
+        try:
+            setting.target_temperature = float(target_temp)
+        except (ValueError, TypeError):
+            pass
+    if want_active:
+        setting.filtration_mode = "marche"
+    setting.updated_by = author
+    setting.updated_at = datetime.utcnow()
+    db.commit()
+
+    # 2. Tenter l'appel KlereoService.set_heating_mode
     try:
+        result = KlereoService.set_heating_mode(
+            mode=req.mode,
+            active=active_input,
+            target_temperature=target_temp
+        )
+        pending_sync = {"has_pending": False, "applied_at": datetime.utcnow().isoformat()}
+        setting.schedule_json = json.dumps(pending_sync)
+        db.commit()
+
+        result["queued_for_retry"] = False
+        result["pending_sync"] = pending_sync
+
         active_val = result.get("is_heating_active", False)
         mode_val = result.get("heating_mode") or req.mode or ("on" if active_val else "off")
         details = f"Chauffage PAC piscine réglé sur : {mode_val} (active={active_val})"
@@ -8679,13 +8952,6 @@ def set_pool_heating_mode(req: PoolHeatingModeRequest, db: Session = Depends(get
             user_name=author,
             details=details
         ))
-        setting = db.query(ThermalSettings).filter(ThermalSettings.equipment_type == "pool").first()
-        if not setting:
-            setting = ThermalSettings(equipment_type="pool")
-            db.add(setting)
-        setting.mode = "confort" if active_val else "standby"
-        setting.updated_by = author
-        setting.updated_at = datetime.utcnow()
         db.commit()
 
         subscribed_members = db.query(Member).filter(
@@ -8716,9 +8982,47 @@ def set_pool_heating_mode(req: PoolHeatingModeRequest, db: Session = Depends(get
             link_path="/sejour",
             email_entry=dispatched_email
         )
-    except Exception as e:
-        logger.warning(f"[POOL] Log DB PAC non bloquant: {e}")
-    return PiscineStatusResponse(**result)
+        return PiscineStatusResponse(**result)
+    except Exception as err:
+        if isinstance(err, HTTPException) and err.status_code not in (status.HTTP_502_BAD_GATEWAY, status.HTTP_504_GATEWAY_TIMEOUT):
+            raise
+        err_msg = str(getattr(err, "detail", err))
+        logger.warning(f"[POOL HEATING] Coupure/indisponibilité Klereo: {err_msg}")
+        pending_sync = {
+            "has_pending": True,
+            "heating_active": want_active,
+            "heating_mode": want_mode,
+            "target_temp": setting.target_temperature or (float(target_temp) if target_temp is not None else 27.0),
+            "filtration_active": True if want_active else (setting.filtration_mode == "marche"),
+            "filtration_mode": "marche" if want_active else (setting.filtration_mode or "arret"),
+            "requested_by": author,
+            "requested_at": datetime.utcnow().isoformat(),
+            "last_retry_at": datetime.utcnow().isoformat(),
+            "retry_count": 1,
+            "last_error": err_msg
+        }
+        setting.schedule_json = json.dumps(pending_sync)
+        db.commit()
+
+        db.add(Log(
+            action="POOL_COMMAND_QUEUED",
+            user_name=author,
+            details=f"⏳ Consigne chauffage mise en file d'attente (liaison radio interrompue) — réessai automatique activé ({err_msg})"
+        ))
+        db.commit()
+
+        try:
+            current_status = KlereoService.get_pool_status(force_refresh=False)
+        except Exception:
+            current_status = {}
+        current_status["queued_for_retry"] = True
+        current_status["radio_link_ok"] = False
+        current_status["pending_sync"] = pending_sync
+        current_status["message"] = (
+            "⏳ Consigne enregistrée en file d'attente — Le coffret piscine étant momentanément "
+            "déconnecté en radio, le site réessaie automatiquement toutes les 15 à 30 minutes et activera votre consigne dès la reconnexion."
+        )
+        return PiscineStatusResponse(**current_status)
 
 @app.post("/api/piscine/mode", tags=["Pool"])
 @app.post("/api/piscine/temperature", tags=["Pool"])
@@ -9089,17 +9393,8 @@ def update_pool_settings(
     """
     author = req.author_name or (current_user.name if current_user else "Henri Jamet (Coordinateur)")
 
-    # Synchronisation obligatoire avec Klereo Connect (Fail-Fast)
-    if req.target_temperature is not None:
-        try:
-            KlereoService.set_temperature(float(req.target_temperature))
-        except HTTPException as klereo_err:
-            if klereo_err.status_code == 403:
-                logger.info("[POOL SETTINGS] Mode lecture seule Klereo actif")
-            else:
-                raise
-
     # 1. Update or create row in thermal_settings
+    ensure_pool_schedule_column(db)
     setting = db.query(ThermalSettings).filter(ThermalSettings.equipment_type == "pool").first()
     if not setting:
         setting = ThermalSettings(equipment_type="pool")
@@ -9123,6 +9418,49 @@ def update_pool_settings(
     setting.updated_by = author
     setting.updated_at = datetime.utcnow()
     db.commit()
+
+    # Synchronisation obligatoire avec Klereo Connect (Fail-Fast avec file d'attente résiliente si coupure radio)
+    radio_error_caught = None
+    if req.target_temperature is not None:
+        try:
+            KlereoService.set_temperature(float(req.target_temperature))
+            pending_sync = {"has_pending": False, "applied_at": datetime.utcnow().isoformat()}
+            setting.schedule_json = json.dumps(pending_sync)
+            db.commit()
+        except HTTPException as klereo_err:
+            if klereo_err.status_code == 403:
+                logger.info("[POOL SETTINGS] Mode lecture seule Klereo actif")
+            elif klereo_err.status_code in (502, 504):
+                radio_error_caught = str(klereo_err.detail)
+            else:
+                raise
+        except Exception as exc:
+            radio_error_caught = str(exc)
+
+    if radio_error_caught:
+        logger.warning(f"[POOL SETTINGS] Commande température Klereo non acquittée (radio/réseau): {radio_error_caught}")
+        pending_sync = {
+            "has_pending": True,
+            "heating_active": (setting.mode == "confort"),
+            "heating_mode": setting.mode or "standby",
+            "target_temp": setting.target_temperature,
+            "filtration_active": (setting.filtration_mode == "marche"),
+            "filtration_mode": setting.filtration_mode or "auto",
+            "requested_by": author,
+            "requested_at": datetime.utcnow().isoformat(),
+            "last_retry_at": datetime.utcnow().isoformat(),
+            "retry_count": 1,
+            "last_error": radio_error_caught
+        }
+        setting.schedule_json = json.dumps(pending_sync)
+        db.commit()
+        db.add(Log(
+            action="POOL_COMMAND_QUEUED",
+            user_name=author,
+            details=f"⏳ Consigne température piscine mise en file d'attente (liaison radio interrompue) — réessai automatique activé ({radio_error_caught})"
+        ))
+        db.commit()
+
     db.refresh(setting)
 
     # 2. Build human-readable details
@@ -11122,6 +11460,14 @@ async def cron_heating_stay_sync(request: Request, force: bool = Query(False), d
 
     result = evaluate_and_sync_stay_heating(db, force_sync=(force and is_authenticated_cron))
     result["authenticated"] = is_authenticated_cron
+
+    # Réessai automatique des commandes piscine en attente (K-Link radio sync)
+    try:
+        pool_retry_res = retry_pending_pool_commands(db)
+        result["pool_retry"] = pool_retry_res
+    except Exception as pool_err:
+        logger.warning(f"[CRON HEATING] Erreur retry pool: {pool_err}")
+
     return result
 
 

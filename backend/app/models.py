@@ -464,6 +464,7 @@ class ThermalSettings(Base):
     target_temperature = Column(Float, nullable=True)
     mode = Column(String(50), nullable=True)
     filtration_mode = Column(String(50), nullable=True)
+    schedule_json = Column(Text, nullable=True)
     updated_by = Column(String(100), nullable=True)
     updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
 

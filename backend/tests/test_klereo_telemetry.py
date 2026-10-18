@@ -169,8 +169,11 @@ def test_pool_status_zero_alerts_when_none_in_payload(mock_post, mock_get, mock_
 @patch("requests.post")
 def test_pool_status_radio_degradation_detected(mock_post, mock_get, mock_auth):
     """
-    Vérifie la détection dynamique d'une dégradation de la liaison radio 868 MHz.
+    Vérifie la détection dynamique d'une dégradation selon le contrat officiel Klereo Connect :
+    - radioPB : liaison radio coffret interrompue si infosTime > 7200s (2h)
+    - noLink : liaison internet interrompue si lastPing > 1800s (30 min)
     """
+    # 1. Cas radioPB (infosTime > 7200s, lastPing <= 1800s)
     mock_get.return_value = MagicMock(
         status_code=200,
         json=lambda: {
@@ -179,7 +182,7 @@ def test_pool_status_radio_degradation_detected(mock_post, mock_get, mock_auth):
                 "idSystem": 91360,
                 "poolNickname": "Piscine Rosing",
                 "Now": 1790446860,
-                "lastPing": 450,  # > 300s = dégradé
+                "lastPing": 30,  # CONNECT en ligne
                 "alerts": []
             }]
         }
@@ -191,7 +194,8 @@ def test_pool_status_radio_degradation_detected(mock_post, mock_get, mock_auth):
             "status": "ok",
             "response": [{
                 "idSystem": 91360,
-                "podinfo": {"pingFail": 5, "pingSent": 50, "pongRx": 45},  # échecs > 0
+                "infosTime": 7500,  # > 7200s -> radioPB
+                "podinfo": {"pingFail": 5, "pingSent": 50, "pongRx": 45},
                 "alerts": [],
                 "probes": [],
                 "outs": [],
@@ -201,15 +205,41 @@ def test_pool_status_radio_degradation_detected(mock_post, mock_get, mock_auth):
     )
 
     KlereoService.clear_cache()
-
     resp = client.get("/api/pool/status")
     assert resp.status_code == 200
     data = resp.json()
 
+    assert data["wifi_box_ok"] is True
     assert data["radio_link_ok"] is False
     assert data["radio_error"] is True
-    assert data["radio_alert"] is not None
-    assert "Liaison radio K-Link interrompue" in data["radio_alert"]
+    assert data["klereo_alert_code"] == "radioPB"
+    assert "liaison radio entre le coffret piscine" in data["radio_alert"]
+
+    # 2. Cas noLink (lastPing > 1800s)
+    mock_get.return_value = MagicMock(
+        status_code=200,
+        json=lambda: {
+            "status": "ok",
+            "response": [{
+                "idSystem": 91360,
+                "poolNickname": "Piscine Rosing",
+                "Now": 1790446860,
+                "lastPing": 2000,  # > 1800s -> noLink
+                "alerts": []
+            }]
+        }
+    )
+
+    KlereoService.clear_cache()
+    resp2 = client.get("/api/pool/status")
+    assert resp2.status_code == 200
+    data2 = resp2.json()
+
+    assert data2["wifi_box_ok"] is False
+    assert data2["radio_link_ok"] is False
+    assert data2["radio_error"] is True
+    assert data2["klereo_alert_code"] == "noLink"
+    assert "boîtier Klereo CONNECT" in data2["radio_alert"]
 
 
 def test_pool_control_interlock_forbidden():

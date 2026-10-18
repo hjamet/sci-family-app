@@ -62,7 +62,7 @@ DEFAULT_ONBOARDING_PAGES: List[Dict[str, Any]] = [
             {
                 "icon": "thermostat",
                 "title": "Gestion automatique du chauffage",
-                "text": "Plus besoin de vous soucier de la chaudière en arrivant ! Dès que votre séjour est enregistré sur le calendrier, le système déclenche automatiquement le préchauffage de la maison à 20°C exactement 24h avant votre arrivée pour trouver une maison chaude et accueillante."
+                "text": "Plus besoin de vous soucier de la chaudière en arrivant ! Dès que votre séjour est enregistré sur le calendrier, le système déclenche automatiquement le préchauffage de la maison à 20°C environ 12h avant votre arrivée (selon la température intérieure et extérieure) pour trouver une maison chaude et accueillante."
             },
             {
                 "icon": "ac_unit",

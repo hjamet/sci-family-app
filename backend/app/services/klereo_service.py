@@ -4,7 +4,8 @@ import logging
 import os
 import time
 import concurrent.futures
-from datetime import datetime
+from datetime import datetime, timedelta
+from zoneinfo import ZoneInfo
 from typing import Any, Dict, Optional
 
 from dotenv import load_dotenv
@@ -434,15 +435,47 @@ class KlereoService:
             except (ValueError, TypeError):
                 last_ping_s = None
 
-            infos_time_s = int(pool_detail.get("infosTime") or sys_0.get("infosTime") or 0)
+            infos_time_raw = pool_detail.get("infosTime")
+            if infos_time_raw is None:
+                infos_time_raw = sys_0.get("infosTime")
+            try:
+                infos_time_s = int(infos_time_raw) if infos_time_raw is not None else 0
+            except (ValueError, TypeError):
+                infos_time_s = 0
+
             rf_sent = int(pool_detail.get("rfSent", 0) or 0)
             rf_err = int(pool_detail.get("rfErr", 0) or 0)
-            telemetry_stale = bool((infos_time_s and infos_time_s > 3600) or (water_temp_age_s is not None and water_temp_age_s > 3600))
 
-            # Règle de résilience radio (Annotation 7) :
-            # Si le dernier contact radio est récent (< 120s), la liaison est pleinement active.
-            # pingFail est un compteur cumulé historique du boîtier Klereo qui ne caractérise pas une panne actuelle.
-            radio_ok = (last_ping_s is not None and last_ping_s < 120)
+            # Règle officielle Klereo Connect (connect.klereo.fr / js/app-min.269813225d.js) :
+            wifi_box_ok = bool(last_ping_s is not None and last_ping_s <= 1800)
+            radio_ok = bool(wifi_box_ok and (infos_time_s is not None and infos_time_s <= 7200))
+
+            if not wifi_box_ok:
+                klereo_alert_code = "noLink"
+                radio_alert = "Connexion internet coupée avec le boîtier Klereo CONNECT"
+                radio_status = "Connexion internet boîtier CONNECT interrompue"
+            elif wifi_box_ok and not radio_ok:
+                klereo_alert_code = "radioPB"
+                radio_alert = 'Vérifiez la liaison radio entre le coffret piscine et le boîtier internet "CONNECT"'
+                radio_status = "Liaison radio coffret piscine interrompue (radioPB)"
+            else:
+                klereo_alert_code = None
+                radio_alert = None
+
+            JOURS_FR = ["lundi", "mardi", "mercredi", "jeudi", "vendredi", "samedi", "dimanche"]
+            MOIS_FR = ["janv.", "févr.", "mars", "avr.", "mai", "juin", "juil.", "août", "sept.", "oct.", "nov.", "déc."]
+            last_sync_label = None
+            if infos_time_s is not None:
+                try:
+                    sync_dt = datetime.now(ZoneInfo("Europe/Paris")) - timedelta(seconds=infos_time_s)
+                    jour_str = JOURS_FR[sync_dt.weekday()]
+                    mois_str = MOIS_FR[sync_dt.month - 1]
+                    last_sync_label = f"Synchronisé {jour_str} {sync_dt.day} {mois_str} {sync_dt.year}, {sync_dt.strftime('%H:%M')}"
+                except Exception as sync_label_err:
+                    logger.warning(f"[KLEREO] Erreur calcul last_sync_label: {sync_label_err}")
+
+            telemetry_stale = bool(wifi_box_ok and radio_ok and infos_time_s is not None and infos_time_s >= 3600)
+
             if radio_ok:
                 if telemetry_stale:
                     hours = infos_time_s // 3600
@@ -453,10 +486,6 @@ class KlereoService:
                         radio_status = f"Liaison radio K-Link active (0 échec, ping {last_ping_s}s)"
                     else:
                         radio_status = f"Liaison radio K-Link active (ping {last_ping_s}s, {ping_fail} échec(s) historiques)"
-                radio_alert_msg = None
-            else:
-                radio_status = "Liaison radio K-Link dégradée ou interrompue"
-                radio_alert_msg = f"Liaison radio K-Link interrompue ({ping_fail} échec(s), dernier ping {last_ping_s}s)"
 
             # Alertes dynamiques (Zero-Trust : extraction et décodage dynamique)
             raw_alerts = pool_detail.get("alerts")
@@ -472,11 +501,10 @@ class KlereoService:
 
             # Invariant de résilience absolue : si la liaison radio est établie, aucune fausse alerte radio dans alerts
             if radio_ok:
-                decoded_alerts = [a for a in decoded_alerts if "radio" not in a.lower() and "k-link" not in a.lower()]
+                decoded_alerts = [a for a in decoded_alerts if "radio" not in a.lower() and "k-link" not in a.lower() and "connect" not in a.lower()]
             else:
-                radio_warning = f"Coffret Klereo injoignable : liaison radio K-Link interrompue ({ping_fail} échec(s), dernier ping {last_ping_s}s). La télémesure affichée est figée et les commandes sont suspendues."
-                if radio_warning not in decoded_alerts:
-                    decoded_alerts.insert(0, radio_warning)
+                if radio_alert and radio_alert not in decoded_alerts:
+                    decoded_alerts.insert(0, radio_alert)
 
             # Sémantique Piscine Marche vs Arrêt & Seuil Antigel Klereo (0.5°C) :
             # - Seuil antigel sécurité Klereo : 0.5°C (déclenche la circulation forcée de sauvegarde).
@@ -512,7 +540,7 @@ class KlereoService:
 
             # Timestamp de dernière remontée radio
             now_ts = sys_0.get("Now", int(time.time()))
-            if infos_time_s > 0:
+            if infos_time_s is not None and infos_time_s > 0:
                 last_update_iso = datetime.fromtimestamp(max(0, now_ts - infos_time_s)).isoformat()
             else:
                 last_update_iso = datetime.fromtimestamp(now_ts).isoformat()
@@ -550,10 +578,14 @@ class KlereoService:
                 "frederic_jamet_agreement": "Prise en charge contrat DECLERCQ à 100% jusqu’au 31/12/2026.",
                 "agreement_status": "Actif (100% pris en charge par Frédéric Jamet)",
                 "contract_provider": "DECLERCQ PISCINES",
+                "wifi_box_ok": wifi_box_ok,
                 "radio_link_ok": radio_ok,
+                "klereo_alert_code": klereo_alert_code,
                 "radio_status": radio_status,
-                "radio_alert": radio_alert_msg,
+                "radio_alert": radio_alert,
                 "radio_error": not radio_ok,
+                "last_sync_label": last_sync_label,
+                "telemetry_stale": telemetry_stale,
                 "infos_time_s": infos_time_s,
                 "water_temp_age_s": water_temp_age_s,
                 "air_temp_age_s": air_temp_age_s,

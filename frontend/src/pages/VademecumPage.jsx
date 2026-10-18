@@ -1005,6 +1005,7 @@ export default function VademecumPage({ properties, currentUser, reservations = 
     klereoRadioAlert ||
     piscineStatus?.radio_error ||
     piscineStatus?.radio_link_ok === false ||
+    piscineStatus?.klereo_alert_code === 'radioPB' ||
     (piscineStatus?.alerts && piscineStatus.alerts.some(a => (typeof a === 'string' ? a : a.message || '').toLowerCase().includes('injoignable'))) ||
     (piscineError && (piscineError.toLowerCase().includes('injoignable') || piscineError.toLowerCase().includes('radio')))
   );
@@ -1256,9 +1257,16 @@ export default function VademecumPage({ properties, currentUser, reservations = 
       try {
         const res = await setPoolTemperature(nextVal, resolveCurrentUserFullName(currentUser));
         if (res) {
-          setPiscineStatus(res);
+          setPiscineStatus((prev) => ({
+            ...(prev || {}),
+            ...res,
+            pending_sync: res.pending_sync || (res.queued_for_retry ? { has_pending: true, target_temp: nextVal } : prev?.pending_sync),
+          }));
           if (res?.pool_comfort_target != null) {
             setPoolTarget(res.pool_comfort_target);
+          }
+          if (res.queued_for_retry) {
+            showToast("⏳ Consigne enregistrée en file d'attente (liaison radio piscine interrompue).");
           }
         }
         showToast(`Consigne piscine synchronisée sur Klereo : ${nextVal.toFixed(1)}°C 🎯`);
@@ -1414,7 +1422,17 @@ export default function VademecumPage({ properties, currentUser, reservations = 
     setIsPoolPumpActive(targetActive);
     setSavingThermal(true);
     try {
-      await setPoolPumpMode(targetActive);
+      const res = await setPoolPumpMode(targetActive);
+      if (res) {
+        setPiscineStatus((prev) => ({
+          ...(prev || {}),
+          ...res,
+          pending_sync: res.pending_sync || (res.queued_for_retry ? { has_pending: true, filtration_active: targetActive } : prev?.pending_sync),
+        }));
+        if (res.queued_for_retry) {
+          showToast("⏳ Consigne enregistrée en file d'attente (liaison radio piscine interrompue).");
+        }
+      }
       showToast(
         targetActive
           ? 'Commande transmise à la filtration Klereo : pompe en marche 🌊'
@@ -1463,7 +1481,14 @@ export default function VademecumPage({ properties, currentUser, reservations = 
     try {
       const res = await setPoolHeatingMode(targetActive, poolTarget);
       if (res) {
-        setPiscineStatus(res);
+        setPiscineStatus((prev) => ({
+          ...(prev || {}),
+          ...res,
+          pending_sync: res.pending_sync || (res.queued_for_retry ? { has_pending: true, target_temp: poolTarget, heating_active: targetActive } : prev?.pending_sync),
+        }));
+        if (res.queued_for_retry) {
+          showToast("⏳ Consigne enregistrée en file d'attente (liaison radio piscine interrompue).");
+        }
       }
       showToast(
         targetActive
@@ -2906,7 +2931,7 @@ export default function VademecumPage({ properties, currentUser, reservations = 
               </div>
 
               {/* Bandeau d'information télémétrie stale Klereo (radio K-Link 868 MHz) */}
-              {piscineStatus?.telemetry_stale && (
+              {(piscineStatus?.telemetry_stale && piscineStatus?.radio_link_ok !== false && piscineStatus?.klereo_alert_code !== 'radioPB') && (
                 <div className="p-3.5 bg-amber-50 dark:bg-amber-950/40 border border-amber-300 dark:border-amber-600 text-amber-950 dark:text-amber-100 rounded-xl text-xs flex items-start gap-2.5 shadow-2xs animate-in fade-in duration-200">
                   <span className="material-symbols-outlined text-amber-600 dark:text-amber-400 text-[22px] shrink-0 mt-0.5">sensors_off</span>
                   <div className="flex flex-col gap-0.5 min-w-0">
@@ -2921,16 +2946,41 @@ export default function VademecumPage({ properties, currentUser, reservations = 
               )}
 
               {/* Alerte Radio Klereo si coffret injoignable ou anomalie radio (Question 3) */}
-              {(klereoRadioAlert || piscineStatus?.radio_error || piscineStatus?.radio_link_ok === false || (piscineStatus?.radio_alert && !piscineStatus?.radio_link_ok) || (piscineError && (piscineError.toLowerCase().includes('injoignable') || piscineError.toLowerCase().includes('radio')))) && (
+              {(piscineStatus?.radio_link_ok === false || piscineStatus?.klereo_alert_code === 'radioPB' || klereoRadioAlert || piscineStatus?.radio_error || (piscineStatus?.radio_alert && !piscineStatus?.radio_link_ok) || (piscineError && (piscineError.toLowerCase().includes('injoignable') || piscineError.toLowerCase().includes('radio')))) && (
                 <div className="p-3.5 bg-amber-50 dark:bg-amber-950/50 border-2 border-amber-500 dark:border-amber-500 text-amber-950 dark:text-amber-100 rounded-xl text-xs font-semibold flex items-start gap-2.5 shadow-sm animate-in fade-in duration-200">
                   <span className="material-symbols-outlined text-amber-600 dark:text-amber-400 text-[24px] shrink-0 mt-0.5">wifi_off</span>
                   <div className="flex flex-col gap-1 min-w-0">
                     <span className="font-bold text-sm text-amber-900 dark:text-amber-200 flex items-center gap-1.5">
-                      ⚠️ Liaison radio K-Link injoignable : le coffret physique au local technique ne répond pas
+                      ⚠️ Vérifiez la liaison radio entre le coffret piscine et le boîtier internet &quot;CONNECT&quot;
                     </span>
-                    <span className="text-[11px] text-amber-800 dark:text-amber-300 font-normal leading-relaxed">
+                    <span className="text-[11px] text-amber-700 dark:text-amber-300 font-medium">
+                      ({piscineStatus?.last_sync_label || (piscineStatus?.infos_time_s ? 'Dernière synchronisation il y a ' + formatTelemetryAge(piscineStatus.infos_time_s) : 'Synchronisation en attente')})
+                    </span>
+                    <span className="text-[11px] text-amber-900/90 dark:text-amber-200 font-medium">
+                      Dernières mesures : {`Air: ${piscineStatus?.air_temp ?? piscineStatus?.outside_temperature ?? piscineStatus?.air_temperature ?? '--'}°C, Eau: ${piscineStatus?.water_temp ?? piscineStatus?.water_temperature ?? '--'}°C, pH: ${piscineStatus?.ph ?? piscineStatus?.ph_value ?? '--'}, Redox: ${piscineStatus?.redox ?? piscineStatus?.redox_mv ?? piscineStatus?.redox_value ?? '--'}mV`}
+                    </span>
+                    <span className="text-[11px] text-amber-800 dark:text-amber-300 font-normal leading-relaxed mt-0.5">
                       {klereoRadioAlert || piscineStatus?.radio_alert || "La communication radio entre le modem internet et le coffret électrique du local technique est interrompue. Les commandes d'actionneurs et la télémesure en direct sont suspendues jusqu'au rétablissement de la liaison radio."}
                     </span>
+                  </div>
+                </div>
+              )}
+
+              {/* Bandeau consigne en file d'attente (pending_sync) */}
+              {piscineStatus?.pending_sync?.has_pending && (
+                <div className="p-3.5 bg-blue-50 dark:bg-blue-950/40 border border-blue-300 dark:border-blue-600 text-blue-950 dark:text-blue-100 rounded-xl text-xs flex items-start gap-2.5 shadow-2xs animate-in fade-in duration-200">
+                  <span className="material-symbols-outlined text-blue-600 dark:text-blue-400 text-[22px] shrink-0 mt-0.5">hourglass_top</span>
+                  <div className="flex flex-col gap-0.5 min-w-0">
+                    <span className="font-bold text-xs text-blue-900 dark:text-blue-200">
+                      ⏳ Consigne enregistrée en file d'attente — La liaison radio avec le coffret piscine étant momentanément interrompue, le site réessaie automatiquement toutes les 15 à 30 minutes et activera votre consigne dès la reconnexion.
+                    </span>
+                    {(piscineStatus?.pending_sync?.target_temp != null || piscineStatus?.pending_sync?.want_target_temp != null || piscineStatus?.pending_sync?.heating_active != null || piscineStatus?.pending_sync?.filtration_active != null) && (
+                      <span className="text-[10px] text-blue-700 dark:text-blue-300 font-medium mt-0.5">
+                        Détail : {piscineStatus?.pending_sync?.heating_active || piscineStatus?.pending_sync?.want_heating_active ? `Chauffage demandé (${piscineStatus?.pending_sync?.target_temp || piscineStatus?.pending_sync?.want_target_temp || poolTarget}°C)` : ''}
+                        {(piscineStatus?.pending_sync?.heating_active || piscineStatus?.pending_sync?.want_heating_active) && (piscineStatus?.pending_sync?.filtration_active || piscineStatus?.pending_sync?.want_pump_active) ? ' • ' : ''}
+                        {piscineStatus?.pending_sync?.filtration_active || piscineStatus?.pending_sync?.want_pump_active ? 'Filtration demandée en marche' : ''}
+                      </span>
+                    )}
                   </div>
                 </div>
               )}

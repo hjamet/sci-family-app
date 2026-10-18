@@ -261,12 +261,12 @@ export default function TaskCard({
           )}
 
           {/* Budget alloué ou devis */}
-          {task.budget ? (
-            <span className="inline-flex items-center gap-1 px-2.5 py-1 rounded-full bg-canvas-slate text-forest-deep font-label-sm text-label-sm border border-slate-200 ml-auto">
-              <span className="text-xs text-on-surface-variant font-medium">Devis :</span>
-              <span className="font-bold">~{task.budget} €</span>
+          {Number(task.budget) > 0 && (
+            <span className="inline-flex items-center gap-1 px-2.5 py-1 rounded-full bg-canvas-slate text-on-surface-variant font-label-sm text-label-sm border border-slate-200">
+              <span className="material-symbols-outlined text-[15px] text-primary">payments</span>
+              <span>Devis : ~{Number(task.budget).toLocaleString('fr-FR')} €</span>
             </span>
-          ) : null}
+          )}
         </div>
 
         {/* Title */}

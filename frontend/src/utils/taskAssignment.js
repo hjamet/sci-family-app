@@ -6,23 +6,23 @@
 
 export const CANONICAL_ASSOCIATES_MAP = {
   henri: 1,
-  hortense: 2,
-  marguerite: 3,
-  eugenie: 4,
-  josephine: 5,
-  maman: 6,
-  elisabeth: 6,
-  frederic: 7,
+  marguerite: 2,
+  hortense: 3,
+  josephine: 4,
+  eugenie: 5,
+  frederic: 6,
+  maman: 7,
+  elisabeth: 7,
 };
 
 export const MEMBER_ID_TO_NAME = {
   1: 'Henri Jamet',
-  2: 'Hortense Jamet',
-  3: 'Marguerite Jamet',
-  4: 'Eugénie Jamet',
-  5: 'Joséphine Jamet',
-  6: 'Élisabeth Jamet',
-  7: 'Frédéric Jamet',
+  2: 'Marguerite Jamet',
+  3: 'Hortense Jamet',
+  4: 'Joséphine Jamet',
+  5: 'Eugénie Jamet',
+  6: 'Frédéric Jamet',
+  7: 'Élisabeth Jamet',
 };
 
 export function resolveMemberDisplayName(val) {

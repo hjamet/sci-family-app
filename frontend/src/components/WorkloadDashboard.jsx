@@ -19,12 +19,12 @@ import ErrorBoundary from './common/ErrorBoundary';
 
 const ALL_7_MEMBERS = [
   { id: 1, prenom: 'Henri', fullName: 'Henri Jamet', role: 'Coordinateur Général', color: 'from-cyan-500 to-blue-600', badgeColor: 'bg-cyan-50 text-cyan-700 border-cyan-200' },
-  { id: 2, prenom: 'Hortense', fullName: 'Hortense Jamet', role: 'Membre Associé', color: 'from-rose-500 to-pink-600', badgeColor: 'bg-rose-50 text-rose-700 border-rose-200' },
-  { id: 3, prenom: 'Marguerite', fullName: 'Marguerite Jamet', role: 'Membre Associé', color: 'from-purple-500 to-indigo-600', badgeColor: 'bg-purple-50 text-purple-700 border-purple-200' },
-  { id: 4, prenom: 'Eugénie', fullName: 'Eugénie Jamet', role: 'Membre Associé', color: 'from-amber-500 to-orange-600', badgeColor: 'bg-amber-50 text-amber-700 border-amber-200' },
-  { id: 5, prenom: 'Joséphine', fullName: 'Joséphine Jamet', role: 'Coordinatrice Adjointe', color: 'from-emerald-500 to-teal-600', badgeColor: 'bg-emerald-50 text-emerald-700 border-emerald-200' },
-  { id: 6, prenom: 'Élisabeth', aliases: ['Maman', 'Elisabeth'], fullName: 'Maman (Élisabeth) Jamet', role: 'Membre Associé', color: 'from-teal-500 to-emerald-600', badgeColor: 'bg-teal-50 text-teal-700 border-teal-200' },
-  { id: 7, prenom: 'Frédéric', fullName: 'Frédéric Jamet', role: 'Membre Associé', color: 'from-blue-500 to-indigo-600', badgeColor: 'bg-blue-50 text-blue-700 border-blue-200' },
+  { id: 2, prenom: 'Marguerite', fullName: 'Marguerite Jamet', role: 'Membre Associé', color: 'from-purple-500 to-indigo-600', badgeColor: 'bg-purple-50 text-purple-700 border-purple-200' },
+  { id: 3, prenom: 'Hortense', fullName: 'Hortense Jamet', role: 'Membre Associé', color: 'from-rose-500 to-pink-600', badgeColor: 'bg-rose-50 text-rose-700 border-rose-200' },
+  { id: 4, prenom: 'Joséphine', fullName: 'Joséphine Jamet', role: 'Coordinatrice Adjointe', color: 'from-emerald-500 to-teal-600', badgeColor: 'bg-emerald-50 text-emerald-700 border-emerald-200' },
+  { id: 5, prenom: 'Eugénie', fullName: 'Eugénie Jamet', role: 'Membre Associé', color: 'from-amber-500 to-orange-600', badgeColor: 'bg-amber-50 text-amber-700 border-amber-200' },
+  { id: 6, prenom: 'Frédéric', fullName: 'Frédéric Jamet', role: 'Membre Associé', color: 'from-blue-500 to-indigo-600', badgeColor: 'bg-blue-50 text-blue-700 border-blue-200' },
+  { id: 7, prenom: 'Élisabeth', aliases: ['Maman', 'Elisabeth'], fullName: 'Maman (Élisabeth) Jamet', role: 'Membre Associé', color: 'from-teal-500 to-emerald-600', badgeColor: 'bg-teal-50 text-teal-700 border-teal-200' },
 ];
 
 function isTaskCompleted(task) {
@@ -44,6 +44,35 @@ function isTaskCompleted(task) {
     'ARCHIVE',
   ];
   return completedStatuses.includes(normalized);
+}
+
+function isTaskApprovedBySupervisor(task) {
+  if (!task) return false;
+  const rawStatus = String(task?.status || '').trim().toUpperCase();
+  const normalized = rawStatus.normalize('NFD').replace(/[\u0300-\u036f]/g, '').replace(/[_\s-]+/g, '_');
+  return normalized !== '' && !['PROPOSED', 'PROPOSEE', 'REJECTED', 'REJETEE', 'BROUILLON', 'DRAFT'].includes(normalized);
+}
+
+function isTaskCreatedByUser(task, member) {
+  if (!task || !member) return false;
+  const creatorRaw = String(task.created_by || task.proposer_name || task.author || task.submitted_by || '').trim();
+  if (!creatorRaw) return false;
+
+  const creatorNorm = creatorRaw.toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '');
+  const prenomNorm = (member.prenom || '').toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '');
+  const fullNameNorm = (member.fullName || '').toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '');
+
+  if (creatorNorm === prenomNorm || creatorNorm === fullNameNorm) return true;
+  if (prenomNorm && creatorNorm.includes(prenomNorm)) return true;
+
+  if (Array.isArray(member.aliases)) {
+    for (const alias of member.aliases) {
+      const aliasNorm = alias.toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '');
+      if (creatorNorm.includes(aliasNorm)) return true;
+    }
+  }
+
+  return false;
 }
 
 const PERIOD_OPTIONS = [
@@ -151,14 +180,20 @@ function WorkloadDashboardInner({ currentUser, period: propPeriod = 'all' }) {
       // Tâches réelles associées
       const memberTasks = realTasks.filter((t) => isTaskAssignedToUser(t, userMeta));
 
-      // Tâches réelles complétées / validées
+      // Tâches réelles complétées / validées (assignées au membre et terminées)
       const completedTasks = memberTasks.filter((t) => isTaskCompleted(t));
+
+      // Tâches réelles créées par le membre et validées par un superviseur
+      const createdApprovedTasks = realTasks.filter(
+        (t) => isTaskCreatedByUser(t, member) && isTaskApprovedBySupervisor(t)
+      );
 
       // 1. Score d'utilisation / occupation (jours réels passés au domaine)
       const score_usage = daysByMember[member.prenom] || 0;
 
-      // 2. Score de missions / tâches accomplies (tâches validées)
-      const score_taches = completedTasks.length;
+      // 2. Score de missions / tâches encaissées (réalisées + bonus création de tâches validées)
+      const created_bonus_count = createdApprovedTasks.length;
+      const score_taches = completedTasks.length + created_bonus_count;
 
       // 3. Algorithme d'équilibre participatif :
       // ratio = (score_taches + 0.5) / (score_usage + 0.5)
@@ -172,6 +207,8 @@ function WorkloadDashboardInner({ currentUser, period: propPeriod = 'all' }) {
         ratio,
         memberTasks,
         completedTasks,
+        createdApprovedTasks,
+        created_bonus_count,
       };
     });
 
@@ -270,14 +307,14 @@ function WorkloadDashboardInner({ currentUser, period: propPeriod = 'all' }) {
         <Sparkles className="w-5 h-5 text-amber-600 shrink-0 mt-0.5" />
         <div className="leading-relaxed flex-1">
           <strong className="text-slate-900 font-bold">Équilibre de participation :</strong>{' '}
-          Plus vous accomplissez de missions par rapport à vos séjours, plus votre indice est élevé. Cet indicateur valorise les contributions de chacun dans un esprit d'entraide familiale.
+          Plus vous accomplissez de missions ou préparez des tâches validées par rapport à vos séjours, plus votre indice est élevé. Cet indicateur valorise les contributions de chacun dans un esprit d'entraide familiale.
           <details className="mt-1.5 text-[11px] text-slate-500 cursor-pointer group">
             <summary className="inline-flex items-center gap-1 font-semibold text-indigo-700 hover:text-indigo-900 select-none">
               <Info className="w-3.5 h-3.5 inline shrink-0" />
               Comment est-ce calculé ?
             </summary>
             <p className="mt-1 pl-4 border-l-2 border-indigo-200 text-slate-600">
-              Formule de calcul : <span className="font-mono font-semibold text-indigo-900">(missions validées + 0,5) / (séjours + 0,5)</span>. L'ajout de 0,5 garantit un départ équitable pour chacun et évite toute division par zéro.
+              Formule de calcul : <span className="font-mono font-semibold text-indigo-900">(missions réalisées + tâches créées validées + 0,5) / (séjours + 0,5)</span>. Chaque tâche réalisée compte pour 1, et chaque tâche créée validée par un superviseur donne un bonus de +1. L'ajout de 0,5 garantit un départ équitable pour chacun et évite toute division par zéro.
             </p>
           </details>
         </div>
@@ -452,15 +489,15 @@ function WorkloadDashboardInner({ currentUser, period: propPeriod = 'all' }) {
                       </div>
                     </div>
 
-                    {/* BARRE 2 : SCORE DE CORVÉES / TÂCHES ACCOMPLIES */}
+                    {/* BARRE 2 : SCORE DE MISSIONS / TÂCHES ENCAISSÉES */}
                     <div className="p-3 bg-white rounded-xl border border-slate-200/80 space-y-1.5 shadow-2xs">
                       <div className="flex items-center justify-between text-xs">
                         <span className="font-bold text-slate-600 flex items-center gap-1.5">
                           <CheckCircle2 className="w-3.5 h-3.5 text-emerald-600" />
-                          <span>2. Missions accomplies :</span>
+                          <span>2. Missions &amp; Tâches encaissées :</span>
                         </span>
                         <span className="font-black text-emerald-900 font-mono">
-                          {member.score_taches} {member.score_taches > 1 ? 'tâches validées' : 'tâche validée'}
+                          {member.score_taches} {member.score_taches > 1 ? 'tâches' : 'tâche'}
                         </span>
                       </div>
 
@@ -468,67 +505,110 @@ function WorkloadDashboardInner({ currentUser, period: propPeriod = 'all' }) {
                         <div
                           style={{ width: `${pctTasks}%` }}
                           className="h-full bg-gradient-to-r from-emerald-500 to-teal-500 transition-all duration-500 rounded-full"
-                          title={`${member.score_taches} tâches validées (${pctTasks}% du max)`}
+                          title={`${member.score_taches} tâches encaissées (${pctTasks}% du max)`}
                         ></div>
                       </div>
 
                       <div className="flex justify-between items-center text-[10px] text-slate-400">
-                        <span>Missions validées &amp; clôturées</span>
+                        <span>
+                          {member.completedTasks.length} réalisée{member.completedTasks.length > 1 ? 's' : ''}
+                          {member.createdApprovedTasks?.length > 0 && (
+                            <strong className="text-emerald-700 ml-1">
+                              + {member.createdApprovedTasks.length} créée{member.createdApprovedTasks.length > 1 ? 's' : ''} &amp; validée{member.createdApprovedTasks.length > 1 ? 's' : ''}
+                            </strong>
+                          )}
+                        </span>
                         <span>{pctTasks}% du max</span>
                       </div>
                     </div>
                   </div>
 
                   {/* Clickable Real Task Badges per Member */}
-                  <div className="pt-3 mt-1 border-t border-slate-200/60 flex flex-wrap items-center gap-2">
-                    <span className="text-[10px] font-bold text-slate-500 uppercase tracking-wider flex items-center gap-1 mr-1 shrink-0">
-                      <CheckSquare className="w-3 h-3 text-indigo-600" />
-                      Missions assignées ({member.memberTasks.length}) :
-                    </span>
-                    {member.memberTasks.length === 0 ? (
-                      <span className="text-[11px] text-slate-400 italic">
-                        Aucune mission active assignée
+                  <div className="pt-3 mt-1 border-t border-slate-200/60 space-y-2">
+                    <div className="flex flex-wrap items-center gap-2">
+                      <span className="text-[10px] font-bold text-slate-500 uppercase tracking-wider flex items-center gap-1 mr-1 shrink-0">
+                        <CheckSquare className="w-3 h-3 text-indigo-600" />
+                        Missions assignées ({member.memberTasks.length}) :
                       </span>
-                    ) : (
-                      member.memberTasks.map((task) => {
-                        const completed = isTaskCompleted(task);
-                        return (
-                          <button
-                            key={task.id}
-                            type="button"
-                            onClick={() => setSelectedTask(task)}
-                            className={`inline-flex items-center space-x-1.5 px-2.5 py-1 rounded-xl text-[11px] font-bold border transition-all shadow-2xs cursor-pointer hover:scale-[1.02] ${
-                              completed
-                                ? 'bg-emerald-50/80 text-emerald-950 border-emerald-200 hover:border-emerald-400'
-                                : task.status === 'EN_VOTE'
-                                ? 'bg-amber-50 text-amber-950 border-amber-200 hover:border-amber-400'
-                                : 'bg-white text-indigo-950 border-slate-200 hover:border-indigo-300'
-                            }`}
-                            title={`Cliquer pour afficher la fiche détaillée (${task.status})`}
-                          >
-                            <span
-                              className={`w-2 h-2 rounded-full ${
+                      {member.memberTasks.length === 0 ? (
+                        <span className="text-[11px] text-slate-400 italic">
+                          Aucune mission active assignée
+                        </span>
+                      ) : (
+                        member.memberTasks.map((task) => {
+                          const completed = isTaskCompleted(task);
+                          return (
+                            <button
+                              key={task.id}
+                              type="button"
+                              onClick={() => setSelectedTask(task)}
+                              className={`inline-flex items-center space-x-1.5 px-2.5 py-1 rounded-xl text-[11px] font-bold border transition-all shadow-2xs cursor-pointer hover:scale-[1.02] ${
                                 completed
-                                  ? 'bg-emerald-500'
+                                  ? 'bg-emerald-50/80 text-emerald-950 border-emerald-200 hover:border-emerald-400'
                                   : task.status === 'EN_VOTE'
-                                  ? 'bg-amber-500 animate-pulse'
-                                  : 'bg-indigo-500'
+                                  ? 'bg-amber-50 text-amber-950 border-amber-200 hover:border-amber-400'
+                                  : 'bg-white text-indigo-950 border-slate-200 hover:border-indigo-300'
                               }`}
-                            ></span>
-                            <span className="truncate max-w-[220px]">📋 {task.title}</span>
-                            {completed && (
-                              <span className="text-[9px] bg-emerald-100 text-emerald-800 font-bold px-1.5 py-0.2 rounded">
-                                Validée
+                              title={`Cliquer pour afficher la fiche détaillée (${task.status})`}
+                            >
+                              <span
+                                className={`w-2 h-2 rounded-full ${
+                                  completed
+                                    ? 'bg-emerald-500'
+                                    : task.status === 'EN_VOTE'
+                                    ? 'bg-amber-500 animate-pulse'
+                                    : 'bg-indigo-500'
+                                }`}
+                              ></span>
+                              <span className="truncate max-w-[220px]">📋 {task.title}</span>
+                              {completed && (
+                                <span className="text-[9px] bg-emerald-100 text-emerald-800 font-bold px-1.5 py-0.2 rounded">
+                                  Validée
+                                </span>
+                              )}
+                              {Number(task.budget) > 0 && (
+                                <span className="text-[9px] font-mono font-bold bg-indigo-100 text-indigo-800 px-1.5 py-0.2 rounded-md">
+                                  {task.budget}€
+                                </span>
+                              )}
+                            </button>
+                          );
+                        })
+                      )}
+                    </div>
+
+                    {member.createdApprovedTasks && member.createdApprovedTasks.length > 0 && (
+                      <div className="flex flex-wrap items-center gap-2 pt-1.5 border-t border-dashed border-slate-200">
+                        <span className="text-[10px] font-bold text-emerald-700 uppercase tracking-wider flex items-center gap-1 mr-1 shrink-0">
+                          <Sparkles className="w-3 h-3 text-emerald-600" />
+                          Créées &amp; validées (+{member.createdApprovedTasks.length} bonus) :
+                        </span>
+                        {member.createdApprovedTasks.map((task) => {
+                          const completed = isTaskCompleted(task);
+                          return (
+                            <button
+                              key={`created-${task.id}`}
+                              type="button"
+                              onClick={() => setSelectedTask(task)}
+                              className="inline-flex items-center space-x-1.5 px-2.5 py-1 rounded-xl text-[11px] font-bold border border-emerald-300 bg-emerald-50/90 text-emerald-950 transition-all shadow-2xs cursor-pointer hover:scale-[1.02] hover:border-emerald-500"
+                              title={`Tâche créée par ${member.prenom} et validée par un superviseur (${task.status})`}
+                            >
+                              <span className="text-amber-500 text-xs">✨</span>
+                              <span className="truncate max-w-[220px]">
+                                {completed ? `Créée & terminée : ${task.title}` : `Créée & ouverte : ${task.title}`}
                               </span>
-                            )}
-                            {task.budget > 0 && (
-                              <span className="text-[9px] font-mono font-bold bg-indigo-100 text-indigo-800 px-1.5 py-0.2 rounded-md">
-                                {task.budget}€
+                              <span className="text-[9px] bg-emerald-200/80 text-emerald-900 font-black px-1.5 py-0.2 rounded">
+                                +1 pt création
                               </span>
-                            )}
-                          </button>
-                        );
-                      })
+                              {Number(task.budget) > 0 && (
+                                <span className="text-[9px] font-mono font-bold bg-emerald-100 text-emerald-800 px-1.5 py-0.2 rounded-md">
+                                  {task.budget}€
+                                </span>
+                              )}
+                            </button>
+                          );
+                        })}
+                      </div>
                     )}
                   </div>
                 </div>
