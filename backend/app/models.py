@@ -1,6 +1,6 @@
 from datetime import datetime
 from sqlalchemy import Column, Integer, String, Text, DateTime, ForeignKey, Float, UniqueConstraint, Boolean, LargeBinary, BigInteger
-from sqlalchemy.orm import relationship, synonym
+from sqlalchemy.orm import relationship, synonym, deferred
 from .database import Base
 
 class Member(Base):
@@ -73,7 +73,7 @@ class AdminDocument(Base):
     file_name = Column(String, nullable=True)
     file_type = Column(String, nullable=True)
     file_size = Column(Integer, nullable=True)
-    file_data = Column(LargeBinary, nullable=True)
+    file_data = deferred(Column(LargeBinary, nullable=True))
     drive_file_id = Column(String(255), nullable=True, index=True)
     file_hash = Column(String(64), nullable=True, index=True)
     source_type = Column(String, nullable=True)  # TASK, ISSUE, PROJECT, MANUAL

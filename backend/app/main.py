@@ -18,7 +18,7 @@ from fastapi.staticfiles import StaticFiles
 from fastapi.responses import FileResponse, Response, RedirectResponse, StreamingResponse, JSONResponse
 from sqlalchemy.orm import Session, selectinload, joinedload
 from sqlalchemy import func, or_, and_
-from sqlalchemy.exc import IntegrityError
+from sqlalchemy.exc import IntegrityError, OperationalError
 
 from .database import engine, Base, get_db
 from .models import (
@@ -4490,11 +4490,19 @@ def list_tasks(
             Task.subject.ilike(s)
         )
 
-    tasks = query.options(
-        selectinload(Task.comments),
-        selectinload(Task.assignee),
-        selectinload(Task.admin_documents)
-    ).order_by(Task.id.asc()).all()
+    try:
+        tasks = query.options(
+            selectinload(Task.comments),
+            selectinload(Task.assignee),
+            selectinload(Task.admin_documents)
+        ).order_by(Task.id.asc()).all()
+    except OperationalError:
+        db.rollback()
+        tasks = query.options(
+            selectinload(Task.comments),
+            selectinload(Task.assignee),
+            selectinload(Task.admin_documents)
+        ).order_by(Task.id.asc()).all()
     return [format_task_response(t) for t in tasks]
 
 

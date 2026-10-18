@@ -49,12 +49,34 @@ else:
     # Un pool léger avec pool_pre_ping et pool_recycle réutilise la connexion TCP/SSL
     # pendant la durée de vie du warm container (économisant 600ms à 1000ms par requête),
     # tout en évitant les connexions périmées ou coupées par Supavisor.
+    if "pg8000" in SQLALCHEMY_DATABASE_URL:
+        pg_connect_args = {"tcp_keepalive": True, "timeout": 10}
+    else:
+        pg_connect_args = {
+            "keepalives": 1,
+            "keepalives_idle": 30,
+            "keepalives_interval": 10,
+            "keepalives_count": 5,
+            "connect_timeout": 10,
+        }
+
+    engine_kwargs = {
+        "connect_args": pg_connect_args,
+    }
+
+    if os.getenv("VERCEL"):
+        engine_kwargs["poolclass"] = NullPool
+    else:
+        engine_kwargs.update({
+            "pool_size": 5,
+            "max_overflow": 10,
+            "pool_recycle": 300,
+            "pool_pre_ping": True,
+        })
+
     engine = create_engine(
         SQLALCHEMY_DATABASE_URL,
-        pool_size=5,
-        max_overflow=10,
-        pool_recycle=300,
-        pool_pre_ping=True
+        **engine_kwargs
     )
 
 SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
