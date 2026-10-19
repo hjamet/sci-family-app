@@ -55,7 +55,7 @@ from .schemas import (
     ProfileUpdateRequest, ChangePasswordRequest, MemberSettingsResponse, MemberSettingsUpdate,
     VoteSubmissionRequest, ForgotPasswordRequest, NotificationResponse,
     OnboardingResponse, OnboardingAcknowledgeRequest, OnboardingHistoryItem,
-    MemberExpenseCreate, MemberExpenseResponse,
+    MemberExpenseCreate, MemberExpenseResponse, MemberExpenseUpdate,
     CallForFundsResponse, CallForFundsCalculationResult,
     CallForFundsGenerateRequest, CallForFundsSummaryResponse,
     MemberTreasurySummaryResponse, ExpenseRejectRequest, ReconciliationAssignRequest,
@@ -10988,6 +10988,83 @@ def reject_member_expense_endpoint(
         if t:
             t.status = "REJECTED"
             t.updated_at = datetime.utcnow()
+    db.commit()
+    db.refresh(expense)
+    return expense
+
+
+@app.patch("/api/finances/expenses/{expense_id}", response_model=MemberExpenseResponse, tags=["Dépenses Membres"])
+@app.put("/api/finances/expenses/{expense_id}", response_model=MemberExpenseResponse, tags=["Dépenses Membres"])
+def update_member_expense_endpoint(
+    expense_id: int,
+    payload: MemberExpenseUpdate,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db)
+):
+    """Met à jour chirurgicalement une dépense ou avance de frais (coordinateur)."""
+    check_coordinator_permission(current_user)
+    expense = db.query(MemberExpense).filter(MemberExpense.id == expense_id).first()
+    if not expense:
+        raise HTTPException(status_code=404, detail="Dépense / Avance introuvable.")
+
+    if payload.payer_type is not None:
+        clean_payer = str(payload.payer_type).strip().lower()
+        if clean_payer in ("member", "sci"):
+            expense.payer_type = clean_payer
+    if payload.expense_date is not None:
+        clean_date = str(payload.expense_date).strip()
+        if clean_date:
+            expense.expense_date = clean_date
+    if payload.title is not None:
+        clean_title = str(payload.title).strip()
+        if clean_title:
+            expense.title = clean_title
+    if payload.amount is not None:
+        if payload.amount > 0:
+            expense.amount = float(payload.amount)
+    if payload.category is not None:
+        expense.category = payload.category.strip()
+    if payload.status is not None:
+        expense.status = payload.status.strip()
+    if payload.notes is not None:
+        expense.notes = payload.notes
+    if payload.document_id is not None:
+        expense.document_id = payload.document_id if payload.document_id > 0 else None
+        if expense.document_id:
+            doc = db.query(AdminDocument).filter(AdminDocument.id == expense.document_id).first()
+            if doc:
+                expense.document_url = doc.file_url or f"/api/documents/{doc.id}/download"
+                expense.document_filename = doc.file_name
+
+    # Synchronisation de la tâche liée si existante
+    if expense.task_id:
+        t = db.query(Task).filter(Task.id == expense.task_id).first()
+        if t:
+            if expense.payer_type == "member":
+                t.title = f"Avance de frais membre : {expense.title} ({expense.amount:.2f} €)"
+            else:
+                t.title = f"Règlement facture SCI : {expense.title} ({expense.amount:.2f} €)"
+            if expense.document_id and expense.document_url:
+                t_docs = []
+                if t.documents:
+                    try:
+                        t_docs = json.loads(t.documents) if isinstance(t.documents, str) else t.documents
+                    except Exception:
+                        t_docs = []
+                if not isinstance(t_docs, list):
+                    t_docs = []
+                if not any(d.get("id") == expense.document_id for d in t_docs if isinstance(d, dict)):
+                    t_docs.append({
+                        "id": expense.document_id,
+                        "name": expense.title,
+                        "filename": expense.document_filename or "Facture jointe",
+                        "file_url": expense.document_url,
+                        "url": expense.document_url,
+                        "type": "Facture / Justificatif"
+                    })
+                    t.documents = json.dumps(t_docs)
+            t.updated_at = datetime.utcnow()
+
     db.commit()
     db.refresh(expense)
     return expense

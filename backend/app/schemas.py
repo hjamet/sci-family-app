@@ -1435,6 +1435,17 @@ class MemberExpenseResponse(BaseModel):
         from_attributes = True
 
 
+class MemberExpenseUpdate(BaseModel):
+    title: Optional[str] = None
+    amount: Optional[float] = None
+    expense_date: Optional[str] = None
+    category: Optional[str] = None
+    payer_type: Optional[str] = None
+    status: Optional[str] = None
+    document_id: Optional[int] = None
+    notes: Optional[str] = None
+
+
 class CallForFundsResponse(BaseModel):
     id: int
     reference: str
