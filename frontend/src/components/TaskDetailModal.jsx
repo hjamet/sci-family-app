@@ -1,6 +1,7 @@
 import React, { useState, useEffect, useRef, useCallback } from 'react';
 import {
   fetchTaskById,
+  fetchTasks,
   updateTask,
   createTask,
   createProject,
@@ -40,6 +41,9 @@ import FamilyChat from './common/FamilyChat';
 import { MarkdownContent } from './common/RichTextEditor';
 import KeyValueAttachmentList, { parseKeyValues } from './common/KeyValueAttachmentList';
 import { parseTaskMarkdown } from '../utils/taskMarkdownParser';
+import DiscardChangesModal from './common/DiscardChangesModal';
+import TaskEquityAssignmentSelector from './common/TaskEquityAssignmentSelector';
+import { KeyValuesEditor, ExternalLinksEditor } from './common/ModalSharedEditors';
 
 const SUBJECTS = [
   'Presbytère',
@@ -211,6 +215,9 @@ export default function TaskDetailModal({
   const [editDescription, setEditDescription] = useState('');
   const [editSubject, setEditSubject] = useState('Presbytère');
   const [editComplexity, setEditComplexity] = useState('Modérée');
+  const [editPriority, setEditPriority] = useState(initialTask?.priority || 'Normale');
+  const [editDeadline, setEditDeadline] = useState(initialTask?.deadline ? initialTask.deadline.slice(0, 10) : '');
+  const [editStatus, setEditStatus] = useState(initialTask?.status || 'A_FAIRE');
   const [editMembers, setEditMembers] = useState([]);
   const [editChecklist, setEditChecklist] = useState([]);
   const [editVoteOptions, setEditVoteOptions] = useState([]);
@@ -226,6 +233,20 @@ export default function TaskDetailModal({
     initialTask?.budget && Number(initialTask.budget) > 0 ? String(initialTask.budget) : ''
   );
   const [savingEdit, setSavingEdit] = useState(false);
+
+  // Attribution directe en mode consultation (Annotation 1)
+  const [isEditingAssignment, setIsEditingAssignment] = useState(false);
+  const [viewAssignedMembers, setViewAssignedMembers] = useState(() => {
+    if (Array.isArray(initialTask?.assigned_members) && initialTask.assigned_members.length > 0) {
+      return initialTask.assigned_members;
+    }
+    if (initialTask?.assignee) return [initialTask.assignee];
+    return [];
+  });
+  const [viewAutoAssign, setViewAutoAssign] = useState(Boolean(initialTask?.auto_assign_by_workload));
+  const [isSavingDirectAssignment, setIsSavingDirectAssignment] = useState(false);
+  const [allTasksList, setAllTasksList] = useState([]);
+  const [showDiscardModal, setShowDiscardModal] = useState(false);
 
   // Import Markdown (Annotation 3 : Réservé à Henri Jamet)
   const [isMarkdownImportOpen, setIsMarkdownImportOpen] = useState(false);
@@ -338,6 +359,9 @@ export default function TaskDetailModal({
     const origDesc = (task?.description || '').trim();
     const origSub = (task?.subject || (isVoteInitiative ? 'Presbytère' : 'Presbytère')).trim();
     const origComp = (task?.complexity || (isVoteInitiative ? 'Élevée' : 'Modérée')).trim();
+    const origPriority = (task?.priority || 'Normale').trim();
+    const origDeadline = task?.deadline ? task.deadline.slice(0, 10) : '';
+    const origStatus = (task?.status || 'A_FAIRE').trim();
     const origMembers = Array.isArray(task?.assigned_members)
       ? [...task.assigned_members].sort().join(',')
       : (task?.assignee || '');
@@ -349,6 +373,9 @@ export default function TaskDetailModal({
     if (editDescription.trim() !== origDesc) return true;
     if (editSubject.trim() !== origSub) return true;
     if (!isVoteInitiative && editComplexity.trim() !== origComp) return true;
+    if (!isVoteInitiative && editPriority.trim() !== origPriority) return true;
+    if (!isVoteInitiative && editDeadline !== origDeadline) return true;
+    if (!isNewTask && isCoordinator && editStatus.trim() !== origStatus) return true;
     if (!isVoteInitiative && currentMembers !== origMembers) return true;
     if (editChecklist.length !== parseChecklistItems(task?.checklist).length) return true;
     if (editDocuments.length !== parseTaskDocuments(task?.documents || task?.completion_docs).length) return true;
@@ -361,9 +388,15 @@ export default function TaskDetailModal({
 
   async function handleSafeClose() {
     if (hasUnsavedChanges()) {
-      const confirmDiscard = window.confirm("Des modifications sont en cours et non enregistrées. Voulez-vous vraiment quitter sans enregistrer ?");
-      if (!confirmDiscard) return;
+      setShowDiscardModal(true);
+      return;
     }
+    await purgeTempDocuments();
+    onClose();
+  }
+
+  async function handleConfirmDiscard() {
+    setShowDiscardModal(false);
     await purgeTempDocuments();
     onClose();
   }
@@ -416,7 +449,16 @@ export default function TaskDetailModal({
     setEditDescription(t.description || '');
     setEditSubject(t.subject || 'Presbytère');
     setEditComplexity(t.complexity || (isVoteInitiative ? 'Élevée' : 'Modérée'));
+    setEditPriority(t.priority || 'Normale');
+    setEditDeadline(t.deadline ? t.deadline.slice(0, 10) : '');
+    setEditStatus(t.status || 'A_FAIRE');
     setEditMembers(isVoteInitiative ? [currentUserName || 'Henri Jamet'] : (Array.isArray(t.assigned_members) ? t.assigned_members : (t.assignee ? [t.assignee] : [])));
+    setViewAssignedMembers(
+      Array.isArray(t.assigned_members) && t.assigned_members.length > 0
+        ? t.assigned_members
+        : (t.assignee ? [t.assignee] : [])
+    );
+    setViewAutoAssign(Boolean(t.auto_assign_by_workload));
     setEditChecklist(isNew ? [] : parseChecklistItems(t.checklist));
     setEditDocuments(parseTaskDocuments(t.documents || t.completion_docs || t.document_urls));
     setEditExternalLinks(Array.isArray(t.external_links) ? t.external_links : []);
@@ -769,10 +811,53 @@ export default function TaskDetailModal({
       : (task?.assignee ? [task.assignee] : []);
     if (taskMembers.length > 0) {
       setSelectedValidationMembers(taskMembers);
+      setViewAssignedMembers(taskMembers);
     } else if (sortedAssociatesByEquity.length > 0) {
-      setSelectedValidationMembers([sortedAssociatesByEquity[0].name]);
+      const top1Name = sortedAssociatesByEquity[0].name;
+      setSelectedValidationMembers([top1Name]);
+      setViewAssignedMembers([top1Name]);
     }
-  }, [isOpen, task?.id, task?.assigned_members, task?.assignee, sortedAssociatesByEquity]);
+    setViewAutoAssign(Boolean(task?.auto_assign_by_workload));
+  }, [isOpen, task?.id, task?.assigned_members, task?.assignee, sortedAssociatesByEquity, task?.auto_assign_by_workload]);
+
+  useEffect(() => {
+    if (!isOpen) return;
+    let isMounted = true;
+    fetchTasks().then((res) => {
+      if (!isMounted) return;
+      if (Array.isArray(res)) setAllTasksList(res);
+      else if (res && Array.isArray(res.tasks)) setAllTasksList(res.tasks);
+    }).catch(() => {});
+    return () => {
+      isMounted = false;
+    };
+  }, [isOpen]);
+
+  const handleSaveDirectAssignment = async (newMembers, isAuto) => {
+    if (!task?.id) return;
+    setIsSavingDirectAssignment(true);
+    try {
+      const payload = {
+        assigned_members: newMembers,
+        assignee: newMembers && newMembers.length > 0 ? newMembers[0] : '',
+        auto_assign_by_workload: Boolean(isAuto),
+      };
+      const updated = await updateTask(task.id, payload);
+      const refreshed = updated && updated.id ? updated : { ...task, ...payload };
+      setTask(refreshed);
+      syncEditFields(refreshed);
+      setIsEditingAssignment(false);
+      invalidateApiCache('tasks');
+      invalidateApiCache('/api/tasks');
+      invalidateApiCache(`tasks/${task.id}`);
+      if (onTaskUpdated) onTaskUpdated(refreshed);
+    } catch (err) {
+      console.error("Erreur mise à jour de l'attribution :", err);
+      throw err;
+    } finally {
+      setIsSavingDirectAssignment(false);
+    }
+  };
 
   useEffect(() => {
     if (!isOpen) return;
@@ -984,6 +1069,8 @@ export default function TaskDetailModal({
         subject: editSubject,
         category: editSubject,
         complexity: isVoteInitiative ? 'Modérée' : editComplexity,
+        priority: editPriority,
+        deadline: editDeadline ? editDeadline : null,
         budget: editBudget !== '' && !isNaN(parseFloat(String(editBudget).replace(',', '.')))
           ? Math.max(0, parseFloat(String(editBudget).replace(',', '.')))
           : 0,
@@ -998,7 +1085,7 @@ export default function TaskDetailModal({
         recurrence_unit: editRecurrenceUnit,
         auto_assign_by_workload: editAutoAssignByWorkload,
         created_by: currentUserName || 'Henri Jamet',
-        status: isVoteInitiative ? 'PROPOSED' : (task?.id ? (task?.status || 'PROPOSED') : 'PROPOSED'),
+        status: isVoteInitiative ? 'PROPOSED' : (!isNewTask && isCoordinator ? editStatus : (task?.id ? (task?.status || 'PROPOSED') : 'PROPOSED')),
         progress: 0,
       };
 
@@ -1685,6 +1772,92 @@ export default function TaskDetailModal({
                   </div>
                 </div>
 
+                {/* Bloc Attribution & Répartition équitable en mode consultation pour toute tâche existante (Annotation 1) */}
+                {!isVoteInitiative && !isNewTask && (
+                  <div className="p-4 bg-slate-50 dark:bg-slate-900/60 rounded-2xl border border-slate-200 dark:border-slate-800 space-y-3">
+                    <div className="flex items-center justify-between flex-wrap gap-2">
+                      <div className="flex items-center gap-2">
+                        <span className="material-symbols-outlined text-[20px] text-emerald-700 dark:text-emerald-400">group</span>
+                        <h3 className="font-semibold text-xs sm:text-sm text-forest-deep dark:text-slate-100">
+                          Responsables &amp; Attribution de la mission
+                        </h3>
+                      </div>
+                      {!isEditingAssignment && isCoordinator && (
+                        <button
+                          type="button"
+                          onClick={() => {
+                            setViewAssignedMembers(
+                              Array.isArray(task?.assigned_members) && task.assigned_members.length > 0
+                                ? task.assigned_members
+                                : (task?.assignee ? [task.assignee] : [])
+                            );
+                            setViewAutoAssign(Boolean(task?.auto_assign_by_workload));
+                            setIsEditingAssignment(true);
+                          }}
+                          className="inline-flex items-center gap-1.5 px-3 py-1 rounded-xl bg-white dark:bg-slate-800 border border-emerald-500/60 text-emerald-800 dark:text-emerald-300 hover:bg-emerald-50 text-xs font-semibold shadow-xs transition-colors cursor-pointer"
+                        >
+                          <span className="material-symbols-outlined text-[15px]">edit</span>
+                          <span>Modifier l'attribution</span>
+                        </button>
+                      )}
+                    </div>
+
+                    {!isEditingAssignment ? (
+                      <div className="flex flex-wrap items-center gap-2">
+                        {Array.isArray(task?.assigned_members) && task.assigned_members.length > 0 ? (
+                          task.assigned_members.map((m) => (
+                            <span key={m} className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full bg-emerald-100 text-emerald-900 font-semibold text-xs border border-emerald-300">
+                              <span className="w-2 h-2 rounded-full bg-emerald-600"></span>
+                              {m}
+                            </span>
+                          ))
+                        ) : task?.assignee ? (
+                          <span className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full bg-emerald-100 text-emerald-900 font-semibold text-xs border border-emerald-300">
+                            <span className="w-2 h-2 rounded-full bg-emerald-600"></span>
+                            {task.assignee}
+                          </span>
+                        ) : (
+                          <span className="text-xs text-on-surface-variant italic">
+                            Aucun responsable assigné pour cette tâche.
+                          </span>
+                        )}
+                        {task?.auto_assign_by_workload && (
+                          <span className="px-2 py-0.5 rounded-full text-[10px] bg-purple-100 text-purple-900 border border-purple-200 font-semibold flex items-center gap-1">
+                            <span className="material-symbols-outlined text-[12px] text-purple-700">bolt</span>
+                            Auto-équité active
+                          </span>
+                        )}
+                      </div>
+                    ) : (
+                      <div className="space-y-2">
+                        <div className="flex items-center justify-between pb-1">
+                          <span className="text-xs text-on-surface-variant font-medium">
+                            Sélectionnez les associés recommandés par charge ou activez l'auto-attribution.
+                          </span>
+                          <button
+                            type="button"
+                            onClick={() => setIsEditingAssignment(false)}
+                            className="text-xs text-slate-500 hover:text-slate-800 dark:hover:text-slate-200 underline cursor-pointer"
+                          >
+                            Annuler
+                          </button>
+                        </div>
+                        <TaskEquityAssignmentSelector
+                          selectedMembers={viewAssignedMembers}
+                          onChangeMembers={setViewAssignedMembers}
+                          autoAssign={viewAutoAssign}
+                          onChangeAutoAssign={setViewAutoAssign}
+                          recommendations={recommendations}
+                          allTasks={allTasksList}
+                          currentTaskId={task?.id}
+                          onSaveDirect={handleSaveDirectAssignment}
+                          isSaving={isSavingDirectAssignment}
+                        />
+                      </div>
+                    )}
+                  </div>
+                )}
+
                 {/* Section Spécifique : Arbitrage d'Avance de Frais (Trésorerie SCI) */}
                 {isExpenseValidationTask && !isNewTask && (
                   <div className="p-5 rounded-2xl border-2 border-emerald-400 bg-emerald-50/80 dark:bg-emerald-950/40 shadow-sm space-y-4">
@@ -2073,89 +2246,15 @@ export default function TaskDetailModal({
 
                     {/* Bloc d'attribution équitable & multi-sélection des membres (Annotation 3) */}
                     {isProposed && isCoordinator && (
-                      <div className="p-3.5 bg-white/90 dark:bg-slate-900/80 rounded-xl border border-emerald-300 dark:border-emerald-700/60 text-xs space-y-3">
-                        <div className="flex flex-wrap items-center justify-between gap-2 font-bold text-forest-deep dark:text-emerald-300">
-                          <span className="flex items-center gap-1.5">
-                            <span>⚖️</span>
-                            <span>Attribution de la mission — Membres associés (triés par équité de charge) :</span>
-                          </span>
-                          <span className="px-2 py-0.5 rounded-full text-[10px] bg-emerald-100 text-emerald-800 dark:bg-emerald-950/70 dark:text-emerald-300 font-semibold border border-emerald-300">
-                            {selectedValidationMembers.length} sélectionné{selectedValidationMembers.length > 1 ? 's' : ''} sur {sortedAssociatesByEquity.length}
-                          </span>
-                        </div>
-
-                        <p className="text-[11px] text-on-surface-variant">
-                          Cochez un ou plusieurs associés en charge de cette mission. Les associés sont classés par priorité d'équité selon l'occupation et les corvées accomplies.
-                        </p>
-
-                        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-2">
-                          {sortedAssociatesByEquity.map((associate, idx) => {
-                            const isSelected = selectedValidationMembers.includes(associate.name);
-                            const isTop1 = idx === 0;
-
-                            return (
-                              <button
-                                key={`assoc-${associate.name}`}
-                                type="button"
-                                onClick={() => handleToggleValidationMember(associate.name)}
-                                className={`p-2.5 rounded-xl border text-left flex items-center justify-between gap-2.5 transition-all cursor-pointer select-none ${
-                                  isSelected
-                                    ? 'bg-emerald-50 dark:bg-emerald-950/50 border-emerald-500 shadow-xs ring-1 ring-emerald-500/30'
-                                    : 'bg-canvas-slate/60 dark:bg-slate-900/50 border-slate-200 dark:border-slate-800 hover:border-slate-300'
-                                }`}
-                              >
-                                <div className="flex items-center gap-2 min-w-0">
-                                  {/* Checkbox stylée */}
-                                  <div className={`w-4 h-4 rounded flex items-center justify-center shrink-0 border transition-colors ${
-                                    isSelected
-                                      ? 'bg-emerald-600 border-emerald-600 text-white'
-                                      : 'border-slate-400 bg-white dark:bg-slate-800'
-                                  }`}>
-                                    {isSelected && (
-                                      <span className="material-symbols-outlined text-[14px]">check</span>
-                                    )}
-                                  </div>
-
-                                  <div className="min-w-0 flex flex-col">
-                                    <div className="flex items-center gap-1.5">
-                                      <span className={`w-4 h-4 rounded-full flex items-center justify-center text-[10px] shrink-0 font-bold ${
-                                        isTop1 ? 'bg-emerald-700 text-white' : 'bg-slate-200 dark:bg-slate-700 text-slate-700 dark:text-slate-300'
-                                      }`}>
-                                        {idx + 1}
-                                      </span>
-                                      <span className="font-semibold text-on-surface dark:text-slate-100 truncate text-xs">
-                                        {associate.name}
-                                      </span>
-                                    </div>
-                                    {associate.reason && (
-                                      <span className="text-[10px] text-on-surface-variant truncate pl-5">
-                                        {associate.reason}
-                                      </span>
-                                    )}
-                                  </div>
-                                </div>
-
-                                {isTop1 && (
-                                  <span className="px-1.5 py-0.5 rounded text-[9px] font-bold bg-purple-100 text-purple-800 dark:bg-purple-950/60 dark:text-purple-300 shrink-0">
-                                    Top 1
-                                  </span>
-                                )}
-                              </button>
-                            );
-                          })}
-                        </div>
-
-                        {selectedValidationMembers.length === 0 ? (
-                          <p className="text-[11px] text-rose-600 dark:text-rose-400 font-medium flex items-center gap-1">
-                            <span className="material-symbols-outlined text-[14px]">warning</span>
-                            <span>Veuillez sélectionner au moins un membre associé pour pouvoir approuver cette tâche.</span>
-                          </p>
-                        ) : (
-                          <p className="text-[11px] text-emerald-900/90 dark:text-emerald-300/90">
-                            ℹ️ La tâche sera assignée à : <strong>{selectedValidationMembers.join(', ')}</strong>.
-                          </p>
-                        )}
-                      </div>
+                      <TaskEquityAssignmentSelector
+                        selectedMembers={selectedValidationMembers}
+                        onChangeMembers={setSelectedValidationMembers}
+                        autoAssign={editAutoAssignByWorkload}
+                        onChangeAutoAssign={setEditAutoAssignByWorkload}
+                        recommendations={recommendations}
+                        allTasks={allTasksList}
+                        currentTaskId={task?.id}
+                      />
                     )}
 
                     <div className="pt-2 flex flex-wrap items-center gap-3">
@@ -2386,46 +2485,61 @@ export default function TaskDetailModal({
                       </div>
                     </div>
 
-                    {/* Annotation 8 & 17 : Membres attribués en mode tâche (gérés par les coordinateurs) */}
-                    {!isVoteInitiative && isCoordinator && (
-                      <div className="space-y-1.5">
-                        <label className="font-label-md text-xs font-semibold text-on-surface">
-                          Membres attribués
-                        </label>
-                        <div className="flex flex-wrap items-center gap-2 p-2.5 bg-canvas-slate rounded-xl border border-slate-300 min-h-[44px]">
-                          {editMembers.map((m) => (
-                            <span
-                              key={m}
-                              className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full bg-white border border-slate-300 text-xs font-semibold text-on-surface shadow-xs"
-                            >
-                              <span className="w-2 h-2 rounded-full bg-primary"></span>
-                              {m}
-                              <button
-                                type="button"
-                                onClick={() => setEditMembers(editMembers.filter((item) => item !== m))}
-                                className="w-4 h-4 flex items-center justify-center text-slate-400 hover:text-error ml-1 cursor-pointer"
-                              >
-                                ×
-                              </button>
-                            </span>
-                          ))}
+                    {/* Grille Priorité, Deadline & Statut */}
+                    {!isVoteInitiative && (
+                      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
+                        <div className="flex flex-col gap-1">
+                          <label className="font-label-md text-xs font-semibold text-on-surface">Priorité</label>
+                          <CustomSelect
+                            value={editPriority}
+                            onChange={(e) => setEditPriority(e.target.value)}
+                            options={['Planifié', 'Normale', 'Haute', 'Critique']}
+                            className="h-10 text-xs sm:text-sm"
+                          />
+                        </div>
 
-                          <div className="inline-block min-w-[170px]">
+                        <div className="flex flex-col gap-1">
+                          <label className="font-label-md text-xs font-semibold text-on-surface">Date d'échéance (deadline)</label>
+                          <input
+                            type="date"
+                            value={editDeadline}
+                            onChange={(e) => setEditDeadline(e.target.value)}
+                            className="w-full h-10 px-3 text-xs sm:text-sm bg-white border border-slate-300 rounded-xl focus:outline-none focus:ring-2 focus:ring-primary font-medium"
+                          />
+                        </div>
+
+                        {!isNewTask && isCoordinator && (
+                          <div className="flex flex-col gap-1">
+                            <label className="font-label-md text-xs font-semibold text-on-surface">Statut de la tâche</label>
                             <CustomSelect
-                              value=""
-                              placeholder="+ Ajouter un membre"
-                              placeholderClassName="text-emerald-800 font-semibold"
-                              options={ALL_MEMBERS.filter((m) => !editMembers.includes(m))}
-                              onChange={(e) => {
-                                if (e.target.value && !editMembers.includes(e.target.value)) {
-                                  setEditMembers([...editMembers, e.target.value]);
-                                }
-                              }}
-                              className="min-h-0 h-[28px] py-0 px-2.5 text-xs bg-white border border-dashed border-emerald-600 rounded-full text-emerald-800 font-semibold hover:border-emerald-700 shadow-xs"
+                              value={editStatus}
+                              onChange={(e) => setEditStatus(e.target.value)}
+                              options={[
+                                { value: 'PROPOSED', label: 'Proposition' },
+                                { value: 'A_FAIRE', label: 'À faire' },
+                                { value: 'EN_COURS', label: 'En cours' },
+                                { value: 'PENDING_VALIDATION', label: 'À valider' },
+                                { value: 'DONE', label: 'Terminée' }
+                              ]}
+                              className="h-10 text-xs sm:text-sm"
                             />
                           </div>
-                        </div>
+                        )}
                       </div>
+                    )}
+
+                    {/* Attribution équitable des membres en mode édition / création (Annotation 1) */}
+                    {!isVoteInitiative && (
+                      <TaskEquityAssignmentSelector
+                        selectedMembers={editMembers}
+                        onChangeMembers={setEditMembers}
+                        autoAssign={editAutoAssignByWorkload}
+                        onChangeAutoAssign={setEditAutoAssignByWorkload}
+                        recommendations={recommendations}
+                        allTasks={allTasksList}
+                        currentTaskId={task?.id}
+                        title="Membres assignés & Répartition équitable"
+                      />
                     )}
 
                     {/* Presence on site required */}
@@ -2486,109 +2600,6 @@ export default function TaskDetailModal({
                               ]}
                               className="h-9 min-w-[150px] text-xs font-semibold"
                             />
-                          </div>
-                        )}
-                      </div>
-                    )}
-
-                    {/* Annotation 1 & 5 : Auto-attribution équitable */}
-                    {!isVoteInitiative && (
-                      <div className="space-y-3">
-                        <label className="flex items-center gap-3 p-3.5 bg-canvas-slate rounded-xl border border-slate-200 select-none cursor-pointer">
-                          <input
-                            type="checkbox"
-                            id="toggle-task-auto-assign"
-                            checked={editAutoAssignByWorkload}
-                            onChange={(e) => setEditAutoAssignByWorkload(e.target.checked)}
-                            className="w-4 h-4 rounded text-primary accent-primary cursor-pointer"
-                          />
-                          <div className="text-xs">
-                            <strong className="text-forest-deep flex items-center gap-1.5">
-                              <span className="material-symbols-outlined text-[16px] text-primary">balance</span>
-                              Auto-attribution équitable (selon taux d'usage du domaine)
-                            </strong>
-                            <span className="text-on-surface-variant">Attribue la tâche à l'associé le plus disponible selon le ratio charge / présence sur le domaine</span>
-                          </div>
-                        </label>
-
-                        {/* Annotation 5 : Top 3 des membres recommandés selon le domaine et l'équité */}
-                        {editAutoAssignByWorkload && (
-                          <div
-                            id="block-top3-recommendations"
-                            className="p-4 bg-emerald-50/70 dark:bg-emerald-950/20 border-2 border-emerald-300 dark:border-emerald-700/60 rounded-xl space-y-3 animate-in fade-in duration-200"
-                          >
-                            <div className="flex items-center justify-between">
-                              <span className="text-xs font-bold text-forest-deep dark:text-emerald-200 flex items-center gap-1.5">
-                                <span>🎯</span>
-                                <span>Top 3 des membres recommandés pour cette mission :</span>
-                              </span>
-                              {loadingRecs && (
-                                <span className="text-[11px] text-emerald-700 dark:text-emerald-300 animate-pulse font-medium">
-                                  Calcul d'équité en cours...
-                                </span>
-                              )}
-                            </div>
-
-                            <div className="space-y-2">
-                              {recommendations.slice(0, 3).map((rec, idx) => {
-                                const rankNum = rec.rank || (idx + 1);
-                                const isRank1 = rankNum === 1;
-                                const isSelected = editMembers.includes(rec.name);
-                                return (
-                                  <div
-                                    key={rec.name || idx}
-                                    className={`flex items-center justify-between gap-2 p-2.5 rounded-lg border text-xs transition-all ${
-                                      isRank1
-                                        ? 'bg-white dark:bg-slate-900 border-emerald-400 dark:border-emerald-600 shadow-xs ring-1 ring-emerald-400/30'
-                                        : 'bg-white/80 dark:bg-slate-900/60 border-slate-200 dark:border-slate-800'
-                                    }`}
-                                  >
-                                    <div className="flex items-center gap-2 min-w-0">
-                                      <span className={`w-5 h-5 rounded-full flex items-center justify-center text-[11px] font-bold shrink-0 ${
-                                        isRank1
-                                          ? 'bg-emerald-700 text-white'
-                                          : 'bg-slate-200 dark:bg-slate-700 text-slate-700 dark:text-slate-300'
-                                      }`}>
-                                        {rankNum}
-                                      </span>
-                                      <div className="min-w-0">
-                                        <span className="font-bold text-on-surface">
-                                          {rec.name}
-                                        </span>
-                                        {rec.reason && (
-                                          <span className="text-on-surface-variant text-[11px] ml-1.5 font-medium">
-                                            ({rec.reason})
-                                          </span>
-                                        )}
-                                      </div>
-                                    </div>
-
-                                    <button
-                                      type="button"
-                                      onClick={() => {
-                                        if (isSelected) {
-                                          setEditMembers(editMembers.filter((m) => m !== rec.name));
-                                        } else {
-                                          setEditMembers([...editMembers, rec.name]);
-                                        }
-                                      }}
-                                      title={isSelected ? `Retirer ${rec.name}` : `Assigner ${rec.name}`}
-                                      className={`shrink-0 px-2.5 py-0.5 text-[11px] font-semibold rounded-md border transition-colors cursor-pointer ${
-                                        isSelected
-                                          ? 'bg-emerald-100 text-emerald-800 border-emerald-300 font-bold'
-                                          : 'bg-white hover:bg-emerald-50 text-emerald-800 border-emerald-300'
-                                      }`}
-                                    >
-                                      {isSelected ? '✓ Assigné' : '+ Assigner'}
-                                    </button>
-                                  </div>
-                                );
-                              })}
-                            </div>
-
-                            <p className="text-[11px] text-emerald-900/80 dark:text-emerald-300/80 leading-tight">
-                              💡 En mode auto-attribution, la tâche sera automatiquement assignée au n°1 (<strong>{recommendations[0]?.name || sortedAssociatesByEquity[0]?.name || 'Premier membre équitable'}</strong>) lors de l'approbation de la mission.
-                            </p>
                           </div>
                         )}
                       </div>
@@ -2875,89 +2886,22 @@ export default function TaskDetailModal({
                           </div>
                         );
                       })}
-
-                      {/* Liens web fusionnés (Annotation 14) */}
-                      {editExternalLinks.map((linkItem, lIdx) => {
-                        const linkUrl = typeof linkItem === 'string' ? linkItem : (linkItem?.url || '');
-                        const linkTitle = (typeof linkItem === 'object' && linkItem?.title) ? linkItem.title : (linkUrl || 'Ressource web');
-                        return (
-                          <div
-                            key={`edit-link-${lIdx}`}
-                            className="p-3 bg-canvas-slate rounded-xl flex items-center justify-between gap-3 shadow-xs border border-slate-200"
-                          >
-                            <div className="flex items-center gap-3 min-w-0">
-                              <div className="w-10 h-10 rounded-xl bg-sky-100 text-sky-700 dark:bg-sky-950/60 dark:text-sky-300 flex items-center justify-center shrink-0 border border-sky-200 dark:border-sky-800/60">
-                                <span className="material-symbols-outlined text-[20px]">language</span>
-                              </div>
-                              <div className="min-w-0">
-                                <div className="flex items-center gap-2">
-                                  <p className="font-label-md text-xs font-semibold text-on-surface break-words" title={linkTitle}>
-                                    {linkTitle}
-                                  </p>
-                                  <span className="px-2 py-0.5 rounded-full text-[10px] font-bold bg-sky-100 text-sky-800 dark:bg-sky-900/60 dark:text-sky-200 border border-sky-200 shrink-0">
-                                    Lien web
-                                  </span>
-                                </div>
-                                <a
-                                  href={linkUrl}
-                                  target="_blank"
-                                  rel="noopener noreferrer"
-                                  className="font-body-md text-[11px] text-primary hover:underline break-all block"
-                                  title={linkUrl}
-                                >
-                                  {linkUrl}
-                                </a>
-                              </div>
-                            </div>
-                            <div className="flex items-center gap-1.5 shrink-0">
-                              <a
-                                href={linkUrl}
-                                target="_blank"
-                                rel="noopener noreferrer"
-                                className="h-8 px-2.5 rounded-lg bg-surface-container-lowest border border-sky-400 text-sky-800 text-xs font-semibold hover:bg-sky-50 transition-colors flex items-center gap-1 cursor-pointer"
-                                title="Ouvrir dans un nouvel onglet"
-                              >
-                                <span className="material-symbols-outlined text-[15px]">open_in_new</span>
-                                <span className="hidden sm:inline">Ouvrir</span>
-                              </a>
-                              <button
-                                type="button"
-                                onClick={() => setEditExternalLinks(prev => prev.filter((_, idx) => idx !== lIdx))}
-                                className="h-8 w-8 rounded-lg bg-rose-50 border border-rose-300 text-rose-700 hover:bg-rose-100 transition-colors flex items-center justify-center cursor-pointer shadow-xs"
-                                title="Supprimer ce lien web"
-                              >
-                                <span className="material-symbols-outlined text-[16px]">delete</span>
-                              </button>
-                            </div>
-                          </div>
-                        );
-                      })}
-
-                      {/* Clés-valeurs fusionnées (Annotation 5) */}
-                      {editKeyValues.length > 0 && (
-                        <KeyValueAttachmentList
-                          items={editKeyValues}
-                          onChange={setEditKeyValues}
-                          isEditing={true}
-                          hideForm={true}
-                          hideList={false}
-                          title="Informations clés & Coordonnées attachées"
-                        />
-                      )}
                     </div>
                   )}
 
+                  {/* Liens web & ressources externes mutualisés */}
+                  <ExternalLinksEditor
+                    links={editExternalLinks}
+                    onChange={setEditExternalLinks}
+                    isEditing={true}
+                  />
 
-                  {/* Formulaire d'ajout de clé-valeur (Annotation 5 : DRY Tâches & Votes) */}
-                  <div className="pt-3 border-t border-slate-100">
-                    <KeyValueAttachmentList
-                      items={editKeyValues}
-                      onChange={setEditKeyValues}
-                      isEditing={true}
-                      hideList={true}
-                      title="Ajouter une information clé (Entreprise, téléphone, email...)"
-                    />
-                  </div>
+                  {/* Informations clés & Coordonnées mutualisées */}
+                  <KeyValuesEditor
+                    items={editKeyValues}
+                    onChange={setEditKeyValues}
+                    isEditing={true}
+                  />
                 </section>
 
                 {/* Footer formulaire fixé / sticky en bas (Annotation 6) */}
@@ -3269,6 +3213,13 @@ export default function TaskDetailModal({
           </div>
         </div>
       )}
+
+      {/* Modale de confirmation Quitter sans enregistrer */}
+      <DiscardChangesModal
+        isOpen={showDiscardModal}
+        onCancel={() => setShowDiscardModal(false)}
+        onConfirm={handleConfirmDiscard}
+      />
 
     </div>
   );

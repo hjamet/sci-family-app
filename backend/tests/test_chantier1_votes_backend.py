@@ -278,8 +278,17 @@ def test_external_links_pydantic_schema_and_persistence():
         assert len(up_data["external_links"]) == 1
         assert up_data["external_links"][0]["title"] == "Devis Mis à Jour"
 
-        # Annotation 6 : La modification des liens externes a réinitialisé les votes
-        assert len(up_data["votes"]) == 0
+        # Règle de cohérence : modifier uniquement les liens externes sans passer reset_votes=True
+        # ni modifier les options conserve désormais le vote existant.
+        assert len(up_data["votes"]) == 1
+
+        # Un appel avec reset_votes: True réinitialise ensuite les votes à 0
+        reset_res = client.put(
+            f"/api/projects/{proj_id}",
+            json={"reset_votes": True}
+        )
+        assert reset_res.status_code == 200
+        assert len(reset_res.json()["votes"]) == 0
 
         # 4. Modification via PATCH /api/projects/{id}/review (review_project)
         final_links = [

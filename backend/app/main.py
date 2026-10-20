@@ -3145,8 +3145,11 @@ def approve_project_by_coordinator(
         proj_res["email_dispatched"] = dispatched_email
     return proj_res
 
+class ProjectUpdateRequest(ProjectReview):
+    reset_votes: Optional[bool] = None
+
 @app.patch("/api/projects/{project_id}/review")
-def review_project(project_id: int, review: ProjectReview, db: Session = Depends(get_db)):
+def review_project(project_id: int, review: ProjectUpdateRequest, db: Session = Depends(get_db)):
     db_proj = db.query(Project).filter(Project.id == project_id).first()
     if not db_proj:
         raise HTTPException(status_code=404, detail="Projet non trouvé")
@@ -3267,14 +3270,13 @@ def review_project(project_id: int, review: ProjectReview, db: Session = Depends
         if new_ext_sig != old_ext_sig:
             ext_were_modified = True
 
-    should_reset_votes = (
-        title_was_modified or
-        desc_was_modified or
-        options_were_modified or
-        multi_was_modified or
-        docs_were_modified or
-        ext_were_modified
-    )
+    # Lot 1 (Mutualisation & Cohérence) : Seule la modification effective des options de vote
+    # ou une demande explicite (reset_votes=True) doit réinitialiser les votes exprimés.
+    # Les modifications de titre, description, documents ou liens n'annulent plus les votes.
+    if review.reset_votes is not None:
+        should_reset_votes = bool(review.reset_votes) or options_were_modified
+    else:
+        should_reset_votes = options_were_modified
 
     if review.title is not None and review.title.strip():
         db_proj.title = review.title.strip()
@@ -3305,11 +3307,14 @@ def review_project(project_id: int, review: ProjectReview, db: Session = Depends
     if review.coordinator_notes is not None:
         db_proj.coordinator_notes = review.coordinator_notes
     if review.estimated_cost is not None:
-        db_proj.estimated_cost = review.estimated_cost
+        try:
+            db_proj.estimated_cost = float(review.estimated_cost or 0.0)
+        except (ValueError, TypeError):
+            db_proj.estimated_cost = 0.0
     if review.category is not None:
         db_proj.category = review.category
-    if review.priority is not None:
-        db_proj.priority = review.priority
+    if review.priority is not None and str(review.priority).strip():
+        db_proj.priority = str(review.priority).strip()
     if review.responsible is not None:
         db_proj.responsible = review.responsible
     if review.options is not None:
@@ -3484,7 +3489,7 @@ def review_project(project_id: int, review: ProjectReview, db: Session = Depends
 
 @app.put("/api/projects/{project_id}")
 @app.patch("/api/projects/{project_id}")
-def update_project(project_id: int, review: ProjectReview, db: Session = Depends(get_db)):
+def update_project(project_id: int, review: ProjectUpdateRequest, db: Session = Depends(get_db)):
     """Mise à jour d'un projet / scrutin (alias complet vers review_project avec sauvegarde external_links)."""
     return review_project(project_id, review, db)
 
@@ -4036,6 +4041,218 @@ def delete_project(project_id: int, db: Session = Depends(get_db)):
     db.delete(db_proj)
     db.commit()
     return None
+
+
+# --- Endpoints Dépenses Membres & Synchronisation Opérations (Livrable 3) ---
+
+def serialize_member_expense(exp: MemberExpense) -> dict:
+    return {
+        "id": exp.id,
+        "member_id": exp.member_id,
+        "member_prenom": exp.member_prenom or "",
+        "title": exp.title or "",
+        "amount": float(exp.amount or 0.0),
+        "expense_date": exp.expense_date or "",
+        "category": exp.category or "Entretien & Fournitures",
+        "payer_type": exp.payer_type or "member",
+        "status": exp.status or "PENDING",
+        "task_id": exp.task_id,
+        "rejection_reason": exp.rejection_reason,
+        "document_id": exp.document_id,
+        "document_url": exp.document_url,
+        "document_filename": exp.document_filename,
+        "call_for_funds_id": exp.call_for_funds_id,
+        "notes": exp.notes,
+        "created_at": exp.created_at.isoformat() if hasattr(exp.created_at, "isoformat") else str(exp.created_at) if exp.created_at else None
+    }
+
+
+@app.post("/api/member-expenses", status_code=status.HTTP_201_CREATED)
+def create_member_expense_direct(
+    payload: dict,
+    db: Session = Depends(get_db)
+):
+    """Création directe d'une dépense membre au format JSON."""
+    member_id = payload.get("member_id")
+    member = None
+    if member_id:
+        try:
+            member = db.query(Member).filter(Member.id == int(member_id)).first()
+        except (ValueError, TypeError):
+            pass
+    if not member:
+        name_candidate = payload.get("member_name") or payload.get("paid_by")
+        if name_candidate:
+            name_str = str(name_candidate).strip()
+            member = db.query(Member).filter(
+                or_(
+                    func.lower(Member.name) == name_str.lower(),
+                    func.lower(Member.prenom) == name_str.lower()
+                )
+            ).first()
+            if not member:
+                for m in db.query(Member).all():
+                    if (m.prenom and m.prenom.lower() in name_str.lower()) or (m.name and m.name.lower() in name_str.lower()):
+                        member = m
+                        break
+    if not member:
+        member = db.query(Member).first()
+
+    clean_payer_type = "sci" if str(payload.get("payer_type") or "").strip().lower() == "sci" else "member"
+    initial_status = payload.get("status") or ("PENDING_SCI_PAYMENT" if clean_payer_type == "sci" else "PENDING")
+    now = datetime.utcnow()
+    clean_date = str(payload.get("date_str") or payload.get("date") or payload.get("expense_date") or now.strftime("%Y-%m-%d")).strip()
+
+    exp = MemberExpense(
+        member_id=member.id if member else 1,
+        member_prenom=member.prenom if member else "Membre",
+        title=str(payload.get("title") or "Dépense").strip(),
+        amount=float(payload.get("amount") or 0.0),
+        expense_date=clean_date,
+        category=str(payload.get("category") or "Entretien & Fournitures").strip(),
+        payer_type=clean_payer_type,
+        status=initial_status,
+        document_id=int(payload["document_id"]) if payload.get("document_id") else None,
+        notes=payload.get("notes")
+    )
+    if exp.document_id:
+        doc = db.query(AdminDocument).filter(AdminDocument.id == exp.document_id).first()
+        if doc:
+            exp.document_url = doc.file_url or f"/api/documents/{doc.id}/download"
+            exp.document_filename = doc.file_name
+    db.add(exp)
+    db.commit()
+    db.refresh(exp)
+    return serialize_member_expense(exp)
+
+
+@app.get("/api/member-expenses/{expense_id}")
+def get_member_expense_by_id(expense_id: int, db: Session = Depends(get_db)):
+    expense = db.query(MemberExpense).filter(MemberExpense.id == expense_id).first()
+    if not expense:
+        raise HTTPException(status_code=404, detail="Dépense non trouvée")
+    return serialize_member_expense(expense)
+
+
+@app.put("/api/member-expenses/{expense_id}")
+@app.patch("/api/member-expenses/{expense_id}")
+def update_member_expense(
+    expense_id: int,
+    payload: dict,
+    db: Session = Depends(get_db)
+):
+    """Mise à jour chirurgicale d'une dépense membre (Livrable 3)."""
+    expense = db.query(MemberExpense).filter(MemberExpense.id == expense_id).first()
+    if not expense:
+        raise HTTPException(status_code=404, detail="Dépense non trouvée")
+
+    if "title" in payload and payload["title"] is not None:
+        clean_title = str(payload["title"]).strip()
+        if clean_title:
+            expense.title = clean_title
+    if "amount" in payload and payload["amount"] is not None:
+        try:
+            amt = float(payload["amount"])
+            if amt > 0:
+                expense.amount = amt
+        except (ValueError, TypeError):
+            pass
+    if "category" in payload and payload["category"] is not None:
+        expense.category = str(payload["category"]).strip()
+    if "payer_type" in payload and payload["payer_type"] is not None:
+        clean_payer = str(payload["payer_type"]).strip().lower()
+        if clean_payer in ("member", "sci"):
+            expense.payer_type = clean_payer
+    if "status" in payload and payload["status"] is not None:
+        expense.status = str(payload["status"]).strip()
+
+    date_val = payload.get("date_str") or payload.get("date") or payload.get("expense_date")
+    if date_val:
+        expense.expense_date = str(date_val).strip()
+
+    if "document_id" in payload:
+        expense.document_id = int(payload["document_id"]) if payload["document_id"] else None
+        if expense.document_id:
+            doc = db.query(AdminDocument).filter(AdminDocument.id == expense.document_id).first()
+            if doc:
+                expense.document_url = doc.file_url or f"/api/documents/{doc.id}/download"
+                expense.document_filename = doc.file_name
+        else:
+            expense.document_url = None
+            expense.document_filename = None
+
+    if "notes" in payload:
+        expense.notes = payload["notes"]
+
+    # Résolution member_id / member_name / paid_by
+    target_member = None
+    if "member_id" in payload and payload["member_id"]:
+        try:
+            target_member = db.query(Member).filter(Member.id == int(payload["member_id"])).first()
+        except (ValueError, TypeError):
+            pass
+    elif "member_name" in payload and payload["member_name"]:
+        name_str = str(payload["member_name"]).strip()
+        target_member = db.query(Member).filter(
+            or_(
+                func.lower(Member.name) == name_str.lower(),
+                func.lower(Member.prenom) == name_str.lower()
+            )
+        ).first()
+        if not target_member:
+            for m in db.query(Member).all():
+                if (m.prenom and m.prenom.lower() in name_str.lower()) or (m.name and m.name.lower() in name_str.lower()):
+                    target_member = m
+                    break
+    elif "paid_by" in payload and payload["paid_by"]:
+        name_str = str(payload["paid_by"]).strip()
+        target_member = db.query(Member).filter(
+            or_(
+                func.lower(Member.name) == name_str.lower(),
+                func.lower(Member.prenom) == name_str.lower()
+            )
+        ).first()
+        if not target_member:
+            for m in db.query(Member).all():
+                if (m.prenom and m.prenom.lower() in name_str.lower()) or (m.name and m.name.lower() in name_str.lower()):
+                    target_member = m
+                    break
+    if target_member:
+        expense.member_id = target_member.id
+        expense.member_prenom = target_member.prenom
+
+    # Synchronisation de la tâche liée si existante
+    if expense.task_id:
+        t = db.query(Task).filter(Task.id == expense.task_id).first()
+        if t:
+            if expense.payer_type == "member":
+                t.title = f"Avance de frais membre : {expense.title} ({expense.amount:.2f} €)"
+            else:
+                t.title = f"Règlement facture SCI : {expense.title} ({expense.amount:.2f} €)"
+            if expense.document_id and expense.document_url:
+                t_docs = []
+                if t.documents:
+                    try:
+                        t_docs = json.loads(t.documents) if isinstance(t.documents, str) else t.documents
+                    except Exception:
+                        t_docs = []
+                if not isinstance(t_docs, list):
+                    t_docs = []
+                if not any(d.get("id") == expense.document_id for d in t_docs if isinstance(d, dict)):
+                    t_docs.append({
+                        "id": expense.document_id,
+                        "name": expense.title,
+                        "filename": expense.document_filename or "Facture jointe",
+                        "file_url": expense.document_url,
+                        "url": expense.document_url,
+                        "type": "Facture / Justificatif"
+                    })
+                    t.documents = json.dumps(t_docs)
+            t.updated_at = datetime.utcnow()
+
+    db.commit()
+    db.refresh(expense)
+    return serialize_member_expense(expense)
 
 
 
@@ -4946,28 +5163,97 @@ def update_task(
         task.recurrence_interval = int(payload["recurrence_interval"]) if payload["recurrence_interval"] else 1
     if "recurrence_unit" in payload and payload["recurrence_unit"] is not None:
         task.recurrence_unit = str(payload["recurrence_unit"] or "semaines")
+    # Synchronisation complète de l'assignation et de l'auto-attribution (Lot 1)
     if "auto_assign_by_workload" in payload and payload["auto_assign_by_workload"] is not None:
         task.auto_assign_by_workload = bool(payload["auto_assign_by_workload"])
-        if task.auto_assign_by_workload:
-            existing_assigned = []
-            if task.assigned_members:
+
+    if "assigned_members" in payload or "auto_assign_by_workload" in payload:
+        has_assigned_in_payload = "assigned_members" in payload and payload["assigned_members"] is not None
+        normalized_members = []
+        if has_assigned_in_payload:
+            val = payload["assigned_members"]
+            if isinstance(val, list):
+                normalized_members = [str(x).strip() for x in val if x and str(x).strip()]
+            elif isinstance(val, str):
                 try:
-                    existing_assigned = json.loads(task.assigned_members) if isinstance(task.assigned_members, str) else list(task.assigned_members)
+                    p = json.loads(val)
+                    if isinstance(p, list):
+                        normalized_members = [str(x).strip() for x in p if x and str(x).strip()]
+                    elif val.strip():
+                        normalized_members = [val.strip()]
                 except Exception:
-                    existing_assigned = []
-            if not existing_assigned:
-                try:
-                    all_members = db.query(Member).all()
-                    all_reservations = db.query(Reservation).all()
-                    all_tasks = db.query(Task).all()
-                    selected_member = resolve_auto_assignment_by_workload(
-                        all_members, all_reservations, all_tasks,
-                        subject=task.subject, category=task.category, complexity=task.complexity
-                    )
-                    if selected_member:
-                        task.assigned_members = json.dumps([selected_member])
-                except Exception as auto_err:
-                    logger.warning(f"Erreur calcul auto-attribution lors de update_task: {auto_err}")
+                    if val.strip() and val.strip() != "[]":
+                        normalized_members = [val.strip()]
+
+        # Cas 1 : auto_assign_by_workload est actif et aucune assignation manuelle n'est fournie (ou liste vidée)
+        if bool(task.auto_assign_by_workload) and not normalized_members:
+            try:
+                all_members = db.query(Member).all()
+                all_reservations = db.query(Reservation).all()
+                all_tasks = db.query(Task).all()
+                selected_member = resolve_auto_assignment_by_workload(
+                    all_members, all_reservations, all_tasks,
+                    subject=task.subject or task.category,
+                    category=task.category or task.subject,
+                    complexity=task.complexity
+                )
+                if selected_member:
+                    task.assigned_members = json.dumps([selected_member], ensure_ascii=False)
+                    m_rec = db.query(Member).filter(
+                        or_(
+                            func.lower(Member.name) == selected_member.lower(),
+                            func.lower(Member.prenom) == selected_member.lower()
+                        )
+                    ).first()
+                    if not m_rec:
+                        for mem in all_members:
+                            if (mem.prenom and mem.prenom.lower() in selected_member.lower()) or (mem.name and mem.name.lower() in selected_member.lower()):
+                                m_rec = mem
+                                break
+                    task.assignee_id = m_rec.id if m_rec else None
+                    if m_rec:
+                        task.assignee = m_rec
+            except Exception as auto_err:
+                logger.warning(f"Erreur calcul auto-attribution lors de update_task: {auto_err}")
+
+        # Cas 2 : Liste de membres explicitement fournie et non vide
+        elif normalized_members:
+            task.assigned_members = json.dumps(normalized_members, ensure_ascii=False)
+            first_name = normalized_members[0]
+            m_found = db.query(Member).filter(
+                or_(
+                    func.lower(Member.name) == first_name.lower(),
+                    func.lower(Member.prenom) == first_name.lower()
+                )
+            ).first()
+            if not m_found:
+                for mem in db.query(Member).all():
+                    if (mem.prenom and mem.prenom.lower() in first_name.lower()) or (mem.name and mem.name.lower() in first_name.lower()):
+                        m_found = mem
+                        break
+            task.assignee_id = m_found.id if m_found else None
+            if m_found:
+                task.assignee = m_found
+
+        # Cas 3 : Liste explicitement vidée ([] ou "") et auto_assign_by_workload désactivé
+        elif has_assigned_in_payload and not normalized_members and not bool(task.auto_assign_by_workload):
+            task.assigned_members = "[]"
+            task.assignee_id = None
+            task.assignee = None
+
+    elif "assignee_id" in payload:
+        task.assignee_id = payload["assignee_id"]
+        if task.assignee_id:
+            m_by_id = db.query(Member).filter(Member.id == task.assignee_id).first()
+            if m_by_id:
+                task.assignee = m_by_id
+                if not task.assigned_members or task.assigned_members == "[]":
+                    task.assigned_members = json.dumps([m_by_id.name], ensure_ascii=False)
+        else:
+            task.assignee = None
+            if not bool(task.auto_assign_by_workload):
+                task.assigned_members = "[]"
+
     if "last_completed_at" in payload and payload["last_completed_at"] is not None:
         task.last_completed_at = payload["last_completed_at"]
     if "complexity" in payload and payload["complexity"] is not None:
@@ -4986,11 +5272,6 @@ def update_task(
             task.budget = 0.0
     if "budget_notes" in payload and payload["budget_notes"] is not None:
         task.budget_notes = payload["budget_notes"]
-    if "assignee_id" in payload:
-        task.assignee_id = payload["assignee_id"]
-    if "assigned_members" in payload and payload["assigned_members"] is not None:
-        val = payload["assigned_members"]
-        task.assigned_members = json.dumps(val) if isinstance(val, list) else str(val)
     if "deadline" in payload and payload["deadline"] is not None:
         task.deadline = payload["deadline"]
     if "checklist" in payload and payload["checklist"] is not None:
@@ -11035,6 +11316,46 @@ def update_member_expense_endpoint(
             if doc:
                 expense.document_url = doc.file_url or f"/api/documents/{doc.id}/download"
                 expense.document_filename = doc.file_name
+        else:
+            expense.document_url = None
+            expense.document_filename = None
+
+    # Résolution member_id / member_name / paid_by
+    target_member = None
+    if payload.member_id:
+        try:
+            target_member = db.query(Member).filter(Member.id == int(payload.member_id)).first()
+        except (ValueError, TypeError):
+            pass
+    elif payload.member_name:
+        name_str = str(payload.member_name).strip()
+        target_member = db.query(Member).filter(
+            or_(
+                func.lower(Member.name) == name_str.lower(),
+                func.lower(Member.prenom) == name_str.lower()
+            )
+        ).first()
+        if not target_member:
+            for m in db.query(Member).all():
+                if (m.prenom and m.prenom.lower() in name_str.lower()) or (m.name and m.name.lower() in name_str.lower()):
+                    target_member = m
+                    break
+    elif payload.paid_by:
+        name_str = str(payload.paid_by).strip()
+        target_member = db.query(Member).filter(
+            or_(
+                func.lower(Member.name) == name_str.lower(),
+                func.lower(Member.prenom) == name_str.lower()
+            )
+        ).first()
+        if not target_member:
+            for m in db.query(Member).all():
+                if (m.prenom and m.prenom.lower() in name_str.lower()) or (m.name and m.name.lower() in name_str.lower()):
+                    target_member = m
+                    break
+    if target_member:
+        expense.member_id = target_member.id
+        expense.member_prenom = target_member.prenom
 
     # Synchronisation de la tâche liée si existante
     if expense.task_id:

@@ -217,6 +217,7 @@ export default function AdminInfoPage({ currentUser }) {
   const [isUploadModalOpen, setIsUploadModalOpen] = useState(false);
   const [uploadModalMode, setUploadModalMode] = useState('document'); // 'document' | 'invoice'
   const [isOperationModalOpen, setIsOperationModalOpen] = useState(false);
+  const [editingExpense, setEditingExpense] = useState(null);
   const [isRenameModalOpen, setIsRenameModalOpen] = useState(false);
   const [selectedRenamingDoc, setSelectedRenamingDoc] = useState(null);
   const [renameInputValue, setRenameInputValue] = useState('');
@@ -252,6 +253,8 @@ export default function AdminInfoPage({ currentUser }) {
   const [operationAmount, setOperationAmount] = useState('');
   const [operationDate, setOperationDate] = useState(() => new Date().toISOString().split('T')[0]);
   const [operationLabel, setOperationLabel] = useState('');
+  const [operationCategory, setOperationCategory] = useState('Travaux & Entretien');
+  const [operationPayerType, setOperationPayerType] = useState('member');
   const [operationFile, setOperationFile] = useState(null);
   const [operationDocument, setOperationDocument] = useState(null);
   const [operationFileName, setOperationFileName] = useState('');
@@ -927,6 +930,53 @@ export default function AdminInfoPage({ currentUser }) {
       return;
     }
 
+    if (editingExpense) {
+      setIsSubmittingOperation(true);
+      try {
+        const payload = {
+          title: operationLabel.trim(),
+          amount: amountNum,
+          expense_date: operationDate || new Date().toISOString().split('T')[0],
+          category: operationCategory,
+          payer_type: operationPayerType
+        };
+        if (operationDocument && operationDocument.id) {
+          payload.document_id = operationDocument.id;
+        }
+        const targetId = editingExpense.id || editingExpense.rawExpense?.id;
+        const token = localStorage.getItem('sci_token');
+        const headers = { 'Content-Type': 'application/json' };
+        if (token) headers['Authorization'] = `Bearer ${token}`;
+        const res = await fetch(`/api/finances/expenses/${targetId}`, {
+          method: 'PUT',
+          headers,
+          body: JSON.stringify(payload)
+        });
+        if (!res.ok) {
+          const errData = await res.json().catch(() => ({}));
+          throw new Error(errData.detail || errData.error || `Erreur HTTP ${res.status}`);
+        }
+        await loadInvoices();
+        setTreasuryRefreshTrigger((prev) => prev + 1);
+        setIsOperationModalOpen(false);
+        setEditingExpense(null);
+        showToast('Dépense modifiée', `${operationLabel.trim()} (${amountNum.toFixed(2)} €)`, 'success');
+        setOperationAmount('');
+        setOperationLabel('');
+        setOperationFile(null);
+        setOperationDocument(null);
+        setOperationFileName('');
+        setOperationFileError('');
+        setOperationLabelError('');
+      } catch (err) {
+        console.error('Erreur modification dépense:', err);
+        showToast('Erreur', err.message || 'Impossible de modifier la dépense', 'error');
+      } finally {
+        setIsSubmittingOperation(false);
+      }
+      return;
+    }
+
     setIsSubmittingOperation(true);
     try {
       const deposant = (
@@ -986,13 +1036,49 @@ export default function AdminInfoPage({ currentUser }) {
 
   // Pre-fill operation for quick invoice payment
   const openPayInvoiceOperation = (inv) => {
+    setEditingExpense(null);
     const rawVal = inv?.amount ? String(inv.amount).replace('€', '').replace(/\s/g, '').replace(',', '.') : '';
     setOperationType('out');
     setOperationAmount(parseFloat(rawVal) || '');
     setOperationLabel(`Règlement Facture ${inv.supplier} (${inv.reference})`);
+    setOperationCategory(inv.rawExpense?.category || inv.category || 'Factures SCI');
+    setOperationPayerType('sci');
     setOperationFile(null);
     setOperationDocument(null);
     setOperationFileName('');
+    setOperationFileError('');
+    setOperationLabelError('');
+    setIsOperationModalOpen(true);
+  };
+
+  // Pre-fill operation for editing an existing member expense
+  const openEditExpenseOperation = (inv) => {
+    setEditingExpense(inv);
+    const rawVal = inv?.amount ? String(inv.amount).replace('€', '').replace(/\s/g, '').replace(',', '.') : '';
+    setOperationType('out');
+    setOperationAmount(parseFloat(rawVal) || '');
+    setOperationLabel(inv.supplier || inv.rawExpense?.title || '');
+    setOperationCategory(inv.rawExpense?.category || inv.category || 'Travaux & Entretien');
+    setOperationPayerType(inv.payerType || inv.rawExpense?.payer_type || 'member');
+    let dateStr = '';
+    if (inv.rawExpense?.expense_date) {
+      dateStr = inv.rawExpense.expense_date;
+    } else if (inv.date && inv.date.includes('/')) {
+      const parts = inv.date.split('/');
+      if (parts.length === 3) dateStr = `${parts[2]}-${parts[1]}-${parts[0]}`;
+    }
+    setOperationDate(dateStr || new Date().toISOString().split('T')[0]);
+    if (inv.rawExpense?.document_id) {
+      setOperationDocument({ id: inv.rawExpense.document_id, title: inv.filename });
+      setOperationFileName(inv.filename || '');
+    } else if (inv.document_url || inv.filename) {
+      setOperationDocument({ url: inv.document_url || inv.file_url, title: inv.filename });
+      setOperationFileName(inv.filename || '');
+    } else {
+      setOperationDocument(null);
+      setOperationFileName('');
+    }
+    setOperationFile(null);
     setOperationFileError('');
     setOperationLabelError('');
     setIsOperationModalOpen(true);
@@ -1733,6 +1819,16 @@ export default function AdminInfoPage({ currentUser }) {
                         <span>Télécharger</span>
                       </button>
 
+                      <button
+                        type="button"
+                        onClick={() => openEditExpenseOperation(inv)}
+                        className="btn-edit px-2.5 h-8 rounded-DEFAULT bg-surface-container-lowest border border-border-subtle text-on-surface-variant hover:text-emerald-700 hover:border-emerald-600 transition-all text-xs font-semibold inline-flex items-center gap-1 cursor-pointer"
+                        title="Modifier cette dépense / avance"
+                      >
+                        <span className="material-symbols-outlined text-[15px]">edit</span>
+                        <span>Modifier</span>
+                      </button>
+
                       {inv.statusType === 'pending' && (
                         <button
                           type="button"
@@ -2387,10 +2483,10 @@ export default function AdminInfoPage({ currentUser }) {
                 </div>
                 <div>
                   <h3 className="font-headline-sm text-headline-sm text-forest-deep font-semibold">
-                    Déclarer une dépense pour la SCI
+                    {editingExpense ? 'Modifier la dépense / avance' : 'Déclarer une dépense pour la SCI'}
                   </h3>
                   <p className="font-body-md text-xs text-on-surface-variant">
-                    Dépense déductible des prochaines factures
+                    {editingExpense ? 'Mise à jour des informations et du justificatif' : 'Dépense déductible des prochaines factures'}
                   </p>
                 </div>
               </div>
@@ -2399,6 +2495,7 @@ export default function AdminInfoPage({ currentUser }) {
                 type="button"
                 onClick={() => {
                   setIsOperationModalOpen(false);
+                  setEditingExpense(null);
                   setOperationFileError('');
                   setOperationLabelError('');
                 }}
@@ -2421,7 +2518,9 @@ export default function AdminInfoPage({ currentUser }) {
                   savings
                 </span>
                 <p className="font-body-md text-xs sm:text-sm font-medium leading-relaxed">
-                  Toutes dépenses effectuées pour la SCI et déclarées ici seront réduites de vos prochaines factures.
+                  {editingExpense
+                    ? 'Modification de la dépense enregistrée. Les totaux et justificatifs seront automatiquement actualisés.'
+                    : 'Toutes dépenses effectuées pour la SCI et déclarées ici seront réduites de vos prochaines factures.'}
                 </p>
               </div>
 
@@ -2458,6 +2557,45 @@ export default function AdminInfoPage({ currentUser }) {
                     onChange={(e) => setOperationDate(e.target.value)}
                     className="w-full h-[52px] px-4 bg-surface-container-lowest border-2 border-border-subtle rounded-DEFAULT font-body-md text-body-md text-on-surface focus:outline-none focus:border-primary transition-all"
                   />
+                </div>
+              </div>
+
+              {/* Pris en charge par & Catégorie */}
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-space-sm">
+                <div>
+                  <label htmlFor="op-payer-type-select" className="block font-label-md text-label-md text-on-surface mb-2 font-semibold">
+                    Pris en charge par
+                  </label>
+                  <select
+                    id="op-payer-type-select"
+                    value={operationPayerType}
+                    onChange={(e) => setOperationPayerType(e.target.value)}
+                    className="w-full h-[52px] px-4 bg-surface-container-lowest border-2 border-border-subtle rounded-DEFAULT font-body-md text-body-md text-on-surface focus:outline-none focus:border-primary transition-all"
+                  >
+                    <option value="member">Avance membre (déductible)</option>
+                    <option value="sci">Facture directe SCI</option>
+                  </select>
+                </div>
+
+                <div>
+                  <label htmlFor="op-category-select" className="block font-label-md text-label-md text-on-surface mb-2 font-semibold">
+                    Catégorie
+                  </label>
+                  <select
+                    id="op-category-select"
+                    value={operationCategory}
+                    onChange={(e) => setOperationCategory(e.target.value)}
+                    className="w-full h-[52px] px-4 bg-surface-container-lowest border-2 border-border-subtle rounded-DEFAULT font-body-md text-body-md text-on-surface focus:outline-none focus:border-primary transition-all"
+                  >
+                    {categoriesList.map((cat) => (
+                      <option key={cat.id || cat.name} value={cat.name}>
+                        {cat.emoji ? `${cat.emoji} ` : ''}{cat.name}
+                      </option>
+                    ))}
+                    {!categoriesList.some((c) => c.name === operationCategory) && operationCategory && (
+                      <option value={operationCategory}>{operationCategory}</option>
+                    )}
+                  </select>
                 </div>
               </div>
 
@@ -2594,6 +2732,7 @@ export default function AdminInfoPage({ currentUser }) {
                 type="button"
                 onClick={() => {
                   setIsOperationModalOpen(false);
+                  setEditingExpense(null);
                   setOperationFileError('');
                   setOperationLabelError('');
                 }}
@@ -2610,7 +2749,11 @@ export default function AdminInfoPage({ currentUser }) {
                 <span className="material-symbols-outlined text-[20px]">
                   {isSubmittingOperation ? 'progress_activity' : 'save'}
                 </span>
-                <span>{isSubmittingOperation ? 'Enregistrement...' : 'Enregistrer la dépense'}</span>
+                <span>
+                  {isSubmittingOperation
+                    ? 'Enregistrement...'
+                    : (editingExpense ? 'Enregistrer les modifications' : 'Enregistrer la dépense')}
+                </span>
               </button>
             </div>
 

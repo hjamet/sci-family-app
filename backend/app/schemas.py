@@ -1444,6 +1444,9 @@ class MemberExpenseUpdate(BaseModel):
     status: Optional[str] = None
     document_id: Optional[int] = None
     notes: Optional[str] = None
+    member_id: Optional[int] = None
+    paid_by: Optional[str] = None
+    member_name: Optional[str] = None
 
 
 class CallForFundsResponse(BaseModel):

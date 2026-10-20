@@ -4,6 +4,8 @@ import DocumentViewerModal from './DocumentViewerModal';
 import UploadDocumentModal from './UploadDocumentModal';
 import SelectExistingDocumentModal from './SelectExistingDocumentModal';
 import KeyValueAttachmentList, { parseKeyValues } from './common/KeyValueAttachmentList';
+import DiscardChangesModal from './common/DiscardChangesModal';
+import { KeyValuesEditor, ExternalLinksEditor } from './common/ModalSharedEditors';
 import FamilyChat from './common/FamilyChat';
 import WhatsAppPollView, { STATUTORY_ASSOCIATES, parseVotesArray, hasVotedForOption } from './common/WhatsAppPollView';
 import CustomSelect from './CustomSelect';
@@ -363,6 +365,14 @@ function VoteRoofModalInner({
   });
   // Annotation 11 : Toggle choix multiples
   const [editAllowMultipleChoices, setEditAllowMultipleChoices] = useState(Boolean(activeProject.allow_multiple_choices));
+  const [editEstimatedCost, setEditEstimatedCost] = useState(
+    activeProject?.estimated_cost !== undefined && activeProject?.estimated_cost !== null
+      ? String(activeProject.estimated_cost)
+      : (activeProject?.budget ? String(activeProject.budget) : '')
+  );
+  const [editPriority, setEditPriority] = useState(activeProject?.priority || 'Normale');
+  const [editResetVotes, setEditResetVotes] = useState(false);
+  const [showDiscardModal, setShowDiscardModal] = useState(false);
   const [newOptionInput, setNewOptionInput] = useState('');
   const [isSubmittingEdit, setIsSubmittingEdit] = useState(false);
   const [isDeleting, setIsDeleting] = useState(false);
@@ -395,6 +405,13 @@ function VoteRoofModalInner({
       setEditTitle(activeProject.title || '');
       setEditDescription(activeProject.description || '');
       setEditCategory(activeProject.category || activeProject.subject || 'Presbytère');
+      setEditEstimatedCost(
+        activeProject?.estimated_cost !== undefined && activeProject?.estimated_cost !== null
+          ? String(activeProject.estimated_cost)
+          : (activeProject?.budget ? String(activeProject.budget) : '')
+      );
+      setEditPriority(activeProject?.priority || 'Normale');
+      setEditResetVotes(false);
       setEditExternalLinks(parseExternalLinks(activeProject?.external_links));
       setEditKeyValues(parseKeyValues(activeProject?.key_values));
       const opts = (() => {
@@ -427,7 +444,7 @@ function VoteRoofModalInner({
       if (Array.isArray(activeProject.document_urls)) activeProject.document_urls.forEach(addDoc);
       setEditDocuments(list);
     }
-  }, [isOpen, activeProject?.id, activeProject?.isNew]);
+  }, [isOpen, activeProject?.id, activeProject?.isNew, activeProject?.estimated_cost, activeProject?.priority]);
 
   // Snapshot initial du formulaire pour détection stricte des modifications (Annotation 9)
   const initialFormSnapshotRef = useRef(null);
@@ -439,6 +456,8 @@ function VoteRoofModalInner({
           title: editTitle || '',
           description: editDescription || '',
           category: editCategory || 'Presbytère',
+          estimatedCost: editEstimatedCost || '',
+          priority: editPriority || 'Normale',
           options: JSON.stringify(editOptions || []),
           allow_multiple_choices: Boolean(editAllowMultipleChoices),
           docsCount: (editDocuments || []).length,
@@ -456,13 +475,15 @@ function VoteRoofModalInner({
     const base = initialFormSnapshotRef.current;
     if (!base) {
       if (isNewProject) {
-        return Boolean(editTitle.trim() || editDescription.trim() || editDocuments.length > 0 || editExternalLinks.length > 0 || editKeyValues.length > 0);
+        return Boolean(editTitle.trim() || editDescription.trim() || editEstimatedCost.trim() || editDocuments.length > 0 || editExternalLinks.length > 0 || editKeyValues.length > 0);
       }
       return false;
     }
     if (editTitle.trim() !== (base.title || '').trim()) return true;
     if (editDescription.trim() !== (base.description || '').trim()) return true;
     if (editCategory.trim() !== (base.category || '').trim()) return true;
+    if (editEstimatedCost.trim() !== (base.estimatedCost || '').trim()) return true;
+    if (editPriority.trim() !== (base.priority || '').trim()) return true;
     if (JSON.stringify(editOptions) !== base.options) return true;
     if (Boolean(editAllowMultipleChoices) !== Boolean(base.allow_multiple_choices)) return true;
     if (editDocuments.length !== base.docsCount) return true;
@@ -475,6 +496,8 @@ function VoteRoofModalInner({
     editTitle,
     editDescription,
     editCategory,
+    editEstimatedCost,
+    editPriority,
     editOptions,
     editAllowMultipleChoices,
     editDocuments.length,
@@ -484,8 +507,8 @@ function VoteRoofModalInner({
 
   const handleSafeClose = () => {
     if (isEditing && hasFormChanges) {
-      const confirmLeave = window.confirm("Des modifications ont été apportées au scrutin sans être enregistrées. Voulez-vous vraiment quitter ?");
-      if (!confirmLeave) return;
+      setShowDiscardModal(true);
+      return;
     }
     initialFormSnapshotRef.current = null;
     onClose();
@@ -493,25 +516,28 @@ function VoteRoofModalInner({
 
   const handleCancelEdit = () => {
     if (hasFormChanges) {
-      const confirmCancel = window.confirm("Des modifications sont en cours. Voulez-vous vraiment annuler sans enregistrer ?");
-      if (!confirmCancel) return;
+      setShowDiscardModal(true);
+      return;
     }
+    handleConfirmDiscard();
+  };
+
+  const handleConfirmDiscard = () => {
+    setShowDiscardModal(false);
     initialFormSnapshotRef.current = null;
     if (isNewProject) {
       onClose();
     } else {
       setEditTitle(activeProject.title || '');
       setEditDescription(activeProject.description || '');
-      setEditExternalLinks(parseExternalLinks(activeProject?.external_links));
-      setEditKeyValues(parseKeyValues(activeProject?.key_values || activeProject?.custom_fields));
-      const rawCat = activeProject.category || activeProject.subject || 'Presbytère';
-      const cleanRawCat = rawCat.toLowerCase().trim();
-      const matchedCat = FIXED_PLACES_CATEGORIES.find(c => {
-        const valLower = c.value.toLowerCase();
-        return valLower === cleanRawCat || cleanRawCat.includes(valLower) || valLower.includes(cleanRawCat);
-      });
-      setEditCategory(matchedCat ? matchedCat.value : 'Presbytère');
-      setEditAllowMultipleChoices(Boolean(activeProject.allow_multiple_choices));
+      setEditCategory(activeProject.category || activeProject.subject || 'Presbytère');
+      setEditEstimatedCost(
+        activeProject?.estimated_cost !== undefined && activeProject?.estimated_cost !== null
+          ? String(activeProject.estimated_cost)
+          : (activeProject?.budget ? String(activeProject.budget) : '')
+      );
+      setEditPriority(activeProject?.priority || 'Normale');
+      setEditResetVotes(false);
       setIsEditing(false);
     }
   };
@@ -1055,6 +1081,8 @@ function VoteRoofModalInner({
           status: 'PROPOSED',
           property_id: 1,
           submitted_by: currentUserName,
+          estimated_cost: parseFloat(editEstimatedCost) || 0,
+          priority: editPriority,
           options: editOptions.filter(Boolean).length > 0 ? editOptions.filter(Boolean) : ['Approuver le projet', 'Rejeter le projet'],
           allow_multiple_choices: editAllowMultipleChoices,
           document_urls: cleanDocs,
@@ -1083,6 +1111,9 @@ function VoteRoofModalInner({
           title: editTitle.trim(),
           description: editDescription.trim(),
           category: editCategory.trim(),
+          estimated_cost: parseFloat(editEstimatedCost) || 0,
+          priority: editPriority,
+          reset_votes: editResetVotes,
           options: editOptions.filter(Boolean),
           allow_multiple_choices: editAllowMultipleChoices,
           document_urls: cleanDocs,
@@ -1095,6 +1126,9 @@ function VoteRoofModalInner({
         invalidateCache('/api/projects/pending');
         mutate('projects');
         setLocalProject(updated);
+        if (editResetVotes) {
+          setAssociatesVotes(DEFAULT_ASSOCIATES.map(assoc => ({ ...assoc, vote: 'EN_ATTENTE', date: null })));
+        }
         setIsEditing(false);
         initialFormSnapshotRef.current = null;
         setToastMessage('Scrutin mis à jour avec succès !');
@@ -1364,6 +1398,57 @@ function VoteRoofModalInner({
                   />
                 </div>
 
+                {/* Budget estimé & Priorité du projet */}
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                  <div className="flex flex-col gap-1.5">
+                    <label className="text-xs font-bold text-slate-700 dark:text-slate-300">
+                      Budget estimé (€ TTC)
+                    </label>
+                    <input
+                      type="number"
+                      min="0"
+                      step="any"
+                      value={editEstimatedCost}
+                      onChange={(e) => setEditEstimatedCost(e.target.value)}
+                      placeholder="0.00"
+                      className="w-full px-3.5 py-2 text-xs sm:text-sm rounded-xl border border-slate-300 dark:border-slate-700 bg-white dark:bg-slate-800 focus:ring-2 focus:ring-emerald-500 font-medium"
+                    />
+                  </div>
+                  <div className="flex flex-col gap-1.5">
+                    <label className="text-xs font-bold text-slate-700 dark:text-slate-300">
+                      Priorité / Urgence
+                    </label>
+                    <select
+                      value={editPriority}
+                      onChange={(e) => setEditPriority(e.target.value)}
+                      className="w-full px-3.5 py-2 text-xs sm:text-sm rounded-xl border border-slate-300 dark:border-slate-700 bg-white dark:bg-slate-800 focus:ring-2 focus:ring-emerald-500 font-medium"
+                    >
+                      <option value="Basse">Basse</option>
+                      <option value="Normale">Normale</option>
+                      <option value="Haute">Haute</option>
+                      <option value="Urgente">Urgente</option>
+                    </select>
+                  </div>
+                </div>
+
+                {/* Case réinitialisation des votes en cas de modification substantielle */}
+                {!isNewProject && (
+                  <div className="p-3 bg-amber-50 dark:bg-amber-950/40 rounded-xl border border-amber-200 dark:border-amber-800 flex flex-col gap-1">
+                    <label className="flex items-center gap-2 cursor-pointer text-xs font-bold text-amber-900 dark:text-amber-200">
+                      <input
+                        type="checkbox"
+                        checked={editResetVotes}
+                        onChange={(e) => setEditResetVotes(e.target.checked)}
+                        className="rounded border-amber-300 text-amber-600 focus:ring-amber-500"
+                      />
+                      <span>Réinitialiser les votes déjà exprimés</span>
+                    </label>
+                    <p className="text-[11px] text-amber-800/80 dark:text-amber-300/80 pl-5">
+                      Par défaut, la modification du texte ou du budget conserve les votes enregistrés. Cochez cette case uniquement si les changements modifient substantiellement la décision soumise au vote.
+                    </p>
+                  </div>
+                )}
+
                 {/* ANNOTATION 11 : Toggle choix unique vs choix multiples (comme WhatsApp) */}
                 <div className="flex items-center justify-between p-3.5 bg-white dark:bg-slate-800 rounded-xl border border-slate-200 dark:border-slate-700 shadow-2xs">
                   <div className="flex flex-col gap-0.5">
@@ -1464,9 +1549,9 @@ function VoteRoofModalInner({
                     </div>
                   </div>
 
-                  {editDocuments.length === 0 && editExternalLinks.length === 0 ? (
+                  {editDocuments.length === 0 ? (
                     <div className="p-3 bg-white dark:bg-slate-800 rounded-xl text-center text-xs text-slate-500 dark:text-slate-400 border border-dashed border-slate-300 dark:border-slate-700">
-                      Aucun document ni lien rattaché. Utilisez les boutons ci-dessus ou le formulaire ci-dessous pour ajouter un document ou une URL web.
+                      Aucun document justificatif rattaché. Utilisez les boutons ci-dessus pour associer ou téléverser un fichier.
                     </div>
                   ) : (
                     <div className="flex flex-col gap-1.5">
@@ -1507,85 +1592,17 @@ function VoteRoofModalInner({
                           </div>
                         );
                       })}
-
-                      {/* Liens web externes fusionnés (Annotation 12) */}
-                      {editExternalLinks.map((link, idx) => {
-                        const rawUrl = typeof link === 'string' ? link : link?.url || '';
-                        const normalized = normalizeUrl(rawUrl);
-                        const linkTitle = (typeof link === 'object' && link?.title) ? link.title : normalized;
-                        return (
-                          <div
-                            key={`link-${idx}`}
-                            className="flex items-center justify-between p-2.5 bg-white dark:bg-slate-800 rounded-xl border border-slate-200 dark:border-slate-700 text-xs"
-                          >
-                            <div className="flex items-center gap-2 min-w-0">
-                              <span className="material-symbols-outlined text-sky-600 text-base shrink-0">
-                                language
-                              </span>
-                              <span className="font-medium text-slate-800 dark:text-slate-200 truncate" title={linkTitle}>
-                                {linkTitle}
-                              </span>
-                              <span className="px-1.5 py-0.5 rounded text-[10px] font-bold bg-sky-100 text-sky-800 dark:bg-sky-950 dark:text-sky-300 border border-sky-200 dark:border-sky-800 shrink-0">
-                                Lien web
-                              </span>
-                              <a
-                                href={normalized}
-                                target="_blank"
-                                rel="noopener noreferrer"
-                                className="text-[11px] text-sky-600 dark:text-sky-400 hover:underline truncate max-w-[200px] font-mono hidden sm:inline"
-                                title={normalized}
-                              >
-                                {normalized}
-                              </a>
-                            </div>
-                            <div className="flex items-center gap-1.5 shrink-0 ml-2">
-                              <a
-                                href={normalized}
-                                target="_blank"
-                                rel="noopener noreferrer"
-                                className="px-2 py-1 rounded-lg bg-slate-100 hover:bg-slate-200 text-slate-700 dark:bg-slate-700 dark:text-slate-200 text-[11px] font-semibold transition-colors cursor-pointer flex items-center gap-1"
-                                title="Ouvrir le lien web"
-                              >
-                                <span>Ouvrir</span>
-                                <span className="material-symbols-outlined text-[13px]">open_in_new</span>
-                              </a>
-                              <button
-                                type="button"
-                                onClick={() => handleDetachExternalLink(idx)}
-                                className="px-2 py-1 rounded-lg bg-rose-50 hover:bg-rose-100 text-rose-700 dark:bg-rose-950/60 dark:text-rose-300 text-[11px] font-semibold transition-colors cursor-pointer"
-                                title="Détacher ce lien web"
-                              >
-                                Détacher
-                              </button>
-                            </div>
-                          </div>
-                        );
-                      })}
-
-                      {/* 3. Clés-valeurs rattachées (Annotation 5 : DRY Tâches & Votes) */}
-                      {editKeyValues.length > 0 && (
-                        <KeyValueAttachmentList
-                          items={editKeyValues}
-                          onChange={setEditKeyValues}
-                          isEditing={true}
-                          hideForm={true}
-                          hideList={false}
-                          title="Informations clés & Coordonnées rattachées"
-                        />
-                      )}
                     </div>
                   )}
 
-
-                  {/* Formulaire d'ajout rapide de clés-valeurs (Annotation 5 : DRY Tâches & Votes) */}
+                  {/* Facteur commun : Liens externes web */}
                   <div className="pt-2">
-                    <KeyValueAttachmentList
-                      items={editKeyValues}
-                      onChange={setEditKeyValues}
-                      isEditing={true}
-                      hideList={true}
-                      title="Ajouter une information clé ou coordonnée (Entreprise, téléphone, email...)"
-                    />
+                    <ExternalLinksEditor links={editExternalLinks} onChange={setEditExternalLinks} />
+                  </div>
+
+                  {/* Facteur commun : Clés-valeurs et métadonnées */}
+                  <div className="pt-2">
+                    <KeyValuesEditor items={editKeyValues} onChange={setEditKeyValues} />
                   </div>
                 </div>
 
@@ -1995,6 +2012,13 @@ function VoteRoofModalInner({
         targetProjectId={activeProject?.id || null}
         alreadyAttachedDocIds={editDocuments}
         onAttachSuccess={handleAttachExistingDocs}
+      />
+
+      {/* Boîte de dialogue de confirmation d'abandon des modifications non enregistrées */}
+      <DiscardChangesModal
+        isOpen={showDiscardModal}
+        onCancel={() => setShowDiscardModal(false)}
+        onConfirm={handleConfirmDiscard}
       />
     </div>
   );
