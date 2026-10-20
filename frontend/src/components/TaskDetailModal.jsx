@@ -680,20 +680,26 @@ export default function TaskDetailModal({
 
   // --- USEMEMOS ---
   const sortedAssociatesByEquity = React.useMemo(() => {
+    const isExemptMember = (name) => {
+      if (!name) return false;
+      const clean = name.toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '');
+      return clean.includes('frederic');
+    };
+
     const recList = Array.isArray(recommendations) ? recommendations : [];
     const ordered = [];
     const seen = new Set();
 
-    recList.forEach((rec, idx) => {
+    recList.forEach((rec) => {
       const recName = rec.name || rec.member_name || rec.prenom || '';
       const match = ALL_MEMBERS.find((m) => m.toLowerCase().includes(recName.toLowerCase()) || recName.toLowerCase().includes(m.toLowerCase()));
       const finalName = match || recName;
-      if (finalName && !seen.has(finalName)) {
+      if (finalName && !isExemptMember(finalName) && !seen.has(finalName)) {
         seen.add(finalName);
         ordered.push({
           name: finalName,
-          rank: idx + 1,
-          reason: rec.reason || (idx === 0 ? "Charge la plus équitable" : "Disponible"),
+          rank: ordered.length + 1,
+          reason: rec.reason || (ordered.length === 0 ? "Charge la plus équitable" : "Disponible"),
           score_usage: rec.score_usage,
           ratio: rec.ratio,
         });
@@ -701,7 +707,7 @@ export default function TaskDetailModal({
     });
 
     ALL_MEMBERS.forEach((m) => {
-      if (!seen.has(m)) {
+      if (!isExemptMember(m) && !seen.has(m)) {
         seen.add(m);
         ordered.push({
           name: m,
@@ -2074,7 +2080,7 @@ export default function TaskDetailModal({
                             <span>Attribution de la mission — Membres associés (triés par équité de charge) :</span>
                           </span>
                           <span className="px-2 py-0.5 rounded-full text-[10px] bg-emerald-100 text-emerald-800 dark:bg-emerald-950/70 dark:text-emerald-300 font-semibold border border-emerald-300">
-                            {selectedValidationMembers.length} sélectionné{selectedValidationMembers.length > 1 ? 's' : ''} sur 7
+                            {selectedValidationMembers.length} sélectionné{selectedValidationMembers.length > 1 ? 's' : ''} sur {sortedAssociatesByEquity.length}
                           </span>
                         </div>
 

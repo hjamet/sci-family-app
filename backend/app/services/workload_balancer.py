@@ -1,5 +1,7 @@
 from datetime import datetime
 from typing import List, Dict, Any, Optional
+import unicodedata
+import json
 
 def calculate_reservation_days(start_date: str, end_date: str) -> int:
     """
@@ -83,6 +85,91 @@ def get_task_charge_points(complexity: Optional[str]) -> int:
     return 3
 
 
+ACTIVE_STATUSES = {"EN_COURS", "A_FAIRE", "TODO"}
+COMPLETED_STATUSES = {"TERMINEE", "TERMINE", "VALIDE", "VALIDEE", "CLOS", "CLOTUREE", "COMPLETED", "ARCHIVEE"}
+UNAPPROVED_STATUSES = {"PROPOSED", "PROPOSEE", "REJECTED", "REJETEE", "BROUILLON", "DRAFT"}
+
+
+def normalize_status(st: Optional[str]) -> str:
+    if not st:
+        return ""
+    clean = unicodedata.normalize("NFD", str(st).strip().upper())
+    clean = "".join(c for c in clean if unicodedata.category(c) != "Mn")
+    clean = clean.replace(" ", "_").replace("-", "_")
+    return clean
+
+
+def is_exempt_member(member: Any) -> bool:
+    """
+    Exempte Frédéric Jamet (Papa) des corvées et des recommandations
+    (il finance déjà la SCI à hauteur de plus de 20 fois les autres membres).
+    """
+    m_name = (getattr(member, "name", None) or (member.get("name") if isinstance(member, dict) else "") or str(member)).lower()
+    m_prenom = (getattr(member, "prenom", None) or (member.get("prenom") if isinstance(member, dict) else "")).lower()
+    clean_name = "".join(c for c in unicodedata.normalize("NFD", m_name) if unicodedata.category(c) != "Mn")
+    clean_prenom = "".join(c for c in unicodedata.normalize("NFD", m_prenom) if unicodedata.category(c) != "Mn")
+    if "frederic" in clean_prenom or "frederic" in clean_name:
+        return True
+    monthly = getattr(member, "monthly_contribution", 0.0) or (member.get("monthly_contribution", 0.0) if isinstance(member, dict) else 0.0)
+    try:
+        if float(monthly) >= 500.0:
+            return True
+    except (ValueError, TypeError):
+        pass
+    return False
+
+
+def is_member_assigned_to_task(member: Any, task: Any) -> bool:
+    m_id = getattr(member, "id", None) or (member.get("id") if isinstance(member, dict) else None)
+    t_assignee_id = getattr(task, "assignee_id", None) if not isinstance(task, dict) else task.get("assignee_id")
+    if m_id is not None and t_assignee_id is not None and m_id == t_assignee_id:
+        return True
+
+    m_name = (getattr(member, "name", None) or (member.get("name") if isinstance(member, dict) else "") or str(member)).strip()
+    m_prenom = (getattr(member, "prenom", None) or (member.get("prenom") if isinstance(member, dict) else "")).strip()
+
+    assigned = getattr(task, "assigned_members", None) if not isinstance(task, dict) else task.get("assigned_members")
+    if isinstance(assigned, str):
+        try:
+            assigned = json.loads(assigned)
+        except Exception:
+            assigned = [assigned]
+    elif not isinstance(assigned, list):
+        assigned = [getattr(task, "assignee", None)] if getattr(task, "assignee", None) else []
+
+    clean_prenom = "".join(c for c in unicodedata.normalize("NFD", m_prenom.lower()) if unicodedata.category(c) != "Mn")
+    clean_name = "".join(c for c in unicodedata.normalize("NFD", m_name.lower()) if unicodedata.category(c) != "Mn")
+
+    for a in (assigned or []):
+        if not a:
+            continue
+        a_str = str(a).strip().lower()
+        a_clean = "".join(c for c in unicodedata.normalize("NFD", a_str) if unicodedata.category(c) != "Mn")
+        if clean_name and (clean_name in a_clean or a_clean in clean_name):
+            return True
+        if clean_prenom and (clean_prenom in a_clean or a_clean in clean_prenom):
+            return True
+
+    return False
+
+
+def is_member_creator_of_task(member: Any, task: Any) -> bool:
+    creator = getattr(task, "created_by", None) if not isinstance(task, dict) else task.get("created_by")
+    if not creator:
+        return False
+    c_str = str(creator).strip().lower()
+    c_clean = "".join(c for c in unicodedata.normalize("NFD", c_str) if unicodedata.category(c) != "Mn")
+    m_name = (getattr(member, "name", None) or (member.get("name") if isinstance(member, dict) else "") or str(member)).strip().lower()
+    m_prenom = (getattr(member, "prenom", None) or (member.get("prenom") if isinstance(member, dict) else "")).strip().lower()
+    clean_prenom = "".join(c for c in unicodedata.normalize("NFD", m_prenom) if unicodedata.category(c) != "Mn")
+    clean_name = "".join(c for c in unicodedata.normalize("NFD", m_name) if unicodedata.category(c) != "Mn")
+    if clean_name and (clean_name in c_clean or c_clean in clean_name):
+        return True
+    if clean_prenom and (clean_prenom in c_clean or c_clean in clean_prenom):
+        return True
+    return False
+
+
 def calculate_workload_distribution(
     reservations: List[Any],
     total_charge_points: float = 100.0,
@@ -134,19 +221,30 @@ def calculate_workload_distribution(
         for t in tasks:
             t_comp = getattr(t, "complexity", None) if not isinstance(t, dict) else t.get("complexity")
             pts = float(get_task_charge_points(t_comp))
+            st_raw = getattr(t, "status", None) if not isinstance(t, dict) else t.get("status")
+            st_norm = normalize_status(st_raw)
+
             assigned = getattr(t, "assigned_members", None) if not isinstance(t, dict) else t.get("assigned_members")
             if isinstance(assigned, str):
                 try:
-                    import json
                     assigned = json.loads(assigned)
                 except Exception:
                     assigned = [assigned]
             elif not isinstance(assigned, list):
                 assigned = [getattr(t, "assignee", None)] if getattr(t, "assignee", None) else []
 
-            for a in (assigned or []):
-                if a:
-                    user_performed_charge[str(a)] = user_performed_charge.get(str(a), 0.0) + pts
+            # Tâches terminées ou validées
+            if st_norm in COMPLETED_STATUSES or not st_norm:
+                for a in (assigned or []):
+                    if a:
+                        user_performed_charge[str(a)] = user_performed_charge.get(str(a), 0.0) + pts
+
+            # Bonus de création (+1 pt) pour toute tâche créée et approuvée
+            if st_norm not in UNAPPROVED_STATUSES:
+                creator = getattr(t, "created_by", None) if not isinstance(t, dict) else t.get("created_by")
+                if creator:
+                    c_str = str(creator).strip()
+                    user_performed_charge[c_str] = user_performed_charge.get(c_str, 0.0) + 1.0
 
     user_stats = []
     for user_name, o_u in user_scores.items():
@@ -177,23 +275,29 @@ def get_task_recommendations(
     subject: Optional[str] = None,
     category: Optional[str] = None,
     complexity: Optional[str] = None,
-    limit: int = 3
+    limit: int = 7
 ) -> List[Dict[str, Any]]:
     """
     Calcule dynamiquement les associés les plus recommandés pour une tâche
-    selon le sujet/domaine/lieu et les scores de charge actuels (Annotation 5).
+    selon les scores de charge actuels réels sur toute la SCI.
     
     Critères d'équité :
-    1. Charge de tâches actuelle dans le sujet / domaine (subject_charge_points croissant)
-    2. Nombre de tâches dans le sujet (subject_tasks_count croissant)
-    3. Ratio d'implication global : R_u = (C_u + 0.5) / (O_u + 0.5) croissant
-       (priorité à celui qui utilise le plus le domaine et a le moins contribué)
-    4. Score d'usage O_u décroissant
+    1. Frédéric Jamet (Papa) est systématiquement exempté des corvées.
+    2. Les tâches en cours sont calculées à l'échelle de toute la SCI (tous bâtiments confondus).
+    3. Tri par : (active_charge_points + completed_charge_points, active_tasks_count, ratio, -score_usage, pref_idx).
+    4. Textes explicatifs précis :
+       - active_tasks_count == 0 & rank == 1 : "charge la plus basse · aucune tâche en cours"
+       - active_tasks_count == 0 : "aucune tâche en cours" (ou "aucune tâche en cours (N terminée(s))")
+       - active_tasks_count == 1 : "1 tâche en cours (X pts) : <titre>"
+       - active_tasks_count >= 2 : "N tâches en cours (X pts)"
     """
     if not members:
         return []
 
-    target_domain = (subject or category or "").strip()
+    # 0. Exclure explicitement Frédéric Jamet (Papa)
+    eligible_members = [m for m in members if not is_exempt_member(m)]
+    if not eligible_members:
+        eligible_members = members
 
     # 1. Calcul des scores d'usage par associé (jours * chambres effectives)
     usage_by_name: Dict[str, float] = {}
@@ -209,83 +313,86 @@ def get_task_recommendations(
         cu = res.get("chambers_used", 1) if isinstance(res, dict) else getattr(res, "chambers_used", 1)
 
         score = calculate_reservation_score(s_date, e_date, accepts_extra, rc, cu, cohab)
-        for m in members:
+        for m in eligible_members:
             m_name = m.name if hasattr(m, "name") else (m.get("name") if isinstance(m, dict) else str(m))
             m_prenom = m.prenom if hasattr(m, "prenom") else (m.get("prenom") if isinstance(m, dict) else "")
             if (m_prenom and m_prenom.lower() in u_name.lower()) or (m_name and m_name.lower() in u_name.lower()):
                 usage_by_name[m_name] = usage_by_name.get(m_name, 0.0) + score
 
-    # 2. Compte pondéré des tâches globales et par domaine/sujet
-    global_charge_by_name: Dict[str, float] = {}
-    global_tasks_count_by_name: Dict[str, int] = {}
-    domain_charge_by_name: Dict[str, float] = {}
-    domain_tasks_count_by_name: Dict[str, int] = {}
+    # 2. Analyse des tâches à l'échelle globale de la SCI
+    m_active_tasks: Dict[str, List[Dict[str, Any]]] = {}
+    m_active_charge: Dict[str, float] = {}
+    m_completed_charge: Dict[str, float] = {}
+    m_completed_tasks_count: Dict[str, int] = {}
+    m_creation_bonus: Dict[str, float] = {}
+
+    for m in eligible_members:
+        m_name = m.name if hasattr(m, "name") else (m.get("name") if isinstance(m, dict) else str(m))
+        m_active_tasks[m_name] = []
+        m_active_charge[m_name] = 0.0
+        m_completed_charge[m_name] = 0.0
+        m_completed_tasks_count[m_name] = 0
+        m_creation_bonus[m_name] = 0.0
 
     if tasks:
         for t in tasks:
             t_comp = getattr(t, "complexity", None) if not isinstance(t, dict) else t.get("complexity")
             charge_pts = float(get_task_charge_points(t_comp))
-            t_subj = str(getattr(t, "subject", "") if not isinstance(t, dict) else t.get("subject", "")).strip()
-            t_cat = str(getattr(t, "category", "") if not isinstance(t, dict) else t.get("category", "")).strip()
+            st_raw = getattr(t, "status", None) if not isinstance(t, dict) else t.get("status")
+            st_norm = normalize_status(st_raw)
+            t_title = str(getattr(t, "title", "") if not isinstance(t, dict) else t.get("title", "")).strip()
 
-            assigned = getattr(t, "assigned_members", None) if not isinstance(t, dict) else t.get("assigned_members")
-            if isinstance(assigned, str):
-                try:
-                    import json
-                    assigned = json.loads(assigned)
-                except Exception:
-                    assigned = [assigned]
-            elif not isinstance(assigned, list):
-                assigned = [getattr(t, "assignee", None)] if getattr(t, "assignee", None) else []
+            is_active = st_norm in ACTIVE_STATUSES
+            is_completed = st_norm in COMPLETED_STATUSES
+            is_approved = st_norm not in UNAPPROVED_STATUSES
 
-            is_in_domain = False
-            if target_domain:
-                target_clean = target_domain.lower()
-                if (t_subj and (target_clean in t_subj.lower() or t_subj.lower() in target_clean)) or \
-                   (t_cat and (target_clean in t_cat.lower() or t_cat.lower() in target_clean)):
-                    is_in_domain = True
+            for m in eligible_members:
+                m_name = m.name if hasattr(m, "name") else (m.get("name") if isinstance(m, dict) else str(m))
+                if is_member_assigned_to_task(m, t):
+                    if is_active:
+                        m_active_tasks[m_name].append({
+                            "title": t_title,
+                            "points": charge_pts
+                        })
+                        m_active_charge[m_name] += charge_pts
+                    elif is_completed:
+                        m_completed_charge[m_name] += charge_pts
+                        m_completed_tasks_count[m_name] += 1
 
-            for a in (assigned or []):
-                if not a:
-                    continue
-                # Rapprochement du nom du membre
-                for m in members:
-                    m_name = m.name if hasattr(m, "name") else (m.get("name") if isinstance(m, dict) else str(m))
-                    m_prenom = m.prenom if hasattr(m, "prenom") else (m.get("prenom") if isinstance(m, dict) else "")
-                    if str(a).strip().lower() in m_name.lower() or (m_prenom and m_prenom.lower() in str(a).strip().lower()):
-                        global_charge_by_name[m_name] = global_charge_by_name.get(m_name, 0.0) + charge_pts
-                        global_tasks_count_by_name[m_name] = global_tasks_count_by_name.get(m_name, 0) + 1
-                        if is_in_domain:
-                            domain_charge_by_name[m_name] = domain_charge_by_name.get(m_name, 0.0) + charge_pts
-                            domain_tasks_count_by_name[m_name] = domain_tasks_count_by_name.get(m_name, 0) + 1
+                if is_approved and is_member_creator_of_task(m, t):
+                    m_creation_bonus[m_name] += 1.0
 
-    # 3. Calcul du score et classement pour chaque membre
+    # 3. Calcul du score et classement pour chaque membre éligible
     candidates = []
-    # Ordre de départ canonique si égalité parfaite
+    # Ordre de départ canonique si égalité parfaite (sans Frédéric Jamet)
     priority_order = [
         "Joséphine Jamet", "Hortense Jamet", "Marguerite Jamet",
-        "Eugénie Jamet", "Frédéric Jamet", "Maman (Élisabeth) Jamet", "Henri Jamet"
+        "Eugénie Jamet", "Maman (Élisabeth) Jamet", "Henri Jamet"
     ]
 
-    for m in members:
+    for m in eligible_members:
         m_name = m.name if hasattr(m, "name") else (m.get("name") if isinstance(m, dict) else str(m))
         m_prenom = m.prenom if hasattr(m, "prenom") else (m.get("prenom") if isinstance(m, dict) else "")
         if not m_prenom:
             m_prenom = m_name.split()[0] if m_name else "Associé"
 
         u_score = usage_by_name.get(m_name, 0.0)
-        g_charge = global_charge_by_name.get(m_name, 0.0)
-        g_count = global_tasks_count_by_name.get(m_name, 0)
-        d_charge = domain_charge_by_name.get(m_name, 0.0)
-        d_count = domain_tasks_count_by_name.get(m_name, 0)
+        act_tasks = m_active_tasks.get(m_name, [])
+        act_count = len(act_tasks)
+        act_charge = m_active_charge.get(m_name, 0.0)
+        comp_charge = m_completed_charge.get(m_name, 0.0)
+        comp_count = m_completed_tasks_count.get(m_name, 0)
+        bonus_pts = m_creation_bonus.get(m_name, 0.0)
 
-        # Ratio d'implication gamifié
-        ratio = (g_charge + 0.5) / (u_score + 0.5)
+        total_charge = act_charge + comp_charge + bonus_pts
+        ratio = (total_charge + 0.5) / (u_score + 0.5)
 
-        # Index de priorité par défaut
         pref_idx = 99
+        clean_m_prenom = "".join(c for c in unicodedata.normalize("NFD", m_prenom.lower()) if unicodedata.category(c) != "Mn")
+        clean_m_name = "".join(c for c in unicodedata.normalize("NFD", m_name.lower()) if unicodedata.category(c) != "Mn")
         for idx, pref_name in enumerate(priority_order):
-            if m_prenom.lower() in pref_name.lower() or m_name.lower() in pref_name.lower():
+            clean_pref = "".join(c for c in unicodedata.normalize("NFD", pref_name.lower()) if unicodedata.category(c) != "Mn")
+            if clean_m_prenom in clean_pref or clean_m_name in clean_pref:
                 pref_idx = idx
                 break
 
@@ -293,23 +400,30 @@ def get_task_recommendations(
             "name": m_name,
             "prenom": m_prenom,
             "score_usage": round(u_score, 1),
-            "global_tasks_count": g_count,
-            "global_charge_points": round(g_charge, 1),
+            "active_tasks": act_tasks,
+            "active_tasks_count": act_count,
+            "active_charge_points": round(act_charge, 1),
+            "completed_tasks_count": comp_count,
+            "completed_charge_points": round(comp_charge, 1),
+            "creation_bonus": round(bonus_pts, 1),
+            "total_charge_points": round(total_charge, 1),
+            "global_tasks_count": act_count + comp_count,
+            "global_charge_points": round(act_charge + comp_charge, 1),
+            "domain_charge_points": round(act_charge, 1),
+            "domain_tasks_count": act_count,
             "ratio": round(ratio, 3),
-            "domain_charge_points": round(d_charge, 1),
-            "domain_tasks_count": d_count,
             "pref_idx": pref_idx,
         })
 
-    # Tri par :
-    # 1. Moins de charge dans le domaine
-    # 2. Moins de tâches dans le domaine
-    # 3. Ratio d'équité global plus bas (doit le plus de corvées)
+    # Tri selon les critères d'équité sur l'ensemble de la SCI :
+    # 1. Somme de charge active + terminée la plus faible
+    # 2. Nombre de tâches en cours le plus bas
+    # 3. Ratio d'implication global plus bas
     # 4. Score d'usage plus élevé
-    # 5. Index de préférence par défaut
+    # 5. Index de préférence canonique
     candidates.sort(key=lambda x: (
-        x["domain_charge_points"],
-        x["domain_tasks_count"],
+        x["active_charge_points"] + x["completed_charge_points"],
+        x["active_tasks_count"],
         x["ratio"],
         -x["score_usage"],
         x["pref_idx"]
@@ -319,27 +433,23 @@ def get_task_recommendations(
     results = []
     for rank_idx, c in enumerate(candidates[:limit]):
         rank = rank_idx + 1
-        d_pts = c["domain_charge_points"]
-        d_cnt = c["domain_tasks_count"]
+        act_cnt = c["active_tasks_count"]
+        act_pts = c["active_charge_points"]
+        comp_cnt = c["completed_tasks_count"]
 
-        if target_domain:
-            if rank == 1:
-                reason = f"charge la plus basse dans {target_domain}"
-            elif d_pts == 0 and d_cnt == 0:
-                reason = f"aucune tâche en cours dans {target_domain}"
-            elif d_cnt == 1:
-                reason = f"1 seule tâche dans {target_domain}"
-            elif d_pts <= 3:
-                reason = f"charge modérée dans {target_domain}"
+        if act_cnt == 0 and rank == 1:
+            reason = "charge la plus basse · aucune tâche en cours"
+        elif act_cnt == 0:
+            if comp_cnt > 0:
+                reason = f"aucune tâche en cours ({comp_cnt} terminée{'s' if comp_cnt > 1 else ''})"
             else:
-                reason = f"charge de {int(d_pts)} pts dans {target_domain}"
+                reason = "aucune tâche en cours"
+        elif act_cnt == 1:
+            raw_title = c["active_tasks"][0]["title"] if c["active_tasks"] else "tâche"
+            short_title = raw_title if len(raw_title) <= 32 else (raw_title[:30].rstrip() + "…")
+            reason = f"1 tâche en cours ({int(act_pts)} pts) : {short_title}"
         else:
-            if rank == 1:
-                reason = "ratio d'équité le plus favorable"
-            elif c["ratio"] < 1.0:
-                reason = "faible charge globale"
-            else:
-                reason = "charge globale équilibrée"
+            reason = f"{act_cnt} tâches en cours ({int(act_pts)} pts)"
 
         results.append({
             "rank": rank,
@@ -347,6 +457,10 @@ def get_task_recommendations(
             "prenom": c["prenom"],
             "reason": reason,
             "score_usage": c["score_usage"],
+            "active_tasks_count": act_cnt,
+            "active_charge_points": act_pts,
+            "completed_tasks_count": comp_cnt,
+            "completed_charge_points": c["completed_charge_points"],
             "global_charge_points": c["global_charge_points"],
             "domain_charge_points": c["domain_charge_points"],
             "domain_tasks_count": c["domain_tasks_count"],
@@ -366,7 +480,7 @@ def resolve_auto_assignment_by_workload(
 ) -> Optional[str]:
     """
     Détermine l'associé auquel attribuer automatiquement une tâche
-    selon le modèle proportionnel d'équité d'Henri et le sujet/domaine.
+    selon le modèle proportionnel d'équité d'Henri (Frédéric Jamet étant exempté).
     """
     recs = get_task_recommendations(
         members=members,
