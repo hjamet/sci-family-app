@@ -57,6 +57,7 @@ class MemberBase(BaseModel):
     notif_new_invoices: bool = True
     notif_calls_for_funds: Optional[bool] = None
     monthly_contribution: float = 50.0
+    payment_reference: Optional[str] = None
 
 class MemberCreate(MemberBase):
     password: str = "pass123"
@@ -86,6 +87,7 @@ class MemberUpdate(BaseModel):
     notif_calls_for_funds: Optional[bool] = None
     notif_invoice_approval_request: Optional[bool] = None
     monthly_contribution: Optional[float] = None
+    payment_reference: Optional[str] = None
 
 class MemberResponse(MemberBase):
     id: int

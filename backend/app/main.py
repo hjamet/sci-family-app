@@ -10304,6 +10304,7 @@ def check_coordinator_permission(user: Optional[User]):
 def preview_calls_for_funds(
     year: Optional[int] = Query(None, description="Année (ex: 2026)"),
     month: Optional[int] = Query(None, description="Mois (1-12)"),
+    target_date: Optional[str] = Query(None, description="Date cible YYYY-MM-DD (ex: 2026-11-05)"),
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db)
 ):
@@ -10318,6 +10319,13 @@ def preview_calls_for_funds(
     """
     check_coordinator_permission(current_user)
     now = datetime.utcnow()
+    if target_date and (year is None or month is None):
+        try:
+            parsed_dt = datetime.strptime(target_date.strip()[:10], "%Y-%m-%d")
+            year = year or parsed_dt.year
+            month = month or parsed_dt.month
+        except ValueError:
+            raise HTTPException(status_code=400, detail="Format target_date invalide (attendu: YYYY-MM-DD)")
     y = year or now.year
     m = month or now.month
     if m < 1 or m > 12:
