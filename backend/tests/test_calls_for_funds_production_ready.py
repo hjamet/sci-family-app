@@ -365,3 +365,65 @@ def test_coordinator_generate_endpoint_skips_credit_member_and_notifies_debtor(
     all_calls_to = [c[1]["json"]["to"] for c in mock_resend_client.call_args_list]
     for recips in all_calls_to:
         assert "frederic_jamet@orange.fr" not in recips
+
+
+# ==============================================================================
+# TESTS 6 : LIVRABLE 3 — TARGET_DATE DANS PREVIEW & MEMBER.PAYMENT_REFERENCE DANS SCHEMA
+# ==============================================================================
+
+def test_preview_target_date_and_member_payment_reference_schema(
+    client,
+    test_db,
+    setup_bank_and_members,
+    coordinator_headers
+):
+    """
+    Certifie :
+    1. Que MemberResponse conserve bien payment_reference (ex: 'HLV-HENRI').
+    2. Que GET /api/members retourne bien payment_reference pour les membres.
+    3. Que GET /api/finances/calls-for-funds/preview?target_date=2026-11-05 renvoie bien year=2026, month=11, period_label='2026-11'.
+    4. Qu'un format invalide pour target_date lève une 400.
+    """
+    from app.schemas import MemberResponse
+
+    henri = setup_bank_and_members["henri"]
+    henri.payment_reference = "HLV-HENRI"
+    test_db.commit()
+    test_db.refresh(henri)
+
+    # 1. Vérification du schéma MemberResponse avec payment_reference
+    if hasattr(MemberResponse, "model_validate"):
+        member_dto = MemberResponse.model_validate(henri)
+    else:
+        member_dto = MemberResponse.from_orm(henri)
+
+    assert member_dto.payment_reference == "HLV-HENRI"
+
+    # 2. Vérification que l'API GET /api/members expose bien payment_reference
+    resp_members = client.get("/api/members", headers=coordinator_headers)
+    assert resp_members.status_code == 200
+    members_list = resp_members.json()
+    henri_member = next((m for m in members_list if m.get("prenom") == "Henri"), None)
+    assert henri_member is not None
+    assert henri_member.get("payment_reference") == "HLV-HENRI"
+
+    # 3. Vérification de l'endpoint preview avec target_date
+    resp = client.get(
+        "/api/finances/calls-for-funds/preview?target_date=2026-11-05",
+        headers=coordinator_headers
+    )
+    assert resp.status_code == 200, resp.text
+    data = resp.json()
+    assert data["year"] == 2026
+    assert data["month"] == 11
+    assert data["period_label"] == "2026-11"
+
+    # 4. Vérification du garde-fou format invalide
+    resp_invalid = client.get(
+        "/api/finances/calls-for-funds/preview?target_date=invalid-date",
+        headers=coordinator_headers
+    )
+    assert resp_invalid.status_code == 400
+    assert "Format target_date invalide" in resp_invalid.json().get("detail", "")
+
+
