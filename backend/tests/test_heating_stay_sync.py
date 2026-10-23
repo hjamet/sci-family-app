@@ -481,3 +481,138 @@ def test_post_heating_settings_updates_reservation_domotique_tag(db_session):
         assert "Eau Chaude Sanitaire 52°C" in stay.notes
         assert "Chauffage Presbytère 21°C" in stay.notes
 
+
+def test_post_heating_settings_updates_reservation_domotique_tag_heating_off(db_session):
+    """
+    Vérifie qu'un appel à POST /api/heating/settings avec is_heating_active=False
+    écrit bien 'Chauffage Presbytère Coupé' dans le tag [Domotique: ...] (au lieu de Hors-gel 12°C).
+    """
+    from zoneinfo import ZoneInfo
+    from datetime import datetime, timedelta
+    tz_paris = ZoneInfo("Europe/Paris")
+    now_paris = datetime.now(tz_paris)
+
+    stay = Reservation(
+        property_id=2,
+        property_name="Presbytère",
+        user_name="Henri Jamet",
+        year=now_paris.year,
+        week_number=now_paris.isocalendar()[1],
+        start_date=(now_paris - timedelta(days=1)).strftime("%Y-%m-%d"),
+        end_date=(now_paris + timedelta(days=2)).strftime("%Y-%m-%d"),
+        arrival_time="14:00",
+        departure_time="11:00",
+        status="Confirmée",
+        notes="Séjour en cours [Domotique: Eau Chaude Sanitaire 52°C • Chauffage Presbytère 20°C]"
+    )
+    db_session.add(stay)
+    db_session.commit()
+
+    current_status = {
+        "heating_mode": "dhwAndHeating",
+        "mode": "dhwAndHeating",
+        "target_temp": 20.0,
+        "dhw_target_temp": 52.0
+    }
+
+    with patch.object(ViCareService, "get_status", return_value=current_status), \
+         patch.object(ViCareService, "set_mode"), \
+         patch.object(ViCareService, "set_temperature"):
+
+        resp = client.post("/api/heating/settings", json={
+            "mode": "dhw",
+            "is_heating_active": False,
+            "is_dhw_active": True
+        })
+        assert resp.status_code == 200
+
+        db_session.refresh(stay)
+        assert "[Domotique:" in stay.notes
+        assert "Eau Chaude Sanitaire 52°C" in stay.notes
+        assert "Chauffage Presbytère Coupé" in stay.notes
+        assert "Hors-gel" not in stay.notes
+
+
+def test_dynamic_lead_hours_calculation(db_session):
+    """
+    Vérifie la formule physique d'anticipation dynamique (lead_hours) selon
+    la température ambiante (room_temp) et extérieure (outside_temp) :
+    - À 12°C ext et delta 3°C (18°C -> 21°C) : heating_rate = 1.20°C/h -> lead_hours = 0.5 + 3.0/1.2 = 3.0h
+    - À 0°C ext et delta 3°C : heating_rate = 1.20 - 0.045*12 = 0.66°C/h -> lead_hours = 0.5 + 3.0/0.66 = 5.05h
+    - À -10°C ext et delta 5°C : heating_rate clippé à 0.40°C/h -> lead_hours = 0.5 + 5.0/0.4 = 13.0h
+    - Déjà chaud (delta 0°C) avec ECS : min_lead = 2.0h
+    """
+    from zoneinfo import ZoneInfo
+    from datetime import datetime, timedelta
+    tz_paris = ZoneInfo("Europe/Paris")
+    now_paris = datetime.now(tz_paris)
+
+    # Création du setting thermique à 21.0°C
+    setting = db_session.query(ThermalSettings).filter(ThermalSettings.equipment_type == "heating").first()
+    if not setting:
+        setting = ThermalSettings(equipment_type="heating", mode="standby", target_temperature=21.0)
+        db_session.add(setting)
+    else:
+        setting.target_temperature = 21.0
+    db_session.commit()
+
+    # Réservation future (dans 24h) pour observer lead_hours calculé dans evaluated_stays
+    arrival_dt = now_paris + timedelta(hours=24)
+    departure_dt = arrival_dt + timedelta(days=2)
+
+    stay = Reservation(
+        property_id=2,
+        property_name="Presbytère",
+        user_name="Henri Jamet",
+        year=arrival_dt.year,
+        week_number=arrival_dt.isocalendar()[1],
+        start_date=arrival_dt.strftime("%Y-%m-%d"),
+        end_date=departure_dt.strftime("%Y-%m-%d"),
+        arrival_time=arrival_dt.strftime("%H:%M"),
+        departure_time=departure_dt.strftime("%H:%M"),
+        status="Confirmée",
+        notes="Séjour futur - Chauffage Presbytère"
+    )
+    db_session.add(stay)
+    db_session.commit()
+
+    # 1. Cas 12°C ext, 18°C intérieur -> delta 3.0°C -> 3.00h
+    status_12 = {"room_temperature": 18.0, "outside_temperature": 12.0}
+    with patch.object(ViCareService, "get_status", return_value=status_12), \
+         patch.object(ViCareService, "set_mode"), \
+         patch.object(ViCareService, "set_temperature"):
+        res = evaluate_and_sync_stay_heating(db_session, force_sync=False)
+        evaluated = [s for s in res["evaluated_stays"] if s["id"] == stay.id][0]
+        assert evaluated["lead_hours"] == 3.0
+
+    # 2. Cas 0°C ext, 18°C intérieur -> delta 3.0°C -> 5.05h (> 3.0h)
+    status_0 = {"room_temperature": 18.0, "outside_temperature": 0.0}
+    with patch.object(ViCareService, "get_status", return_value=status_0), \
+         patch.object(ViCareService, "set_mode"), \
+         patch.object(ViCareService, "set_temperature"):
+        res = evaluate_and_sync_stay_heating(db_session, force_sync=False)
+        evaluated = [s for s in res["evaluated_stays"] if s["id"] == stay.id][0]
+        assert evaluated["lead_hours"] == 5.05
+        assert evaluated["lead_hours"] > 3.0
+
+    # 3. Cas grand froid -10°C ext, 16°C intérieur -> delta 5.0°C -> plancher 0.40°C/h -> 13.00h
+    status_cold = {"room_temperature": 16.0, "outside_temperature": -10.0}
+    with patch.object(ViCareService, "get_status", return_value=status_cold), \
+         patch.object(ViCareService, "set_mode"), \
+         patch.object(ViCareService, "set_temperature"):
+        res = evaluate_and_sync_stay_heating(db_session, force_sync=False)
+        evaluated = [s for s in res["evaluated_stays"] if s["id"] == stay.id][0]
+        assert evaluated["lead_hours"] == 13.0
+
+    # 4. Cas déjà à consigne (18°C intérieur pour consigne 18°C) avec ECS -> min_lead = 2.0h
+    setting.target_temperature = 18.0
+    db_session.commit()
+    status_warm = {"room_temperature": 18.0, "outside_temperature": 15.0}
+    with patch.object(ViCareService, "get_status", return_value=status_warm), \
+         patch.object(ViCareService, "set_mode"), \
+         patch.object(ViCareService, "set_temperature"):
+        res = evaluate_and_sync_stay_heating(db_session, force_sync=False)
+        evaluated = [s for s in res["evaluated_stays"] if s["id"] == stay.id][0]
+        assert evaluated["lead_hours"] == 2.0
+
+

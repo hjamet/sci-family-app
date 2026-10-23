@@ -999,6 +999,7 @@ export default function VademecumPage({ properties, currentUser, reservations = 
   const poolTempDebounceRef = useRef(null);
   const heatingTempDebounceRef = useRef(null);
   const toggleRecheckTimeoutsRef = useRef([]);
+  const lastRefreshAtRef = useRef(Date.now());
   const [isPoolPumpActive, setIsPoolPumpActive] = useState(true);
   const [isPoolHeatingActive, setIsPoolHeatingActive] = useState(false);
   const [savingThermal, setSavingThermal] = useState(false);
@@ -1205,7 +1206,7 @@ export default function VademecumPage({ properties, currentUser, reservations = 
     loadVademecumDb();
   }, [currentUser]);
 
-  // Rafraîchissement automatique toutes les 5 minutes (300 000 ms) de la télémétrie thermique et piscine
+  // Rafraîchissement automatique toutes les 5 minutes (300 000 ms) avec respect strict des rate-limits Viessmann/Klereo (onglet visible uniquement + refresh au retour si > 2 min)
   useEffect(() => {
     const fetchHeatingSettings = async () => {
       try {
@@ -1223,13 +1224,14 @@ export default function VademecumPage({ properties, currentUser, reservations = 
       }
     };
 
-    const intervalId = setInterval(async () => {
+    const performRefresh = async () => {
       try {
         const [heatResResult, settingsResResult, poolResResult] = await Promise.allSettled([
           fetchHeatingStatus({ forceRefresh: true }),
           fetchHeatingSettings(),
           fetchPoolStatus(),
         ]);
+        lastRefreshAtRef.current = Date.now();
 
         if (heatResResult.status === 'fulfilled' && heatResResult.value && !heatResResult.value.error) {
           const freshHeat = heatResResult.value;
@@ -1274,10 +1276,32 @@ export default function VademecumPage({ properties, currentUser, reservations = 
       } catch (err) {
         console.warn('Erreur lors du rafraîchissement automatique domotique:', err);
       }
+    };
+
+    const intervalId = setInterval(() => {
+      if (typeof document !== 'undefined' && document.visibilityState !== 'visible') {
+        return;
+      }
+      performRefresh();
     }, 5 * 60 * 1000);
+
+    const handleVisibilityChange = () => {
+      if (typeof document !== 'undefined' && document.visibilityState === 'visible') {
+        if (Date.now() - lastRefreshAtRef.current >= 2 * 60 * 1000) {
+          performRefresh();
+        }
+      }
+    };
+
+    if (typeof document !== 'undefined') {
+      document.addEventListener('visibilitychange', handleVisibilityChange);
+    }
 
     return () => {
       clearInterval(intervalId);
+      if (typeof document !== 'undefined') {
+        document.removeEventListener('visibilitychange', handleVisibilityChange);
+      }
       if (heatingTempDebounceRef.current) clearTimeout(heatingTempDebounceRef.current);
       if (poolTempDebounceRef.current) clearTimeout(poolTempDebounceRef.current);
       if (toggleRecheckTimeoutsRef.current) {
@@ -1428,14 +1452,14 @@ export default function VademecumPage({ properties, currentUser, reservations = 
         author_name: resolveCurrentUserFullName(currentUser),
         details: targetActive
           ? `Chauffage ViCare activé en Marche (Confort ${heatingComfortTarget.toFixed(1)}°C)`
-          : `Chauffage ViCare mis à l'Arrêt (Sécurité Hors-gel permanente active à ${heatingFrostTarget.toFixed(1)}°C)`
+          : `Chauffage ViCare mis à l'Arrêt (En veille, antigel auto)`
       });
 
       // Notification immédiate positive et explicite
       showToast(
         targetActive
           ? `Commande transmise à la chaudière : allumage Confort ${heatingComfortTarget.toFixed(1)}°C (synchronisation ~30-60s) 🔥`
-          : `Commande transmise à la chaudière : arrêt hors-gel ${heatingFrostTarget.toFixed(1)}°C (mise en veille) 🛑`
+          : `Commande transmise à la chaudière : arrêt (mise en veille, antigel auto) 🛑`
       );
 
       // Relectures en tâche de fond pour synchroniser la télémétrie ViCare (8s confirmation, 15s et 45s suivi allumage brûleur)
@@ -1459,7 +1483,7 @@ export default function VademecumPage({ properties, currentUser, reservations = 
                   showToast(
                     realActive
                       ? `Chauffage confirmé en marche : Mode Confort ${heatingComfortTarget.toFixed(1)}°C 🔥`
-                      : `Chauffage confirmé à l'arrêt : Sécurité Hors-gel active (${heatingFrostTarget.toFixed(1)}°C) 🛑`
+                      : `Chauffage confirmé à l'arrêt : En veille (antigel auto) 🛑`
                   );
                 }
               }
@@ -1675,7 +1699,7 @@ export default function VademecumPage({ properties, currentUser, reservations = 
         dhw_target_temperature: isDhwActive ? dhwTarget : dhwFrostTarget,
         mode: isHeatingActive ? 'dhwAndHeating' : 'dhw',
         author_name: resolveCurrentUserFullName(currentUser),
-        details: `Réglages consolidés : Chauffage ${isHeatingActive ? `Marche (${heatingComfortTarget.toFixed(1)}°C)` : `Arrêt (Hors-gel ${heatingFrostTarget.toFixed(1)}°C)`}, ECS ${isDhwActive ? `Marche (${dhwTarget.toFixed(1)}°C)` : `Arrêt (Veille ${dhwFrostTarget.toFixed(1)}°C)`}`
+        details: `Réglages consolidés : Chauffage ${isHeatingActive ? `Marche (${heatingComfortTarget.toFixed(1)}°C)` : 'En veille (antigel auto)'}, ECS ${isDhwActive ? `Marche (${dhwTarget.toFixed(1)}°C)` : `Arrêt (Veille ${dhwFrostTarget.toFixed(1)}°C)`}`
       });
 
       try {
@@ -2581,7 +2605,7 @@ export default function VademecumPage({ properties, currentUser, reservations = 
                         ? 'Chauffe en cours'
                         : isHeatingActive
                           ? 'Au repos (brûleur éteint)'
-                          : `Arrêt hors-gel (${heatingFrostTarget.toFixed(1)}°C)`}
+                          : 'En veille (antigel auto)'}
                   </span>
                 </div>
 

@@ -9523,7 +9523,7 @@ def update_heating_settings(
 
                 dhw_tag = "Eau Chaude Sanitaire 52°C" if is_dhw else "Eau Chaude Sanitaire Coupée"
                 heating_temp_val = setting.target_temperature if setting.target_temperature is not None else 20.0
-                heating_tag = f"Chauffage Presbytère {heating_temp_val:.0f}°C" if is_heating else "Chauffage Presbytère Hors-gel 12°C"
+                heating_tag = f"Chauffage Presbytère {heating_temp_val:.0f}°C" if is_heating else "Chauffage Presbytère Coupé"
 
                 new_domo_tags = [dhw_tag, heating_tag] + kept_tags
                 new_domo_str = f"[Domotique: {' • '.join(new_domo_tags)}]"
@@ -11791,9 +11791,14 @@ def evaluate_and_sync_stay_heating(db: Session, force_sync: bool = False) -> dic
 
         # Calcul de l'anticipation dynamique avec consigne confort
         if wants_heating:
-            lead_hours = min(18.0, max(6.0, 6.0 + 1.5 * max(0.0, stay_comfort_temp - room_temp) + 0.25 * max(0.0, 12.0 - outside_temp)))
+            # Vitesse nette de chauffe (°C/h) selon la température extérieure :
+            # 1.20°C/h à >=12°C ext (calibré sur la montée réelle du Presbytère), -0.045°C/h par degré sous 12°C (plancher 0.40°C/h)
+            heating_rate_c_per_hour = max(0.40, 1.20 - 0.045 * max(0.0, 12.0 - outside_temp))
+            delta_temp = max(0.0, stay_comfort_temp - room_temp)
+            min_lead = 2.0 if wants_dhw else 1.0
+            lead_hours = round(min(24.0, max(min_lead, 0.5 + (delta_temp / heating_rate_c_per_hour))), 2)
         elif wants_dhw:
-            lead_hours = 2.5
+            lead_hours = 2.0
         else:
             lead_hours = 0.0
 
@@ -11829,9 +11834,7 @@ def evaluate_and_sync_stay_heating(db: Session, force_sync: bool = False) -> dic
     target_comfort_temp = configured_comfort_temp
     target_mode = ViCareService.resolve_unified_mode(is_heating=need_heating, is_dhw=need_dhw)
     target_dhw_state = "on" if need_dhw else "off"
-    frost_setting = db.query(ThermalSettings).filter(ThermalSettings.equipment_type == "heating_frost").first()
-    frost_temp = frost_setting.target_temperature if (frost_setting and frost_setting.target_temperature is not None) else 5.0
-    target_temp = target_comfort_temp if need_heating else frost_temp
+    target_temp = target_comfort_temp
     target_dhw_temp = 52.0
 
     # 3. Synchronisation avec ThermalSettings

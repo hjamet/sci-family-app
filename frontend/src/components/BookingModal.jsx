@@ -774,7 +774,7 @@ function BookingModalContent({
       if (presbytereHeating) {
         domotiqueTags.push('Chauffage Presbytère 20°C');
       } else if (hasPresb) {
-        domotiqueTags.push('Chauffage Presbytère Hors-gel 12°C');
+        domotiqueTags.push('Chauffage Presbytère Coupé');
       }
       if (poolHeating) {
         domotiqueTags.push('Préchauffage Piscine 27°C');
@@ -1302,7 +1302,7 @@ function BookingModalContent({
                       ? 'bg-sage-soft text-primary-container border border-sage-border'
                       : 'bg-surface-container-high text-on-surface-variant border border-border-subtle'
                   }`}>
-                    {presbytereHeating ? 'Automatique (20°C)' : 'Hors-gel (12°C)'}
+                    {presbytereHeating ? 'Confort actif' : 'Veille (antigel auto)'}
                   </span>
                 </div>
                 <label
