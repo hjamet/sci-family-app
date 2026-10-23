@@ -577,7 +577,7 @@ def test_dynamic_lead_hours_calculation(db_session):
     db_session.commit()
 
     # 1. Cas 12°C ext, 18°C intérieur -> delta 3.0°C -> 3.00h
-    status_12 = {"room_temperature": 18.0, "outside_temperature": 12.0}
+    status_12 = {"room_temperature": 18.0, "outside_temperature": 12.0, "is_heating_active": False, "burner_active": False}
     with patch.object(ViCareService, "get_status", return_value=status_12), \
          patch.object(ViCareService, "set_mode"), \
          patch.object(ViCareService, "set_temperature"):
@@ -586,7 +586,7 @@ def test_dynamic_lead_hours_calculation(db_session):
         assert evaluated["lead_hours"] == 3.0
 
     # 2. Cas 0°C ext, 18°C intérieur -> delta 3.0°C -> 5.05h (> 3.0h)
-    status_0 = {"room_temperature": 18.0, "outside_temperature": 0.0}
+    status_0 = {"room_temperature": 18.0, "outside_temperature": 0.0, "is_heating_active": False, "burner_active": False}
     with patch.object(ViCareService, "get_status", return_value=status_0), \
          patch.object(ViCareService, "set_mode"), \
          patch.object(ViCareService, "set_temperature"):
@@ -596,7 +596,7 @@ def test_dynamic_lead_hours_calculation(db_session):
         assert evaluated["lead_hours"] > 3.0
 
     # 3. Cas grand froid -10°C ext, 16°C intérieur -> delta 5.0°C -> plancher 0.40°C/h -> 13.00h
-    status_cold = {"room_temperature": 16.0, "outside_temperature": -10.0}
+    status_cold = {"room_temperature": 16.0, "outside_temperature": -10.0, "is_heating_active": False, "burner_active": False}
     with patch.object(ViCareService, "get_status", return_value=status_cold), \
          patch.object(ViCareService, "set_mode"), \
          patch.object(ViCareService, "set_temperature"):
@@ -607,7 +607,7 @@ def test_dynamic_lead_hours_calculation(db_session):
     # 4. Cas déjà à consigne (18°C intérieur pour consigne 18°C) avec ECS -> min_lead = 2.0h
     setting.target_temperature = 18.0
     db_session.commit()
-    status_warm = {"room_temperature": 18.0, "outside_temperature": 15.0}
+    status_warm = {"room_temperature": 18.0, "outside_temperature": 15.0, "is_heating_active": False, "burner_active": False}
     with patch.object(ViCareService, "get_status", return_value=status_warm), \
          patch.object(ViCareService, "set_mode"), \
          patch.object(ViCareService, "set_temperature"):

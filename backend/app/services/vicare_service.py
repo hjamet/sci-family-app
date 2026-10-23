@@ -17,9 +17,9 @@ import logging
 
 logger = logging.getLogger(__name__)
 
-# Zero-Trust / Fail-Fast : ZÉRO cache (directive Henri). 100% direct-live vers l'API ViCare.
-# Timeout strict de 3.5s max sur les requêtes pour éviter tout blocage réseau de 30 secondes.
-HTTP_TIMEOUT_SECONDS: float = 3.5
+# Timeout ViCare : sur Vercel à froid, initWithCredentials (OAuth + installations + features
+# Viessmann Cloud) prend régulièrement 4 à 8 s. Un plafond de 3,5 s coupait le handshake en plein vol.
+HTTP_TIMEOUT_SECONDS: float = 12.0
 
 # --- Constantes de Calibration Physique & Empirique du Fioul (Josse / Bompais) ---
 TANK_CAPACITY_LITERS: float = 3000.0
@@ -46,13 +46,23 @@ def calculate_fuel_telemetry(
     """
     Calcule la jauge de fioul exacte basée sur la calibration physique de M. Bompais (17/10/2026)
     ou toute nouvelle livraison/calibration, et les compteurs officiels Viessmann (allumages & heures brûleur).
+    Sans aucun compteur brûleur réel, la jauge est inconnue (None) : jamais la valeur de calibration
+    présentée comme niveau courant.
     """
-    delta_starts = max(0, (int(burner_starts) if burner_starts is not None else base_starts) - base_starts)
-    delta_hours = max(0, (int(burner_hours) if burner_hours is not None else base_hours) - base_hours)
-    consumed_liters = round(max(delta_starts * LITERS_PER_START, delta_hours * FLOW_LITERS_PER_HOUR), 2)
-    fuel_liters_remaining = round(min(TANK_CAPACITY_LITERS, max(0.0, base_liters + added_liters_since_base - consumed_liters)), 1)
-    fuel_level_percent = round((fuel_liters_remaining / TANK_CAPACITY_LITERS) * 100.0, 1)
-    fuel_height_cm = round((fuel_liters_remaining / TANK_CAPACITY_LITERS) * TANK_TOTAL_HEIGHT_CM, 1)
+    consumptions = []
+    if burner_starts is not None:
+        consumptions.append(max(0, int(burner_starts) - base_starts) * LITERS_PER_START)
+    if burner_hours is not None:
+        consumptions.append(max(0, int(burner_hours) - base_hours) * FLOW_LITERS_PER_HOUR)
+
+    fuel_liters_remaining = None
+    fuel_level_percent = None
+    fuel_height_cm = None
+    if consumptions:
+        consumed_liters = round(max(consumptions), 2)
+        fuel_liters_remaining = round(min(TANK_CAPACITY_LITERS, max(0.0, base_liters + added_liters_since_base - consumed_liters)), 1)
+        fuel_level_percent = round((fuel_liters_remaining / TANK_CAPACITY_LITERS) * 100.0, 1)
+        fuel_height_cm = round((fuel_liters_remaining / TANK_CAPACITY_LITERS) * TANK_TOTAL_HEIGHT_CM, 1)
 
     return {
         "fuel_level_percent": fuel_level_percent,
@@ -126,7 +136,7 @@ def get_vicare_token_path() -> str:
 def _patch_pyvicare_safe_serialization():
     """
     Sécurise PyViCare contre tout crash OSError [Errno 30] Read-only file system
-    lors de la sérialisation/mise à jour du token, et force un timeout strict de 3.5s.
+    lors de la sérialisation/mise à jour du token, et force un timeout strict (HTTP_TIMEOUT_SECONDS).
     """
     try:
         from PyViCare.PyViCareOAuthManager import ViCareOAuthManager
@@ -514,7 +524,6 @@ def fetch_live_telemetry() -> Dict[str, Any]:
         if dhw_configured_temp is not None and dhw_configured_temp > 15.0:
             dhw_comfort = dhw_configured_temp
             ViCareService._dhw_comfort_temperature = dhw_comfort
-        dhw_reduced = ViCareService._dhw_reduced_temperature
 
         # Consigne active ECS effective : réelle consigne configurée sans artefact 10°C
         dhw_active_target = dhw_configured_temp if dhw_configured_temp is not None else dhw_comfort
@@ -530,11 +539,11 @@ def fetch_live_telemetry() -> Dict[str, Any]:
         if not is_dhw_active:
             dhw_status_state = "off"
             if active_mode == "standby" or (active_mode and str(active_mode).lower().startswith("standby")):
-                dhw_status_label = "À l'arrêt (Veille chaudière standby)"
+                dhw_status_label = "À l'arrêt (veille antigel auto)"
                 dhw_status_subtext = "Chaudière en veille standby • Ballon et brûleur coupés"
             else:
-                dhw_status_label = "À l'arrêt (Veille)"
-                dhw_status_subtext = "Ballon sous tension • Chauffe coupée"
+                dhw_status_label = "À l'arrêt (veille antigel auto)"
+                dhw_status_subtext = "Chauffe ECS coupée • Protection antigel intégrée au firmware Viessmann"
         elif is_dhw_heating:
             dhw_status_state = "heating"
             dhw_status_label = "Chauffe en cours"
@@ -565,7 +574,6 @@ def fetch_live_telemetry() -> Dict[str, Any]:
             "dhw_configured_temperature": dhw_active_target,
             "dhw_target_temperature": dhw_active_target,
             "dhw_comfort_temperature": dhw_comfort,
-            "dhw_reduced_temperature": dhw_reduced,
             "is_heating_active": is_heating_active,
             "is_heating_burning": is_heating_burning,
             "heating_status_state": heating_status_state,
@@ -613,7 +621,6 @@ def fetch_live_telemetry() -> Dict[str, Any]:
 
 class ViCareService:
     _dhw_comfort_temperature: float = 52.0
-    _dhw_reduced_temperature: float = 10.0
     _heating_comfort_temperature: float = 20.0
     _heating_reduced_temperature: float = 5.0
 
@@ -623,11 +630,12 @@ class ViCareService:
         Returns heating telemetry strictly direct-live from ViCare API without any cache.
         Zero-Trust & Fail-Fast : Zéro données périmées, zéro fausses valeurs hardcodées.
         """
+        # Plafond global HTTP_TIMEOUT_SECONDS. Pas de `with` : sa sortie attendait la fin du thread
+        # même après le timeout, ce qui rendait le plafond inopérant.
+        executor = concurrent.futures.ThreadPoolExecutor(max_workers=1)
         try:
-            # Exécution avec timeout strict de 4.0s pour éviter tout blocage réseau ViCare
-            with concurrent.futures.ThreadPoolExecutor(max_workers=1) as executor:
-                future = executor.submit(fetch_live_telemetry)
-                data = future.result(timeout=HTTP_TIMEOUT_SECONDS)
+            future = executor.submit(fetch_live_telemetry)
+            data = future.result(timeout=HTTP_TIMEOUT_SECONDS)
         except HTTPException:
             raise
         except Exception as err:
@@ -646,12 +654,12 @@ class ViCareService:
                 status_code=status_code,
                 detail={"error": f"Erreur télémétrie chaudière ViCare: {err_str}", "type": err_type}
             )
+        finally:
+            executor.shutdown(wait=False)
 
         # S'assurer de la présence des doubles consignes ECS et statuts qualifiés
         if "dhw_comfort_temperature" not in data:
             data["dhw_comfort_temperature"] = cls._dhw_comfort_temperature
-        if "dhw_reduced_temperature" not in data:
-            data["dhw_reduced_temperature"] = cls._dhw_reduced_temperature
         if "dhw_charging_active" not in data:
             data["dhw_charging_active"] = False
         if "is_dhw_heating" not in data:
@@ -661,7 +669,7 @@ class ViCareService:
         if "dhw_status_label" not in data:
             data["dhw_status_label"] = (
                 "Chauffe en cours" if data.get("is_dhw_heating")
-                else ("Au repos (brûleur éteint)" if data.get("is_dhw_active") else "À l'arrêt (Veille)")
+                else ("Au repos (brûleur éteint)" if data.get("is_dhw_active") else "À l'arrêt (veille antigel auto)")
             )
         if "dhw_status_subtext" not in data:
             data["dhw_status_subtext"] = None
@@ -880,27 +888,15 @@ class ViCareService:
             raise
 
     @classmethod
-    def set_dhw_temperature(cls, target_temp: float, target: Optional[str] = "comfort") -> Dict[str, Any]:
+    def set_dhw_temperature(cls, target_temp: float) -> Dict[str, Any]:
         """
-        Ajuste la consigne de température de l'ECS (10°C à 60°C).
-        Supporte la double consigne : 'comfort' (marche) ou 'reduced' (veille/arrêt à 10°C).
+        Ajuste la consigne de confort de l'ECS (10°C à 60°C, bornes matérielles VPlusHO1_40).
+        Pas de consigne « réduite » ECS : à l'arrêt, la chaudière est en standby avec l'antigel firmware.
         """
-        target_mode = (target or "comfort").lower().strip()
-        if target_mode == "reduced":
-            if not (10.0 <= target_temp <= 30.0):
-                raise HTTPException(
-                    status_code=status.HTTP_400_BAD_REQUEST,
-                    detail={"error": "La consigne réduite ECS doit être comprise entre 10°C et 30°C.", "type": "ValueError"}
-                )
-            cls._dhw_reduced_temperature = target_temp
-        else:
-            if not (10.0 <= target_temp <= 60.0):
-                raise HTTPException(
-                    status_code=status.HTTP_400_BAD_REQUEST,
-                    detail={"error": "La consigne confort ECS doit être comprise entre 10°C et 60°C.", "type": "ValueError"}
-                )
-            cls._dhw_comfort_temperature = target_temp
-
+        if not (10.0 <= target_temp <= 60.0):
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail={"error": "La consigne confort ECS doit être comprise entre 10°C et 60°C.", "type": "ValueError"}
+            )
+        cls._dhw_comfort_temperature = target_temp
         return cls.set_temperature(target_temp=target_temp, program="dhw")
-
-

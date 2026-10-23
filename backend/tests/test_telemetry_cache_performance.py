@@ -80,7 +80,7 @@ def test_klereo_cache_hit_and_stale_fallback():
 
 
 def test_vicare_cache_hit_and_stale_fallback():
-    """Vérifie l'interrogation 100% direct-live et le Fail-Fast strict ViCare (zéro faux repli par défaut)."""
+    """Relevé réel persisté : déduplication < 20 s, puis repli explicite sur le dernier relevé réel si ViCare tombe."""
     mock_telemetry = {
         "room_temperature": 21.0,
         "target_temperature": 20.0,
@@ -88,13 +88,11 @@ def test_vicare_cache_hit_and_stale_fallback():
         "supply_temperature": 44.0,
         "boiler_temperature": 47.0,
         "dhw_temperature": 50.0,
-        "mode": "heating",
-        "active_mode": "heating",
+        "is_heating_active": True,
+        "burner_active": False,
+        "mode": "dhwAndHeating",
+        "active_mode": "dhwAndHeating",
         "active_program": "normal",
-        "fuel_level_percent": 68.0,
-        "fuel_liters_remaining": 2720.0,
-        "fuel_capacity_liters": 3000.0,
-        "fuel_supplier": "Éts JOSSE SAS"
     }
 
     # Premier appel direct-live
@@ -104,18 +102,19 @@ def test_vicare_cache_hit_and_stale_fallback():
         assert resp1.json()["room_temperature"] == 21.0
         assert mock_fetch.call_count == 1
 
-    # Deuxième appel : interroge à nouveau en direct sans aucun cache
+    # Deuxième appel < 20 s : relevé réel réutilisé, passerelle non sollicitée
     with patch("app.services.vicare_service.fetch_live_telemetry", return_value=mock_telemetry) as mock_fetch2:
         resp2 = client.get("/api/heating/status")
         assert resp2.status_code == 200
         assert resp2.json()["room_temperature"] == 21.0
-        assert mock_fetch2.call_count == 1
+        assert mock_fetch2.call_count == 0
 
-    # Troisième appel avec timeout ViCare : Fail-Fast strict 504/502 (aucun camouflage factice)
+    # Rafraîchissement forcé avec timeout ViCare : dernier relevé réel servi, explicitement marqué
     with patch("app.services.vicare_service.fetch_live_telemetry", side_effect=TimeoutError("ViCare cloud timeout")):
-        resp3 = client.get("/api/heating/status")
-        assert resp3.status_code in (502, 504)
-        assert "chaudière ViCare" in resp3.json()["detail"]["error"]
+        resp3 = client.get("/api/heating/status?refresh=true")
+        assert resp3.status_code == 200
+        assert resp3.json()["is_cached_last_known"] is True
+        assert "chaudière ViCare" in resp3.json()["live_error"]
 
 
 def test_banking_status_cache_hit():

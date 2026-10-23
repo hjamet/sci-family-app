@@ -754,18 +754,17 @@ class HeatingStatusResponse(BaseModel):
     dhw_temperature: Optional[float] = None
     dhw_configured_temperature: Optional[float] = None
     dhw_target_temperature: Optional[float] = None
-    dhw_comfort_temperature: Optional[float] = 52.0
-    dhw_reduced_temperature: Optional[float] = 10.0
+    dhw_comfort_temperature: Optional[float] = None
     is_heating_active: bool = False
     is_heating_burning: bool = False
     heating_status_state: str = "off"
-    heating_status_label: str = "Hors-gel actif (5.0°C)"
+    heating_status_label: Optional[str] = None
     heating_status_subtext: Optional[str] = None
     is_dhw_active: bool = False
     dhw_charging_active: bool = False
     is_dhw_heating: bool = False
     dhw_status_state: str = "off"
-    dhw_status_label: str = "À l'arrêt (Veille 10°C)"
+    dhw_status_label: Optional[str] = None
     dhw_status_subtext: Optional[str] = None
     frost_protection_active: bool = False  # Défaut prudent, valeur réelle depuis l'API
     eco_mode_active: bool = False
@@ -782,15 +781,19 @@ class HeatingStatusResponse(BaseModel):
     fuel_level_percent: Optional[float] = None
     fuel_liters_remaining: Optional[float] = None
     fuel_capacity_liters: Optional[float] = None
-    fuel_height_cm: Optional[float] = 46.0
-    fuel_tank_height_cm: Optional[float] = 130.0
-    fuel_liters_per_start: Optional[float] = 0.293
-    fuel_liters_per_hour: Optional[float] = 1.62
-    fuel_nozzle_spec: Optional[str] = "Danfoss 0,50 / 80° H LEV DA (1,62 L/h • 0,293 L/allumage)"
+    fuel_height_cm: Optional[float] = None
+    fuel_tank_height_cm: Optional[float] = None
+    fuel_liters_per_start: Optional[float] = None
+    fuel_liters_per_hour: Optional[float] = None
+    fuel_nozzle_spec: Optional[str] = None
     fuel_calibration_info: Optional[str] = None
     fuel_supplier: Optional[str] = None
     test_mode_read_only: Optional[bool] = None
     message: Optional[str] = None
+    # Fraîcheur du relevé : True = passerelle injoignable, dernier relevé réel servi depuis la base
+    is_cached_last_known: bool = False
+    last_seen_at: Optional[str] = None
+    live_error: Optional[str] = None
     class Config:
         from_attributes = True
 
@@ -810,7 +813,6 @@ class DhwModeRequest(BaseModel):
 class DhwTemperatureRequest(BaseModel):
     temperature: Optional[float] = None
     target_temperature: Optional[float] = None
-    target: Optional[str] = "comfort"
 
     def get_temperature(self) -> float:
         if self.temperature is not None:
@@ -1299,7 +1301,6 @@ class HeatingSettingsRequest(BaseModel):
     is_dhw_active: Optional[bool] = None
     dhw_target_temperature: Optional[float] = None
     dhw_comfort_temperature: Optional[float] = None
-    dhw_reduced_temperature: Optional[float] = None
     mode: Optional[str] = None
     author_name: Optional[str] = None
     details: Optional[str] = None
@@ -1314,7 +1315,6 @@ class HeatingSettingsResponse(BaseModel):
     is_dhw_active: Optional[bool] = None
     dhw_target_temperature: Optional[float] = None
     dhw_comfort_temperature: Optional[float] = 52.0
-    dhw_reduced_temperature: Optional[float] = 10.0
     mode: Optional[str] = "dhwAndHeating"
     updated_by: Optional[str] = None
     updated_at: Optional[datetime] = None

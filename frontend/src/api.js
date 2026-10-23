@@ -1184,10 +1184,21 @@ export async function fetchHeatingStatus(options = {}) {
     });
     if (!res.ok) {
       const err = await res.json().catch(() => ({}));
-      throw new Error(err.detail || 'Erreur lors de la récupération du statut du chauffage ViCare');
+      throw new Error(parseApiError(err, `HTTP ${res.status} sur /api/heating/status`));
     }
     return res.json();
   }, { forceRefresh: force });
+}
+
+export async function fetchHeatingTelemetryHistory(days) {
+  const res = await fetch(`${API_BASE}/heating/telemetry-history?days=${days}`, {
+    headers: getAuthHeaders(),
+  });
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({}));
+    throw new Error(parseApiError(err, `HTTP ${res.status} sur /api/heating/telemetry-history`));
+  }
+  return res.json();
 }
 
 export async function setHeatingMode(mode) {

@@ -1247,7 +1247,7 @@ function BookingModalContent({
                       ? 'bg-sage-soft text-primary-container border border-sage-border'
                       : 'bg-surface-container-high text-on-surface-variant border border-border-subtle'
                   }`}>
-                    {presbytereHeating ? 'Inclus dans le chauffage (52°C)' : (dhwHeating ? 'Active (52°C)' : 'Veille économique (10°C)')}
+                    {presbytereHeating ? 'Inclus dans le chauffage (52°C)' : (dhwHeating ? 'Active (52°C)' : "À l'arrêt (veille antigel auto)")}
                   </span>
                 </div>
                 <label

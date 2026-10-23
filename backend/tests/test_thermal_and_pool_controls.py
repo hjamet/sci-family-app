@@ -166,7 +166,7 @@ def test_pool_general_interlock_preserved():
 
 def test_vicare_double_consigne_status_fields():
     """
-    Vérifie que /api/heating/status expose dhw_comfort_temperature et dhw_reduced_temperature.
+    Vérifie que /api/heating/status expose dhw_comfort_temperature et plus aucune consigne réduite ECS (10°C bannie).
     """
     with patch("app.services.vicare_service.fetch_live_telemetry") as mock_fetch:
         mock_fetch.return_value = {
@@ -181,7 +181,6 @@ def test_vicare_double_consigne_status_fields():
             "dhw_configured_temperature": 50.0,
             "dhw_target_temperature": 50.0,
             "dhw_comfort_temperature": 50.0,
-            "dhw_reduced_temperature": 10.0,
             "is_heating_active": True,
             "is_dhw_active": True,
             "frost_protection_active": True,
@@ -201,24 +200,18 @@ def test_vicare_double_consigne_status_fields():
 
         assert "dhw_comfort_temperature" in data
         assert data["dhw_comfort_temperature"] == 50.0
-        assert "dhw_reduced_temperature" in data
-        assert data["dhw_reduced_temperature"] == 10.0
+        assert "dhw_reduced_temperature" not in data
 
 
 def test_vicare_double_consigne_dhw_temperature_endpoint():
     """
-    Vérifie que POST /api/heating/dhw/temperature accepte temperature et target (comfort/reduced).
+    Vérifie que POST /api/heating/dhw/temperature n'accepte que la consigne confort.
     """
     # 1. Consigne confort
     resp_comfort = client.post("/api/heating/dhw/temperature", json={"temperature": 52.0, "target": "comfort"})
     # En mode test read-only, l'interlock 403 est attendu, et la consigne mémoire interne est mise à jour
     assert resp_comfort.status_code == 403
     assert ViCareService._dhw_comfort_temperature == 52.0
-
-    # 2. Consigne réduite (veille à 10°C)
-    resp_reduced = client.post("/api/heating/dhw/temperature", json={"temperature": 10.0, "target": "reduced"})
-    assert resp_reduced.status_code == 403
-    assert ViCareService._dhw_reduced_temperature == 10.0
 
     # 3. Payload legacy target_temperature
     resp_legacy = client.post("/api/heating/dhw/temperature", json={"target_temperature": 55.0})
@@ -235,7 +228,6 @@ def test_vicare_dhw_mode_switching_applies_comfort_and_reduced():
     Vérifie que set_dhw_mode applique _dhw_comfort_temperature en marche et bascule en standby à l'arrêt.
     """
     ViCareService._dhw_comfort_temperature = 53.0
-    ViCareService._dhw_reduced_temperature = 10.0
 
     with patch.object(ViCareService, "set_temperature") as mock_set_temp, \
          patch.object(ViCareService, "set_mode") as mock_set_mode, \

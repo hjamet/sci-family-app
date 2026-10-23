@@ -97,6 +97,15 @@ from .services.workload_balancer import (
     get_task_charge_points,
     TASK_CHARGE_WEIGHTS
 )
+from .services.heating_telemetry_service import (
+    LIVE_SNAPSHOT_REUSE_SECONDS,
+    get_live_snapshot,
+    snapshot_age_seconds,
+    serve_snapshot,
+    record_live_status,
+    list_history as list_heating_history,
+    to_utc_iso,
+)
 from .services.vicare_service import (
     ViCareService,
     calculate_fuel_telemetry,
@@ -224,10 +233,13 @@ app.add_middleware(
 @app.exception_handler(Exception)
 async def global_exception_handler(request: Request, exc: Exception):
     logger.error(f"[GLOBAL UNHANDLED ERROR] {request.method} {request.url.path}: {exc}", exc_info=True)
-    from fastapi.responses import JSONResponse
     return JSONResponse(
         status_code=500,
-        content={"detail": "Une erreur interne est survenue sur le serveur.", "error": str(exc)}
+        content={
+            "detail": f"Erreur interne serveur sur {request.method} {request.url.path} ({type(exc).__name__}) : {exc}",
+            "error": str(exc),
+            "type": type(exc).__name__,
+        }
     )
 
 @app.get("/api/emails/recent", tags=["Emails"])
@@ -746,7 +758,12 @@ def get_onboarding_history(db: Session = Depends(get_db)):
 async def security_and_rate_limit_middleware(request: Request, call_next):
     ip = rate_limiter.get_client_ip(request)
     if request.url.path.startswith("/api/"):
-        rate_limiter.check_general_rate_limit(ip)
+        # Une HTTPException levée dans un middleware HTTP n'est pas traitée par l'ExceptionMiddleware
+        # de FastAPI : elle remontait en 500 générique. On renvoie donc explicitement la 429.
+        try:
+            rate_limiter.check_general_rate_limit(ip)
+        except HTTPException as rate_err:
+            return JSONResponse(status_code=rate_err.status_code, content={"detail": rate_err.detail})
 
     response = await call_next(request)
     
@@ -7923,26 +7940,54 @@ def get_heating_status(
     force_refresh: bool = Query(False),
     db: Session = Depends(get_db)
 ):
-    is_refresh = refresh or force_refresh
-    status_data = ViCareService.get_status(property_id=property_id, force_refresh=is_refresh)
+    return get_persisted_heating_status(db, force_refresh=(refresh or force_refresh))
+
+
+def get_persisted_heating_status(db: Session, force_refresh: bool = False) -> dict:
+    """
+    Lecture ViCare persistée en base :
+    - hors rafraîchissement forcé, un relevé réel de moins de LIVE_SNAPSHOT_REUSE_SECONDS est réutilisé
+      (évite 2 handshakes simultanés vers la passerelle Vitoconnect Opto2 au chargement de /sejour) ;
+    - chaque relevé réel est persisté (snapshot + historique heating_telemetry_history) ;
+    - passerelle hors ligne : le dernier relevé réel est servi avec is_cached_last_known=True,
+      last_seen_at et live_error (raison exacte). Sans aucun relevé en base, l'erreur ViCare remonte.
+    """
+    now = datetime.utcnow()
+    snapshot = get_live_snapshot(db)
+    if snapshot is not None and not force_refresh and snapshot_age_seconds(snapshot, now) < LIVE_SNAPSHOT_REUSE_SECONDS:
+        return serve_snapshot(snapshot, is_cached_last_known=False)
+
     try:
-        deliveries = get_or_seed_fuel_deliveries(db)
-        added_liters = sum(
-            float(d.get("liters_delivered", 0.0))
-            for d in deliveries
-            if d.get("date", "") > CALIBRATION_DATE
-        )
-        if added_liters > 0:
-            fuel_dyn = calculate_fuel_telemetry(
-                burner_hours=status_data.get("burner_hours"),
-                burner_starts=status_data.get("burner_starts"),
-                added_liters_since_base=added_liters
-            )
-            status_data.update(fuel_dyn)
-        record_daily_fuel_snapshot(db, status_data)
-    except Exception as e:
-        logger.warning(f"[get_heating_status] Notice calcul dynamique fioul: {e}")
-    return status_data
+        status_data = ViCareService.get_status(force_refresh=force_refresh)
+    except HTTPException as live_err:
+        if snapshot is None:
+            raise
+        detail = live_err.detail
+        reason = detail.get("error") if isinstance(detail, dict) else str(detail)
+        logger.warning(f"[HEATING] ViCare indisponible, dernier relevé réel servi ({snapshot.recorded_at}) : {reason}")
+        return serve_snapshot(snapshot, is_cached_last_known=True, live_error=reason)
+
+    deliveries = get_or_seed_fuel_deliveries(db)
+    added_liters = sum(
+        float(d.get("liters_delivered", 0.0))
+        for d in deliveries
+        if d.get("date", "") > CALIBRATION_DATE
+    )
+    if added_liters > 0:
+        status_data.update(calculate_fuel_telemetry(
+            burner_hours=status_data.get("burner_hours"),
+            burner_starts=status_data.get("burner_starts"),
+            added_liters_since_base=added_liters
+        ))
+    record_daily_fuel_snapshot(db, status_data)
+    record_live_status(db, status_data, now)
+    return {**status_data, "is_cached_last_known": False, "last_seen_at": to_utc_iso(now), "live_error": None}
+
+
+@app.get("/api/heating/telemetry-history", tags=["Chauffage"])
+def get_heating_telemetry_history(days: int = Query(7, ge=1, le=90), db: Session = Depends(get_db)):
+    """Historique réel (heating_telemetry_history) : T° maison, T° extérieure, état chauffage / brûleur."""
+    return {"days": days, "points": list_heating_history(db, days=days, now=datetime.utcnow())}
 
 @app.post("/api/vicare/mode", response_model=HeatingStatusResponse)
 @app.post("/api/heating/mode", response_model=HeatingStatusResponse)
@@ -8077,7 +8122,7 @@ def set_dhw_mode(req: DhwModeRequest, db: Session = Depends(get_db)):
 @app.post("/api/vicare/dhw/temperature", response_model=HeatingStatusResponse)
 def set_dhw_temperature(req: DhwTemperatureRequest):
     temp = req.get_temperature()
-    return ViCareService.set_dhw_temperature(temp, target=req.target)
+    return ViCareService.set_dhw_temperature(temp)
 
 
 def record_daily_fuel_snapshot(db: Session, status_data: dict):
@@ -8217,16 +8262,15 @@ def get_heating_fuel_history(db: Session = Depends(get_db)):
     - Série mensuelle glissante 100% temps réel sur 12 mois sans données ni événements hardcodés.
     - Relevés quotidiens asservis aux compteurs Viessmann et aux snapshots automatiques.
     """
-    try:
-        telemetry = ViCareService.get_status(force_refresh=False)
-        record_daily_fuel_snapshot(db, telemetry)
-    except Exception:
-        pass
+    # Aucun appel ViCare ici : /sejour charge /api/heating/status en parallèle, et deux handshakes
+    # simultanés saturaient la passerelle Vitoconnect. On lit le dernier relevé réel persisté.
+    live_snapshot = get_live_snapshot(db)
+    telemetry = serve_snapshot(live_snapshot, is_cached_last_known=True) if live_snapshot else None
 
     # Récupération des valeurs live courantes pour le brûleur et le stock
     live_starts = None
     live_hours = None
-    if telemetry and isinstance(telemetry, dict):
+    if telemetry:
         live_starts = telemetry.get("burner_starts")
         live_hours = telemetry.get("burner_hours")
 
@@ -11708,12 +11752,11 @@ def evaluate_and_sync_stay_heating(db: Session, force_sync: bool = False) -> dic
     room_temp = 16.0
     outside_temp = 12.0
     try:
-        telemetry = ViCareService.get_status(force_refresh=False)
+        telemetry = get_persisted_heating_status(db, force_refresh=True)
         if telemetry.get("room_temperature") is not None:
             room_temp = float(telemetry["room_temperature"])
         if telemetry.get("outside_temperature") is not None:
             outside_temp = float(telemetry["outside_temperature"])
-        record_daily_fuel_snapshot(db, telemetry)
     except Exception as t_err:
         logger.debug(f"[evaluate_and_sync_stay_heating] Télémétrie ViCare non disponible (défauts 16°C/12°C): {t_err}")
 

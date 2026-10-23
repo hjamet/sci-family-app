@@ -72,11 +72,11 @@ def test_fuel_telemetry_calculation_exact_bompais_calibration():
     assert res_hours["fuel_level_percent"] == 34.9
     assert res_hours["fuel_height_cm"] == 45.3
 
-    # 4. Fallback sur valeurs nulles
+    # 4. Sans compteur brûleur réel : jauge inconnue (jamais la calibration présentée comme niveau courant)
     none_res = calculate_fuel_telemetry(None, None)
-    assert none_res["fuel_liters_remaining"] == 1062.0
-    assert none_res["fuel_level_percent"] == 35.4
-    assert none_res["fuel_height_cm"] == 46.0
+    assert none_res["fuel_liters_remaining"] is None
+    assert none_res["fuel_level_percent"] is None
+    assert none_res["fuel_height_cm"] is None
 
     # 5. Calcul avec livraison additionnelle dynamique (ex: +500 L)
     res_added = calculate_fuel_telemetry(CALIBRATION_BURNER_HOURS, CALIBRATION_BURNER_STARTS, added_liters_since_base=500.0)

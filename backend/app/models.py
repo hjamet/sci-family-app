@@ -469,6 +469,33 @@ class ThermalSettings(Base):
     updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
 
 
+class HeatingTelemetryHistory(Base):
+    """Série temporelle des relevés réels ViCare (1 point / 10 min max, ou à chaque changement d'état)."""
+    __tablename__ = "heating_telemetry_history"
+
+    id = Column(Integer, primary_key=True, index=True)
+    recorded_at = Column(DateTime, nullable=False, index=True)  # UTC naïf (convention du projet)
+    room_temperature = Column(Float, nullable=True)
+    outside_temperature = Column(Float, nullable=True)
+    boiler_temperature = Column(Float, nullable=True)
+    dhw_temperature = Column(Float, nullable=True)
+    target_temperature = Column(Float, nullable=True)
+    is_heating_active = Column(Boolean, nullable=False, default=False)
+    burner_active = Column(Boolean, nullable=False, default=False)
+    mode = Column(String(50), nullable=True)
+    burner_hours = Column(Float, nullable=True)
+    fuel_liters_remaining = Column(Float, nullable=True)
+
+
+class HeatingLiveSnapshot(Base):
+    """Dernier relevé ViCare réel complet (ligne unique id=1) : déduplication 20 s et repli passerelle hors ligne."""
+    __tablename__ = "heating_live_snapshot"
+
+    id = Column(Integer, primary_key=True)
+    recorded_at = Column(DateTime, nullable=False)  # UTC naïf
+    payload = Column(Text, nullable=False)  # JSON complet renvoyé par ViCareService.get_status()
+
+
 class Notification(Base):
     __tablename__ = "notifications"
 

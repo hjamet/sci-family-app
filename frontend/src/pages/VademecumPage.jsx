@@ -28,6 +28,7 @@ import CategoryManageModal, { COLOR_OPTIONS, EMOJI_PRESETS } from '../components
 import TaskDetailModal from '../components/TaskDetailModal';
 import SelectExistingDocumentModal from '../components/SelectExistingDocumentModal';
 import TaskCard from '../components/common/TaskCard';
+import HeatingTemperatureChart from '../components/HeatingTemperatureChart';
 import BookingModal from '../components/BookingModal';
 import { ThermalMetricSkeleton, StayCardSkeleton } from '../components/SkeletonLoaders';
 import CustomSelect from '../components/CustomSelect';
@@ -43,6 +44,31 @@ const formatTelemetryAge = (ageSeconds) => {
   const remMins = mins % 60;
   return `Il y a ${hours}h${remMins > 0 ? String(remMins).padStart(2, '0') : ''}`;
 };
+
+// État de la liaison ViCare : bandeau rouge si aucune donnée réelle, indication douce si le
+// backend sert le dernier relevé réel persisté (passerelle Vitoconnect momentanément hors ligne).
+function ViCareLinkNotice({ heatingError, heatingStatus }) {
+  if (heatingError) {
+    return (
+      <div className="p-3 bg-rose-50 border border-rose-300 text-rose-900 rounded-xl text-xs font-semibold flex items-center gap-2 animate-in fade-in duration-200">
+        <span className="material-symbols-outlined text-rose-600 text-[18px] shrink-0">error</span>
+        <span>⚠️ Liaison ViCare indisponible et aucun relevé réel en base : {heatingError}</span>
+      </div>
+    );
+  }
+  if (!heatingStatus?.is_cached_last_known || !heatingStatus.last_seen_at) return null;
+  const seenAt = new Date(heatingStatus.last_seen_at);
+  const seenLabel = seenAt.toLocaleString('fr-FR', { weekday: 'short', day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit' });
+  return (
+    <div className="p-2.5 bg-amber-50 border border-amber-200 text-amber-900 rounded-xl text-[11px] font-medium flex items-start gap-2">
+      <span className="material-symbols-outlined text-amber-600 text-[16px] shrink-0">wifi_off</span>
+      <span>
+        Dernier relevé reçu le {seenLabel} ({formatTelemetryAge((Date.now() - seenAt.getTime()) / 1000)}) — passerelle ViCare momentanément injoignable, commandes suspendues.
+        {heatingStatus.live_error && <span className="block text-amber-700/80 mt-0.5">Raison : {heatingStatus.live_error}</span>}
+      </span>
+    </div>
+  );
+}
 
 function resolveCurrentUserFullName(user) {
   if (typeof user === 'string' && user.trim()) return user.trim();
@@ -476,11 +502,11 @@ function FuelDeliveryModal({ isOpen, onClose, onSuccess }) {
 }
 
 function FuelInteractiveGraph({ fuelHistory, heatingStatus, onRefreshFuel }) {
-  const [activeTab, setActiveTab] = useState('annual'); // 'annual' | 'daily'
+  const [activeTab, setActiveTab] = useState('temperatures'); // 'temperatures' | 'annual' | 'daily'
   const [isDeliveryModalOpen, setIsDeliveryModalOpen] = useState(false);
 
   // Tant que fuelHistory est null, conteneur fixe h-[250px] pour éviter tout saut de layout
-  if (!fuelHistory) {
+  if (!fuelHistory && activeTab !== 'temperatures') {
     return (
       <div className="mt-4 p-4 sm:p-5 bg-white dark:bg-slate-900 rounded-2xl border border-border-subtle shadow-xs flex flex-col gap-4">
         <div className="flex items-center gap-2 border-b border-border-subtle pb-3">
@@ -553,9 +579,8 @@ function FuelInteractiveGraph({ fuelHistory, heatingStatus, onRefreshFuel }) {
   const maxDailyStarts = Math.max(...dailyData.map((d) => d.daily_starts || d.starts || 1), 20);
 
   const totalDelivered = deliveries.reduce((acc, d) => acc + Number(d.liters_delivered ?? d.liters ?? 0), 0);
-  const remainingLiters = heatingStatus?.fuel_liters_remaining != null
-    ? heatingStatus.fuel_liters_remaining
-    : (fuelHistory?.calibration?.liters_remaining ?? (points.length > 0 ? points[points.length - 1].liters : 0));
+  const remainingLiters = heatingStatus?.fuel_liters_remaining
+    ?? (points.length > 0 ? points[points.length - 1].liters : null);
 
   return (
     <div className="mt-4 p-4 sm:p-5 bg-white dark:bg-slate-900 rounded-2xl border border-border-subtle shadow-xs flex flex-col gap-4">
@@ -575,6 +600,17 @@ function FuelInteractiveGraph({ fuelHistory, heatingStatus, onRefreshFuel }) {
 
         {/* Boutons d'onglets */}
         <div className="inline-flex p-1 rounded-xl bg-slate-100 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 text-xs font-semibold shrink-0">
+          <button
+            type="button"
+            onClick={() => setActiveTab('temperatures')}
+            className={`px-3 py-1.5 rounded-lg transition-all cursor-pointer ${
+              activeTab === 'temperatures'
+                ? 'bg-white dark:bg-slate-900 text-forest-deep dark:text-emerald-300 font-bold shadow-xs'
+                : 'text-slate-600 dark:text-slate-400 hover:text-slate-900'
+            }`}
+          >
+            Températures &amp; Impact Chauffage
+          </button>
           <button
             type="button"
             onClick={() => setActiveTab('annual')}
@@ -599,6 +635,9 @@ function FuelInteractiveGraph({ fuelHistory, heatingStatus, onRefreshFuel }) {
           </button>
         </div>
       </div>
+
+      {/* Onglet par défaut : Températures maison / extérieur & plages de chauffage */}
+      {activeTab === 'temperatures' && <HeatingTemperatureChart />}
 
       {/* Contenu Onglet 1 : Historique Annuel Cuve & Livraisons */}
       {activeTab === 'annual' && (
@@ -756,7 +795,7 @@ function FuelInteractiveGraph({ fuelHistory, heatingStatus, onRefreshFuel }) {
                   Historique des livraisons de fioul ({deliveries.length})
                 </span>
                 <span className="text-[11px] font-semibold text-slate-500">
-                  Total livré : {totalDelivered.toLocaleString('fr-FR')} L • Restant : {Math.round(remainingLiters).toLocaleString('fr-FR')} L
+                  Total livré : {totalDelivered.toLocaleString('fr-FR')} L • Restant : {remainingLiters != null ? `${Math.round(remainingLiters).toLocaleString('fr-FR')} L` : '-- L'}
                 </span>
               </div>
               <button
@@ -993,7 +1032,6 @@ export default function VademecumPage({ properties, currentUser, reservations = 
 
   const [isDhwActive, setIsDhwActive] = useState(false);
   const [dhwTarget, setDhwTarget] = useState(52.0);
-  const [dhwFrostTarget, setDhwFrostTarget] = useState(10.0);
 
   const [poolTarget, setPoolTarget] = useState(27.0);
   const poolTempDebounceRef = useRef(null);
@@ -1045,7 +1083,9 @@ export default function VademecumPage({ properties, currentUser, reservations = 
         fetch('/api/heating/fuel-history').then((r) => (r.ok ? r.json() : null)).catch(() => null),
       ]);
 
-      const heatRes = heatResResult.status === 'fulfilled' ? heatResResult.value : { error: 'Liaison ViCare indisponible' };
+      const heatRes = heatResResult.status === 'fulfilled'
+        ? heatResResult.value
+        : { error: parseApiError(heatResResult.reason, 'aucune réponse du serveur') };
       const poolRes = poolResResult.status === 'fulfilled' ? poolResResult.value : null;
       const taskRes = taskResResult.status === 'fulfilled' ? (taskResResult.value || []) : [];
       const reservationsRes = reservationsResResult.status === 'fulfilled' ? (reservationsResResult.value || []) : (reservations || []);
@@ -1067,10 +1107,6 @@ export default function VademecumPage({ properties, currentUser, reservations = 
 
         if (heatRes.dhw_target_temperature != null && heatRes.dhw_target_temperature > 20.0) {
           setDhwTarget(heatRes.dhw_target_temperature);
-        }
-
-        if (heatRes.dhw_reduced_temperature != null && heatRes.dhw_reduced_temperature >= 5.0) {
-          setDhwFrostTarget(heatRes.dhw_reduced_temperature);
         }
 
         // Heating active state (Matrice Unifiée)
@@ -1102,7 +1138,7 @@ export default function VademecumPage({ properties, currentUser, reservations = 
         }
       } else {
         setHeatingStatus(null);
-        setHeatingError('⚠️ Liaison ViCare indisponible : impossible d\'interroger la chaudière');
+        setHeatingError(heatRes?.error || 'aucune réponse du serveur');
       }
 
       // Piscine Telemetry & Fail-Fast
@@ -1336,7 +1372,7 @@ export default function VademecumPage({ properties, currentUser, reservations = 
           is_heating_active: isHeatingActive,
           frost_temperature: heatingFrostTarget,
           is_dhw_active: isDhwActive,
-          dhw_target_temperature: isDhwActive ? dhwTarget : dhwFrostTarget,
+          dhw_target_temperature: dhwTarget,
           mode: targetMode,
           author_name: author,
         });
@@ -1362,16 +1398,6 @@ export default function VademecumPage({ properties, currentUser, reservations = 
         await setDhwTemperature(nextVal);
       } catch (_) {}
     }
-  };
-
-  const handleDhwFrostChange = (delta) => {
-    const nextVal = Math.round((dhwFrostTarget + delta) * 10) / 10;
-    if (nextVal < 10.0) {
-      showToast('10.0°C est le plancher minimal de coupure Vitotronic & protection cuve ViCare.');
-      return;
-    }
-    if (nextVal > 25.0) return;
-    setDhwFrostTarget(nextVal);
   };
 
   const handlePoolChange = (delta) => {
@@ -1441,7 +1467,7 @@ export default function VademecumPage({ properties, currentUser, reservations = 
         target_temperature: heatingComfortTarget,
         frost_temperature: heatingFrostTarget,
         is_dhw_active: isDhwActive,
-        dhw_target_temperature: isDhwActive ? dhwTarget : dhwFrostTarget,
+        dhw_target_temperature: dhwTarget,
         mode: targetMode,
         author_name: resolveCurrentUserFullName(currentUser),
         details: targetActive
@@ -1512,12 +1538,12 @@ export default function VademecumPage({ properties, currentUser, reservations = 
         target_temperature: heatingComfortTarget,
         frost_temperature: heatingFrostTarget,
         is_dhw_active: targetActive,
-        dhw_target_temperature: targetActive ? dhwTarget : dhwFrostTarget,
+        dhw_target_temperature: dhwTarget,
         mode: targetMode,
         author_name: resolveCurrentUserFullName(currentUser),
         details: targetActive
           ? `Eau Chaude (250L) activée en Marche (Chauffe cible ${dhwTarget.toFixed(1)}°C)`
-          : `Eau Chaude (250L) mise à l'Arrêt (Veille économique)`
+          : `Eau Chaude (250L) mise à l'arrêt (veille antigel auto)`
       });
 
       // Notification immédiate positive et explicite
@@ -1690,10 +1716,10 @@ export default function VademecumPage({ properties, currentUser, reservations = 
         target_temperature: heatingComfortTarget,
         frost_temperature: heatingFrostTarget,
         is_dhw_active: isDhwActive,
-        dhw_target_temperature: isDhwActive ? dhwTarget : dhwFrostTarget,
+        dhw_target_temperature: dhwTarget,
         mode: isHeatingActive ? 'dhwAndHeating' : 'dhw',
         author_name: resolveCurrentUserFullName(currentUser),
-        details: `Réglages consolidés : Chauffage ${isHeatingActive ? `Marche (${heatingComfortTarget.toFixed(1)}°C)` : 'En veille (antigel auto)'}, ECS ${isDhwActive ? `Marche (${dhwTarget.toFixed(1)}°C)` : `Arrêt (Veille ${dhwFrostTarget.toFixed(1)}°C)`}`
+        details: `Réglages consolidés : Chauffage ${isHeatingActive ? `Marche (${heatingComfortTarget.toFixed(1)}°C)` : 'En veille (antigel auto)'}, ECS ${isDhwActive ? `Marche (${dhwTarget.toFixed(1)}°C)` : 'Arrêt (veille antigel auto)'}`
       });
 
       try {
@@ -2626,7 +2652,7 @@ export default function VademecumPage({ properties, currentUser, reservations = 
                   <ThermalMasterSwitch
                     isActive={isHeatingActive}
                     onChange={handleToggleHeating}
-                    disabled={Boolean(heatingError) || savingThermal}
+                    disabled={Boolean(heatingError) || Boolean(heatingStatus?.is_cached_last_known) || savingThermal}
                     offLabel="Arrêt"
                     onLabel="Marche"
                     offIcon="power_settings_new"
@@ -2680,13 +2706,7 @@ export default function VademecumPage({ properties, currentUser, reservations = 
                   </div>
                 )}
 
-                {/* Fail-Fast ViCare Alert (Annotation 4 & 6) */}
-                {heatingError && (
-                  <div className="p-3 bg-rose-50 border border-rose-300 text-rose-900 rounded-xl text-xs font-semibold flex items-center gap-2 animate-in fade-in duration-200">
-                    <span className="material-symbols-outlined text-rose-600 text-[18px] shrink-0">error</span>
-                    <span>⚠️ Liaison ViCare indisponible : impossible d'interroger la chaudière</span>
-                  </div>
-                )}
+                <ViCareLinkNotice heatingError={heatingError} heatingStatus={heatingStatus} />
 
                 {/* Sondes réelles ViCare (Ambiante mesurée & Chaudière réelle) */}
                 <div className="grid grid-cols-2 gap-2">
@@ -2756,11 +2776,14 @@ export default function VademecumPage({ properties, currentUser, reservations = 
 
                 {/* Jauge Fioul Calibrée (Cuve Éts JOSSE & Télémétrie Dynamique) */}
                 {(() => {
-                  const fuelRemaining = heatingStatus?.fuel_liters_remaining != null ? heatingStatus.fuel_liters_remaining : (fuelHistory?.calibration?.liters_remaining ?? 1062.0);
-                  const fuelCapacity = heatingStatus?.fuel_capacity_liters != null ? heatingStatus.fuel_capacity_liters : (fuelHistory?.calibration?.capacity_liters ?? 3000.0);
-                  const fuelPercent = heatingStatus?.fuel_level_percent != null ? heatingStatus.fuel_level_percent : (fuelHistory?.calibration ? Number(((fuelRemaining / fuelCapacity) * 100).toFixed(1)) : 35.4);
-                  const fuelHeight = heatingStatus?.fuel_height_cm != null ? heatingStatus.fuel_height_cm : (fuelHistory?.calibration?.height_cm ?? 46.0);
-                  const tankHeight = heatingStatus?.fuel_tank_height_cm != null ? heatingStatus.fuel_tank_height_cm : (fuelHistory?.calibration?.tank_height_cm ?? 130.0);
+                  // Uniquement les valeurs réelles renvoyées par l'API : '--' tant qu'aucun relevé n'existe.
+                  const fuelRemaining = heatingStatus?.fuel_liters_remaining ?? null;
+                  const fuelCapacity = heatingStatus?.fuel_capacity_liters ?? null;
+                  const fuelPercent = heatingStatus?.fuel_level_percent ?? null;
+                  const fuelHeight = heatingStatus?.fuel_height_cm ?? null;
+                  const tankHeight = heatingStatus?.fuel_tank_height_cm ?? null;
+                  const fmtLiters = (v) => (v != null ? `${Math.round(v).toLocaleString('fr-FR')} L` : '-- L');
+                  const fmtCm = (v) => (v != null ? `${v} cm` : '-- cm');
                   const lastDelivery = (fuelHistory?.deliveries && fuelHistory.deliveries.length > 0)
                     ? fuelHistory.deliveries[fuelHistory.deliveries.length - 1]
                     : null;
@@ -2773,11 +2796,11 @@ export default function VademecumPage({ properties, currentUser, reservations = 
                           <span className="material-symbols-outlined text-amber-600 text-[20px] shrink-0">local_gas_station</span>
                           <div className="flex flex-col min-w-0">
                             <span className="text-xs font-semibold text-on-surface">Cuve Fioul (Éts JOSSE)</span>
-                            <span className="text-[11px] text-on-surface-variant">Capacité {fuelCapacity.toLocaleString('fr-FR')} L ({tankHeight} cm)</span>
+                            <span className="text-[11px] text-on-surface-variant">Capacité {fmtLiters(fuelCapacity)} ({fmtCm(tankHeight)})</span>
                           </div>
                         </div>
                         <span className="font-headline-sm text-xs font-bold text-amber-950 bg-amber-50 border border-amber-200/80 tabular-nums shrink-0 px-2.5 py-1 rounded-md">
-                          {fuelRemaining.toLocaleString('fr-FR')} L / {fuelCapacity.toLocaleString('fr-FR')} L • {fuelPercent}% • {fuelHeight} cm
+                          {fuelRemaining != null ? `${fuelRemaining.toLocaleString('fr-FR')} L` : '-- L'} / {fmtLiters(fuelCapacity)} • {fuelPercent != null ? `${fuelPercent}%` : '--%'} • {fmtCm(fuelHeight)}
                         </span>
                       </div>
 
@@ -2785,15 +2808,15 @@ export default function VademecumPage({ properties, currentUser, reservations = 
                       <div className="w-full bg-slate-100 dark:bg-slate-800/80 backdrop-blur-xs h-3 rounded-full overflow-hidden shadow-inner border border-slate-200/70 p-0.5">
                         <div
                           className="bg-gradient-to-r from-amber-600 via-amber-500 to-amber-400 h-full rounded-full overflow-hidden shadow-inner transition-all duration-500"
-                          style={{ width: `${Math.min(100, Math.max(0, fuelPercent))}%` }}
+                          style={{ width: `${fuelPercent != null ? Math.min(100, Math.max(0, fuelPercent)) : 0}%` }}
                         />
                       </div>
 
                       {/* Level indicators */}
                       <div className="flex items-center justify-between text-[10px] font-semibold text-on-surface-variant/80 px-0.5">
                         <span>0 L (0 cm)</span>
-                        <span className="text-amber-700 dark:text-amber-400 font-bold">{Math.round(fuelRemaining).toLocaleString('fr-FR')} L ({fuelHeight} cm)</span>
-                        <span>{fuelCapacity.toLocaleString('fr-FR')} L ({tankHeight} cm)</span>
+                        <span className="text-amber-700 dark:text-amber-400 font-bold">{fmtLiters(fuelRemaining)} ({fmtCm(fuelHeight)})</span>
+                        <span>{fmtLiters(fuelCapacity)} ({fmtCm(tankHeight)})</span>
                       </div>
 
                       {/* Indicateurs calculés en temps réel */}
@@ -2848,7 +2871,7 @@ export default function VademecumPage({ properties, currentUser, reservations = 
                       : (heatingStatus?.dhw_status_label || (
                           isDhwActive
                             ? 'Au repos (brûleur éteint)'
-                            : `À l'arrêt (Veille ${dhwFrostTarget.toFixed(1)}°C)`
+                            : "À l'arrêt (veille antigel auto)"
                         ))}
                   </span>
                 </div>
@@ -2861,7 +2884,7 @@ export default function VademecumPage({ properties, currentUser, reservations = 
                   <ThermalMasterSwitch
                     isActive={isDhwActive}
                     onChange={handleToggleDhw}
-                    disabled={Boolean(heatingError) || savingThermal}
+                    disabled={Boolean(heatingError) || Boolean(heatingStatus?.is_cached_last_known) || savingThermal}
                     offLabel="Arrêt"
                     onLabel="Marche"
                     offIcon="power_settings_new"
@@ -2898,13 +2921,7 @@ export default function VademecumPage({ properties, currentUser, reservations = 
                   </div>
                 )}
 
-                {/* Fail-Fast ViCare Alert (si erreur) */}
-                {heatingError && (
-                  <div className="p-3 bg-rose-50 border border-rose-300 text-rose-900 rounded-xl text-xs font-semibold flex items-center gap-2 animate-in fade-in duration-200">
-                    <span className="material-symbols-outlined text-rose-600 text-[18px] shrink-0">error</span>
-                    <span>⚠️ Liaison ViCare indisponible : impossible d'interroger le chauffe-eau</span>
-                  </div>
-                )}
+                <ViCareLinkNotice heatingError={heatingError} heatingStatus={heatingStatus} />
 
                 {/* Sondes réelles ViCare : Température actuelle du ballon & Capacité (Annotation 5 & 8) */}
                 <div className="grid grid-cols-2 gap-2">
