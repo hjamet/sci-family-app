@@ -9667,7 +9667,7 @@ def update_heating_settings(
 
     return HeatingSettingsResponse(
         target_temperature=setting.target_temperature,
-        frost_temperature=frost_setting.target_temperature if frost_setting else 5.0,
+        frost_temperature=5.0,
         is_heating_active=setting.mode != "dhw" and setting.mode != "standby",
         is_dhw_active=(dhw_setting.mode == "on") if dhw_setting else None,
         dhw_target_temperature=dhw_setting.target_temperature if dhw_setting else None,
