@@ -1349,12 +1349,6 @@ export default function VademecumPage({ properties, currentUser, reservations = 
     }, 2500);
   };
 
-  const handleHeatingFrostChange = (delta) => {
-    const nextVal = Math.round((heatingFrostTarget + delta) * 10) / 10;
-    if (nextVal < 5.0 || nextVal > 15.0) return;
-    setHeatingFrostTarget(nextVal);
-  };
-
   const handleDhwChange = async (delta) => {
     const nextVal = Math.round((dhwTarget + delta) * 10) / 10;
     if (delta > 0 && dhwTarget >= 60.0) {

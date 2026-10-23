@@ -9418,16 +9418,6 @@ def update_heating_settings(
     elif setting.target_temperature is None:
         setting.target_temperature = 20.0
 
-    # 1b. Support frost / standby temperature
-    frost_setting = db.query(ThermalSettings).filter(ThermalSettings.equipment_type == "heating_frost").first()
-    if req.frost_temperature is not None:
-        if not frost_setting:
-            frost_setting = ThermalSettings(equipment_type="heating_frost")
-            db.add(frost_setting)
-        frost_setting.target_temperature = req.frost_temperature
-        frost_setting.updated_by = author
-        frost_setting.updated_at = datetime.utcnow()
-
     # 1c. Support DHW settings
     dhw_setting = db.query(ThermalSettings).filter(ThermalSettings.equipment_type == "dhw").first()
     if not dhw_setting:
@@ -11703,8 +11693,9 @@ def evaluate_and_sync_stay_heating(db: Session, force_sync: bool = False) -> dic
         wants_dhw: 'Eau Chaude Sanitaire Coupée' absent
         wants_heating: '20°C' présent et 'Hors-gel' absent
     - Calcule l'anticipation dynamique (T_lead_hours) en fonction de la température ambiante et extérieure ViCare :
-        Si wants_heating : lead_hours = min(18.0, max(6.0, 6.0 + 1.5 * max(0.0, 20.0 - room_temp) + 0.25 * max(0.0, 12.0 - outside_temp)))
-        Si wants_dhw seul : lead_hours = 2.5
+        Si wants_heating : heating_rate_c_per_hour = max(0.40, 1.20 - 0.045 * max(0.0, 12.0 - outside_temp))
+                           lead_hours = min(24.0, max(min_lead, 0.5 + delta_temp / heating_rate_c_per_hour))
+        Si wants_dhw seul : lead_hours = 2.0
     - Détermine si un séjour est actif ou dans sa fenêtre de préchauffage [arrival - lead_hours, departure].
     - Résout le mode unifié (dhwAndHeating, dhw, ou standby).
     - Met à jour ThermalSettings et commande la chaudière ViCare si l'état change ou si force_sync=True.
