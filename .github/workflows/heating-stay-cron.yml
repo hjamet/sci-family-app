@@ -11,6 +11,6 @@ jobs:
     steps:
       - name: Trigger Heating Stay Sync Endpoint
         run: |
-          curl -s -X POST https://hellenvilliers.henri-jamet.com/api/cron/heating-stay-sync \
+          curl -fsS -X POST https://hellenvilliers.henri-jamet.com/api/cron/heating-stay-sync \
             -H "Authorization: Bearer ${{ secrets.CRON_SECRET }}" \
             -H "Content-Type: application/json"

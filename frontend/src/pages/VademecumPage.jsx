@@ -997,6 +997,8 @@ export default function VademecumPage({ properties, currentUser, reservations = 
 
   const [poolTarget, setPoolTarget] = useState(27.0);
   const poolTempDebounceRef = useRef(null);
+  const heatingTempDebounceRef = useRef(null);
+  const toggleRecheckTimeoutsRef = useRef([]);
   const [isPoolPumpActive, setIsPoolPumpActive] = useState(true);
   const [isPoolHeatingActive, setIsPoolHeatingActive] = useState(false);
   const [savingThermal, setSavingThermal] = useState(false);
@@ -1203,14 +1205,124 @@ export default function VademecumPage({ properties, currentUser, reservations = 
     loadVademecumDb();
   }, [currentUser]);
 
+  // Rafraîchissement automatique toutes les 5 minutes (300 000 ms) de la télémétrie thermique et piscine
+  useEffect(() => {
+    const fetchHeatingSettings = async () => {
+      try {
+        const res = await fetch('/api/heating/settings');
+        if (res.ok) return await res.json();
+      } catch (_) {}
+      return null;
+    };
+
+    const fetchPoolStatus = async () => {
+      try {
+        return await fetchPiscineStatus({ forceRefresh: true, refresh: true });
+      } catch (_) {
+        return null;
+      }
+    };
+
+    const intervalId = setInterval(async () => {
+      try {
+        const [heatResResult, settingsResResult, poolResResult] = await Promise.allSettled([
+          fetchHeatingStatus({ forceRefresh: true }),
+          fetchHeatingSettings(),
+          fetchPoolStatus(),
+        ]);
+
+        if (heatResResult.status === 'fulfilled' && heatResResult.value && !heatResResult.value.error) {
+          const freshHeat = heatResResult.value;
+          setHeatingStatus(freshHeat);
+          setHeatingError(null);
+
+          const dhwActive = freshHeat.is_dhw_active != null
+            ? Boolean(freshHeat.is_dhw_active)
+            : (freshHeat.dhw_target_temperature != null && freshHeat.dhw_target_temperature > 20.0);
+          setIsDhwActive(dhwActive);
+
+          let heatingActive = false;
+          if (freshHeat.is_heating_active != null) {
+            heatingActive = Boolean(freshHeat.is_heating_active);
+          } else if (freshHeat.active_mode) {
+            const m = (freshHeat.active_mode || '').toLowerCase();
+            heatingActive = m === 'dhwandheating' || m === 'forcednormal';
+          }
+          setIsHeatingActive(heatingActive);
+
+          if (!heatingTempDebounceRef.current) {
+            const settingsData = settingsResResult.status === 'fulfilled' ? settingsResResult.value : null;
+            if (settingsData?.target_temperature && settingsData.target_temperature >= 15.0) {
+              setHeatingComfortTarget(settingsData.target_temperature);
+            } else {
+              const comfortVal = freshHeat.comfort_temperature != null
+                ? freshHeat.comfort_temperature
+                : freshHeat.heating_comfort_temperature;
+              if (comfortVal != null && comfortVal >= 15.0) {
+                setHeatingComfortTarget(comfortVal);
+              } else if (freshHeat.target_temperature != null && freshHeat.target_temperature >= 15.0) {
+                setHeatingComfortTarget(freshHeat.target_temperature);
+              }
+            }
+          }
+        }
+
+        if (poolResResult.status === 'fulfilled' && poolResResult.value && !poolResResult.value.error) {
+          setPiscineStatus(poolResResult.value);
+          setPiscineError(null);
+        }
+      } catch (err) {
+        console.warn('Erreur lors du rafraîchissement automatique domotique:', err);
+      }
+    }, 5 * 60 * 1000);
+
+    return () => {
+      clearInterval(intervalId);
+      if (heatingTempDebounceRef.current) clearTimeout(heatingTempDebounceRef.current);
+      if (poolTempDebounceRef.current) clearTimeout(poolTempDebounceRef.current);
+      if (toggleRecheckTimeoutsRef.current) {
+        toggleRecheckTimeoutsRef.current.forEach((t) => clearTimeout(t));
+        toggleRecheckTimeoutsRef.current = [];
+      }
+    };
+  }, []);
+
   const handleHeatingComfortChange = (delta) => {
     const nextVal = Math.round((heatingComfortTarget + delta) * 10) / 10;
-    if (delta > 0 && heatingComfortTarget >= 20.0) {
-      showToast('Consigne maximale autorisée par la charte des associés : 20.0°C.');
+    if (nextVal < 15.0 || nextVal > 24.0) {
+      if (nextVal > 24.0) {
+        showToast('Consigne maximale autorisée : 24.0°C.');
+      }
       return;
     }
-    if (nextVal < 15.0) return;
     setHeatingComfortTarget(nextVal);
+
+    if (heatingTempDebounceRef.current) {
+      clearTimeout(heatingTempDebounceRef.current);
+    }
+
+    heatingTempDebounceRef.current = setTimeout(async () => {
+      try {
+        const targetMode = isHeatingActive
+          ? 'dhwAndHeating'
+          : (isDhwActive ? 'dhw' : 'standby');
+        const author = resolveCurrentUserFullName(currentUser);
+        await saveHeatingSettings({
+          target_temperature: nextVal,
+          is_heating_active: isHeatingActive,
+          frost_temperature: heatingFrostTarget,
+          is_dhw_active: isDhwActive,
+          dhw_target_temperature: isDhwActive ? dhwTarget : dhwFrostTarget,
+          mode: targetMode,
+          author_name: author,
+        });
+        setHeatingStatus((prev) => (prev ? { ...prev, target_temperature: nextVal, target_temp: nextVal } : prev));
+      } catch (err) {
+        showToast(`Erreur enregistrement consigne chauffage : ${parseApiError(err)}`);
+      } finally {
+        heatingTempDebounceRef.current = null;
+      }
+    }, 2500);
   };
 
   const handleHeatingFrostChange = (delta) => {
@@ -1326,31 +1438,40 @@ export default function VademecumPage({ properties, currentUser, reservations = 
           : `Commande transmise à la chaudière : arrêt hors-gel ${heatingFrostTarget.toFixed(1)}°C (mise en veille) 🛑`
       );
 
-      // Relecture en tâche de fond pour synchroniser la télémétrie ViCare
-      setTimeout(async () => {
-        try {
-          const freshHeat = await fetchHeatingStatus({ forceRefresh: true, force: true, refresh: true });
-          if (freshHeat && !freshHeat.error) {
-            setHeatingStatus(freshHeat);
-            setHeatingError(null);
-            let realActive = false;
-            if (freshHeat.is_heating_active != null) {
-              realActive = Boolean(freshHeat.is_heating_active);
-            } else if (freshHeat.active_mode) {
-              const m = (freshHeat.active_mode || '').toLowerCase();
-              realActive = m === 'dhwandheating' || m === 'forcednormal';
+      // Relectures en tâche de fond pour synchroniser la télémétrie ViCare (8s confirmation, 15s et 45s suivi allumage brûleur)
+      const triggerHeatingRecheck = (delayMs, isInitialConfirm = false) => {
+        const tid = setTimeout(async () => {
+          try {
+            const freshHeat = await fetchHeatingStatus({ forceRefresh: true, force: true, refresh: true });
+            if (freshHeat && !freshHeat.error) {
+              setHeatingStatus(freshHeat);
+              setHeatingError(null);
+              let realActive = false;
+              if (freshHeat.is_heating_active != null) {
+                realActive = Boolean(freshHeat.is_heating_active);
+              } else if (freshHeat.active_mode) {
+                const m = (freshHeat.active_mode || '').toLowerCase();
+                realActive = m === 'dhwandheating' || m === 'forcednormal';
+              }
+              if (realActive === targetActive) {
+                setIsHeatingActive(realActive);
+                if (isInitialConfirm) {
+                  showToast(
+                    realActive
+                      ? `Chauffage confirmé en marche : Mode Confort ${heatingComfortTarget.toFixed(1)}°C 🔥`
+                      : `Chauffage confirmé à l'arrêt : Sécurité Hors-gel active (${heatingFrostTarget.toFixed(1)}°C) 🛑`
+                  );
+                }
+              }
             }
-            if (realActive === targetActive) {
-              setIsHeatingActive(realActive);
-              showToast(
-                realActive
-                  ? `Chauffage confirmé en marche : Mode Confort ${heatingComfortTarget.toFixed(1)}°C 🔥`
-                  : `Chauffage confirmé à l'arrêt : Sécurité Hors-gel active (${heatingFrostTarget.toFixed(1)}°C) 🛑`
-              );
-            }
-          }
-        } catch (_) {}
-      }, 8000);
+          } catch (_) {}
+        }, delayMs);
+        toggleRecheckTimeoutsRef.current.push(tid);
+      };
+
+      triggerHeatingRecheck(8000, true);
+      triggerHeatingRecheck(15000, false);
+      triggerHeatingRecheck(45000, false);
     } catch (err) {
       setIsHeatingActive(!targetActive);
       showToast(`Erreur liaison chaudière : ${parseApiError(err)}`);
@@ -1388,27 +1509,36 @@ export default function VademecumPage({ properties, currentUser, reservations = 
           : `Commande transmise : coupure eau chaude sanitaire 🛑`
       );
 
-      // Relecture en tâche de fond pour synchroniser la télémétrie ViCare
-      setTimeout(async () => {
-        try {
-          const freshHeat = await fetchHeatingStatus({ forceRefresh: true, force: true, refresh: true });
-          if (freshHeat && !freshHeat.error) {
-            setHeatingStatus(freshHeat);
-            setHeatingError(null);
-            const realDhwActive = freshHeat.is_dhw_active != null
-              ? Boolean(freshHeat.is_dhw_active)
-              : (freshHeat.dhw_target_temperature != null && freshHeat.dhw_target_temperature > 20.0);
-            if (realDhwActive === targetActive) {
-              setIsDhwActive(realDhwActive);
-              showToast(
-                realDhwActive
-                  ? `Eau Chaude confirmée en marche (Cible : ${dhwTarget.toFixed(1)}°C) 🔥`
-                  : `Eau Chaude confirmée à l'arrêt 🛑`
-              );
+      // Relectures en tâche de fond pour synchroniser la télémétrie ViCare (8s confirmation, 15s et 45s suivi allumage brûleur)
+      const triggerDhwRecheck = (delayMs, isInitialConfirm = false) => {
+        const tid = setTimeout(async () => {
+          try {
+            const freshHeat = await fetchHeatingStatus({ forceRefresh: true, force: true, refresh: true });
+            if (freshHeat && !freshHeat.error) {
+              setHeatingStatus(freshHeat);
+              setHeatingError(null);
+              const realDhwActive = freshHeat.is_dhw_active != null
+                ? Boolean(freshHeat.is_dhw_active)
+                : (freshHeat.dhw_target_temperature != null && freshHeat.dhw_target_temperature > 20.0);
+              if (realDhwActive === targetActive) {
+                setIsDhwActive(realDhwActive);
+                if (isInitialConfirm) {
+                  showToast(
+                    realDhwActive
+                      ? `Eau Chaude confirmée en marche (Cible : ${dhwTarget.toFixed(1)}°C) 🔥`
+                      : `Eau Chaude confirmée à l'arrêt 🛑`
+                  );
+                }
+              }
             }
-          }
-        } catch (_) {}
-      }, 8000);
+          } catch (_) {}
+        }, delayMs);
+        toggleRecheckTimeoutsRef.current.push(tid);
+      };
+
+      triggerDhwRecheck(8000, true);
+      triggerDhwRecheck(15000, false);
+      triggerDhwRecheck(45000, false);
     } catch (err) {
       setIsDhwActive(!targetActive);
       showToast(`Erreur liaison eau chaude : ${parseApiError(err)}`);

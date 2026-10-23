@@ -15,12 +15,29 @@ export function isWinterSeason(dateStr) {
     const parts = String(dateStr).split('-');
     if (parts.length >= 2) {
       const month = parseInt(parts[1], 10);
-      return [10, 11, 12, 1, 2, 3, 4].includes(month);
+      return [9, 10, 11, 12, 1, 2, 3, 4, 5].includes(month);
     }
     const d = new Date(dateStr);
     if (isNaN(d.getTime())) return false;
     const m = d.getMonth() + 1;
-    return [10, 11, 12, 1, 2, 3, 4].includes(m);
+    return [9, 10, 11, 12, 1, 2, 3, 4, 5].includes(m);
+  } catch (_) {
+    return false;
+  }
+}
+
+export function isSummerSeason(dateStr) {
+  if (!dateStr) return false;
+  try {
+    const parts = String(dateStr).split('-');
+    if (parts.length >= 2) {
+      const month = parseInt(parts[1], 10);
+      return [6, 7, 8].includes(month);
+    }
+    const d = new Date(dateStr);
+    if (isNaN(d.getTime())) return false;
+    const m = d.getMonth() + 1;
+    return [6, 7, 8].includes(m);
   } catch (_) {
     return false;
   }
@@ -325,6 +342,7 @@ function BookingModalContent({
 
   // Contrôles domotiques d'anticipation
   const [poolHeating, setPoolHeating] = useState(false);
+  const [poolHeatingManual, setPoolHeatingManual] = useState(false);
   const [dhwHeating, setDhwHeating] = useState(false);
   const [dhwHeatingManual, setDhwHeatingManual] = useState(false);
   const [presbytereHeating, setPresbytereHeating] = useState(false);
@@ -449,33 +467,60 @@ function BookingModalContent({
         rawNotes = rawNotes.replace(invitesMatch[0], '');
       }
 
-      let initPool = false;
-      if (rawNotes.toLowerCase().includes('piscine')) {
-        initPool = true;
-        setPoolHeating(true);
-      }
-      let initDhw = false;
       const lowerRawNotes = rawNotes.toLowerCase();
+
+      // a) Chauffage Presbytère
+      let initPresb = false;
+      const isHeatingCutOff = lowerRawNotes.includes('hors-gel') || lowerRawNotes.includes('coupé') || lowerRawNotes.includes('coupe');
+      if (
+        (lowerRawNotes.includes('chauffage presbytère') ||
+          lowerRawNotes.includes('chauffage presbytere') ||
+          lowerRawNotes.includes('presbytère 20°c') ||
+          lowerRawNotes.includes('presbytere 20°c') ||
+          lowerRawNotes.includes('presbytère 21°c') ||
+          lowerRawNotes.includes('presbytere 21°c')) &&
+        !isHeatingCutOff
+      ) {
+        initPresb = true;
+        setPresbytereHeating(true);
+        setPresbytereHeatingManual(true);
+      } else if (isHeatingCutOff) {
+        initPresb = false;
+        setPresbytereHeating(false);
+        setPresbytereHeatingManual(true);
+      }
+
+      // b) Eau Chaude Sanitaire (DHW)
+      let initDhw = false;
       const isDhwCutOff = lowerRawNotes.includes('coupée') || lowerRawNotes.includes('coupee');
       if ((lowerRawNotes.includes('eau chaude') || lowerRawNotes.includes('ecs')) && !isDhwCutOff) {
         initDhw = true;
         setDhwHeating(true);
         setDhwHeatingManual(true);
+      } else if (isDhwCutOff) {
+        initDhw = false;
+        setDhwHeating(false);
+        setDhwHeatingManual(true);
       }
-      let initPresb = false;
-      if (
-        lowerRawNotes.includes('chauffage presbytère') ||
-        lowerRawNotes.includes('chauffage presbytere') ||
-        lowerRawNotes.includes('presbytère 20°c') ||
-        lowerRawNotes.includes('presbytere 20°c')
-      ) {
-        initPresb = true;
-        setPresbytereHeating(true);
-        setPresbytereHeatingManual(true);
-        // Cocher presbytereHeating active obligatoirement l'ECS
+
+      // Cocher presbytereHeating active obligatoirement l'ECS
+      if (initPresb) {
         initDhw = true;
         setDhwHeating(true);
         setDhwHeatingManual(true);
+      }
+
+      // c) Option Bassin & Piscine
+      let initPool = false;
+      const isPoolCutOff = lowerRawNotes.includes('piscine coupée') || lowerRawNotes.includes('piscine coupee') || lowerRawNotes.includes('sans piscine');
+      if (lowerRawNotes.includes('piscine') && !isPoolCutOff) {
+        initPool = true;
+        setPoolHeating(true);
+        setPoolHeatingManual(true);
+      } else if (isPoolCutOff) {
+        initPool = false;
+        setPoolHeating(false);
+        setPoolHeatingManual(true);
       }
 
       const domotiqueMatch = rawNotes.match(/\[Domotique:\s*([^\]]+)\]/i);
@@ -546,11 +591,11 @@ function BookingModalContent({
           return found ? found.house === 'presbytere' : false;
         });
         if (hasPresb) {
-          if (!dhwHeatingManual && !initDhw) {
+          if (!isDhwCutOff && !dhwHeatingManual && !initDhw) {
             initDhw = true;
             setDhwHeating(true);
           }
-          if (!presbytereHeatingManual && !initPresb) {
+          if (!isHeatingCutOff && !presbytereHeatingManual && !initPresb) {
             const isWinter = isWinterSeason(initStart);
             initPresb = isWinter;
             setPresbytereHeating(isWinter);
@@ -601,8 +646,10 @@ function BookingModalContent({
       setGuestInputValue('');
       setCohabitationType('total');
       setNotes('');
+      const isSummer = isSummerSeason(def.startDate);
       setSelectedRooms([]); // Annotation 1 : ZÉRO CHAMBRE SÉLECTIONNÉE PAR DÉFAUT
-      setPoolHeating(false);
+      setPoolHeating(isSummer);
+      setPoolHeatingManual(false);
       setDhwHeating(false);
       setDhwHeatingManual(false);
       setPresbytereHeating(false);
@@ -621,7 +668,7 @@ function BookingModalContent({
         externalGuests: [],
         cohabitationType: 'total',
         notes: '',
-        poolHeating: false,
+        poolHeating: isSummer,
         dhwHeating: false,
         presbytereHeating: false,
       });
@@ -975,6 +1022,9 @@ function BookingModalContent({
                         if (endDate && newStart > endDate) {
                           setEndDate(newStart);
                         }
+                        if (!poolHeatingManual) {
+                          setPoolHeating(isSummerSeason(newStart));
+                        }
                         if (!presbytereHeatingManual) {
                           const safeRooms = Array.isArray(selectedRooms) ? selectedRooms : [];
                           const hasPresb = safeRooms.some((rName) => {
@@ -1324,7 +1374,12 @@ function BookingModalContent({
                     type="checkbox"
                     disabled={isReadOnly}
                     checked={poolHeating}
-                    onChange={(e) => !isReadOnly && setPoolHeating(e.target.checked)}
+                    onChange={(e) => {
+                      if (!isReadOnly) {
+                        setPoolHeating(e.target.checked);
+                        setPoolHeatingManual(true);
+                      }
+                    }}
                     className="mt-0.5 w-5 h-5 rounded accent-primary-container cursor-pointer shrink-0 disabled:cursor-not-allowed"
                   />
                   <div className="flex flex-col min-w-0">

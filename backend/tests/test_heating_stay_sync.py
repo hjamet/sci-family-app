@@ -181,14 +181,21 @@ def test_evaluate_and_sync_dhw_and_heating_no_redundant_writes(db_session):
     Vérifie qu'un démarrage en dhwAndHeating n'envoie pas d'écritures de température
     redondantes si les consignes 20°C / 52°C sont déjà en place sur la chaudière.
     """
+    from zoneinfo import ZoneInfo
+    from datetime import datetime, timedelta
+    tz_paris = ZoneInfo("Europe/Paris")
+    now_paris = datetime.now(tz_paris)
+    start_date = (now_paris - timedelta(days=1)).strftime("%Y-%m-%d")
+    end_date = (now_paris + timedelta(days=2)).strftime("%Y-%m-%d")
+
     res = Reservation(
         property_id=2,
         property_name="Presbytère",
         user_name="Henri Jamet",
-        year=2026,
-        week_number=42,
-        start_date="2026-10-15",
-        end_date="2026-10-20",
+        year=now_paris.year,
+        week_number=now_paris.isocalendar()[1],
+        start_date=start_date,
+        end_date=end_date,
         arrival_time="12:00",
         departure_time="12:00",
         status="Confirmée",
@@ -290,4 +297,173 @@ def test_update_heating_settings_no_redundant_writes(db_session):
 
         # set_mode applique le mode sélectionné, mais aucune écriture de température redondante
         mock_set_mode.assert_called_once_with("dhwAndHeating")
-        mock_set_temp.assert_not_called()
+        mock_set_not_called = mock_set_temp.assert_not_called()
+
+
+def test_evaluate_and_sync_configured_comfort_preserved(db_session):
+    """
+    a) Vérifie que la consigne confort configurée dans ThermalSettings(equipment_type='heating') (ex. 21.0°C)
+    est respectée et n'est pas écrasée par 20.0 ni par 5.0 hors séjour.
+    """
+    setting = db_session.query(ThermalSettings).filter(ThermalSettings.equipment_type == "heating").first()
+    if not setting:
+        setting = ThermalSettings(equipment_type="heating", mode="standby", target_temperature=21.0)
+        db_session.add(setting)
+    else:
+        setting.mode = "standby"
+        setting.target_temperature = 21.0
+    db_session.commit()
+
+    current_status = {
+        "heating_mode": "standby",
+        "mode": "standby",
+        "target_temp": 21.0,
+        "target_temperature": 21.0,
+        "dhw_target_temp": 52.0,
+        "dhw_target_temperature": 52.0,
+        "room_temperature": 18.0,
+        "outside_temperature": 10.0
+    }
+
+    with patch.object(ViCareService, "get_status", return_value=current_status), \
+         patch.object(ViCareService, "set_mode"), \
+         patch.object(ViCareService, "set_temperature"):
+
+        # 1. Hors séjour (aucune réservation active)
+        res = evaluate_and_sync_stay_heating(db_session, force_sync=True)
+        assert res["need_heating"] is False
+        db_session.refresh(setting)
+        # La consigne confort en base reste bien 21.0°C et n'a pas été écrasée par 5.0 ni 20.0
+        assert setting.target_temperature == 21.0
+
+        # 2. Pendant un séjour sans consigne explicite dans les notes -> hérite de la consigne configurée 21.0°C
+        from zoneinfo import ZoneInfo
+        from datetime import datetime, timedelta
+        tz_paris = ZoneInfo("Europe/Paris")
+        now_paris = datetime.now(tz_paris)
+        stay = Reservation(
+            property_id=2,
+            property_name="Presbytère",
+            user_name="Henri Jamet",
+            year=now_paris.year,
+            week_number=now_paris.isocalendar()[1],
+            start_date=(now_paris - timedelta(days=1)).strftime("%Y-%m-%d"),
+            end_date=(now_paris + timedelta(days=2)).strftime("%Y-%m-%d"),
+            arrival_time="12:00",
+            departure_time="12:00",
+            status="Confirmée",
+            notes="Séjour famille - Chauffage Presbytère souhaité"
+        )
+        db_session.add(stay)
+        db_session.commit()
+
+        res_stay = evaluate_and_sync_stay_heating(db_session, force_sync=True)
+        assert res_stay["need_heating"] is True
+        assert res_stay["target_comfort_temperature"] == 21.0
+        db_session.refresh(setting)
+        assert setting.target_temperature == 21.0
+
+
+def test_evaluate_and_sync_pool_preheating_active_any_season(db_session):
+    """
+    b) Vérifie qu'une réservation avec 'Préchauffage Piscine 27°C' active bien
+    ThermalSettings(equipment_type='pool') en mode confort quelle que soit la saison.
+    """
+    from zoneinfo import ZoneInfo
+    from datetime import datetime, timedelta
+    from app.services.klereo_service import KlereoService
+
+    tz_paris = ZoneInfo("Europe/Paris")
+    now_paris = datetime.now(tz_paris)
+
+    res_pool = Reservation(
+        property_id=2,
+        property_name="Presbytère",
+        user_name="Associé Famille",
+        year=now_paris.year,
+        week_number=now_paris.isocalendar()[1],
+        start_date=(now_paris - timedelta(days=1)).strftime("%Y-%m-%d"),
+        end_date=(now_paris + timedelta(days=2)).strftime("%Y-%m-%d"),
+        arrival_time="12:00",
+        departure_time="12:00",
+        status="Confirmée",
+        notes="Séjour automne - Préchauffage Piscine 27°C demandé"
+    )
+    db_session.add(res_pool)
+
+    pool_setting = db_session.query(ThermalSettings).filter(ThermalSettings.equipment_type == "pool").first()
+    if not pool_setting:
+        pool_setting = ThermalSettings(equipment_type="pool", mode="eco", filtration_mode="auto", target_temperature=27.0)
+        db_session.add(pool_setting)
+    else:
+        pool_setting.mode = "eco"
+        pool_setting.filtration_mode = "auto"
+        pool_setting.target_temperature = 27.0
+    db_session.commit()
+
+    with patch.object(ViCareService, "get_status", return_value={"room_temperature": 16.0, "outside_temperature": 10.0}), \
+         patch.object(ViCareService, "set_mode"), \
+         patch.object(ViCareService, "set_temperature"), \
+         patch.object(KlereoService, "is_read_only_mode", return_value=False), \
+         patch.object(KlereoService, "get_status", return_value={"is_heating_active": False}), \
+         patch.object(KlereoService, "set_heating_mode") as mock_klereo_set_heating:
+
+        result = evaluate_and_sync_stay_heating(db_session, force_sync=False)
+
+        assert result["need_pool"] is True
+        db_session.refresh(pool_setting)
+        assert pool_setting.mode == "confort"
+        assert pool_setting.filtration_mode == "marche"
+        mock_klereo_set_heating.assert_called_once_with(mode="confort", active=True, target_temperature=27.0)
+
+
+def test_post_heating_settings_updates_reservation_domotique_tag(db_session):
+    """
+    c) Vérifie qu'un appel manuel à POST /api/heating/settings pendant un séjour actif
+    au Presbytère met à jour le tag [Domotique: ...] de la réservation en cours.
+    """
+    from zoneinfo import ZoneInfo
+    from datetime import datetime, timedelta
+    tz_paris = ZoneInfo("Europe/Paris")
+    now_paris = datetime.now(tz_paris)
+
+    stay = Reservation(
+        property_id=2,
+        property_name="Presbytère",
+        user_name="Henri Jamet",
+        year=now_paris.year,
+        week_number=now_paris.isocalendar()[1],
+        start_date=(now_paris - timedelta(days=1)).strftime("%Y-%m-%d"),
+        end_date=(now_paris + timedelta(days=2)).strftime("%Y-%m-%d"),
+        arrival_time="14:00",
+        departure_time="11:00",
+        status="Confirmée",
+        notes="Séjour en cours [Domotique: Eau Chaude Sanitaire Coupée • Chauffage Presbytère Hors-gel 12°C]"
+    )
+    db_session.add(stay)
+    db_session.commit()
+
+    current_status = {
+        "heating_mode": "standby",
+        "mode": "standby",
+        "target_temp": 18.0,
+        "dhw_target_temp": 52.0
+    }
+
+    with patch.object(ViCareService, "get_status", return_value=current_status), \
+         patch.object(ViCareService, "set_mode"), \
+         patch.object(ViCareService, "set_temperature"):
+
+        resp = client.post("/api/heating/settings", json={
+            "mode": "dhwAndHeating",
+            "target_temperature": 21.0,
+            "is_heating_active": True,
+            "is_dhw_active": True
+        })
+        assert resp.status_code == 200
+
+        db_session.refresh(stay)
+        assert "[Domotique:" in stay.notes
+        assert "Eau Chaude Sanitaire 52°C" in stay.notes
+        assert "Chauffage Presbytère 21°C" in stay.notes
+
