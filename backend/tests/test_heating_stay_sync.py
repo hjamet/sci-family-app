@@ -363,6 +363,20 @@ def test_evaluate_and_sync_configured_comfort_preserved(db_session):
         db_session.refresh(setting)
         assert setting.target_temperature == 21.0
 
+        # 3. Même avec une note contenant le texte par défaut 'Chauffage Presbytère 20°C',
+        # si la consigne configurée sur /sejour est abaissée à 19.0°C, c'est 19.0°C qui fait foi (source unique).
+        setting.target_temperature = 19.0
+        db_session.commit()
+        stay.notes = "Séjour famille [Domotique: Chauffage Presbytère 20°C]"
+        db_session.commit()
+
+        res_stay_19 = evaluate_and_sync_stay_heating(db_session, force_sync=True)
+        assert res_stay_19["need_heating"] is True
+        assert res_stay_19["target_comfort_temperature"] == 19.0
+        db_session.refresh(setting)
+        assert setting.target_temperature == 19.0
+
+
 
 def test_evaluate_and_sync_pool_preheating_active_any_season(db_session):
     """

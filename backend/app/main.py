@@ -11786,22 +11786,8 @@ def evaluate_and_sync_stay_heating(db: Session, force_sync: bool = False) -> dic
             and "ecs coupee" not in notes_str.lower()
         ) or wants_heating
 
-        # Recherche température explicite pour le Presbytère
-        stay_heating_temp = None
-        m_temp = re.search(r'chauffage\s+presbyt[eè]re\s+(\d+(?:[.,]\d+)?)\s*°?c', notes_str, re.IGNORECASE)
-        if m_temp:
-            try:
-                stay_heating_temp = float(m_temp.group(1).replace(",", "."))
-            except (ValueError, TypeError):
-                stay_heating_temp = None
-
-        if stay_heating_temp is not None:
-            if configured_comfort_temp == 20.0:
-                stay_comfort_temp = stay_heating_temp
-            else:
-                stay_comfort_temp = max(configured_comfort_temp, stay_heating_temp)
-        else:
-            stay_comfort_temp = configured_comfort_temp
+        # Consigne confort de référence issue de ThermalSettings (source unique de vérité)
+        stay_comfort_temp = configured_comfort_temp
 
         # Calcul de l'anticipation dynamique avec consigne confort
         if wants_heating:
@@ -11840,7 +11826,7 @@ def evaluate_and_sync_stay_heating(db: Session, force_sync: bool = False) -> dic
             if wants_dhw:
                 need_dhw = True
 
-    target_comfort_temp = max(active_heating_temps) if active_heating_temps else configured_comfort_temp
+    target_comfort_temp = configured_comfort_temp
     target_mode = ViCareService.resolve_unified_mode(is_heating=need_heating, is_dhw=need_dhw)
     target_dhw_state = "on" if need_dhw else "off"
     frost_setting = db.query(ThermalSettings).filter(ThermalSettings.equipment_type == "heating_frost").first()
