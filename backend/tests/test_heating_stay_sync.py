@@ -725,3 +725,19 @@ def test_manual_start_outside_stay_expires_after_override_window(db_session, hou
     else:
         mock_set_mode.assert_not_called()
         assert result["manual_override_until"] is not None
+
+
+def test_post_heating_settings_vicare_failure_returns_502_and_keeps_db(db_session):
+    """POST /api/heating/settings : échec ViCare → HTTP 502, aucune consigne ni tag [Domotique] enregistré."""
+    from fastapi import HTTPException
+    heating, dhw = _set_thermal(db_session, "standby", "off")
+    with patch.object(ViCareService, "get_status", return_value=live_status()), \
+         patch.object(ViCareService, "set_mode", side_effect=HTTPException(status_code=502, detail={"error": "passerelle hors ligne"})):
+        resp = client.post("/api/heating/settings", json={"mode": "dhwAndHeating", "target_temperature": 22.0,
+                                                          "is_heating_active": True, "is_dhw_active": True})
+    assert resp.status_code == 502
+    db_session.refresh(heating)
+    db_session.refresh(dhw)
+    assert heating.mode == "standby"
+    assert heating.target_temperature == 20.0
+    assert dhw.mode == "off"

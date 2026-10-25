@@ -77,15 +77,18 @@ def test_dhw_mode_interlock():
 
 
 def test_heating_settings_database_persistence():
-    """Vérifie que POST /api/heating/settings enregistre bien en base les consignes."""
-    resp = client.post("/api/heating/settings", json={
-        "target_temperature": 20.0,
-        "frost_temperature": 12.0,
-        "is_heating_active": False,
-        "is_dhw_active": False,
-        "dhw_target_temperature": 10.0,
-        "author_name": "Henri Jamet"
-    })
+    """Vérifie que POST /api/heating/settings enregistre bien en base les consignes (après succès ViCare simulé)."""
+    from unittest.mock import patch
+    from app.services.vicare_service import ViCareService
+    with patch.object(ViCareService, "get_status", return_value={"target_temp": 20.0, "dhw_target_temp": 52.0}),          patch.object(ViCareService, "set_mode"),          patch.object(ViCareService, "set_temperature"):
+        resp = client.post("/api/heating/settings", json={
+            "target_temperature": 20.0,
+            "frost_temperature": 12.0,
+            "is_heating_active": False,
+            "is_dhw_active": False,
+            "dhw_target_temperature": 10.0,
+            "author_name": "Henri Jamet"
+        })
     assert resp.status_code == 200
     data = resp.json()
     assert data["status"] == "ok"

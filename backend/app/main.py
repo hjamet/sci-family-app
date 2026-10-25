@@ -9486,24 +9486,23 @@ def update_heating_settings(
     """
     author = req.author_name or (current_user.name if current_user else "Henri Jamet (Coordinateur)")
 
-    # 1. Update or create row in thermal_settings for heating
+    import time
+
+    # 1. État cible calculé SANS écrire en base (contrat fail-fast : la base n'est commitée qu'après succès ViCare)
     setting = db.query(ThermalSettings).filter(ThermalSettings.equipment_type == "heating").first()
     if not setting:
         setting = ThermalSettings(equipment_type="heating")
-        db.add(setting)
-
-    if req.target_temperature is not None:
-        setting.target_temperature = req.target_temperature
-    elif setting.target_temperature is None:
-        setting.target_temperature = 20.0
-
-    # 1c. Support DHW settings
     dhw_setting = db.query(ThermalSettings).filter(ThermalSettings.equipment_type == "dhw").first()
     if not dhw_setting:
         dhw_setting = ThermalSettings(equipment_type="dhw")
-        db.add(dhw_setting)
-    if req.dhw_target_temperature is not None:
-        dhw_setting.target_temperature = req.dhw_target_temperature
+
+    if req.target_temperature is not None:
+        new_target_temperature = req.target_temperature
+    elif setting.target_temperature is not None:
+        new_target_temperature = setting.target_temperature
+    else:
+        new_target_temperature = 20.0
+    new_dhw_target_temperature = req.dhw_target_temperature if req.dhw_target_temperature is not None else dhw_setting.target_temperature
 
     # Résolution des états booléens selon spécification stricte
     if req.is_dhw_active is not None:
@@ -9522,75 +9521,65 @@ def update_heating_settings(
     else:
         is_heating = (setting.mode == "dhwAndHeating") if setting.mode else True
 
-    dhw_was_off = dhw_setting.mode == "off" if dhw_setting and dhw_setting.mode else False
-
     # Matrice de Couplage Unifiée ViCare (Directive Henri) :
     # - Chauffage ON + Eau Chaude ON -> ViCare dhwAndHeating, dhw_setting="on"
     # - Chauffage ON + Eau Chaude OFF -> ViCare dhwAndHeating (le chauffage fioul a besoin de ce mode), dhw_setting="off"
     # - Chauffage OFF + Eau Chaude ON -> ViCare dhw, dhw_setting="on"
     # - Chauffage OFF + Eau Chaude OFF -> ViCare standby, dhw_setting="off"
     target_mode = ViCareService.resolve_unified_mode(is_heating=is_heating, is_dhw=is_dhw)
-    setting.mode = target_mode
-    dhw_setting.mode = "on" if is_dhw else "off"
 
-    setting.updated_by = author
-    setting.updated_at = datetime.utcnow()
-    dhw_setting.updated_by = author
-    dhw_setting.updated_at = datetime.utcnow()
-
-    # A5: Détecter la transition ECS off→on AVANT le commit
-    dhw_now_on = is_dhw or is_heating
-
-    # Alignement du tag [Domotique: ...] des séjours actifs ou imminents sur le réglage manuel
-    sync_presbytere_domotique_tags(db, is_heating=is_heating, is_dhw=is_dhw, heating_temp=setting.target_temperature)
-
-    db.commit()
-    db.refresh(setting)
-
-    # ──── Commande matérielle ViCare ────
+    # 2. Commande matérielle ViCare d'abord : toute erreur remonte (403 lecture seule, 502 passerelle/commande)
     try:
-        import time
-        prev_status = {}
-        try:
-            prev_status = ViCareService.get_status(force_refresh=False)
-        except Exception as status_err:
-            logger.debug(f"[HEATING SETTINGS] Impossible de lire prev_status: {status_err}")
-
-        curr_target_temp = prev_status.get("target_temp") or prev_status.get("target_temperature") or prev_status.get("comfort_temperature")
-        curr_dhw_temp = prev_status.get("dhw_target_temp") or prev_status.get("dhw_target_temperature") or prev_status.get("dhw_configured_temperature")
+        prev_status = ViCareService.get_status(force_refresh=False)
+        curr_target_temp = prev_status.get("target_temp")
+        curr_dhw_temp = prev_status.get("dhw_target_temp")
 
         if target_mode == "standby":
             # Mode standby : envoyer uniquement set_mode("standby") sans toucher aux consignes de température (10°C banni)
             ViCareService.set_mode("standby")
-        elif target_mode in ("dhw", "dhwAndHeating"):
+        else:
             ViCareService.set_mode(target_mode)
             time.sleep(1.0)
 
             temp_updated = False
-            if is_heating and setting.target_temperature is not None:
-                if curr_target_temp != setting.target_temperature:
-                    ViCareService.set_temperature(setting.target_temperature, program="normal", refresh_status=False)
-                    temp_updated = True
-                    time.sleep(1.0)
+            if is_heating and curr_target_temp != new_target_temperature:
+                ViCareService.set_temperature(new_target_temperature, program="normal", refresh_status=False)
+                temp_updated = True
+                time.sleep(1.0)
 
             if is_dhw:
-                target_dhw = dhw_setting.target_temperature or ViCareService._dhw_comfort_temperature
+                target_dhw = new_dhw_target_temperature or ViCareService._dhw_comfort_temperature
                 if curr_dhw_temp != target_dhw:
                     ViCareService.set_temperature(target_dhw, program="dhw", refresh_status=False)
                     temp_updated = True
 
             if temp_updated:
                 ViCareService.get_status(force_refresh=True)
-
-        logger.info(f"[HEATING SETTINGS] Commande ViCare envoyée : mode={target_mode}, heating={is_heating}, dhw={is_dhw}")
     except HTTPException as vicare_err:
-        if vicare_err.status_code == 403:
-            logger.info("[HEATING SETTINGS] Mode lecture seule ViCare actif")
-        else:
-            logger.error(f"[HEATING SETTINGS] Erreur ViCare : {vicare_err.detail}")
+        logger.error(f"[HEATING SETTINGS] Commande ViCare en échec, aucune consigne enregistrée : {vicare_err.detail}")
+        raise
     except Exception as vicare_err:
-        logger.error(f"[HEATING SETTINGS] Erreur ViCare inattendue : {vicare_err}")
-    # ──── FIN COMMANDE MATÉRIELLE ────
+        logger.error(f"[HEATING SETTINGS] Erreur ViCare inattendue, aucune consigne enregistrée : {vicare_err}")
+        raise HTTPException(
+            status_code=status.HTTP_502_BAD_GATEWAY,
+            detail={"error": f"Commande ViCare en échec : {vicare_err}", "type": type(vicare_err).__name__}
+        )
+    logger.info(f"[HEATING SETTINGS] Commande ViCare réussie : mode={target_mode}, heating={is_heating}, dhw={is_dhw}")
+
+    # 3. Succès matériel : persistance des consignes + alignement des tags [Domotique: ...] des séjours actifs ou imminents
+    setting.target_temperature = new_target_temperature
+    setting.mode = target_mode
+    setting.updated_by = author
+    setting.updated_at = datetime.utcnow()
+    dhw_setting.target_temperature = new_dhw_target_temperature
+    dhw_setting.mode = "on" if is_dhw else "off"
+    dhw_setting.updated_by = author
+    dhw_setting.updated_at = datetime.utcnow()
+    db.add(setting)
+    db.add(dhw_setting)
+    sync_presbytere_domotique_tags(db, is_heating=is_heating, is_dhw=is_dhw, heating_temp=new_target_temperature)
+    db.commit()
+    db.refresh(setting)
 
     # Vérifier si un cycle anti-légionelle précédent doit être terminé (>30 min)
     try:

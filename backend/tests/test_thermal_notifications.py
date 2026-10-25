@@ -103,7 +103,10 @@ def test_api_heating_settings_get_and_post_under_circuit_breaker(hermetic_resend
         "mode": "dhwAndHeating",
         "author_name": "Henri Jamet"
     }
-    res_post = client.post("/api/heating/settings", headers=headers, json=payload)
+    # Contrat fail-fast : la consigne n'est enregistrée qu'après succès de la commande ViCare (simulée ici)
+    from app.services.vicare_service import ViCareService
+    with patch.object(ViCareService, "get_status", return_value={"target_temp": 20.0, "dhw_target_temp": 52.0}),          patch.object(ViCareService, "set_mode"),          patch.object(ViCareService, "set_temperature"):
+        res_post = client.post("/api/heating/settings", headers=headers, json=payload)
     assert res_post.status_code == 200
     data_post = res_post.json()
     assert data_post["status"] == "ok"
