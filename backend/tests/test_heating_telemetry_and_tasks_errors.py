@@ -119,3 +119,45 @@ def test_fuel_gauge_unknown_without_real_burner_counters():
     assert fuel["fuel_liters_remaining"] is None
     assert fuel["fuel_level_percent"] is None
     assert fuel["fuel_height_cm"] is None
+
+
+def test_status_reads_db_snapshot_without_vicare_call_and_exposes_next_sync_at():
+    """
+    Vérifie que GET /api/heating/status lit instantanément le dernier snapshot en base
+    (même > 20 s) sans appel réseau ViCare, expose last_seen_at et next_sync_at (quart d'heure pg_cron),
+    et que POST /api/heating/mode met immédiatement à jour le snapshot en base.
+    """
+    with patch("app.services.vicare_service.fetch_live_telemetry", return_value=live_payload(mode="standby", is_heating_active=False)) as fetch:
+        r1 = client.get("/api/heating/status")
+        assert r1.status_code == 200
+        d1 = r1.json()
+        assert d1["mode"] == "standby"
+        assert d1["last_seen_at"].endswith("Z")
+        assert d1["next_sync_at"].endswith(":00Z") or d1["next_sync_at"].endswith(":15Z") or d1["next_sync_at"].endswith(":30Z") or d1["next_sync_at"].endswith(":45Z")
+        assert fetch.call_count == 1
+
+    # Vieillir artificiellement le snapshot en base de 10 minutes (> 20s) : GET /api/heating/status ne doit PAS rappeler ViCare
+    from app.database import SessionLocal
+    with SessionLocal() as db:
+        snap = hts.get_live_snapshot(db)
+        snap.recorded_at = datetime.utcnow() - timedelta(minutes=10)
+        db.commit()
+
+    with patch("app.services.vicare_service.fetch_live_telemetry", side_effect=AssertionError("Aucun appel ViCare ne doit avoir lieu sur GET /api/heating/status par défaut")):
+        r2 = client.get("/api/heating/status")
+        assert r2.status_code == 200
+        assert r2.json()["mode"] == "standby"
+
+    # Modification manuelle : met immédiatement à jour heating_live_snapshot
+    updated_payload = live_payload(mode="dhwAndHeating", active_mode="dhwAndHeating", is_heating_active=True, target_temperature=21.0)
+    with patch("app.main.ViCareService.set_mode", return_value=updated_payload):
+        r_post = client.post("/api/heating/mode", json={"mode": "dhwAndHeating", "author_name": "Henri Jamet"})
+        assert r_post.status_code == 200
+        assert r_post.json()["mode"] == "dhwAndHeating"
+
+    with patch("app.services.vicare_service.fetch_live_telemetry", side_effect=AssertionError("Lecture base attendue")):
+        r3 = client.get("/api/heating/status")
+        assert r3.status_code == 200
+        assert r3.json()["mode"] == "dhwAndHeating"
+        assert r3.json()["target_temperature"] == 21.0
+

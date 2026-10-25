@@ -105,6 +105,7 @@ from .services.heating_telemetry_service import (
     record_live_status,
     list_history as list_heating_history,
     to_utc_iso,
+    next_cron_sync_utc,
 )
 from .services.vicare_service import (
     ViCareService,
@@ -7905,19 +7906,50 @@ def get_heating_status(
     return get_persisted_heating_status(db, force_refresh=(refresh or force_refresh))
 
 
+def persist_and_enrich_heating_status(db: Session, status_data: dict, now: Optional[datetime] = None) -> dict:
+    """
+    Enrichit un relevé ViCare réel complet avec la télémétrie fioul, le persiste dans
+    heating_live_snapshot + heating_telemetry_history, et expose last_seen_at / next_sync_at.
+    """
+    ref_now = now or datetime.utcnow()
+    enriched = dict(status_data)
+    deliveries = get_or_seed_fuel_deliveries(db)
+    added_liters = sum(
+        float(d.get("liters_delivered", 0.0))
+        for d in deliveries
+        if d.get("date", "") > CALIBRATION_DATE
+    )
+    if added_liters > 0 and enriched.get("burner_hours") is not None:
+        enriched.update(calculate_fuel_telemetry(
+            burner_hours=enriched.get("burner_hours"),
+            burner_starts=enriched.get("burner_starts"),
+            added_liters_since_base=added_liters
+        ))
+    record_daily_fuel_snapshot(db, enriched)
+    record_live_status(db, enriched, ref_now)
+    return {
+        **enriched,
+        "is_cached_last_known": False,
+        "last_seen_at": to_utc_iso(ref_now),
+        "next_sync_at": to_utc_iso(next_cron_sync_utc(ref_now)),
+        "live_error": None,
+    }
+
+
 def get_persisted_heating_status(db: Session, force_refresh: bool = False) -> dict:
     """
-    Lecture ViCare persistée en base :
-    - hors rafraîchissement forcé, un relevé réel de moins de LIVE_SNAPSHOT_REUSE_SECONDS est réutilisé
-      (évite 2 handshakes simultanés vers la passerelle Vitoconnect Opto2 au chargement de /sejour) ;
-    - chaque relevé réel est persisté (snapshot + historique heating_telemetry_history) ;
-    - passerelle hors ligne : le dernier relevé réel est servi avec is_cached_last_known=True,
-      last_seen_at et live_error (raison exacte). Sans aucun relevé en base, l'erreur ViCare remonte.
+    Lecture ViCare mutualisée sur le cron pg_cron (15 min) et les modifications manuelles :
+    - par défaut (force_refresh=False), aucun appel réseau vers Viessmann ViCare : retourne
+      immédiatement (< 50 ms) le dernier état complet enregistré dans heating_live_snapshot ;
+    - un appel live à ViCare n'est effectué que si force_refresh=True (cron, modification manuelle,
+      ou ?refresh=true explicite) ou si aucun snapshot n'existe encore en base ;
+    - passerelle hors ligne lors d'un refresh : le dernier relevé réel est servi avec
+      is_cached_last_known=True, last_seen_at, next_sync_at et live_error.
     """
     now = datetime.utcnow()
     snapshot = get_live_snapshot(db)
-    if snapshot is not None and not force_refresh and snapshot_age_seconds(snapshot, now) < LIVE_SNAPSHOT_REUSE_SECONDS:
-        return serve_snapshot(snapshot, is_cached_last_known=False)
+    if snapshot is not None and not force_refresh:
+        return serve_snapshot(snapshot, is_cached_last_known=False, now=now)
 
     try:
         status_data = ViCareService.get_status(force_refresh=force_refresh)
@@ -7927,23 +7959,9 @@ def get_persisted_heating_status(db: Session, force_refresh: bool = False) -> di
         detail = live_err.detail
         reason = detail.get("error") if isinstance(detail, dict) else str(detail)
         logger.warning(f"[HEATING] ViCare indisponible, dernier relevé réel servi ({snapshot.recorded_at}) : {reason}")
-        return serve_snapshot(snapshot, is_cached_last_known=True, live_error=reason)
+        return serve_snapshot(snapshot, is_cached_last_known=True, live_error=reason, now=now)
 
-    deliveries = get_or_seed_fuel_deliveries(db)
-    added_liters = sum(
-        float(d.get("liters_delivered", 0.0))
-        for d in deliveries
-        if d.get("date", "") > CALIBRATION_DATE
-    )
-    if added_liters > 0:
-        status_data.update(calculate_fuel_telemetry(
-            burner_hours=status_data.get("burner_hours"),
-            burner_starts=status_data.get("burner_starts"),
-            added_liters_since_base=added_liters
-        ))
-    record_daily_fuel_snapshot(db, status_data)
-    record_live_status(db, status_data, now)
-    return {**status_data, "is_cached_last_known": False, "last_seen_at": to_utc_iso(now), "live_error": None}
+    return persist_and_enrich_heating_status(db, status_data, now=now)
 
 
 @app.get("/api/heating/telemetry-history", tags=["Chauffage"])
@@ -8021,6 +8039,9 @@ def set_heating_mode(
     sync_presbytere_domotique_tags(db, is_heating=is_heating, is_dhw=is_dhw, heating_temp=setting.target_temperature)
     db.commit()
 
+    if isinstance(res, dict):
+        res = persist_and_enrich_heating_status(db, res)
+
     try:
         details = f"Mode de chauffage ViCare réglé sur : {req.mode}"
         db.add(Log(
@@ -8086,6 +8107,9 @@ def set_heating_temperature(req: HeatingTemperatureRequest, db: Session = Depend
         setting.updated_at = datetime.utcnow()
         db.commit()
 
+        if isinstance(res, dict):
+            res = persist_and_enrich_heating_status(db, res)
+
         subscribed_members = db.query(Member).filter(
             Member.notif_thermal_changes == True,
             Member.email.isnot(None)
@@ -8148,14 +8172,19 @@ def set_dhw_mode(
     heating_setting.updated_at = datetime.utcnow()
     sync_presbytere_domotique_tags(db, is_heating=is_heating, is_dhw=req.is_active, heating_temp=heating_setting.target_temperature)
     db.commit()
+    if isinstance(res, dict):
+        res = persist_and_enrich_heating_status(db, res)
     return res
 
 @app.post("/api/heating/dhw/temperature", response_model=HeatingStatusResponse)
 @app.post("/api/heating/dhw-temperature", response_model=HeatingStatusResponse)
 @app.post("/api/vicare/dhw/temperature", response_model=HeatingStatusResponse)
-def set_dhw_temperature(req: DhwTemperatureRequest):
+def set_dhw_temperature(req: DhwTemperatureRequest, db: Session = Depends(get_db)):
     temp = req.get_temperature()
-    return ViCareService.set_dhw_temperature(temp)
+    res = ViCareService.set_dhw_temperature(temp)
+    if isinstance(res, dict):
+        res = persist_and_enrich_heating_status(db, res)
+    return res
 
 
 def record_daily_fuel_snapshot(db: Session, status_data: dict):
@@ -9460,15 +9489,15 @@ def get_heating_settings(db: Session = Depends(get_db)):
     if not setting:
         return HeatingSettingsResponse(
             target_temperature=20.0,
-            frost_temperature=5.0,
-            mode="dhwAndHeating",
+            frost_temperature=6.0,
+            mode="standby",
             updated_by="Système",
             updated_at=datetime.utcnow()
         )
     return HeatingSettingsResponse(
         target_temperature=setting.target_temperature if setting.target_temperature is not None else 20.0,
-        frost_temperature=5.0,
-        mode=setting.mode or "dhwAndHeating",
+        frost_temperature=6.0,
+        mode=setting.mode or "standby",
         updated_by=setting.updated_by or "Coordinateur",
         updated_at=setting.updated_at
     )
@@ -9529,16 +9558,18 @@ def update_heating_settings(
     target_mode = ViCareService.resolve_unified_mode(is_heating=is_heating, is_dhw=is_dhw)
 
     # 2. Commande matérielle ViCare d'abord : toute erreur remonte (403 lecture seule, 502 passerelle/commande)
+    live_status = None
+    prev_status = None
     try:
         prev_status = ViCareService.get_status(force_refresh=False)
-        curr_target_temp = prev_status.get("target_temp")
-        curr_dhw_temp = prev_status.get("dhw_target_temp")
+        curr_target_temp = prev_status.get("target_temp") if isinstance(prev_status, dict) else None
+        curr_dhw_temp = prev_status.get("dhw_target_temp") if isinstance(prev_status, dict) else None
 
         if target_mode == "standby":
             # Mode standby : envoyer uniquement set_mode("standby") sans toucher aux consignes de température (10°C banni)
-            ViCareService.set_mode("standby")
+            live_status = ViCareService.set_mode("standby")
         else:
-            ViCareService.set_mode(target_mode)
+            live_status = ViCareService.set_mode(target_mode)
             time.sleep(1.0)
 
             temp_updated = False
@@ -9554,7 +9585,7 @@ def update_heating_settings(
                     temp_updated = True
 
             if temp_updated:
-                ViCareService.get_status(force_refresh=True)
+                live_status = ViCareService.get_status(force_refresh=True)
     except HTTPException as vicare_err:
         logger.error(f"[HEATING SETTINGS] Commande ViCare en échec, aucune consigne enregistrée : {vicare_err.detail}")
         raise
@@ -9580,6 +9611,28 @@ def update_heating_settings(
     sync_presbytere_domotique_tags(db, is_heating=is_heating, is_dhw=is_dhw, heating_temp=new_target_temperature)
     db.commit()
     db.refresh(setting)
+
+    # 4. Persistance immédiate du nouvel état réel dans heating_live_snapshot pour lecture instantanée sur /sejour
+    if isinstance(live_status, dict):
+        persist_and_enrich_heating_status(db, live_status)
+    elif isinstance(prev_status, dict):
+        merged_status = {
+            **prev_status,
+            "mode": target_mode,
+            "active_mode": target_mode,
+            "heating_mode": target_mode,
+            "is_heating_active": is_heating,
+            "is_dhw_active": is_dhw,
+            "target_temperature": new_target_temperature if is_heating else prev_status.get("reduced_temperature", 6.0),
+            "target_temp": new_target_temperature if is_heating else prev_status.get("reduced_temperature", 6.0),
+            "comfort_temperature": new_target_temperature,
+            "heating_comfort_temperature": new_target_temperature,
+        }
+        if new_dhw_target_temperature is not None:
+            merged_status["dhw_target_temperature"] = new_dhw_target_temperature
+            merged_status["dhw_target_temp"] = new_dhw_target_temperature
+            merged_status["dhw_configured_temperature"] = new_dhw_target_temperature
+        persist_and_enrich_heating_status(db, merged_status)
 
     # Vérifier si un cycle anti-légionelle précédent doit être terminé (>30 min)
     try:

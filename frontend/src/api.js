@@ -1175,9 +1175,10 @@ export async function deleteVademecumItem(itemId) {
 
 
 export async function fetchHeatingStatus(options = {}) {
-  const force = Boolean(options?.forceRefresh || options?.refresh || options?.force);
+  const liveRefresh = Boolean(options?.refresh || options?.liveRefresh);
+  const bypassCache = Boolean(liveRefresh || options?.forceRefresh || options?.force);
   return swrFetch('heating_status', async () => {
-    const query = force ? '?refresh=true' : '';
+    const query = liveRefresh ? '?refresh=true' : '';
     const res = await fetch(`${API_BASE}/heating/status${query}`, {
       headers: getAuthHeaders(),
       silentError: options?.silentError ?? true,
@@ -1187,7 +1188,7 @@ export async function fetchHeatingStatus(options = {}) {
       throw new Error(parseApiError(err, `HTTP ${res.status} sur /api/heating/status`));
     }
     return res.json();
-  }, { forceRefresh: force });
+  }, { forceRefresh: bypassCache });
 }
 
 export async function fetchHeatingTelemetryHistory(days) {

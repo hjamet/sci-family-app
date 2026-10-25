@@ -745,9 +745,9 @@ class HeatingStatusResponse(BaseModel):
     room_temperature: Optional[float] = None
     target_temperature: Optional[float] = None
     comfort_temperature: Optional[float] = 20.0
-    reduced_temperature: Optional[float] = 5.0
+    reduced_temperature: Optional[float] = 6.0
     heating_comfort_temperature: Optional[float] = 20.0
-    heating_reduced_temperature: Optional[float] = 5.0
+    heating_reduced_temperature: Optional[float] = 6.0
     outside_temperature: Optional[float] = None
     supply_temperature: Optional[float] = None
     boiler_temperature: Optional[float] = None
@@ -793,6 +793,7 @@ class HeatingStatusResponse(BaseModel):
     # Fraîcheur du relevé : True = passerelle injoignable, dernier relevé réel servi depuis la base
     is_cached_last_known: bool = False
     last_seen_at: Optional[str] = None
+    next_sync_at: Optional[str] = None
     live_error: Optional[str] = None
     class Config:
         from_attributes = True
@@ -1310,7 +1311,7 @@ class HeatingSettingsRequest(BaseModel):
 
 class HeatingSettingsResponse(BaseModel):
     target_temperature: Optional[float] = 20.0
-    frost_temperature: Optional[float] = 5.0
+    frost_temperature: Optional[float] = 6.0
     is_heating_active: Optional[bool] = None
     is_dhw_active: Optional[bool] = None
     dhw_target_temperature: Optional[float] = None

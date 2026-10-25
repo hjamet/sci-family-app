@@ -1076,7 +1076,7 @@ export default function VademecumPage({ properties, currentUser, reservations = 
       if (!upcomingStays || upcomingStays.length === 0) setStayLoading(true);
 
       const [heatResResult, poolResResult, taskResResult, reservationsResResult, fuelResResult] = await Promise.allSettled([
-        fetchHeatingStatus(),
+        fetchHeatingStatus({ forceRefresh: true }),
         fetchPiscineStatus({ forceRefresh: true, refresh: true }),
         fetchTasks(),
         fetchReservations(),
@@ -1376,7 +1376,12 @@ export default function VademecumPage({ properties, currentUser, reservations = 
           mode: targetMode,
           author_name: author,
         });
-        setHeatingStatus((prev) => (prev ? { ...prev, target_temperature: nextVal, target_temp: nextVal } : prev));
+        const freshHeat = await fetchHeatingStatus({ forceRefresh: true });
+        if (freshHeat && !freshHeat.error) {
+          setHeatingStatus(freshHeat);
+        } else {
+          setHeatingStatus((prev) => (prev ? { ...prev, target_temperature: nextVal, target_temp: nextVal } : prev));
+        }
       } catch (err) {
         showToast(`Erreur enregistrement consigne chauffage : ${parseApiError(err)}`);
       } finally {
@@ -1395,7 +1400,10 @@ export default function VademecumPage({ properties, currentUser, reservations = 
     setDhwTarget(nextVal);
     if (isDhwActive) {
       try {
-        await setDhwTemperature(nextVal);
+        const freshHeat = await setDhwTemperature(nextVal);
+        if (freshHeat && !freshHeat.error) {
+          setHeatingStatus(freshHeat);
+        }
       } catch (_) {}
     }
   };
@@ -1475,6 +1483,14 @@ export default function VademecumPage({ properties, currentUser, reservations = 
           : `Chauffage ViCare mis à l'Arrêt (En veille, antigel auto)`
       });
 
+      try {
+        const immediateHeat = await fetchHeatingStatus({ forceRefresh: true });
+        if (immediateHeat && !immediateHeat.error) {
+          setHeatingStatus(immediateHeat);
+          setHeatingError(null);
+        }
+      } catch (_) {}
+
       // Notification immédiate positive et explicite
       showToast(
         targetActive
@@ -1545,6 +1561,14 @@ export default function VademecumPage({ properties, currentUser, reservations = 
           ? `Eau Chaude (250L) activée en Marche (Chauffe cible ${dhwTarget.toFixed(1)}°C)`
           : `Eau Chaude (250L) mise à l'arrêt (veille antigel auto)`
       });
+
+      try {
+        const immediateHeat = await fetchHeatingStatus({ forceRefresh: true });
+        if (immediateHeat && !immediateHeat.error) {
+          setHeatingStatus(immediateHeat);
+          setHeatingError(null);
+        }
+      } catch (_) {}
 
       // Notification immédiate positive et explicite
       showToast(
@@ -2580,6 +2604,34 @@ export default function VademecumPage({ properties, currentUser, reservations = 
                   Chauffage et Piscine
                 </h2>
               </div>
+              {(heatingStatus?.last_seen_at || heatingStatus?.next_sync_at) && (
+                <p className="text-xs text-on-surface-variant font-medium mt-0.5 flex items-center gap-1.5 flex-wrap">
+                  <span className="material-symbols-outlined text-[14px] text-primary">schedule</span>
+                  <span>
+                    Dernière actualisation :{' '}
+                    <strong className="text-on-surface">
+                      {heatingStatus?.last_seen_at
+                        ? new Date(heatingStatus.last_seen_at).toLocaleTimeString('fr-FR', {
+                            timeZone: 'Europe/Paris',
+                            hour: '2-digit',
+                            minute: '2-digit',
+                          })
+                        : '—'}
+                    </strong>
+                    {' • '}
+                    Prochaine actualisation :{' '}
+                    <strong className="text-on-surface">
+                      {heatingStatus?.next_sync_at
+                        ? new Date(heatingStatus.next_sync_at).toLocaleTimeString('fr-FR', {
+                            timeZone: 'Europe/Paris',
+                            hour: '2-digit',
+                            minute: '2-digit',
+                          })
+                        : '—'}
+                    </strong>
+                  </span>
+                </p>
+              )}
             </div>
           </div>
         </div>

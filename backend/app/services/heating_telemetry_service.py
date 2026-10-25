@@ -27,6 +27,13 @@ def to_utc_iso(dt: datetime) -> str:
     return dt.isoformat() + "Z"
 
 
+def next_cron_sync_utc(now: datetime) -> datetime:
+    """Calcule la prochaine exécution du pg_cron Supabase (*/15 * * * * : :00, :15, :30, :45 UTC)."""
+    quarter_minutes = ((now.minute // 15) + 1) * 15
+    base = now.replace(minute=0, second=0, microsecond=0)
+    return base + timedelta(minutes=quarter_minutes)
+
+
 def get_live_snapshot(db: Session) -> Optional[HeatingLiveSnapshot]:
     return db.get(HeatingLiveSnapshot, LIVE_SNAPSHOT_ID)
 
@@ -35,11 +42,18 @@ def snapshot_age_seconds(snapshot: HeatingLiveSnapshot, now: datetime) -> float:
     return (now - snapshot.recorded_at).total_seconds()
 
 
-def serve_snapshot(snapshot: HeatingLiveSnapshot, is_cached_last_known: bool, live_error: Optional[str] = None) -> Dict[str, Any]:
+def serve_snapshot(
+    snapshot: HeatingLiveSnapshot,
+    is_cached_last_known: bool,
+    live_error: Optional[str] = None,
+    now: Optional[datetime] = None,
+) -> Dict[str, Any]:
+    ref_now = now or datetime.utcnow()
     return {
         **json.loads(snapshot.payload),
         "is_cached_last_known": is_cached_last_known,
         "last_seen_at": to_utc_iso(snapshot.recorded_at),
+        "next_sync_at": to_utc_iso(next_cron_sync_utc(ref_now)),
         "live_error": live_error,
     }
 
@@ -52,8 +66,8 @@ def _history_point_from_status(status_data: Dict[str, Any], recorded_at: datetim
         boiler_temperature=status_data.get("boiler_temperature"),
         dhw_temperature=status_data.get("dhw_temperature"),
         target_temperature=status_data.get("target_temperature"),
-        is_heating_active=bool(status_data["is_heating_active"]),
-        burner_active=bool(status_data["burner_active"]),
+        is_heating_active=bool(status_data.get("is_heating_active", False)),
+        burner_active=bool(status_data.get("burner_active", False)),
         mode=status_data.get("mode"),
         burner_hours=status_data.get("burner_hours"),
         fuel_liters_remaining=status_data.get("fuel_liters_remaining"),
@@ -65,7 +79,11 @@ def should_append_history(last: Optional[HeatingTelemetryHistory], status_data: 
         return True
     if (now - last.recorded_at).total_seconds() >= HISTORY_MIN_INTERVAL_SECONDS:
         return True
-    current_state = (bool(status_data["is_heating_active"]), bool(status_data["burner_active"]), status_data.get("mode"))
+    current_state = (
+        bool(status_data.get("is_heating_active", False)),
+        bool(status_data.get("burner_active", False)),
+        status_data.get("mode"),
+    )
     previous_state = (bool(last.is_heating_active), bool(last.burner_active), last.mode)
     return current_state != previous_state
 
