@@ -56,8 +56,8 @@ export function getDefaultWeekendRange() {
   return {
     startDate: formatYMD(friday),
     endDate: formatYMD(sunday),
-    arrivalTime: '18:00',
-    departureTime: '18:00',
+    arrivalTime: '15:00',
+    departureTime: '11:00',
   };
 }
 
@@ -469,37 +469,27 @@ function BookingModalContent({
 
       const lowerRawNotes = rawNotes.toLowerCase();
 
+      // Souhaits domotiques lus segment par segment dans [Domotique: a • b] (même règle que parse_domotique_wishes
+      // côté backend) : « Eau Chaude Sanitaire Coupée » ne décoche plus le chauffage.
+      const domoSegmentsMatch = rawNotes.match(/\[Domotique:\s*([^\]]+)\]/i);
+      const domoSegments = domoSegmentsMatch ? domoSegmentsMatch[1].split('•').map((seg) => seg.trim().toLowerCase()) : [];
+      const isCutSegment = (seg) => seg.includes('coup') || seg.includes('hors-gel');
+
       // a) Chauffage Presbytère
       let initPresb = false;
-      const isHeatingCutOff = lowerRawNotes.includes('hors-gel') || lowerRawNotes.includes('coupé') || lowerRawNotes.includes('coupe');
-      if (
-        (lowerRawNotes.includes('chauffage presbytère') ||
-          lowerRawNotes.includes('chauffage presbytere') ||
-          lowerRawNotes.includes('presbytère 20°c') ||
-          lowerRawNotes.includes('presbytere 20°c') ||
-          lowerRawNotes.includes('presbytère 21°c') ||
-          lowerRawNotes.includes('presbytere 21°c')) &&
-        !isHeatingCutOff
-      ) {
-        initPresb = true;
-        setPresbytereHeating(true);
-        setPresbytereHeatingManual(true);
-      } else if (isHeatingCutOff) {
-        initPresb = false;
-        setPresbytereHeating(false);
+      const heatingSegment = domoSegments.find((seg) => seg.includes('chauffage presbyt'));
+      if (heatingSegment) {
+        initPresb = !isCutSegment(heatingSegment);
+        setPresbytereHeating(initPresb);
         setPresbytereHeatingManual(true);
       }
 
       // b) Eau Chaude Sanitaire (DHW)
       let initDhw = false;
-      const isDhwCutOff = lowerRawNotes.includes('coupée') || lowerRawNotes.includes('coupee');
-      if ((lowerRawNotes.includes('eau chaude') || lowerRawNotes.includes('ecs')) && !isDhwCutOff) {
-        initDhw = true;
-        setDhwHeating(true);
-        setDhwHeatingManual(true);
-      } else if (isDhwCutOff) {
-        initDhw = false;
-        setDhwHeating(false);
+      const dhwSegment = domoSegments.find((seg) => seg.includes('eau chaude') || seg.startsWith('ecs'));
+      if (dhwSegment) {
+        initDhw = !isCutSegment(dhwSegment);
+        setDhwHeating(initDhw);
         setDhwHeatingManual(true);
       }
 
@@ -1043,7 +1033,7 @@ function BookingModalContent({
                       id="heure-arrivee"
                       type="time"
                       disabled={isReadOnly}
-                      value={arrivalTime || '18:00'}
+                      value={arrivalTime || '15:00'}
                       onChange={(e) => setArrivalTime(e.target.value)}
                       className="w-full h-11 px-3 bg-surface-container-lowest text-on-surface font-body-md text-body-md rounded-DEFAULT border border-border-subtle focus:border-primary-container focus:outline-none transition-colors disabled:opacity-75 disabled:cursor-not-allowed"
                     />
@@ -1078,7 +1068,7 @@ function BookingModalContent({
                       id="heure-depart"
                       type="time"
                       disabled={isReadOnly}
-                      value={departureTime || '18:00'}
+                      value={departureTime || '11:00'}
                       onChange={(e) => setDepartureTime(e.target.value)}
                       className="w-full h-11 px-3 bg-surface-container-lowest text-on-surface font-body-md text-body-md rounded-DEFAULT border border-border-subtle focus:border-primary-container focus:outline-none transition-colors disabled:opacity-75 disabled:cursor-not-allowed"
                     />

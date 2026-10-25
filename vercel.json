@@ -17,10 +17,6 @@
     {
       "path": "/api/cron/banking-sync",
       "schedule": "0 6 * * *"
-    },
-    {
-      "path": "/api/cron/heating-stay-sync",
-      "schedule": "0 5 * * *"
     }
   ],
   "rewrites": [

@@ -2774,6 +2774,25 @@ export default function VademecumPage({ properties, currentUser, reservations = 
                   </div>
                 </div>
 
+                {/* Protection hors-gel : uniquement les valeurs réelles ViCare (mode, antigel, sondes) */}
+                {heatingStatus && heatingStatus.is_heating_active === false && (
+                  <div className="p-3 rounded-xl border border-sky-200 dark:border-sky-900/60 bg-sky-50/60 dark:bg-sky-950/30 flex items-start gap-2.5">
+                    <span className="material-symbols-outlined text-[20px] text-sky-700 dark:text-sky-300 shrink-0">ac_unit</span>
+                    <div className="flex flex-col gap-0.5 min-w-0">
+                      <span className="text-xs font-bold text-on-surface">
+                        Protection hors-gel {heatingStatus.frost_protection_active ? 'en action (froid extérieur)' : 'en veille'}
+                      </span>
+                      {heatingStatus.heating_status_subtext && (
+                        <span className="text-[11px] text-on-surface-variant">{heatingStatus.heating_status_subtext}</span>
+                      )}
+                      <span className="text-[11px] text-on-surface-variant tabular-nums">
+                        Mesuré : maison {heatingStatus.room_temperature != null ? `${heatingStatus.room_temperature.toFixed(1)}°C` : '--°C'}
+                        {' • '}ballon d'eau chaude {heatingStatus.dhw_temperature != null ? `${heatingStatus.dhw_temperature.toFixed(1)}°C` : '--°C'}
+                      </span>
+                    </div>
+                  </div>
+                )}
+
                 {/* Jauge Fioul Calibrée (Cuve Éts JOSSE & Télémétrie Dynamique) */}
                 {(() => {
                   // Uniquement les valeurs réelles renvoyées par l'API : '--' tant qu'aucun relevé n'existe.

@@ -494,8 +494,9 @@ def fetch_live_telemetry() -> Dict[str, Any]:
         if not is_heating_active:
             heating_status_state = "off"
             if active_mode == "standby" or (active_mode and str(active_mode).lower().startswith("standby")):
-                heating_status_label = "Arrêt (Veille chaudière standby)"
-                heating_status_subtext = "Chaudière en veille totale standby • Chauffage et ECS coupés"
+                heating_status_label = "Veille hors-gel (standby Viessmann)"
+                reduced_str = f" • Consigne réduite {reduced_temp:.1f}°C (appliquée quand le chauffage est en marche)" if reduced_temp is not None else ""
+                heating_status_subtext = f"Pièces non chauffées • Chaudière et ballon protégés du gel par la régulation Vitotronic{reduced_str}"
             else:
                 frost_temp_str = f"{target_temp:.1f}°C"
                 heating_status_label = "Arrêt (Mode été • Eau chaude seule)"
@@ -540,7 +541,7 @@ def fetch_live_telemetry() -> Dict[str, Any]:
             dhw_status_state = "off"
             if active_mode == "standby" or (active_mode and str(active_mode).lower().startswith("standby")):
                 dhw_status_label = "À l'arrêt (veille antigel auto)"
-                dhw_status_subtext = "Chaudière en veille standby • Ballon et brûleur coupés"
+                dhw_status_subtext = "Chaudière en veille standby • Ballon non réchauffé, protégé du gel par la régulation Vitotronic"
             else:
                 dhw_status_label = "À l'arrêt (veille antigel auto)"
                 dhw_status_subtext = "Chauffe ECS coupée • Protection antigel intégrée au firmware Viessmann"
@@ -564,9 +565,9 @@ def fetch_live_telemetry() -> Dict[str, Any]:
             "room_temperature": room_temp,
             "target_temperature": effective_heating_target,
             "comfort_temperature": comfort_temp or 20.0,
-            "reduced_temperature": reduced_temp or 5.0,
+            "reduced_temperature": reduced_temp,
             "heating_comfort_temperature": comfort_temp or 20.0,
-            "heating_reduced_temperature": reduced_temp or 5.0,
+            "heating_reduced_temperature": reduced_temp,
             "outside_temperature": outside_temp,
             "supply_temperature": supply_temp,
             "boiler_temperature": boiler_temp,

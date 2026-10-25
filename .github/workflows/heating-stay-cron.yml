@@ -2,7 +2,8 @@ name: Heating Stay Cron Sync
 
 on:
   schedule:
-    - cron: '*/30 * * * *'
+    # Minutes décalées de l'heure pile (congestion GitHub Actions) ; filet de secours de pg_cron Supabase (*/15)
+    - cron: '7,22,37,52 * * * *'
   workflow_dispatch:
 
 jobs:

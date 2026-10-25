@@ -713,6 +713,11 @@ export default function AdminInfoPage({ currentUser }) {
   };
 
   // Annotation 10 & Demande Henri : Ouverture de la modale d'édition de l'étiquette sélectionnée
+  const openDocumentUploadModal = () => {
+    setUploadModalMode('document');
+    setIsUploadModalOpen(true);
+  };
+
   const handleOpenEditCategoryModal = (targetCategory = null) => {
     let current = null;
     const targetName = typeof targetCategory === 'string' ? targetCategory : (targetCategory?.name || selectedCategory);
@@ -1258,10 +1263,7 @@ export default function AdminInfoPage({ currentUser }) {
             <button
               id="btn-open-upload"
               type="button"
-              onClick={() => {
-                setUploadModalMode('document');
-                setIsUploadModalOpen(true);
-              }}
+              onClick={openDocumentUploadModal}
               className="group flex items-center justify-center gap-2 px-5 py-3.5 rounded-DEFAULT bg-white dark:bg-slate-900 border-2 border-primary text-primary hover:bg-sage-soft font-label-lg text-sm sm:text-base font-bold shadow-sm hover:shadow-md transition-all duration-200 cursor-pointer whitespace-nowrap"
             >
               <span className="material-symbols-outlined text-[22px] group-hover:scale-110 transition-transform">upload_file</span>
@@ -1955,6 +1957,17 @@ export default function AdminInfoPage({ currentUser }) {
                 <span className="hidden sm:inline">Liste</span>
               </button>
             </div>
+
+            {/* Dépôt d'une pièce directement depuis la barre de recherche (même modale que #btn-open-upload) */}
+            <button
+              id="btn-open-upload-toolbar"
+              type="button"
+              onClick={openDocumentUploadModal}
+              className="h-[52px] px-4 rounded-DEFAULT bg-white dark:bg-slate-900 border-2 border-primary text-primary hover:bg-sage-soft font-label-sm text-label-sm font-bold flex items-center gap-2 shadow-xs transition-all cursor-pointer whitespace-nowrap group"
+            >
+              <span className="material-symbols-outlined text-[20px] group-hover:scale-110 transition-transform">upload_file</span>
+              <span>+ Déposer une pièce</span>
+            </button>
 
           </div>
 

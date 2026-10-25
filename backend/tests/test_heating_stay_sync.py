@@ -23,10 +23,36 @@ client = TestClient(app)
 @pytest.fixture
 def db_session():
     db = TestingSessionLocal()
+    # Base en mémoire partagée entre tests : chaque scénario part sans réservation ni consigne résiduelle
+    db.query(Reservation).delete()
+    db.query(ThermalSettings).delete()
+    db.commit()
     try:
         yield db
     finally:
         db.close()
+
+
+def live_status(**overrides):
+    """Relevé ViCare réel tel que servi par get_persisted_heating_status (passerelle en ligne)."""
+    base = {
+        "is_cached_last_known": False,
+        "heating_mode": "standby",
+        "mode": "standby",
+        "active_mode": "standby",
+        "target_temp": 20.0,
+        "dhw_target_temp": 52.0,
+        "room_temperature": 18.0,
+        "outside_temperature": 10.0,
+    }
+    base.update(overrides)
+    for key in ("heating_mode", "active_mode"):
+        if "mode" in overrides and key not in overrides:
+            base[key] = overrides["mode"]
+    return base
+
+
+DOMO_HEATING_ON = "[Domotique: Eau Chaude Sanitaire 52°C • Chauffage Presbytère 20°C]"
 
 
 def test_vicare_set_mode_refresh_status_parameter():
@@ -158,7 +184,7 @@ def test_evaluate_and_sync_standby_only_sets_standby_no_dhw_10(db_session):
         "outside_temperature": 10.0
     }
 
-    with patch.object(ViCareService, "get_status", return_value=fake_status), \
+    with patch("app.main.get_persisted_heating_status", return_value=live_status(**fake_status)), \
          patch.object(ViCareService, "set_mode") as mock_set_mode, \
          patch.object(ViCareService, "set_temperature") as mock_set_temp:
 
@@ -166,7 +192,7 @@ def test_evaluate_and_sync_standby_only_sets_standby_no_dhw_10(db_session):
 
         assert result["target_mode"] == "standby"
         assert result["vicare_command_executed"] is True
-        mock_set_mode.assert_called_once_with("standby", refresh_status=True)
+        mock_set_mode.assert_called_once_with("standby", refresh_status=False)
         # Consigne 10°C bannie : set_temperature ne doit JAMAIS avoir été appelé !
         mock_set_temp.assert_not_called()
 
@@ -199,7 +225,7 @@ def test_evaluate_and_sync_dhw_and_heating_no_redundant_writes(db_session):
         arrival_time="12:00",
         departure_time="12:00",
         status="Confirmée",
-        notes="Séjour famille - Chauffage 20°C souhaité"
+        notes=f"Séjour famille {DOMO_HEATING_ON}"
     )
     db_session.add(res)
 
@@ -229,7 +255,7 @@ def test_evaluate_and_sync_dhw_and_heating_no_redundant_writes(db_session):
         "outside_temperature": 10.0
     }
 
-    with patch.object(ViCareService, "get_status", return_value=current_status), \
+    with patch("app.main.get_persisted_heating_status", return_value=live_status(**current_status)), \
          patch.object(ViCareService, "set_mode") as mock_set_mode, \
          patch.object(ViCareService, "set_temperature") as mock_set_temp:
 
@@ -325,7 +351,7 @@ def test_evaluate_and_sync_configured_comfort_preserved(db_session):
         "outside_temperature": 10.0
     }
 
-    with patch.object(ViCareService, "get_status", return_value=current_status), \
+    with patch("app.main.get_persisted_heating_status", return_value=live_status(**current_status)), \
          patch.object(ViCareService, "set_mode"), \
          patch.object(ViCareService, "set_temperature"):
 
@@ -352,7 +378,7 @@ def test_evaluate_and_sync_configured_comfort_preserved(db_session):
             arrival_time="12:00",
             departure_time="12:00",
             status="Confirmée",
-            notes="Séjour famille - Chauffage Presbytère souhaité"
+            notes=f"Séjour famille {DOMO_HEATING_ON}"
         )
         db_session.add(stay)
         db_session.commit()
@@ -401,7 +427,7 @@ def test_evaluate_and_sync_pool_preheating_active_any_season(db_session):
         arrival_time="12:00",
         departure_time="12:00",
         status="Confirmée",
-        notes="Séjour automne - Préchauffage Piscine 27°C demandé"
+        notes="Séjour automne [Domotique: Eau Chaude Sanitaire Coupée • Chauffage Presbytère Coupé • Préchauffage Piscine 27°C]"
     )
     db_session.add(res_pool)
 
@@ -415,7 +441,7 @@ def test_evaluate_and_sync_pool_preheating_active_any_season(db_session):
         pool_setting.target_temperature = 27.0
     db_session.commit()
 
-    with patch.object(ViCareService, "get_status", return_value={"room_temperature": 16.0, "outside_temperature": 10.0}), \
+    with patch("app.main.get_persisted_heating_status", return_value=live_status(room_temperature=16.0)), \
          patch.object(ViCareService, "set_mode"), \
          patch.object(ViCareService, "set_temperature"), \
          patch.object(KlereoService, "is_read_only_mode", return_value=False), \
@@ -571,14 +597,14 @@ def test_dynamic_lead_hours_calculation(db_session):
         arrival_time=arrival_dt.strftime("%H:%M"),
         departure_time=departure_dt.strftime("%H:%M"),
         status="Confirmée",
-        notes="Séjour futur - Chauffage Presbytère"
+        notes=f"Séjour futur {DOMO_HEATING_ON}"
     )
     db_session.add(stay)
     db_session.commit()
 
     # 1. Cas 12°C ext, 18°C intérieur -> delta 3.0°C -> 3.00h
     status_12 = {"room_temperature": 18.0, "outside_temperature": 12.0, "is_heating_active": False, "burner_active": False}
-    with patch.object(ViCareService, "get_status", return_value=status_12), \
+    with patch("app.main.get_persisted_heating_status", return_value=live_status(**status_12)), \
          patch.object(ViCareService, "set_mode"), \
          patch.object(ViCareService, "set_temperature"):
         res = evaluate_and_sync_stay_heating(db_session, force_sync=False)
@@ -587,7 +613,7 @@ def test_dynamic_lead_hours_calculation(db_session):
 
     # 2. Cas 0°C ext, 18°C intérieur -> delta 3.0°C -> 5.05h (> 3.0h)
     status_0 = {"room_temperature": 18.0, "outside_temperature": 0.0, "is_heating_active": False, "burner_active": False}
-    with patch.object(ViCareService, "get_status", return_value=status_0), \
+    with patch("app.main.get_persisted_heating_status", return_value=live_status(**status_0)), \
          patch.object(ViCareService, "set_mode"), \
          patch.object(ViCareService, "set_temperature"):
         res = evaluate_and_sync_stay_heating(db_session, force_sync=False)
@@ -597,7 +623,7 @@ def test_dynamic_lead_hours_calculation(db_session):
 
     # 3. Cas grand froid -10°C ext, 16°C intérieur -> delta 5.0°C -> plancher 0.40°C/h -> 13.00h
     status_cold = {"room_temperature": 16.0, "outside_temperature": -10.0, "is_heating_active": False, "burner_active": False}
-    with patch.object(ViCareService, "get_status", return_value=status_cold), \
+    with patch("app.main.get_persisted_heating_status", return_value=live_status(**status_cold)), \
          patch.object(ViCareService, "set_mode"), \
          patch.object(ViCareService, "set_temperature"):
         res = evaluate_and_sync_stay_heating(db_session, force_sync=False)
@@ -608,7 +634,7 @@ def test_dynamic_lead_hours_calculation(db_session):
     setting.target_temperature = 18.0
     db_session.commit()
     status_warm = {"room_temperature": 18.0, "outside_temperature": 15.0, "is_heating_active": False, "burner_active": False}
-    with patch.object(ViCareService, "get_status", return_value=status_warm), \
+    with patch("app.main.get_persisted_heating_status", return_value=live_status(**status_warm)), \
          patch.object(ViCareService, "set_mode"), \
          patch.object(ViCareService, "set_temperature"):
         res = evaluate_and_sync_stay_heating(db_session, force_sync=False)
@@ -616,3 +642,86 @@ def test_dynamic_lead_hours_calculation(db_session):
         assert evaluated["lead_hours"] == 2.0
 
 
+
+
+def _set_thermal(db_session, heating_mode, dhw_mode, updated_by="Système Automatique (Asservissement Séjours)", hours_ago=0.0):
+    from datetime import datetime, timedelta
+    updated_at = datetime.utcnow() - timedelta(hours=hours_ago)
+    heating = ThermalSettings(equipment_type="heating", mode=heating_mode, target_temperature=20.0, updated_by=updated_by, updated_at=updated_at)
+    dhw = ThermalSettings(equipment_type="dhw", mode=dhw_mode, target_temperature=52.0, updated_by=updated_by, updated_at=updated_at)
+    db_session.add_all([heating, dhw])
+    db_session.commit()
+    return heating, dhw
+
+
+def test_parse_domotique_wishes_segment_by_segment():
+    """« Eau Chaude Sanitaire Coupée » ne coupe ni le chauffage ni la piscine (bug de sous-chaîne « coupé »)."""
+    from app.main import parse_domotique_wishes
+    assert parse_domotique_wishes("[Domotique: Eau Chaude Sanitaire Coupée • Chauffage Presbytère 20°C]") == {
+        "wants_heating": True, "wants_dhw": True, "wants_pool": False}
+    assert parse_domotique_wishes("[Domotique: Eau Chaude Sanitaire Coupée • Chauffage Presbytère Coupé • Préchauffage Piscine 27°C]") == {
+        "wants_heating": False, "wants_dhw": False, "wants_pool": True}
+    assert parse_domotique_wishes("[Domotique: Eau Chaude Sanitaire 52°C • Chauffage Presbytère Coupé]") == {
+        "wants_heating": False, "wants_dhw": True, "wants_pool": False}
+
+
+def test_hardware_on_while_db_standby_is_stopped(db_session):
+    """Chaudière allumée hors application (app ViCare, tableau) alors que la base dit standby : l'arrêt est envoyé."""
+    heating, _ = _set_thermal(db_session, "standby", "off")
+    with patch("app.main.get_persisted_heating_status", return_value=live_status(mode="dhwAndHeating")), \
+         patch.object(ViCareService, "set_mode") as mock_set_mode, \
+         patch.object(ViCareService, "set_temperature") as mock_set_temp:
+        result = evaluate_and_sync_stay_heating(db_session)
+    assert result["hardware_out_of_sync"] is True
+    assert result["db_out_of_sync"] is False
+    mock_set_mode.assert_called_once_with("standby", refresh_status=False)
+    mock_set_temp.assert_not_called()
+    db_session.refresh(heating)
+    assert heating.mode == "standby"
+
+
+def test_vicare_failure_keeps_db_for_retry(db_session):
+    """Échec ViCare : la base n'est pas écrite, le run suivant réessaie (aucun faux « standby » enregistré)."""
+    from fastapi import HTTPException
+    heating, dhw = _set_thermal(db_session, "dhwAndHeating", "on")
+    with patch("app.main.get_persisted_heating_status", return_value=live_status(mode="dhwAndHeating")), \
+         patch.object(ViCareService, "set_mode", side_effect=HTTPException(status_code=502, detail={"error": "429 rate limit"})):
+        result = evaluate_and_sync_stay_heating(db_session)
+    assert result["vicare_error"] == "429 rate limit"
+    assert result["status"] == "vicare_error"
+    db_session.refresh(heating)
+    db_session.refresh(dhw)
+    assert heating.mode == "dhwAndHeating"
+    assert dhw.mode == "on"
+
+
+def test_dry_run_sends_nothing_and_writes_nothing(db_session):
+    """dry_run (GET du cron) : diagnostic seul, ni ordre ViCare ni écriture de consigne."""
+    heating, _ = _set_thermal(db_session, "dhwAndHeating", "on")
+    with patch("app.main.get_persisted_heating_status", return_value=live_status(mode="dhwAndHeating")), \
+         patch.object(ViCareService, "set_mode") as mock_set_mode:
+        result = evaluate_and_sync_stay_heating(db_session, dry_run=True)
+        resp = client.get("/api/cron/heating-stay-sync")
+    assert result["dry_run"] is True
+    assert result["sync_required"] is True
+    assert resp.status_code == 200 and resp.json()["dry_run"] is True
+    mock_set_mode.assert_not_called()
+    db_session.refresh(heating)
+    assert heating.mode == "dhwAndHeating"
+
+
+@pytest.mark.parametrize("hours_ago,expected_mode", [(1.0, "dhwAndHeating"), (5.0, "standby")])
+def test_manual_start_outside_stay_expires_after_override_window(db_session, hours_ago, expected_mode):
+    """Allumage manuel hors séjour : respecté pendant la fenêtre d'override (4 h), puis retour automatique en standby."""
+    _set_thermal(db_session, "dhwAndHeating", "on", updated_by="Henri Jamet", hours_ago=hours_ago)
+    with patch("app.main.get_persisted_heating_status", return_value=live_status(mode="dhwAndHeating")), \
+         patch.object(ViCareService, "set_mode") as mock_set_mode, \
+         patch.object(ViCareService, "set_temperature"):
+        result = evaluate_and_sync_stay_heating(db_session)
+    assert result["target_mode"] == expected_mode
+    if expected_mode == "standby":
+        mock_set_mode.assert_called_once_with("standby", refresh_status=False)
+        assert result["manual_override_until"] is None
+    else:
+        mock_set_mode.assert_not_called()
+        assert result["manual_override_until"] is not None

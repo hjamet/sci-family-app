@@ -18,7 +18,7 @@ from fastapi.staticfiles import StaticFiles
 from fastapi.responses import FileResponse, Response, RedirectResponse, StreamingResponse, JSONResponse
 from sqlalchemy.orm import Session, selectinload, joinedload
 from sqlalchemy import func, or_, and_
-from sqlalchemy.exc import IntegrityError, OperationalError
+from sqlalchemy.exc import IntegrityError, OperationalError, ProgrammingError
 
 from .database import engine, Base, get_db
 from .models import (
@@ -1006,15 +1006,19 @@ def run_member_migrations():
     except Exception as e:
         logger.warning(f"Notice: run_member_migrations: {e}")
 
-try:
-    run_member_migrations()
-    run_project_migrations()
-    run_reservation_migrations()
-    run_task_migrations()
-    run_document_migrations()
-    migrate_engine(engine)
-except Exception as e:
-    print(f"Migration notice: {e}")
+# Migrations DDL au démarrage : jamais sur Vercel (chaque cold start prenait des AccessExclusiveLock sur
+# tasks/admin_documents et provoquait des deadlocks 40P01 avec GET /api/tasks). Le schéma de production
+# est complet ; pour migrer explicitement, définir RUN_DB_MIGRATION=true.
+if not is_vercel or force_init:
+    try:
+        run_member_migrations()
+        run_project_migrations()
+        run_reservation_migrations()
+        run_task_migrations()
+        run_document_migrations()
+        migrate_engine(engine)
+    except Exception as e:
+        print(f"Migration notice: {e}")
 
 
 
@@ -4743,7 +4747,7 @@ def list_tasks(
             selectinload(Task.assignee),
             selectinload(Task.admin_documents)
         ).order_by(Task.id.asc()).all()
-    except OperationalError:
+    except (OperationalError, ProgrammingError):
         db.rollback()
         tasks = query.options(
             selectinload(Task.comments),
@@ -6346,58 +6350,16 @@ def list_documents(
         logger.warning(f"Google Drive non disponible, repli sur base locale : {drive_err}")
         drive_docs = []
 
-    # 2. Interrogation sécurisée de la base de données avec rattrapage automatique
-    db_docs = []
-    try:
-        query = db.query(AdminDocument)
-        clean_category = category if isinstance(category, str) else None
-        clean_source_type = source_type if isinstance(source_type, str) else None
-        if clean_category and clean_category not in ("Toutes", "all"):
-            query = query.filter(AdminDocument.category == clean_category)
-        if clean_source_type:
-            query = query.filter(AdminDocument.source_type == clean_source_type)
-        db_docs = query.order_by(AdminDocument.created_at.desc()).all()
-    except Exception as db_err:
-        logger.warning(f"Erreur requête AdminDocument en base ({db_err}), tentative de rattrapage / auto-migration...")
-        try:
-            db.rollback()
-        except Exception:
-            pass
-
-        # Tentative d'auto-création de la table et de la colonne manquante
-        try:
-            from sqlalchemy import text
-            with engine.connect() as conn:
-                AdminDocument.__table__.create(bind=engine, checkfirst=True)
-                if engine.dialect.name == "sqlite":
-                    inspector_query = text("PRAGMA table_info(admin_documents)")
-                    result = conn.execute(inspector_query).fetchall()
-                    column_names = [row[1] for row in result]
-                    if column_names:
-                        if "drive_file_id" not in column_names:
-                            conn.execute(text("ALTER TABLE admin_documents ADD COLUMN drive_file_id VARCHAR(255)"))
-                        if "file_data" not in column_names:
-                            conn.execute(text("ALTER TABLE admin_documents ADD COLUMN file_data BLOB"))
-                        conn.commit()
-                else:
-                    conn.execute(text("ALTER TABLE admin_documents ADD COLUMN IF NOT EXISTS drive_file_id VARCHAR(255);"))
-                    conn.execute(text("ALTER TABLE admin_documents ADD COLUMN IF NOT EXISTS file_data BYTEA;"))
-                    conn.commit()
-
-            # Seconde tentative de requête
-            query = db.query(AdminDocument)
-            if category and category not in ("Toutes", "all"):
-                query = query.filter(AdminDocument.category == category)
-            if source_type:
-                query = query.filter(AdminDocument.source_type == source_type)
-            db_docs = query.order_by(AdminDocument.created_at.desc()).all()
-        except Exception as retry_err:
-            logger.warning(f"Repli gracieux : base de données indisponible ({retry_err}), bascule en mémoire.")
-            try:
-                db.rollback()
-            except Exception:
-                pass
-            db_docs = []
+    # 2. Interrogation de la base de données (schéma garanti par les migrations de démarrage hors Vercel :
+    #    aucun DDL dans une requête HTTP, qui prendrait un AccessExclusiveLock concurrent de GET /api/tasks)
+    query = db.query(AdminDocument)
+    clean_category = category if isinstance(category, str) else None
+    clean_source_type = source_type if isinstance(source_type, str) else None
+    if clean_category and clean_category not in ("Toutes", "all"):
+        query = query.filter(AdminDocument.category == clean_category)
+    if clean_source_type:
+        query = query.filter(AdminDocument.source_type == clean_source_type)
+    db_docs = query.order_by(AdminDocument.created_at.desc()).all()
 
     # 3. Synchronisation & Fusion intelligente Drive <-> DB
     has_db_updates = False
@@ -7989,13 +7951,76 @@ def get_heating_telemetry_history(days: int = Query(7, ge=1, le=90), db: Session
     """Historique réel (heating_telemetry_history) : T° maison, T° extérieure, état chauffage / brûleur."""
     return {"days": days, "points": list_heating_history(db, days=days, now=datetime.utcnow())}
 
+def sync_presbytere_domotique_tags(db: Session, is_heating: bool, is_dhw: bool, heating_temp: float) -> None:
+    """
+    Aligne le tag [Domotique: ...] des réservations confirmées du Presbytère actives ou démarrant dans les 18 h
+    sur un réglage manuel, pour que l'asservissement (parse_domotique_wishes) respecte ce choix pendant le séjour.
+    Les autres tags (piscine…) sont conservés. Pas de commit : à la charge de l'appelant.
+    """
+    from zoneinfo import ZoneInfo
+    tz_paris = ZoneInfo("Europe/Paris")
+    now_paris = datetime.now(tz_paris)
+
+    for r in db.query(Reservation).filter(Reservation.status == "Confirmée").all():
+        is_presb = (r.property_id == 2) or (r.property_name and "presbyt" in r.property_name.lower())
+        if not is_presb:
+            continue
+        arrival_dt = datetime.strptime(f"{r.start_date} {r.arrival_time or '15:00'}", "%Y-%m-%d %H:%M").replace(tzinfo=tz_paris)
+        departure_dt = datetime.strptime(f"{r.end_date} {r.departure_time or '11:00'}", "%Y-%m-%d %H:%M").replace(tzinfo=tz_paris)
+        if not (arrival_dt - timedelta(hours=18.0) <= now_paris <= departure_dt):
+            continue
+
+        curr_notes = r.notes or ""
+        domo_match = re.search(r'\[Domotique:\s*([^\]]+)\]', curr_notes, re.IGNORECASE)
+        existing_tags = [t.strip() for t in domo_match.group(1).split("•") if t.strip()] if domo_match else []
+        kept_tags = [
+            t for t in existing_tags
+            if "chauffage presbyt" not in t.lower() and "eau chaude" not in t.lower() and not t.lower().startswith("ecs")
+        ]
+        dhw_tag = "Eau Chaude Sanitaire 52°C" if is_dhw else "Eau Chaude Sanitaire Coupée"
+        heating_tag = f"Chauffage Presbytère {heating_temp:.0f}°C" if is_heating else "Chauffage Presbytère Coupé"
+        new_domo_str = f"[Domotique: {' • '.join([dhw_tag, heating_tag] + kept_tags)}]"
+
+        if domo_match:
+            r.notes = curr_notes.replace(domo_match.group(0), new_domo_str)
+        else:
+            r.notes = f"{curr_notes} • {new_domo_str}" if curr_notes else new_domo_str
+        logger.info(f"[HEATING] Notes de la réservation {r.id} alignées sur le réglage manuel : {new_domo_str}")
+
+
 @app.post("/api/vicare/mode", response_model=HeatingStatusResponse)
 @app.post("/api/heating/mode", response_model=HeatingStatusResponse)
 @app.post("/api/heating/set-mode", response_model=HeatingStatusResponse)
 @app.post("/api/heating/vicare/mode", response_model=HeatingStatusResponse)
-def set_heating_mode(req: HeatingModeRequest, db: Session = Depends(get_db)):
+def set_heating_mode(
+    req: HeatingModeRequest,
+    current_user: Optional[User] = Depends(get_optional_current_user),
+    db: Session = Depends(get_db)
+):
     res = ViCareService.set_mode(req.mode)
-    author = getattr(req, "author_name", None) or "Système"
+    author = req.author_name or (current_user.name if current_user else "Système")
+
+    # État manuel persisté après succès ViCare : l'asservissement le respecte (tag [Domotique] pendant un séjour,
+    # fenêtre MANUAL_HEATING_OVERRIDE_HOURS hors séjour, l'auteur n'étant pas l'automate).
+    is_heating = req.mode in ("dhwAndHeating", "forcedNormal", "forcedReduced")
+    is_dhw = req.mode != "standby"
+    setting = db.query(ThermalSettings).filter(ThermalSettings.equipment_type == "heating").first()
+    if not setting:
+        setting = ThermalSettings(equipment_type="heating", target_temperature=20.0)
+        db.add(setting)
+    dhw_setting = db.query(ThermalSettings).filter(ThermalSettings.equipment_type == "dhw").first()
+    if not dhw_setting:
+        dhw_setting = ThermalSettings(equipment_type="dhw")
+        db.add(dhw_setting)
+    setting.mode = req.mode
+    setting.updated_by = author
+    setting.updated_at = datetime.utcnow()
+    dhw_setting.mode = "on" if is_dhw else "off"
+    dhw_setting.updated_by = author
+    dhw_setting.updated_at = datetime.utcnow()
+    sync_presbytere_domotique_tags(db, is_heating=is_heating, is_dhw=is_dhw, heating_temp=setting.target_temperature)
+    db.commit()
+
     try:
         details = f"Mode de chauffage ViCare réglé sur : {req.mode}"
         db.add(Log(
@@ -8003,13 +8028,6 @@ def set_heating_mode(req: HeatingModeRequest, db: Session = Depends(get_db)):
             user_name=author,
             details=details
         ))
-        setting = db.query(ThermalSettings).filter(ThermalSettings.equipment_type == "heating").first()
-        if not setting:
-            setting = ThermalSettings(equipment_type="heating")
-            db.add(setting)
-        setting.mode = req.mode
-        setting.updated_by = author
-        setting.updated_at = datetime.utcnow()
         db.commit()
 
         subscribed_members = db.query(Member).filter(
@@ -8103,19 +8121,34 @@ def set_heating_temperature(req: HeatingTemperatureRequest, db: Session = Depend
 @app.post("/api/heating/dhw/mode", response_model=HeatingStatusResponse)
 @app.post("/api/heating/dhw-mode", response_model=HeatingStatusResponse)
 @app.post("/api/vicare/dhw/mode", response_model=HeatingStatusResponse)
-def set_dhw_mode(req: DhwModeRequest, db: Session = Depends(get_db)):
+def set_dhw_mode(
+    req: DhwModeRequest,
+    current_user: Optional[User] = Depends(get_optional_current_user),
+    db: Session = Depends(get_db)
+):
     heating_setting = db.query(ThermalSettings).filter(ThermalSettings.equipment_type == "heating").first()
-    is_heating = (heating_setting.mode == "dhwAndHeating") if heating_setting and heating_setting.mode else False
+    if not heating_setting:
+        heating_setting = ThermalSettings(equipment_type="heating", target_temperature=20.0)
+        db.add(heating_setting)
+    is_heating = heating_setting.mode == "dhwAndHeating"
 
+    res = ViCareService.set_dhw_mode(req.is_active, is_heating_active=is_heating)
+
+    # État manuel persisté après succès ViCare (même contrat que set_heating_mode)
+    author = current_user.name if current_user else "Système"
     dhw_setting = db.query(ThermalSettings).filter(ThermalSettings.equipment_type == "dhw").first()
     if not dhw_setting:
         dhw_setting = ThermalSettings(equipment_type="dhw")
         db.add(dhw_setting)
     dhw_setting.mode = "on" if req.is_active else "off"
+    dhw_setting.updated_by = author
     dhw_setting.updated_at = datetime.utcnow()
+    heating_setting.mode = ViCareService.resolve_unified_mode(is_heating=is_heating, is_dhw=req.is_active)
+    heating_setting.updated_by = author
+    heating_setting.updated_at = datetime.utcnow()
+    sync_presbytere_domotique_tags(db, is_heating=is_heating, is_dhw=req.is_active, heating_temp=heating_setting.target_temperature)
     db.commit()
-
-    return ViCareService.set_dhw_mode(req.is_active, is_heating_active=is_heating)
+    return res
 
 @app.post("/api/heating/dhw/temperature", response_model=HeatingStatusResponse)
 @app.post("/api/heating/dhw-temperature", response_model=HeatingStatusResponse)
@@ -8917,7 +8950,9 @@ async def create_fuel_delivery(
 # --- Piscine Rosing Telemetry & Controls Endpoints (PAC Rosing F08) ---
 
 def ensure_pool_schedule_column(db: Session):
-    """Garantit l'existence de la colonne schedule_json dans thermal_settings."""
+    """Garantit l'existence de la colonne schedule_json dans thermal_settings (hors Vercel : pas de DDL par requête en production)."""
+    if is_vercel and not force_init:
+        return
     try:
         from sqlalchemy import text
         bind = db.get_bind()
@@ -9506,69 +9541,8 @@ def update_heating_settings(
     # A5: Détecter la transition ECS off→on AVANT le commit
     dhw_now_on = is_dhw or is_heating
 
-    # Synchronisation des réservations actives ou imminentes au Presbytère
-    # pour aligner leur tag [Domotique: ...] sur le réglage manuel de l'utilisateur
-    try:
-        from zoneinfo import ZoneInfo
-        tz_paris = ZoneInfo("Europe/Paris")
-        now_paris = datetime.now(tz_paris)
-        today_str = now_paris.strftime("%Y-%m-%d")
-        in_18h = now_paris + timedelta(hours=18)
-        in_18h_date_str = in_18h.strftime("%Y-%m-%d")
-
-        presbytere_res = db.query(Reservation).filter(
-            ~Reservation.status.in_(("Annulée", "Refusée"))
-        ).all()
-
-        for r in presbytere_res:
-            is_presb = (r.property_id == 2) or (r.property_name and "presbyt" in r.property_name.lower())
-            if not is_presb:
-                continue
-
-            arr_time = r.arrival_time or "15:00"
-            dep_time = r.departure_time or "11:00"
-            try:
-                arrival_dt = datetime.strptime(f"{r.start_date} {arr_time}", "%Y-%m-%d %H:%M").replace(tzinfo=tz_paris)
-                departure_dt = datetime.strptime(f"{r.end_date} {dep_time}", "%Y-%m-%d %H:%M").replace(tzinfo=tz_paris)
-            except Exception:
-                arrival_dt = None
-                departure_dt = None
-
-            is_active_or_imminent = False
-            if r.start_date <= today_str <= r.end_date:
-                is_active_or_imminent = True
-            elif arrival_dt and departure_dt:
-                is_active_or_imminent = (arrival_dt - timedelta(hours=18.0) <= now_paris <= departure_dt)
-            elif r.start_date <= in_18h_date_str and r.end_date >= today_str:
-                is_active_or_imminent = True
-
-            if is_active_or_imminent:
-                curr_notes = r.notes or ""
-                domo_match = re.search(r'\[Domotique:\s*([^\]]+)\]', curr_notes, re.IGNORECASE)
-                existing_tags = []
-                if domo_match:
-                    raw_tags = domo_match.group(1).split("•")
-                    existing_tags = [t.strip() for t in raw_tags if t.strip()]
-
-                kept_tags = [
-                    t for t in existing_tags
-                    if "chauffage" not in t.lower() and "eau chaude" not in t.lower() and "ecs" not in t.lower()
-                ]
-
-                dhw_tag = "Eau Chaude Sanitaire 52°C" if is_dhw else "Eau Chaude Sanitaire Coupée"
-                heating_temp_val = setting.target_temperature if setting.target_temperature is not None else 20.0
-                heating_tag = f"Chauffage Presbytère {heating_temp_val:.0f}°C" if is_heating else "Chauffage Presbytère Coupé"
-
-                new_domo_tags = [dhw_tag, heating_tag] + kept_tags
-                new_domo_str = f"[Domotique: {' • '.join(new_domo_tags)}]"
-
-                if domo_match:
-                    r.notes = curr_notes.replace(domo_match.group(0), new_domo_str)
-                else:
-                    r.notes = (curr_notes + " " + new_domo_str).strip() if curr_notes else new_domo_str
-                logger.info(f"[HEATING SETTINGS] Notes de la réservation {r.id} mises à jour avec {new_domo_str}")
-    except Exception as notes_sync_err:
-        logger.warning(f"[HEATING SETTINGS] Erreur alignement notes domotique réservation : {notes_sync_err}")
+    # Alignement du tag [Domotique: ...] des séjours actifs ou imminents sur le réglage manuel
+    sync_presbytere_domotique_tags(db, is_heating=is_heating, is_dhw=is_dhw, heating_temp=setting.target_temperature)
 
     db.commit()
     db.refresh(setting)
@@ -11729,117 +11703,114 @@ async def cron_calls_for_funds(request: Request, db: Session = Depends(get_db)):
     }
 
 
-def evaluate_and_sync_stay_heating(db: Session, force_sync: bool = False) -> dict:
+HEATING_AUTOMATION_AUTHOR = "Système Automatique (Asservissement Séjours)"
+MANUAL_HEATING_OVERRIDE_HOURS = 4.0
+MAX_PREHEAT_LEAD_HOURS = 24.0
+VICARE_KNOWN_MODES = ("standby", "dhw", "dhwAndHeating", "forcedNormal", "forcedReduced")
+
+
+def parse_domotique_wishes(notes: Optional[str]) -> dict:
     """
-    Asservissement automatique du chauffage et de l'eau chaude sanitaire aux réservations du Presbytère :
-    - Filtre les réservations confirmées au Presbytère (property_id == 2 ou 'presbyt' in property_name).
-    - Analyse les choix de l'associé dans reservation.notes :
-        wants_dhw: 'Eau Chaude Sanitaire Coupée' absent
-        wants_heating: '20°C' présent et 'Hors-gel' absent
-    - Calcule l'anticipation dynamique (T_lead_hours) en fonction de la température ambiante et extérieure ViCare :
-        Si wants_heating : heating_rate_c_per_hour = max(0.40, 1.20 - 0.045 * max(0.0, 12.0 - outside_temp))
-                           lead_hours = min(24.0, max(min_lead, 0.5 + delta_temp / heating_rate_c_per_hour))
-        Si wants_dhw seul : lead_hours = 2.0
-    - Détermine si un séjour est actif ou dans sa fenêtre de préchauffage [arrival - lead_hours, departure].
-    - Résout le mode unifié (dhwAndHeating, dhw, ou standby).
-    - Met à jour ThermalSettings et commande la chaudière ViCare si l'état change ou si force_sync=True.
+    Souhaits domotiques d'une réservation, lus segment par segment dans le bloc « [Domotique: a • b • c] »
+    écrit par BookingModal.jsx et sync_presbytere_domotique_tags.
+    Un segment n'agit que sur son propre équipement : « Eau Chaude Sanitaire Coupée » ne coupe ni le chauffage ni la piscine.
     """
+    match = re.search(r'\[Domotique:\s*([^\]]+)\]', notes or "", re.IGNORECASE)
+    segments = [s.strip().lower() for s in match.group(1).split("•")] if match else []
+
+    def is_cut(segment: str) -> bool:
+        return "coup" in segment or "hors-gel" in segment
+
+    wants_heating = any("chauffage presbyt" in s and not is_cut(s) for s in segments)
+    dhw_cut = any(("eau chaude sanitaire" in s or s.startswith("ecs")) and is_cut(s) for s in segments)
+    wants_pool = any("piscine" in s and not is_cut(s) for s in segments)
+    return {"wants_heating": wants_heating, "wants_dhw": (not dhw_cut) or wants_heating, "wants_pool": wants_pool}
+
+
+def evaluate_and_sync_stay_heating(db: Session, force_sync: bool = False, dry_run: bool = False) -> dict:
+    """
+    Asservissement automatique du chauffage et de l'eau chaude sanitaire aux réservations confirmées du Presbytère :
+    - Souhaits lus dans le bloc [Domotique: ...] des notes (parse_domotique_wishes).
+    - Anticipation dynamique (T_lead_hours) selon la température ambiante et extérieure ViCare réelles :
+        heating_rate_c_per_hour = max(0.40, 1.20 - 0.045 * max(0.0, 12.0 - outside_temp))
+        lead_hours = min(24.0, max(min_lead, 0.5 + delta_temp / heating_rate_c_per_hour))
+      ECS seule : 2 h. Sans mesure réelle : anticipation maximale (24 h).
+    - Fenêtre active [arrival - lead_hours, departure] → mode unifié (dhwAndHeating, dhw, ou standby).
+    - Hors séjour, un allumage manuel (auteur ≠ automate) est respecté MANUAL_HEATING_OVERRIDE_HOURS heures puis
+      la chaudière repasse en standby.
+    - Réconciliation sur l'état RÉEL de la chaudière : un écart chaudière ≠ cible (allumage depuis l'app ViCare ou
+      le tableau, échec d'une commande précédente) déclenche la commande, même si la base est déjà à jour.
+    - La base (thermal_settings) n'est écrite qu'après succès des commandes ViCare : un échec est réessayé au run suivant.
+    - dry_run=True : calcul et diagnostic seuls, aucun ordre ViCare ni écriture de consigne.
+    """
+    import time
     from zoneinfo import ZoneInfo
     tz_paris = ZoneInfo("Europe/Paris")
     now_paris = datetime.now(tz_paris)
+    now_utc = datetime.now(timezone.utc)
 
-    # 1. Lecture de la télémétrie courante (températures)
-    room_temp = 16.0
-    outside_temp = 12.0
-    try:
-        telemetry = get_persisted_heating_status(db, force_refresh=True)
-        if telemetry.get("room_temperature") is not None:
-            room_temp = float(telemetry["room_temperature"])
-        if telemetry.get("outside_temperature") is not None:
-            outside_temp = float(telemetry["outside_temperature"])
-    except Exception as t_err:
-        logger.debug(f"[evaluate_and_sync_stay_heating] Télémétrie ViCare non disponible (défauts 16°C/12°C): {t_err}")
+    # 1. État réel de la chaudière (une seule lecture ViCare : télémétrie + mode actif).
+    #    Passerelle hors ligne : dernier relevé servi (is_cached_last_known) → mode réel inconnu.
+    telemetry = get_persisted_heating_status(db, force_refresh=not dry_run)
+    live_known = not telemetry.get("is_cached_last_known", False)
+    live_mode = (telemetry.get("active_mode") or telemetry.get("mode")) if live_known else None
+    room_temp = telemetry.get("room_temperature")
+    outside_temp = telemetry.get("outside_temperature")
 
-    # Récupération préalable de la consigne configurée sur /sejour
     setting = db.query(ThermalSettings).filter(ThermalSettings.equipment_type == "heating").first()
-    if not setting:
+    if setting is None:
         setting = ThermalSettings(equipment_type="heating")
-        db.add(setting)
+    dhw_setting = db.query(ThermalSettings).filter(ThermalSettings.equipment_type == "dhw").first()
+    if dhw_setting is None:
+        dhw_setting = ThermalSettings(equipment_type="dhw")
 
-    configured_comfort_temp = setting.target_temperature if (setting and setting.target_temperature is not None and setting.target_temperature >= 15.0) else 20.0
+    # Consigne confort configurée sur /sejour (source unique de vérité)
+    configured_comfort_temp = setting.target_temperature if (setting.target_temperature is not None and setting.target_temperature >= 15.0) else 20.0
 
-    # 2. Récupération des réservations confirmées
-    excluded_statuses = ("Annulée", "Refusée")
-    reservations = db.query(Reservation).filter(~Reservation.status.in_(excluded_statuses)).all()
+    # 2. Réservations confirmées
+    reservations = db.query(Reservation).filter(Reservation.status == "Confirmée").all()
 
     active_stays = []
     need_heating = False
     need_dhw = False
     need_pool = False
-    active_heating_temps = []
     evaluated_stays_info = []
 
     for r in reservations:
-        notes_str = r.notes or ""
         arr_time = r.arrival_time or "15:00"
         dep_time = r.departure_time or "11:00"
-        try:
-            arrival_dt = datetime.strptime(f"{r.start_date} {arr_time}", "%Y-%m-%d %H:%M").replace(tzinfo=tz_paris)
-            departure_dt = datetime.strptime(f"{r.end_date} {dep_time}", "%Y-%m-%d %H:%M").replace(tzinfo=tz_paris)
-        except Exception as dt_err:
-            logger.warning(f"[evaluate_and_sync_stay_heating] Erreur parsing date réservation {r.id}: {dt_err}")
-            continue
+        arrival_dt = datetime.strptime(f"{r.start_date} {arr_time}", "%Y-%m-%d %H:%M").replace(tzinfo=tz_paris)
+        departure_dt = datetime.strptime(f"{r.end_date} {dep_time}", "%Y-%m-%d %H:%M").replace(tzinfo=tz_paris)
+        wishes = parse_domotique_wishes(r.notes)
 
-        # Vérification piscine pour toutes propriétés (Presbytère ou Rosings) et toute saison
-        wants_pool = (
-            ("piscine" in notes_str.lower())
-            and ("coupé" not in notes_str.lower())
-            and ("coupe" not in notes_str.lower())
-            and ("hors-gel" not in notes_str.lower())
-        )
-        if wants_pool:
-            pool_window_start = arrival_dt - timedelta(hours=24.0)
-            pool_window_end = departure_dt
-            if pool_window_start <= now_paris <= pool_window_end:
-                need_pool = True
+        # Piscine : toutes propriétés (Presbytère ou Rosings) et toute saison
+        if wishes["wants_pool"] and (arrival_dt - timedelta(hours=24.0)) <= now_paris <= departure_dt:
+            need_pool = True
 
-        # Filtrage Presbytère pour le chauffage fioul ViCare
+        # Chauffage fioul ViCare : Presbytère uniquement
         is_presbytere = (r.property_id == 2) or (r.property_name and "presbyt" in r.property_name.lower())
         if not is_presbytere:
             continue
 
-        wants_heating = (
-            ("chauffage presbytère" in notes_str.lower() or "chauffage presbytere" in notes_str.lower() or "°c" in notes_str.lower())
-            and ("hors-gel" not in notes_str.lower())
-            and ("coupé" not in notes_str.lower())
-            and ("coupe" not in notes_str.lower())
-        )
-        wants_dhw = (
-            "eau chaude sanitaire coupée" not in notes_str.lower()
-            and "ecs coupée" not in notes_str.lower()
-            and "ecs coupee" not in notes_str.lower()
-        ) or wants_heating
-
-        # Consigne confort de référence issue de ThermalSettings (source unique de vérité)
-        stay_comfort_temp = configured_comfort_temp
-
-        # Calcul de l'anticipation dynamique avec consigne confort
+        wants_heating = wishes["wants_heating"]
+        wants_dhw = wishes["wants_dhw"]
         if wants_heating:
-            # Vitesse nette de chauffe (°C/h) selon la température extérieure :
-            # 1.20°C/h à >=12°C ext (calibré sur la montée réelle du Presbytère), -0.045°C/h par degré sous 12°C (plancher 0.40°C/h)
-            heating_rate_c_per_hour = max(0.40, 1.20 - 0.045 * max(0.0, 12.0 - outside_temp))
-            delta_temp = max(0.0, stay_comfort_temp - room_temp)
-            min_lead = 2.0 if wants_dhw else 1.0
-            lead_hours = round(min(24.0, max(min_lead, 0.5 + (delta_temp / heating_rate_c_per_hour))), 2)
+            if room_temp is None or outside_temp is None:
+                lead_hours = MAX_PREHEAT_LEAD_HOURS
+            else:
+                # Vitesse nette de chauffe (°C/h) selon la température extérieure :
+                # 1.20°C/h à >=12°C ext (calibré sur la montée réelle du Presbytère), -0.045°C/h par degré sous 12°C (plancher 0.40°C/h)
+                heating_rate_c_per_hour = max(0.40, 1.20 - 0.045 * max(0.0, 12.0 - float(outside_temp)))
+                delta_temp = max(0.0, configured_comfort_temp - float(room_temp))
+                min_lead = 2.0 if wants_dhw else 1.0
+                lead_hours = round(min(MAX_PREHEAT_LEAD_HOURS, max(min_lead, 0.5 + (delta_temp / heating_rate_c_per_hour))), 2)
         elif wants_dhw:
             lead_hours = 2.0
         else:
             lead_hours = 0.0
 
         window_start = arrival_dt - timedelta(hours=lead_hours)
-        window_end = departure_dt
-
-        is_in_window = (window_start <= now_paris <= window_end)
+        is_in_window = window_start <= now_paris <= departure_dt
 
         evaluated_stays_info.append({
             "id": r.id,
@@ -11850,119 +11821,103 @@ def evaluate_and_sync_stay_heating(db: Session, force_sync: bool = False) -> dic
             "departure_time": dep_time,
             "wants_heating": wants_heating,
             "wants_dhw": wants_dhw,
-            "stay_comfort_temp": stay_comfort_temp,
+            "stay_comfort_temp": configured_comfort_temp,
             "lead_hours": round(lead_hours, 2),
             "window_start": window_start.isoformat(),
-            "window_end": window_end.isoformat(),
+            "window_end": departure_dt.isoformat(),
             "is_in_window": is_in_window
         })
 
         if is_in_window:
             active_stays.append(r)
-            if wants_heating:
-                need_heating = True
-                active_heating_temps.append(stay_comfort_temp)
-            if wants_dhw:
-                need_dhw = True
+            need_heating = need_heating or wants_heating
+            need_dhw = need_dhw or wants_dhw
 
-    target_comfort_temp = configured_comfort_temp
     target_mode = ViCareService.resolve_unified_mode(is_heating=need_heating, is_dhw=need_dhw)
     target_dhw_state = "on" if need_dhw else "off"
-    target_temp = target_comfort_temp
+
+    # 3. Allumage manuel hors séjour : respecté MANUAL_HEATING_OVERRIDE_HOURS heures (un arrêt manuel est immédiat,
+    #    puisque la cible hors séjour est déjà standby).
+    manual_override_until = None
+    if (
+        not active_stays
+        and setting.mode in ("dhw", "dhwAndHeating")
+        and setting.updated_by
+        and setting.updated_by != HEATING_AUTOMATION_AUTHOR
+        and setting.updated_at is not None
+    ):
+        updated_at_utc = setting.updated_at if setting.updated_at.tzinfo else setting.updated_at.replace(tzinfo=timezone.utc)
+        override_expiry = updated_at_utc + timedelta(hours=MANUAL_HEATING_OVERRIDE_HOURS)
+        if now_utc < override_expiry:
+            manual_override_until = override_expiry
+            target_mode = setting.mode
+            target_dhw_state = dhw_setting.mode or "on"
+            need_heating = target_mode == "dhwAndHeating"
+            need_dhw = target_dhw_state == "on"
+
+    target_temp = configured_comfort_temp
     target_dhw_temp = 52.0
 
-    # 3. Synchronisation avec ThermalSettings
-    dhw_setting = db.query(ThermalSettings).filter(ThermalSettings.equipment_type == "dhw").first()
-    if not dhw_setting:
-        dhw_setting = ThermalSettings(equipment_type="dhw")
-        db.add(dhw_setting)
-
+    # 4. Synchronisation requise : base ≠ cible, OU chaudière réelle ≠ cible
     current_heating_mode = setting.mode or "standby"
     current_dhw_mode = dhw_setting.mode or "off"
+    db_out_of_sync = (current_heating_mode != target_mode) or (current_dhw_mode != target_dhw_state)
+    hardware_out_of_sync = live_mode in VICARE_KNOWN_MODES and live_mode != target_mode
+    temp_changed = need_heating and (setting.target_temperature is not None) and (abs(float(setting.target_temperature) - float(target_temp)) >= 0.5)
+    sync_required = db_out_of_sync or hardware_out_of_sync or temp_changed or force_sync
 
-    mode_changed = (current_heating_mode != target_mode) or (current_dhw_mode != target_dhw_state)
-    temp_changed = need_heating and (setting.target_temperature is not None) and (abs(float(setting.target_temperature) - float(target_comfort_temp)) >= 0.5)
-
-    vicare_command_executed = False
+    commands_sent = 0
     vicare_error = None
 
-    if mode_changed or temp_changed or force_sync:
-        setting.mode = target_mode
-        # Conserver la consigne confort configurée au lieu d'écraser par 5.0
-        if need_heating:
-            setting.target_temperature = target_comfort_temp
-        else:
-            setting.target_temperature = configured_comfort_temp
-        setting.updated_by = "Système Automatique (Asservissement Séjours)"
-        setting.updated_at = datetime.utcnow()
-
-        dhw_setting.mode = target_dhw_state
-        dhw_setting.target_temperature = target_dhw_temp
-        dhw_setting.updated_by = "Système Automatique (Asservissement Séjours)"
-        dhw_setting.updated_at = datetime.utcnow()
-
-        db.commit()
-
-        # Envoi de la commande matérielle ViCare sans écriture redondante (alignement app officielle ViCare)
+    if sync_required and not dry_run:
+        curr_target_temp = telemetry.get("target_temp") if live_known else None
+        curr_dhw_temp = telemetry.get("dhw_target_temp") if live_known else None
         try:
-            import time
-            current_status = {}
-            try:
-                current_status = ViCareService.get_status(force_refresh=True)
-            except Exception as cs_err:
-                logger.debug(f"[evaluate_and_sync_stay_heating] Erreur lecture current_status: {cs_err}")
-
-            commands_sent = 0
-            curr_mode = current_status.get("heating_mode") or current_status.get("mode") or current_status.get("active_mode")
-            curr_target_temp = current_status.get("target_temp") or current_status.get("target_temperature")
-            curr_dhw_temp = current_status.get("dhw_target_temp") or current_status.get("dhw_target_temperature") or current_status.get("dhw_configured_temperature")
-
             if target_mode == "standby":
-                if curr_mode != "standby" or force_sync:
-                    ViCareService.set_mode("standby", refresh_status=True)
+                if live_mode != "standby" or force_sync:
+                    ViCareService.set_mode("standby", refresh_status=False)
                     commands_sent += 1
-            elif target_mode in ("dhw", "dhwAndHeating"):
-                if curr_mode != target_mode:
+            else:
+                if live_mode != target_mode or force_sync:
                     ViCareService.set_mode(target_mode, refresh_status=False)
                     commands_sent += 1
                     time.sleep(1.0)
-
-                if need_heating and target_temp is not None:
-                    should_update_temp = False
-                    if curr_target_temp is not None:
-                        try:
-                            if abs(float(curr_target_temp) - float(target_temp)) >= 0.5:
-                                should_update_temp = True
-                        except (ValueError, TypeError):
-                            should_update_temp = True
-                    else:
-                        should_update_temp = True
-
-                    if should_update_temp:
-                        refresh_st = (curr_mode == target_mode)
-                        ViCareService.set_temperature(target_temp, program="normal", refresh_status=refresh_st)
-                        commands_sent += 1
-                        time.sleep(1.0)
-
-                if need_dhw and target_dhw_temp is not None and curr_dhw_temp != target_dhw_temp:
+                if need_heating and (curr_target_temp is None or abs(float(curr_target_temp) - float(target_temp)) >= 0.5):
+                    ViCareService.set_temperature(target_temp, program="normal", refresh_status=False)
+                    commands_sent += 1
+                    time.sleep(1.0)
+                if need_dhw and curr_dhw_temp != target_dhw_temp:
                     ViCareService.set_temperature(target_dhw_temp, program="dhw", refresh_status=False)
                     commands_sent += 1
+        except HTTPException as v_err:
+            detail = v_err.detail
+            vicare_error = detail.get("error") if isinstance(detail, dict) else str(detail)
+            logger.error(f"[evaluate_and_sync_stay_heating] Commande ViCare en échec ({commands_sent} envoyées), base inchangée pour réessai : {vicare_error}")
 
-                if commands_sent > 0:
-                    ViCareService.get_status(force_refresh=True)
-
+        if vicare_error is None:
+            # Écriture en base uniquement après succès matériel
+            setting.mode = target_mode
+            setting.target_temperature = configured_comfort_temp
+            dhw_setting.mode = target_dhw_state
+            dhw_setting.target_temperature = target_dhw_temp
+            if manual_override_until is None:
+                setting.updated_by = HEATING_AUTOMATION_AUTHOR
+                setting.updated_at = datetime.utcnow()
+                dhw_setting.updated_by = HEATING_AUTOMATION_AUTHOR
+                dhw_setting.updated_at = datetime.utcnow()
+            db.add(setting)
+            db.add(dhw_setting)
+            db.commit()
             if commands_sent > 0:
-                vicare_command_executed = True
+                # Relevé réel post-commande, persisté pour /sejour
+                get_persisted_heating_status(db, force_refresh=True)
             logger.info(
                 f"[evaluate_and_sync_stay_heating] Consignes ViCare appliquées ({commands_sent} commandes) : "
-                f"mode={target_mode}, heating={need_heating} ({target_temp}°C), dhw={need_dhw} ({target_dhw_temp}°C)"
+                f"mode={target_mode}, heating={need_heating} ({target_temp}°C), dhw={need_dhw} ({target_dhw_temp}°C), live_mode avant={live_mode}"
             )
-        except Exception as v_err:
-            vicare_error = str(v_err)
-            logger.warning(f"[evaluate_and_sync_stay_heating] Erreur commande ViCare : {v_err}")
 
     # Synchronisation de la piscine si demandée (quelle que soit la propriété)
-    if need_pool:
+    if need_pool and not dry_run:
         try:
             pool_setting = db.query(ThermalSettings).filter(ThermalSettings.equipment_type == "pool").first()
             if not pool_setting:
@@ -11971,7 +11926,7 @@ def evaluate_and_sync_stay_heating(db: Session, force_sync: bool = False) -> dic
             if pool_setting.mode != "confort":
                 pool_setting.mode = "confort"
                 pool_setting.filtration_mode = "marche"
-                pool_setting.updated_by = "Système Automatique (Asservissement Séjours)"
+                pool_setting.updated_by = HEATING_AUTOMATION_AUTHOR
                 pool_setting.updated_at = datetime.utcnow()
                 db.commit()
 
@@ -11985,20 +11940,28 @@ def evaluate_and_sync_stay_heating(db: Session, force_sync: bool = False) -> dic
             logger.warning(f"[evaluate_and_sync_stay_heating] Erreur synchro Klereo piscine: {k_err}")
 
     return {
-        "status": "success",
+        "status": "success" if vicare_error is None else "vicare_error",
+        "dry_run": dry_run,
         "now_paris": now_paris.isoformat(),
         "room_temperature": room_temp,
         "outside_temperature": outside_temp,
+        "live_known": live_known,
+        "live_mode": live_mode,
         "active_stays_count": len(active_stays),
         "need_heating": need_heating,
         "need_dhw": need_dhw,
         "need_pool": need_pool,
         "target_mode": target_mode,
         "target_temperature": target_temp,
-        "target_comfort_temperature": target_comfort_temp,
+        "target_comfort_temperature": configured_comfort_temp,
         "target_dhw_temperature": target_dhw_temp,
-        "mode_changed": mode_changed,
-        "vicare_command_executed": vicare_command_executed,
+        "manual_override_until": manual_override_until.isoformat() if manual_override_until else None,
+        "db_out_of_sync": db_out_of_sync,
+        "hardware_out_of_sync": hardware_out_of_sync,
+        "sync_required": sync_required,
+        "mode_changed": db_out_of_sync,
+        "commands_sent": commands_sent,
+        "vicare_command_executed": commands_sent > 0 and vicare_error is None,
         "vicare_error": vicare_error,
         "evaluated_stays": evaluated_stays_info
     }
@@ -12007,13 +11970,14 @@ def evaluate_and_sync_stay_heating(db: Session, force_sync: bool = False) -> dic
 @app.api_route("/api/cron/heating-stay-sync", methods=["GET", "POST"], tags=["Crons"])
 async def cron_heating_stay_sync(request: Request, force: bool = Query(False), db: Session = Depends(get_db)):
     """
-    Cron d'automatisation thermique asservi aux séjours (Vercel Cron + GitHub Actions toutes les 30 min) :
-    - Évalue les réservations confirmées au Presbytère
-    - Calcule l'anticipation dynamique (~12h selon température)
-    - Aligne la chaudière ViCare sur le mode requis (dhwAndHeating, dhw, standby)
-    - En GET : lecture et diagnostic transparents (HTTP 200)
-    - En POST ou mutation matérielle : protection stricte par CRON_SECRET / verify_cron_auth
+    Cron d'automatisation thermique asservi aux séjours (pg_cron Supabase + GitHub Actions) :
+    - GET : diagnostic en lecture seule (dry_run) — aucun ordre ViCare, aucune écriture de consigne.
+    - POST : asservissement réel, protégé par CRON_SECRET (ou membre connecté). Une commande ViCare en échec
+      renvoie HTTP 502 (le run GitHub / pg_net est alors visible en échec ; la base reste inchangée pour réessai).
     """
+    if request.method == "GET":
+        return evaluate_and_sync_stay_heating(db, dry_run=True)
+
     cron_secret = os.getenv("CRON_SECRET", "")
     auth_header = request.headers.get("Authorization", "")
     token = auth_header.replace("Bearer ", "", 1).strip() if auth_header.startswith("Bearer ") else ""
@@ -12021,30 +11985,22 @@ async def cron_heating_stay_sync(request: Request, force: bool = Query(False), d
         token = request.query_params.get("token") or request.query_params.get("cron_secret") or request.query_params.get("secret")
 
     is_authenticated_cron = bool(cron_secret and token and secrets.compare_digest(token, cron_secret))
-
-    # Si ce n'est pas un cron authentifié, vérifier si c'est un utilisateur membre connecté
-    if not is_authenticated_cron and cron_secret:
-        try:
-            user = get_optional_current_user(request, db)
-            if user:
-                is_authenticated_cron = True
-        except Exception:
-            pass
-
-    # Si requête POST de déclenchement ou force=True, exiger l'authentification
-    if (request.method == "POST" or force) and not is_authenticated_cron and cron_secret:
-        verify_cron_auth(request)
+    if not is_authenticated_cron:
+        if get_optional_current_user(request, db) is None:
+            verify_cron_auth(request)  # lève 401
+        is_authenticated_cron = True
 
     result = evaluate_and_sync_stay_heating(db, force_sync=(force and is_authenticated_cron))
     result["authenticated"] = is_authenticated_cron
 
     # Réessai automatique des commandes piscine en attente (K-Link radio sync)
     try:
-        pool_retry_res = retry_pending_pool_commands(db)
-        result["pool_retry"] = pool_retry_res
+        result["pool_retry"] = retry_pending_pool_commands(db)
     except Exception as pool_err:
         logger.warning(f"[CRON HEATING] Erreur retry pool: {pool_err}")
 
+    if result["vicare_error"] is not None:
+        raise HTTPException(status_code=status.HTTP_502_BAD_GATEWAY, detail=result)
     return result
 
 
