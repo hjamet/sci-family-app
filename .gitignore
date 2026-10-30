@@ -30,7 +30,9 @@ certs/
 backend/scripts/*
 !backend/scripts/generate_drive_refresh_token.py
 !backend/scripts/sync_oct2026_roadmap_tasks.py
+!backend/scripts/reconcile_nov2026_ledger.py
 !backend/tests/test_sync_oct2026_roadmap_tasks.py
+!backend/tests/test_reconcile_nov2026_ledger.py
 .drive_refresh_token
 backend/.drive_refresh_token
 
@@ -77,6 +79,7 @@ test_*.py
 !backend/tests/test_drive_env_token.py
 !backend/tests/test_calls_for_funds_production_ready.py
 !backend/tests/test_sync_oct2026_roadmap_tasks.py
+!backend/tests/test_reconcile_nov2026_ledger.py
 backend/app/uploads/
 backend/archive_scratch_tests/
 uploads/

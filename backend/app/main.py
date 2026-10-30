@@ -11508,6 +11508,25 @@ def update_member_expense_endpoint(
                     t.documents = json.dumps(t_docs)
             t.updated_at = datetime.utcnow()
 
+    # Synchronisation idempotente au grand livre si avance membre approuvée/payée/validée
+    if (expense.status or "").strip().upper() in ("APPROVED", "PAID", "VALIDATED") and (expense.payer_type or "member").strip().lower() != "sci" and expense.member_id:
+        existing_ledger = db.query(MemberLedgerEntry).filter(
+            MemberLedgerEntry.expense_id == expense.id,
+            MemberLedgerEntry.entry_type == "AVANCE"
+        ).first()
+        if not existing_ledger:
+            from .services.treasury_service import add_ledger_entry
+            add_ledger_entry(
+                db=db,
+                member_id=expense.member_id,
+                entry_type="AVANCE",
+                amount=float(expense.amount),
+                description=f"Avance validée : {expense.title}",
+                expense_id=expense.id
+            )
+        from .services.call_for_funds_service import reconcile_open_calls_for_member
+        reconcile_open_calls_for_member(db, expense.member_id)
+
     db.commit()
     db.refresh(expense)
     return expense
