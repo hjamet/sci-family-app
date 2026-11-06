@@ -231,6 +231,9 @@ app.add_middleware(
     expose_headers=["*"]
 )
 
+from .routers.toaster import router as toaster_router
+app.include_router(toaster_router)
+
 @app.exception_handler(Exception)
 async def global_exception_handler(request: Request, exc: Exception):
     logger.error(f"[GLOBAL UNHANDLED ERROR] {request.method} {request.url.path}: {exc}", exc_info=True)
