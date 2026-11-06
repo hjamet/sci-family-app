@@ -453,6 +453,14 @@ def intercept_email_notification(
     )
 
 
+def _format_member_display_name(m: Member) -> str:
+    prenom = (m.prenom or "").strip()
+    nom = (m.name or "").strip()
+    if nom and prenom and prenom.lower() in nom.lower():
+        return nom
+    return f"{prenom} {nom}".strip() or nom or prenom
+
+
 def get_sandbox_state(prod_db: Session, member_id: Optional[int] = None) -> Dict[str, Any]:
     """
     Retourne l'état complet du bac à sable pour GET /api/toaster/state :
@@ -477,8 +485,8 @@ def get_sandbox_state(prod_db: Session, member_id: Optional[int] = None) -> Dict
             {
                 "id": m.id,
                 "prenom": m.prenom,
-                "nom": m.name,
-                "name": m.name,
+                "nom": _format_member_display_name(m),
+                "name": _format_member_display_name(m),
                 "email": m.email,
                 "role": m.role,
                 "is_coordinator": bool(m.is_coordinator),
@@ -682,8 +690,8 @@ def get_sandbox_state(prod_db: Session, member_id: Optional[int] = None) -> Dict
             {
                 "id": active_member.id,
                 "prenom": active_member.prenom,
-                "nom": active_member.name,
-                "name": active_member.name,
+                "nom": _format_member_display_name(active_member),
+                "name": _format_member_display_name(active_member),
                 "email": active_member.email,
                 "role": active_member.role,
                 "is_coordinator": bool(active_member.is_coordinator),

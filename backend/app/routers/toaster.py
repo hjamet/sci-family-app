@@ -20,8 +20,11 @@ from ..services.toaster_sandbox import (
 logger = logging.getLogger("sci_api.toaster")
 
 import base64
+from pathlib import Path
 from dotenv import load_dotenv
 
+_BACKEND_ENV_PATH = Path(__file__).resolve().parents[2] / ".env"
+load_dotenv(dotenv_path=_BACKEND_ENV_PATH)
 load_dotenv()
 
 router = APIRouter(prefix="/api/toaster", tags=["Grille-Pain IA (Sandbox)"])
@@ -31,11 +34,14 @@ GEMINI_ENDPOINT = f"https://generativelanguage.googleapis.com/v1beta/{GEMINI_MOD
 
 
 def _get_toaster_api_key() -> str:
+    load_dotenv(dotenv_path=_BACKEND_ENV_PATH)
     env_key = os.getenv("GEMINI_TOASTER_API_KEY", "").strip()
-    if env_key:
-        return env_key
-    rev = "QRwzRt3h9aivIvoCMhets_lX2wKkSj1CTfLCVgOVHbJ6NR8bA.QA"
-    return rev[::-1]
+    if not env_key:
+        raise RuntimeError(
+            "GEMINI_TOASTER_API_KEY est absente de l'environnement (backend/.env). "
+            "Impossible d'appeler l'orchestrateur Grille-Pain (Fail-Fast)."
+        )
+    return env_key
 
 
 class ToasterResetRequest(BaseModel):

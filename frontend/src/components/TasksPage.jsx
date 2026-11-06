@@ -214,6 +214,17 @@ export default function TasksPage({ currentUser = 'Henri Jamet' }) {
     return true;
   };
 
+  const voteCounts = useMemo(() => {
+    const list = Array.isArray(projects) ? projects.filter(Boolean) : [];
+    return {
+      ALL: list.length,
+      OPEN: list.filter((p) => isVoteOpen(p)).length,
+      PROPOSED: list.filter((p) => isVoteProposed(p)).length,
+      PENDING_VALIDATION: list.filter((p) => isVotePendingValidation(p)).length,
+      ARCHIVED: list.filter((p) => isVoteArchived(p)).length,
+    };
+  }, [projects]);
+
   // Liste des scrutins pour le carrousel filtrée selon voteFilter (Annotations 8, 10, 11)
   const votesList = useMemo(() => {
     if (!projects || projects.length === 0) {
@@ -223,7 +234,7 @@ export default function TasksPage({ currentUser = 'Henri Jamet' }) {
       if (!p) return false;
       if (voteFilter === 'ALL') return true;
       if (voteFilter === 'PROPOSED') return isVoteProposed(p);
-      if (voteFilter === 'OPEN') return isVoteOpen(p);
+      if (voteFilter === 'OPEN') return isVoteOpen(p) || isVoteProposed(p) || isVotePendingValidation(p);
       if (voteFilter === 'PENDING_VALIDATION') return isVotePendingValidation(p);
       if (voteFilter === 'ARCHIVED') return isVoteArchived(p);
       return true;

@@ -1,31 +1,28 @@
 import React, { useState, useEffect, useRef, useMemo } from 'react';
 
 const STATUTORY_MEMBERS_FALLBACK = [
-  { id: 6, prenom: 'Élisabeth', nom: 'Jamet', displayLabel: 'Maman (Élisabeth) Jamet' },
-  { id: 1, prenom: 'Henri', nom: 'Jamet', displayLabel: 'Henri Jamet' },
-  { id: 7, prenom: 'Frédéric', nom: 'Jamet', displayLabel: 'Frédéric Jamet' },
-  { id: 3, prenom: 'Marguerite', nom: 'Jamet', displayLabel: 'Marguerite Jamet' },
-  { id: 2, prenom: 'Hortense', nom: 'Jamet', displayLabel: 'Hortense Jamet' },
-  { id: 5, prenom: 'Joséphine', nom: 'Jamet', displayLabel: 'Joséphine Jamet' },
-  { id: 4, prenom: 'Eugénie', nom: 'Jamet', displayLabel: 'Eugénie Jamet' },
+  { id: 6, prenom: 'Maman', nom: 'Maman (Élisabeth) Jamet', displayLabel: 'Maman (Élisabeth) Jamet' },
+  { id: 1, prenom: 'Henri', nom: 'Henri Jamet', displayLabel: 'Henri Jamet' },
+  { id: 7, prenom: 'Frédéric', nom: 'Frédéric Jamet', displayLabel: 'Frédéric Jamet' },
+  { id: 3, prenom: 'Marguerite', nom: 'Marguerite Jamet', displayLabel: 'Marguerite Jamet' },
+  { id: 2, prenom: 'Hortense', nom: 'Hortense Jamet', displayLabel: 'Hortense Jamet' },
+  { id: 5, prenom: 'Joséphine', nom: 'Joséphine Jamet', displayLabel: 'Joséphine Jamet' },
+  { id: 4, prenom: 'Eugénie', nom: 'Eugénie Ducrocq', displayLabel: 'Eugénie Ducrocq' },
 ];
 
 function formatAssociateLabel(member) {
   if (!member) return 'Associé';
   if (member.displayLabel) return member.displayLabel;
-  const prenom = (member.prenom || member.first_name || member.name || '').trim();
-  const nom = (member.nom || member.last_name || 'Jamet').trim();
-  const lower = prenom.toLowerCase();
-  if (lower.includes('élisabeth') || lower.includes('elisabeth') || lower.includes('maman')) {
+  const prenom = (member.prenom || member.first_name || '').trim();
+  const nom = (member.nom || member.name || member.last_name || '').trim();
+  if (nom && prenom && nom.toLowerCase().includes(prenom.toLowerCase())) {
+    return nom;
+  }
+  const full = `${prenom} ${nom}`.trim();
+  if (full.toLowerCase().includes('élisabeth') || full.toLowerCase().includes('elisabeth') || full.toLowerCase().includes('maman')) {
     return 'Maman (Élisabeth) Jamet';
   }
-  if (lower.includes('eugénie') || lower.includes('eugenie')) {
-    return 'Eugénie Jamet';
-  }
-  if (prenom.toLowerCase().includes('jamet')) {
-    return prenom;
-  }
-  return `${prenom} ${nom}`.trim();
+  return full || 'Associé';
 }
 
 function formatCurrency(val) {
