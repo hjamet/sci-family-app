@@ -1240,34 +1240,29 @@ export default function AdminInfoPage({ currentUser }) {
             </p>
           </div>
 
-          {/* Quick Actions Buttons */}
-          <div className="flex flex-wrap sm:flex-nowrap items-center gap-3 shrink-0 pt-2 md:pt-0">
+          {/* Quick Actions Buttons — Unification ergonomique */}
+          <div className="flex flex-col sm:flex-row sm:items-center gap-2.5 shrink-0 pt-2 md:pt-0">
             <button
-              id="btn-open-operation"
+              id="btn-open-upload-invoice-top"
               type="button"
               onClick={() => {
-                setOperationType('out');
-                setOperationFile(null);
-                setOperationDocument(null);
-                setOperationFileName('');
-                setOperationFileError('');
-                setOperationLabelError('');
-                setIsOperationModalOpen(true);
+                setUploadModalMode('invoice');
+                setIsUploadModalOpen(true);
               }}
-              className="group flex items-center justify-center gap-2 px-5 py-3.5 rounded-DEFAULT bg-white dark:bg-slate-900 border-2 border-outline-variant text-on-surface hover:bg-canvas-slate hover:border-outline font-label-lg text-sm sm:text-base font-semibold transition-all duration-200 shadow-sm cursor-pointer whitespace-nowrap"
+              className="group flex items-center justify-center gap-2 px-5 py-3.5 rounded-DEFAULT bg-primary text-on-primary hover:bg-forest-deep font-label-lg text-sm sm:text-base font-bold shadow-sm hover:shadow-md transition-all duration-200 cursor-pointer whitespace-nowrap"
             >
-              <span className="material-symbols-outlined text-[22px] text-on-surface-variant group-hover:scale-110 transition-transform">payments</span>
-              <span>Déclarer une dépense</span>
+              <span className="material-symbols-outlined text-[22px] group-hover:scale-110 transition-transform">receipt_long</span>
+              <span>+ Déposer une facture ou dépense</span>
             </button>
 
             <button
               id="btn-open-upload"
               type="button"
               onClick={openDocumentUploadModal}
-              className="group flex items-center justify-center gap-2 px-5 py-3.5 rounded-DEFAULT bg-white dark:bg-slate-900 border-2 border-primary text-primary hover:bg-sage-soft font-label-lg text-sm sm:text-base font-bold shadow-sm hover:shadow-md transition-all duration-200 cursor-pointer whitespace-nowrap"
+              className="group flex items-center justify-center gap-1.5 px-4 py-2.5 rounded-DEFAULT bg-white/80 dark:bg-slate-900 border border-outline-variant text-on-surface-variant hover:text-forest-deep hover:bg-canvas-slate hover:border-outline font-label-md text-xs sm:text-sm font-medium transition-all duration-200 cursor-pointer whitespace-nowrap"
             >
-              <span className="material-symbols-outlined text-[22px] group-hover:scale-110 transition-transform">upload_file</span>
-              <span>+ Déposer une pièce</span>
+              <span className="material-symbols-outlined text-[18px]">folder_open</span>
+              <span>+ Archiver un autre document (RIB, CNI, PV)</span>
             </button>
           </div>
         </div>
@@ -1297,16 +1292,22 @@ export default function AdminInfoPage({ currentUser }) {
 
           <div className="flex items-center gap-2">
             <button
-              id="btn-open-upload-invoice-top"
+              id="btn-open-operation"
               type="button"
               onClick={() => {
-                setUploadModalMode('invoice');
-                setIsUploadModalOpen(true);
+                setOperationType('out');
+                setOperationFile(null);
+                setOperationDocument(null);
+                setOperationFileName('');
+                setOperationFileError('');
+                setOperationLabelError('');
+                setIsOperationModalOpen(true);
               }}
-              className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-DEFAULT bg-primary text-on-primary hover:bg-forest-deep text-xs font-semibold shadow-sm transition-all cursor-pointer"
+              className="inline-flex items-center gap-1 px-2.5 py-1 rounded-DEFAULT text-xs font-medium text-on-surface-variant hover:text-primary hover:bg-surface-container-low transition-colors cursor-pointer"
+              title="Saisie comptable avancée (flux entrant ou sortant)"
             >
-              <span className="material-symbols-outlined text-[16px]">receipt_long</span>
-              <span>+ Déposer une facture</span>
+              <span className="material-symbols-outlined text-[15px]">payments</span>
+              <span>Saisie comptable directe</span>
             </button>
             <span className="text-xs font-semibold text-on-surface-variant bg-surface-container-low px-3 py-1.5 rounded-full">
               {myInvoices.length} {myInvoices.length <= 1 ? 'facture' : 'factures'}

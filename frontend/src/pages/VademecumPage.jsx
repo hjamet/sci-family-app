@@ -910,56 +910,67 @@ function FuelInteractiveGraph({ fuelHistory, heatingStatus, onRefreshFuel }) {
             </div>
           </div>
 
-          {/* Cartouches télémétrie Viessmann */}
-          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-2.5 text-xs">
-            <div className="p-3 rounded-xl bg-amber-50/60 dark:bg-amber-950/20 border border-amber-200/60 dark:border-amber-800/40">
-              <span className="text-[10px] uppercase font-bold text-amber-800 dark:text-amber-300 block">
-                Ratio Consommation / Allumage
+          {/* Accordéon discret pour les métriques d'ingénieur chaudière */}
+          <details className="group rounded-xl border border-slate-200 dark:border-slate-700 bg-slate-50/70 dark:bg-slate-800/40 p-3">
+            <summary className="list-none flex items-center justify-between cursor-pointer text-xs font-semibold text-slate-700 dark:text-slate-300 select-none">
+              <span className="inline-flex items-center gap-1.5">
+                <span className="material-symbols-outlined text-[16px] text-slate-500">engineering</span>
+                <span>Détails techniques chaudière</span>
               </span>
-              <span className="text-base font-bold text-amber-950 dark:text-amber-100 font-mono mt-0.5 block">
-                0,293 L / allumage
+              <span className="material-symbols-outlined text-[18px] text-slate-500 group-open:rotate-180 transition-transform">
+                expand_more
               </span>
-              <span className="text-[10px] text-amber-700 dark:text-amber-400">
-                Cycle moyen : 10 min 50 s
-              </span>
-            </div>
+            </summary>
+            <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-2.5 text-xs mt-3 pt-2.5 border-t border-slate-200/70 dark:border-slate-700/70">
+              <div className="p-3 rounded-xl bg-amber-50/60 dark:bg-amber-950/20 border border-amber-200/60 dark:border-amber-800/40">
+                <span className="text-[10px] uppercase font-bold text-amber-800 dark:text-amber-300 block">
+                  Ratio Consommation / Allumage
+                </span>
+                <span className="text-base font-bold text-amber-950 dark:text-amber-100 font-mono mt-0.5 block">
+                  0,293 L / allumage
+                </span>
+                <span className="text-[10px] text-amber-700 dark:text-amber-400">
+                  Cycle moyen : 10 min 50 s
+                </span>
+              </div>
 
-            <div className="p-3 rounded-xl bg-emerald-50/60 dark:bg-emerald-950/20 border border-emerald-200/60 dark:border-emerald-800/40">
-              <span className="text-[10px] uppercase font-bold text-emerald-800 dark:text-emerald-300 block">
-                Débit Horaire Gicleur
-              </span>
-              <span className="text-base font-bold text-emerald-950 dark:text-emerald-100 font-mono mt-0.5 block">
-                1,62 L / heure
-              </span>
-              <span className="text-[10px] text-emerald-700 dark:text-emerald-400">
-                Danfoss 0,50 / 80° H LEV DA
-              </span>
-            </div>
+              <div className="p-3 rounded-xl bg-emerald-50/60 dark:bg-emerald-950/20 border border-emerald-200/60 dark:border-emerald-800/40">
+                <span className="text-[10px] uppercase font-bold text-emerald-800 dark:text-emerald-300 block">
+                  Débit Horaire Gicleur
+                </span>
+                <span className="text-base font-bold text-emerald-950 dark:text-emerald-100 font-mono mt-0.5 block">
+                  1,62 L / heure
+                </span>
+                <span className="text-[10px] text-emerald-700 dark:text-emerald-400">
+                  Danfoss 0,50 / 80° H LEV DA
+                </span>
+              </div>
 
-            <div className="p-3 rounded-xl bg-slate-50 dark:bg-slate-800/60 border border-slate-200 dark:border-slate-700">
-              <span className="text-[10px] uppercase font-bold text-slate-500 block">
-                Heures Brûleur Cumulées
-              </span>
-              <span className="text-base font-bold text-slate-900 dark:text-slate-100 font-mono mt-0.5 block">
-                {heatingStatus?.burner_hours != null ? `${heatingStatus.burner_hours.toLocaleString('fr-FR')} h` : '—'}
-              </span>
-              <span className="text-[10px] text-slate-500">
-                Compteur temps réel ViCare
-              </span>
-            </div>
+              <div className="p-3 rounded-xl bg-slate-50 dark:bg-slate-800/60 border border-slate-200 dark:border-slate-700">
+                <span className="text-[10px] uppercase font-bold text-slate-500 block">
+                  Heures Brûleur Cumulées
+                </span>
+                <span className="text-base font-bold text-slate-900 dark:text-slate-100 font-mono mt-0.5 block">
+                  {heatingStatus?.burner_hours != null ? `${heatingStatus.burner_hours.toLocaleString('fr-FR')} h` : '—'}
+                </span>
+                <span className="text-[10px] text-slate-500">
+                  Compteur temps réel ViCare
+                </span>
+              </div>
 
-            <div className="p-3 rounded-xl bg-slate-50 dark:bg-slate-800/60 border border-slate-200 dark:border-slate-700">
-              <span className="text-[10px] uppercase font-bold text-slate-500 block">
-                Allumages Brûleur Viessmann
-              </span>
-              <span className="text-base font-bold text-slate-900 dark:text-slate-100 font-mono mt-0.5 block">
-                {heatingStatus?.burner_starts != null ? `${heatingStatus.burner_starts.toLocaleString('fr-FR')} allumages` : '—'}
-              </span>
-              <span className="text-[10px] text-slate-500">
-                {heatingStatus?.burner_starts != null ? `Total estimé : ${Math.round(heatingStatus.burner_starts * 0.293).toLocaleString('fr-FR')} L` : '—'}
-              </span>
+              <div className="p-3 rounded-xl bg-slate-50 dark:bg-slate-800/60 border border-slate-200 dark:border-slate-700">
+                <span className="text-[10px] uppercase font-bold text-slate-500 block">
+                  Allumages Brûleur Viessmann
+                </span>
+                <span className="text-base font-bold text-slate-900 dark:text-slate-100 font-mono mt-0.5 block">
+                  {heatingStatus?.burner_starts != null ? `${heatingStatus.burner_starts.toLocaleString('fr-FR')} allumages` : '—'}
+                </span>
+                <span className="text-[10px] text-slate-500">
+                  {heatingStatus?.burner_starts != null ? `Total estimé : ${Math.round(heatingStatus.burner_starts * 0.293).toLocaleString('fr-FR')} L` : '—'}
+                </span>
+              </div>
             </div>
-          </div>
+          </details>
         </div>
       )}
 
@@ -2303,44 +2314,77 @@ export default function VademecumPage({ properties, currentUser, reservations = 
       {/* ===================================================================== */}
       {/* BARRE DE NAVIGATION MULTI-PAGES SÉJOURS & VUE DOMAINE (Annotation 2)  */}
       {/* ===================================================================== */}
-      <section className="bg-surface-container-lowest rounded-2xl p-4 sm:p-5 shadow-sm border border-border-subtle mb-8 flex items-center justify-between gap-3 sm:gap-4 w-full max-w-full">
-        {/* Bouton Précédent / Flèche Gauche */}
-        <button
-          type="button"
-          onClick={() => setCurrentPageIndex((prev) => Math.max(0, prev - 1))}
-          disabled={currentPageIndex === 0}
-          aria-label="Séjour précédent ou vue domaine"
-          className={`flex items-center gap-2 px-4 py-3 rounded-xl font-label-md text-sm font-bold transition-all shadow-xs shrink-0 select-none ${
-            currentPageIndex > 0
-              ? 'bg-white hover:bg-canvas-slate text-forest-deep border-2 border-border-subtle hover:border-primary active:scale-95 cursor-pointer'
-              : 'bg-canvas-slate text-on-surface-variant/40 border border-border-subtle cursor-not-allowed opacity-50'
-          }`}
-        >
-          <span className="material-symbols-outlined text-[24px]">chevron_left</span>
-          <span className="hidden sm:inline">
-            {currentPageIndex === 1 ? 'Vue Domaine' : 'Séjour précédent'}
-          </span>
-        </button>
+      <section className="bg-surface-container-lowest rounded-2xl p-4 sm:p-5 shadow-sm border border-border-subtle mb-8 flex flex-col gap-3 w-full max-w-full">
+        {/* Deux onglets explicites : En ce moment au Domaine vs Prochains séjours */}
+        <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+          <div className="inline-flex items-center rounded-xl bg-surface-container p-1 border border-border-subtle self-start">
+            <button
+              type="button"
+              onClick={() => setCurrentPageIndex(0)}
+              className={`inline-flex items-center gap-2 px-4 py-2 rounded-lg font-label-md text-xs sm:text-sm font-bold transition-all cursor-pointer ${
+                currentPageIndex === 0
+                  ? 'bg-white text-forest-deep shadow-xs'
+                  : 'text-on-surface-variant hover:text-forest-deep'
+              }`}
+            >
+              <span className="material-symbols-outlined text-[18px] text-primary">domain</span>
+              <span>En ce moment au Domaine</span>
+            </button>
 
-        {/* Titre & Indicateur de Page Central */}
-        <div className="flex flex-col items-center text-center min-w-0 px-2">
-          <div className="flex items-center gap-2 flex-wrap justify-center mb-1">
-            {currentPageIndex === 0 ? (
-              <span className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full bg-surface-container font-label-sm text-xs font-bold text-on-surface-variant">
-                <span className="material-symbols-outlined text-[16px] text-primary">domain</span>
-                PAGE 0 • VUE DOMAINE SEUL
-              </span>
-            ) : (
-              <span className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full bg-emerald-100 text-emerald-900 dark:bg-emerald-950 dark:text-emerald-200 font-label-sm text-xs font-bold">
-                <span className="material-symbols-outlined text-[16px] text-emerald-700">calendar_today</span>
-                PAGE {currentPageIndex}/{totalStays} • {currentPageIndex === 1 ? 'PROCHAIN SÉJOUR' : `SÉJOUR ${currentPageIndex}`}
-              </span>
-            )}
+            <button
+              type="button"
+              onClick={() => {
+                if (totalStays > 0 && currentPageIndex === 0) {
+                  setCurrentPageIndex(1);
+                }
+              }}
+              disabled={totalStays === 0 || stayLoading}
+              className={`inline-flex items-center gap-2 px-4 py-2 rounded-lg font-label-md text-xs sm:text-sm font-bold transition-all ${
+                currentPageIndex > 0
+                  ? 'bg-white text-forest-deep shadow-xs cursor-pointer'
+                  : totalStays > 0 && !stayLoading
+                  ? 'text-on-surface-variant hover:text-forest-deep cursor-pointer'
+                  : 'text-on-surface-variant/40 cursor-not-allowed opacity-60'
+              }`}
+            >
+              <span className="material-symbols-outlined text-[18px] text-emerald-700">calendar_today</span>
+              <span>Prochains séjours ({totalStays})</span>
+            </button>
           </div>
 
-          <h2 className="font-headline-md text-base sm:text-lg lg:text-xl font-bold text-forest-deep tracking-tight truncate max-w-full">
+          {/* Sous-navigation entre les prochains séjours lorsque l'onglet Prochains séjours est actif */}
+          {currentPageIndex > 0 && totalStays > 1 && (
+            <div className="flex items-center gap-2">
+              <button
+                type="button"
+                onClick={() => setCurrentPageIndex((prev) => Math.max(1, prev - 1))}
+                disabled={currentPageIndex <= 1}
+                aria-label="Séjour précédent"
+                className="w-8 h-8 rounded-lg border border-border-subtle bg-white hover:bg-canvas-slate text-forest-deep flex items-center justify-center disabled:opacity-40 cursor-pointer"
+              >
+                <span className="material-symbols-outlined text-[18px]">chevron_left</span>
+              </button>
+              <span className="text-xs font-bold text-forest-deep tabular-nums">
+                Séjour {currentPageIndex} / {totalStays}
+              </span>
+              <button
+                type="button"
+                onClick={() => setCurrentPageIndex((prev) => Math.min(totalStays, prev + 1))}
+                disabled={currentPageIndex >= totalStays}
+                aria-label="Séjour suivant"
+                className="w-8 h-8 rounded-lg border border-border-subtle bg-white hover:bg-canvas-slate text-forest-deep flex items-center justify-center disabled:opacity-40 cursor-pointer"
+              >
+                <span className="material-symbols-outlined text-[18px]">chevron_right</span>
+              </button>
+            </div>
+          )}
+        </div>
+
+        {/* Titre & Résumé contextuel */}
+        <div className="flex flex-col sm:flex-row sm:items-baseline justify-between gap-1 pt-1 border-t border-border-subtle/60">
+          <h2 className="font-headline-md text-base sm:text-lg font-bold text-forest-deep tracking-tight truncate max-w-full">
             {currentPageIndex === 0 ? (
-              'Vue d’ensemble du Domaine'
+              'En ce moment au Domaine'
             ) : (
               <>
                 <span>{currentPageIndex === 1 ? 'Prochain séjour' : `Séjour n°${currentPageIndex}`}</span>
@@ -2353,34 +2397,16 @@ export default function VademecumPage({ properties, currentUser, reservations = 
             )}
           </h2>
 
-          <p className="text-xs text-on-surface-variant mt-0.5 truncate max-w-full">
+          <p className="text-xs text-on-surface-variant truncate max-w-full">
             {stayLoading
               ? 'Recherche et chargement de vos prochains séjours...'
               : currentPageIndex === 0
               ? (totalStays > 0
-                  ? `${totalStays} séjour(s) planifié(s) • Naviguez avec les flèches pour consulter chaque séjour`
+                  ? `${totalStays} séjour(s) planifié(s) • Supervision thermique et intendance permanente du domaine`
                   : 'Aucun séjour planifié • Supervision thermique et intendance permanente du domaine')
               : (currentStay?.user_name ? `Séjour de ${currentStay.user_name} • Semaine ${currentStay.week_number || ''}` : 'Séjour planifié')}
           </p>
         </div>
-
-        {/* Bouton Suivant / Flèche Droite */}
-        <button
-          type="button"
-          onClick={() => setCurrentPageIndex((prev) => Math.min(totalStays, prev + 1))}
-          disabled={currentPageIndex >= totalStays || totalStays === 0 || stayLoading}
-          aria-label="Séjour suivant"
-          className={`flex items-center gap-2 px-4 py-3 rounded-xl font-label-md text-sm font-bold transition-all shadow-xs shrink-0 select-none ${
-            currentPageIndex < totalStays && totalStays > 0 && !stayLoading
-              ? 'bg-white hover:bg-canvas-slate text-forest-deep border-2 border-border-subtle hover:border-primary active:scale-95 cursor-pointer'
-              : 'bg-canvas-slate text-on-surface-variant/40 border border-border-subtle cursor-not-allowed opacity-50'
-          }`}
-        >
-          <span className="hidden sm:inline">
-            {currentPageIndex === 0 ? 'Prochain séjour' : 'Séjour suivant'}
-          </span>
-          <span className="material-symbols-outlined text-[24px]">chevron_right</span>
-        </button>
       </section>
 
       {/* ===================================================================== */}
@@ -2760,18 +2786,18 @@ export default function VademecumPage({ properties, currentUser, reservations = 
 
                 <ViCareLinkNotice heatingError={heatingError} heatingStatus={heatingStatus} />
 
-                {/* Sondes réelles ViCare (Ambiante mesurée & Chaudière réelle) */}
+                {/* Sondes réelles ViCare en vue directe : Températures (Intérieure / Extérieure) */}
                 <div className="grid grid-cols-2 gap-2">
                   <div className="p-3 bg-white dark:bg-slate-900 rounded-xl border border-border-subtle flex flex-col gap-0.5 shadow-2xs">
-                    <span className="text-[11px] text-on-surface-variant font-medium">Ambiante mesurée</span>
+                    <span className="text-[11px] text-on-surface-variant font-medium">Température intérieure</span>
                     <span className="font-headline-md text-base sm:text-lg font-bold text-on-surface tabular-nums">
                       {heatingStatus?.room_temperature != null ? `${heatingStatus.room_temperature.toFixed(1)}°C` : '--°C'}
                     </span>
                   </div>
                   <div className="p-3 bg-white dark:bg-slate-900 rounded-xl border border-border-subtle flex flex-col gap-0.5 shadow-2xs">
-                    <span className="text-[11px] text-on-surface-variant font-medium">Chaudière réelle</span>
+                    <span className="text-[11px] text-on-surface-variant font-medium">Température extérieure</span>
                     <span className="font-headline-md text-base sm:text-lg font-bold text-on-surface tabular-nums">
-                      {heatingStatus?.boiler_temperature != null ? `${heatingStatus.boiler_temperature.toFixed(1)}°C` : '--°C'}
+                      {heatingStatus?.outside_temperature != null ? `${heatingStatus.outside_temperature.toFixed(1)}°C` : '--°C'}
                     </span>
                   </div>
                 </div>
@@ -2866,12 +2892,12 @@ export default function VademecumPage({ properties, currentUser, reservations = 
                         <div className="flex items-center gap-2 min-w-0">
                           <span className="material-symbols-outlined text-amber-600 text-[20px] shrink-0">local_gas_station</span>
                           <div className="flex flex-col min-w-0">
-                            <span className="text-xs font-semibold text-on-surface">Cuve Fioul (Éts JOSSE)</span>
-                            <span className="text-[11px] text-on-surface-variant">Capacité {fmtLiters(fuelCapacity)} ({fmtCm(tankHeight)})</span>
+                            <span className="text-xs font-semibold text-on-surface">Niveau de fioul (Cuve Éts JOSSE)</span>
+                            <span className="text-[11px] text-on-surface-variant">Capacité {fmtLiters(fuelCapacity)}</span>
                           </div>
                         </div>
                         <span className="font-headline-sm text-xs font-bold text-amber-950 bg-amber-50 border border-amber-200/80 tabular-nums shrink-0 px-2.5 py-1 rounded-md">
-                          {fuelRemaining != null ? `${fuelRemaining.toLocaleString('fr-FR')} L` : '-- L'} / {fmtLiters(fuelCapacity)} • {fuelPercent != null ? `${fuelPercent}%` : '--%'} • {fmtCm(fuelHeight)}
+                          {fuelRemaining != null ? `${fuelRemaining.toLocaleString('fr-FR')} L` : '-- L'} • {fuelPercent != null ? `${fuelPercent}%` : '--%'}
                         </span>
                       </div>
 
@@ -2885,28 +2911,43 @@ export default function VademecumPage({ properties, currentUser, reservations = 
 
                       {/* Level indicators */}
                       <div className="flex items-center justify-between text-[10px] font-semibold text-on-surface-variant/80 px-0.5">
-                        <span>0 L (0 cm)</span>
-                        <span className="text-amber-700 dark:text-amber-400 font-bold">{fmtLiters(fuelRemaining)} ({fmtCm(fuelHeight)})</span>
-                        <span>{fmtLiters(fuelCapacity)} ({fmtCm(tankHeight)})</span>
+                        <span>0 L</span>
+                        <span className="text-amber-700 dark:text-amber-400 font-bold">{fmtLiters(fuelRemaining)} ({fuelPercent != null ? `${fuelPercent}%` : '--%'})</span>
+                        <span>{fmtLiters(fuelCapacity)}</span>
                       </div>
 
-                      {/* Indicateurs calculés en temps réel */}
-                      <div className="text-[10.5px] text-slate-600 dark:text-slate-400 bg-slate-50 dark:bg-slate-800/60 p-2 rounded-lg border border-border-subtle flex flex-col gap-1 leading-tight">
-                        <div className="flex items-center justify-between flex-wrap gap-1">
-                          <span>Débit brûleur : <strong className="text-on-surface">0,293 L / démarrage • 1,62 L / h</strong></span>
-                          {todayLiters != null && (
-                            <span className="font-semibold text-amber-700 dark:text-amber-400">Aujourd'hui : {todayLiters} L</span>
+                      {/* Accordéon discret : Détails techniques chaudière */}
+                      <details className="group text-[10.5px] text-slate-600 dark:text-slate-400 bg-slate-50 dark:bg-slate-800/60 p-2 rounded-lg border border-border-subtle">
+                        <summary className="list-none flex items-center justify-between cursor-pointer font-semibold text-slate-700 dark:text-slate-300 select-none">
+                          <span className="inline-flex items-center gap-1">
+                            <span className="material-symbols-outlined text-[14px] text-slate-500">engineering</span>
+                            <span>Détails techniques chaudière</span>
+                          </span>
+                          <span className="material-symbols-outlined text-[15px] text-slate-500 group-open:rotate-180 transition-transform">
+                            expand_more
+                          </span>
+                        </summary>
+                        <div className="flex flex-col gap-1 leading-tight mt-2 pt-1.5 border-t border-slate-200/60 dark:border-slate-700/60">
+                          <div className="flex items-center justify-between flex-wrap gap-1">
+                            <span>Chaudière réelle : <strong className="text-on-surface">{heatingStatus?.boiler_temperature != null ? `${heatingStatus.boiler_temperature.toFixed(1)}°C` : '--°C'}</strong></span>
+                            <span>Hauteur cuve : <strong className="text-on-surface">{fmtCm(fuelHeight)} / {fmtCm(tankHeight)}</strong></span>
+                          </div>
+                          <div className="flex items-center justify-between flex-wrap gap-1">
+                            <span>Débit Horaire Gicleur : <strong className="text-on-surface">1,62 L / h (Danfoss 0,50 / 80° H LEV DA) • 0,293 L / all.</strong></span>
+                            {todayLiters != null && (
+                              <span className="font-semibold text-amber-700 dark:text-amber-400">Aujourd'hui : {todayLiters} L</span>
+                            )}
+                          </div>
+                          {lastDelivery && (
+                            <div className="flex items-center justify-between text-[10px] text-slate-500 dark:text-slate-400 pt-0.5 border-t border-slate-200/50 dark:border-slate-700/50">
+                              <span>Dernière livraison enregistrée :</span>
+                              <span className="font-medium text-slate-700 dark:text-slate-200">
+                                {lastDelivery.date} (+{Number(lastDelivery.liters_delivered ?? lastDelivery.liters ?? 0).toLocaleString('fr-FR')} L)
+                              </span>
+                            </div>
                           )}
                         </div>
-                        {lastDelivery && (
-                          <div className="flex items-center justify-between text-[10px] text-slate-500 dark:text-slate-400 pt-0.5 border-t border-slate-200/50 dark:border-slate-700/50">
-                            <span>Dernière livraison enregistrée :</span>
-                            <span className="font-medium text-slate-700 dark:text-slate-200">
-                              {lastDelivery.date} (+{Number(lastDelivery.liters_delivered ?? lastDelivery.liters ?? 0).toLocaleString('fr-FR')} L)
-                            </span>
-                          </div>
-                        )}
-                      </div>
+                      </details>
                     </div>
                   );
                 })()}

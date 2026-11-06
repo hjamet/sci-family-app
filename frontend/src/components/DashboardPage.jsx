@@ -566,143 +566,50 @@ export default function DashboardPage({
       </section>
 
 
-      {/* ==================== 4 GRANDS ENCADRÉS THÉMATIQUES INTERACTIFS ==================== */}
-      <section className="grid grid-cols-1 md:grid-cols-2 gap-space-md">
-        
-        {/* Pilier 1 : Votes & Chantiers */}
-        <div
-          onClick={() => navigateTo('/votes')}
-          className="group relative overflow-hidden rounded-2xl min-h-[160px] p-space-md bg-gradient-to-br from-[#065f46] to-[#044e39] text-white shadow-md transition-all duration-300 transform hover:-translate-y-1 hover:shadow-xl cursor-pointer flex flex-col justify-between"
-        >
-          <div className="absolute -right-6 -bottom-6 w-32 h-32 rounded-full bg-white/10 blur-xl pointer-events-none group-hover:scale-150 transition-transform duration-500"></div>
-          <div className="relative z-10 flex items-center justify-between gap-3">
-            <div className="w-12 h-12 rounded-xl bg-white/15 backdrop-blur-sm flex items-center justify-center text-emerald-200 group-hover:bg-white group-hover:text-[#065f46] transition-all duration-200 shadow-sm">
-              <span className="material-symbols-outlined text-[28px]">how_to_vote</span>
-            </div>
-            <span className="inline-flex items-center gap-1 text-[11px] font-semibold uppercase tracking-wider px-2.5 py-1 rounded-full bg-white/15 backdrop-blur-sm text-emerald-100">
-              1 voix = 1 pers.
+      {/* ==================== BARRE D'ÉTAT COMPACTE (TRÉSORERIE & CHAUFFAGE) ==================== */}
+      <section className="flex flex-wrap items-center justify-between gap-2.5 bg-surface-container-lowest rounded-xl px-4 py-3 border border-outline-variant/30 shadow-2xs">
+        <div className="flex flex-wrap items-center gap-2">
+          <button
+            type="button"
+            onClick={() => navigateTo('/admin')}
+            className="inline-flex items-center gap-2 px-3 py-1.5 rounded-lg bg-[#0f4c81]/10 hover:bg-[#0f4c81]/15 text-[#0f4c81] dark:text-blue-200 text-xs font-bold transition-colors cursor-pointer"
+          >
+            <span className="material-symbols-outlined text-[18px]">account_balance</span>
+            <span>
+              {loadingBank
+                ? 'Trésorerie...'
+                : bankStatus?.total_balance != null
+                ? `Trésorerie SCI : ${Math.round(bankStatus.total_balance).toLocaleString('fr-FR')} €`
+                : 'Administratif & CCA'}
             </span>
-          </div>
-          <div className="relative z-10 mt-3">
-            <h3 className="font-headline-md text-headline-sm font-bold tracking-tight text-white flex items-center justify-between">
-              <span>Votes & Chantiers</span>
-              <span className="material-symbols-outlined text-sm opacity-0 -translate-x-2 group-hover:opacity-100 group-hover:translate-x-0 transition-all duration-200 text-white pointer-events-none group-hover:pointer-events-auto">
-                arrow_forward
-              </span>
-            </h3>
-            <p className="font-body-md text-xs leading-relaxed text-emerald-100/90 font-medium mt-2">
-              Liste des tâches à faire et des décisions à prendre.
-            </p>
-          </div>
+          </button>
+
+          <button
+            type="button"
+            onClick={() => navigateTo('/sejour#chauffage')}
+            className="inline-flex items-center gap-2 px-3 py-1.5 rounded-lg bg-[#0d9488]/10 hover:bg-[#0d9488]/15 text-[#0d9488] dark:text-teal-200 text-xs font-bold transition-colors cursor-pointer"
+          >
+            <span className="material-symbols-outlined text-[18px]">thermostat</span>
+            <span>
+              {loadingHeating
+                ? 'Sonde ViCare...'
+                : heatingStatus?.target_temperature != null
+                ? `Chauffage ${heatingStatus.target_temperature}°C${heatingStatus?.room_temperature != null ? ` (int. ${heatingStatus.room_temperature.toFixed(1)}°C)` : ''}`
+                : 'Séjour & Chauffage'}
+            </span>
+          </button>
         </div>
 
-        {/* Pilier 2 : Administratif & Budget */}
-        <div
-          onClick={() => navigateTo('/admin')}
-          className="group relative overflow-hidden rounded-2xl min-h-[160px] p-space-md bg-gradient-to-br from-[#0f4c81] to-[#0a355c] text-white shadow-md transition-all duration-300 transform hover:-translate-y-1 hover:shadow-xl cursor-pointer flex flex-col justify-between"
-        >
-          <div className="absolute -right-6 -bottom-6 w-32 h-32 rounded-full bg-white/10 blur-xl pointer-events-none group-hover:scale-150 transition-transform duration-500"></div>
-          <div className="relative z-10 flex items-center justify-between gap-3">
-            <div className="w-12 h-12 rounded-xl bg-white/15 backdrop-blur-sm flex items-center justify-center text-blue-200 group-hover:bg-white group-hover:text-[#0f4c81] transition-all duration-200 shadow-sm">
-              <span className="material-symbols-outlined text-[28px]">folder_shared</span>
-            </div>
-            <span className="inline-flex items-center gap-1 text-[11px] font-semibold uppercase tracking-wider px-2.5 py-1 rounded-full bg-white/15 backdrop-blur-sm text-blue-100">
-              {loadingBank ? (
-                <span className="inline-flex items-center gap-1.5">
-                  <span className="w-1.5 h-1.5 rounded-full bg-blue-300 animate-pulse"></span>
-                  <span className="opacity-80">Trésorerie...</span>
-                </span>
-              ) : bankStatus?.total_balance !== undefined && bankStatus?.total_balance !== null
-                ? `Trésorerie : ${Math.round(bankStatus.total_balance).toLocaleString('fr-FR')} €`
-                : 'Statuts & CCA'}
-            </span>
-          </div>
-          <div className="relative z-10 mt-3">
-            <h3 className="font-headline-md text-headline-sm font-bold tracking-tight text-white flex items-center justify-between">
-              <span>Administratif & Budget</span>
-              <span className="material-symbols-outlined text-sm opacity-0 -translate-x-2 group-hover:opacity-100 group-hover:translate-x-0 transition-all duration-200 text-white pointer-events-none group-hover:pointer-events-auto">
-                arrow_forward
-              </span>
-            </h3>
-            <p className="font-body-md text-xs leading-relaxed text-blue-100/90 font-medium mt-2">
-              Factures des membres, aperçu des comptes bancaires et documents administratifs de la SCI
-            </p>
-          </div>
+        <div className="flex items-center gap-2 text-xs text-on-surface-variant">
+          <button
+            type="button"
+            onClick={() => navigateTo('/calendrier')}
+            className="inline-flex items-center gap-1 px-2.5 py-1 rounded-md hover:bg-canvas-slate font-semibold text-forest-deep cursor-pointer"
+          >
+            <span className="material-symbols-outlined text-[16px]">calendar_month</span>
+            <span>Calendrier (52 sem.)</span>
+          </button>
         </div>
-
-        {/* Pilier 3 : Calendrier des Passages */}
-        <div
-          onClick={() => navigateTo('/calendrier')}
-          className="group relative overflow-hidden rounded-2xl min-h-[160px] p-space-md bg-gradient-to-br from-[#d97706] to-[#92400e] text-white shadow-md transition-all duration-300 transform hover:-translate-y-1 hover:shadow-xl cursor-pointer flex flex-col justify-between"
-        >
-          <div className="absolute -right-6 -bottom-6 w-32 h-32 rounded-full bg-white/10 blur-xl pointer-events-none group-hover:scale-150 transition-transform duration-500"></div>
-          <div className="relative z-10 flex items-center justify-between gap-3">
-            <div className="w-12 h-12 rounded-xl bg-white/15 backdrop-blur-sm flex items-center justify-center text-amber-200 group-hover:bg-white group-hover:text-[#d97706] transition-all duration-200 shadow-sm">
-              <span className="material-symbols-outlined text-[28px]">calendar_month</span>
-            </div>
-            <span className="inline-flex items-center gap-1 text-[11px] font-semibold uppercase tracking-wider px-2.5 py-1 rounded-full bg-white/15 backdrop-blur-sm text-amber-100">
-              52 Semaines
-            </span>
-          </div>
-          <div className="relative z-10 mt-3">
-            <h3 className="font-headline-md text-headline-sm font-bold tracking-tight text-white flex items-center justify-between">
-              <span>Calendrier des Passages</span>
-              <span className="material-symbols-outlined text-sm opacity-0 -translate-x-2 group-hover:opacity-100 group-hover:translate-x-0 transition-all duration-200 text-white pointer-events-none group-hover:pointer-events-auto">
-                arrow_forward
-              </span>
-            </h3>
-            <p className="font-body-md text-xs leading-relaxed text-amber-100/90 font-medium mt-2">
-              Réservation et calendrier des passages
-            </p>
-          </div>
-        </div>
-
-        {/* Pilier 4 : Séjour & Chauffage */}
-        <div
-          onClick={() => navigateTo('/sejour')}
-          className="group relative overflow-hidden rounded-2xl min-h-[160px] p-space-md bg-gradient-to-br from-[#0d9488] to-[#115e59] text-white shadow-md transition-all duration-300 transform hover:-translate-y-1 hover:shadow-xl cursor-pointer flex flex-col justify-between"
-        >
-          <div className="absolute -right-6 -bottom-6 w-32 h-32 rounded-full bg-white/10 blur-xl pointer-events-none group-hover:scale-150 transition-transform duration-500"></div>
-          <div className="relative z-10 flex items-center justify-between gap-3">
-            <div className="w-12 h-12 rounded-xl bg-white/15 backdrop-blur-sm flex items-center justify-center text-teal-200 group-hover:bg-white group-hover:text-[#0d9488] transition-all duration-200 shadow-sm">
-              <span className="material-symbols-outlined text-[28px]">key</span>
-            </div>
-            <span
-              onClick={(e) => {
-                e.stopPropagation();
-                navigateTo('/sejour#chauffage');
-              }}
-              className="inline-flex items-center gap-1.5 text-[11px] font-semibold uppercase tracking-wider px-2.5 py-1 rounded-full bg-white/15 backdrop-blur-sm text-teal-100 hover:bg-white/30 cursor-pointer transition-all"
-              title="Consulter la télémesure & chauffage ViCare"
-            >
-              {loadingHeating ? (
-                <span className="inline-flex items-center gap-1.5">
-                  <span className="w-1.5 h-1.5 rounded-full bg-teal-300 animate-pulse"></span>
-                  <span className="opacity-90">Sonde ViCare...</span>
-                </span>
-              ) : heatingStatus?.target_temperature != null ? (
-                <span className="inline-flex items-center gap-1">
-                  <span className="w-1.5 h-1.5 rounded-full bg-emerald-400"></span>
-                  {`Chauffage ${heatingStatus.target_temperature}°C${poolStatus?.temperature != null ? ` • Bassin ${poolStatus.temperature}°C` : ''}`}
-                </span>
-              ) : (
-                'Guide & Énergie'
-              )}
-            </span>
-          </div>
-          <div className="relative z-10 mt-3">
-            <h3 className="font-headline-md text-headline-sm font-bold tracking-tight text-white flex items-center justify-between">
-              <span>Séjour & Chauffage</span>
-              <span className="material-symbols-outlined text-sm opacity-0 -translate-x-2 group-hover:opacity-100 group-hover:translate-x-0 transition-all duration-200 text-white pointer-events-none group-hover:pointer-events-auto">
-                arrow_forward
-              </span>
-            </h3>
-            <p className="font-body-md text-xs leading-relaxed text-teal-100/90 font-medium mt-2">
-              Gestion du chauffage et de la piscine pour le séjour, tâches attribuées et vadémécum
-            </p>
-          </div>
-        </div>
-
       </section>
 
       {/* ==================== SCRUTIN FAMILIAL EN COURS ==================== */}
@@ -713,11 +620,13 @@ export default function DashboardPage({
               <span className="material-symbols-outlined text-[24px]">how_to_vote</span>
             </div>
             <div>
-              <div className="flex items-center gap-2">
-                {/* ANNOTATION 2 : Titre épuré « Scrutins en cours » & ANNOTATION 1 : Badge « Vote actif » supprimé */}
+              <div className="flex items-center gap-2 flex-wrap">
                 <h2 className="font-headline-md text-base sm:text-headline-sm text-forest-deep font-bold tracking-tight">
                   Scrutins en cours
                 </h2>
+                <span className="inline-flex items-center gap-1 text-[11px] font-semibold uppercase tracking-wider px-2.5 py-0.5 rounded-full bg-sage-soft text-primary">
+                  1 voix = 1 pers.
+                </span>
               </div>
             </div>
           </div>
@@ -823,8 +732,16 @@ export default function DashboardPage({
         {/* Colonne Gauche : Prochains Séjours au Domaine */}
         <div className="flex flex-col space-y-space-md bg-surface-container-lowest rounded-2xl p-6 sm:p-space-lg shadow-sm border border-outline-variant/30">
           <div className="space-y-space-xs border-b border-outline-variant/20 pb-space-sm">
-            <div className="flex items-center gap-2">
-              <span className="text-xs text-on-surface-variant font-medium">Saison 2026</span>
+            <div className="flex items-center justify-between gap-2 flex-wrap">
+              <span className="text-xs text-on-surface-variant font-medium">Saison 2026 • 52 Semaines</span>
+              <button
+                type="button"
+                onClick={() => navigateTo('/calendrier')}
+                className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full bg-amber-50 text-amber-800 border border-amber-200 font-label-sm text-xs font-semibold hover:bg-amber-100 transition-colors cursor-pointer"
+              >
+                <span className="material-symbols-outlined text-[14px]">calendar_month</span>
+                <span>{displayedStays.length} séjour{displayedStays.length > 1 ? 's' : ''} à venir</span>
+              </button>
             </div>
             <h2 className="font-headline-md text-headline-md text-forest-deep font-bold tracking-tight">
               Prochains Séjours au Domaine

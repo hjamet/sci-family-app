@@ -11,6 +11,7 @@ import AdminPage from './components/AdminPage';
 import VademecumPage from './components/VademecumPage';
 import SettingsPage from './pages/SettingsPage';
 import StatistiquesPage from './pages/StatistiquesPage';
+import ToasterPage from './pages/ToasterPage';
 import BookingModal from './components/BookingModal';
 import VoteRoofModal from './components/VoteRoofModal';
 import TaskDetailModal from './components/TaskDetailModal';
@@ -345,6 +346,14 @@ export default function App() {
             }
           />
           <Route path="/stats" element={<Navigate to="/statistiques" replace />} />
+          <Route
+            path="/grille-pain"
+            element={
+              <ToasterPage
+                currentUser={currentUser}
+              />
+            }
+          />
           <Route path="/login" element={<Navigate to="/" replace />} />
           <Route path="*" element={<Navigate to="/" replace />} />
         </Routes>

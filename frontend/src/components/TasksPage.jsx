@@ -1071,7 +1071,72 @@ export default function TasksPage({ currentUser = 'Henri Jamet' }) {
             </div>
           </div>
 
-          <div className="flex items-center gap-2 sm:gap-3 shrink-0">
+          <div className="flex flex-wrap items-center gap-2 sm:gap-3 shrink-0">
+            {/* 2 Vues principales : En cours de vote vs Historique */}
+            <div className="inline-flex items-center rounded-xl bg-surface-container p-1 border border-border-subtle">
+              <button
+                type="button"
+                onClick={() => {
+                  setVoteFilter('OPEN');
+                  setActiveVoteIndex(0);
+                }}
+                className={`px-3 py-1.5 rounded-lg text-xs font-bold transition-all cursor-pointer ${
+                  voteFilter !== 'ARCHIVED'
+                    ? 'bg-white text-forest-deep shadow-xs'
+                    : 'text-on-surface-variant hover:text-forest-deep'
+                }`}
+              >
+                En cours de vote ({voteCounts.OPEN + voteCounts.PROPOSED + voteCounts.PENDING_VALIDATION})
+              </button>
+              <button
+                type="button"
+                onClick={() => {
+                  setVoteFilter('ARCHIVED');
+                  setActiveVoteIndex(0);
+                }}
+                className={`px-3 py-1.5 rounded-lg text-xs font-bold transition-all cursor-pointer ${
+                  voteFilter === 'ARCHIVED'
+                    ? 'bg-white text-forest-deep shadow-xs'
+                    : 'text-on-surface-variant hover:text-forest-deep'
+                }`}
+              >
+                Historique ({voteCounts.ARCHIVED})
+              </button>
+            </div>
+
+            {/* Accès dépliable aux filtres avancés */}
+            <details className="relative group">
+              <summary className="list-none inline-flex items-center gap-1 px-2.5 py-1.5 rounded-xl bg-surface-container-low hover:bg-surface-container text-on-surface-variant text-xs font-semibold border border-border-subtle cursor-pointer select-none">
+                <span className="material-symbols-outlined text-[16px]">tune</span>
+                <span>Filtres avancés</span>
+              </summary>
+              <div className="absolute right-0 mt-1.5 w-56 bg-white dark:bg-slate-900 rounded-xl shadow-lg border border-border-subtle p-1.5 z-20 flex flex-col gap-1">
+                {[
+                  { id: 'OPEN', label: `Scrutins ouverts (${voteCounts.OPEN})` },
+                  { id: 'PROPOSED', label: `Propositions soumises (${voteCounts.PROPOSED})` },
+                  { id: 'PENDING_VALIDATION', label: `En attente d'arbitrage (${voteCounts.PENDING_VALIDATION})` },
+                  { id: 'ARCHIVED', label: `Scrutins archivés (${voteCounts.ARCHIVED})` },
+                  { id: 'ALL', label: `Tous les scrutins (${voteCounts.ALL})` },
+                ].map((opt) => (
+                  <button
+                    key={opt.id}
+                    type="button"
+                    onClick={() => {
+                      setVoteFilter(opt.id);
+                      setActiveVoteIndex(0);
+                    }}
+                    className={`w-full text-left px-3 py-1.5 rounded-lg text-xs font-semibold transition-colors cursor-pointer ${
+                      voteFilter === opt.id
+                        ? 'bg-sage-soft text-primary font-bold'
+                        : 'text-on-surface hover:bg-canvas-slate'
+                    }`}
+                  >
+                    {opt.label}
+                  </button>
+                ))}
+              </div>
+            </details>
+
             <button
               onClick={handleOpenCreateVote}
               className="inline-flex items-center gap-1.5 px-3.5 py-2 rounded-xl bg-primary-container/10 hover:bg-primary-container/20 text-primary-container border border-primary-container/30 font-label-md text-xs sm:text-sm font-bold transition-all cursor-pointer shadow-sm whitespace-nowrap"
