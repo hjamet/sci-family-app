@@ -4145,6 +4145,25 @@ def create_member_expense_direct(
     db.add(exp)
     db.commit()
     db.refresh(exp)
+
+    if (exp.status or "").strip().upper() in ("APPROVED", "PAID", "VALIDATED") and (exp.payer_type or "member").strip().lower() != "sci" and exp.member_id:
+        existing_ledger = db.query(MemberLedgerEntry).filter(
+            MemberLedgerEntry.expense_id == exp.id,
+            MemberLedgerEntry.entry_type == "AVANCE"
+        ).first()
+        if not existing_ledger:
+            from .services.treasury_service import add_ledger_entry
+            add_ledger_entry(
+                db=db,
+                member_id=exp.member_id,
+                entry_type="AVANCE",
+                amount=float(exp.amount),
+                description=f"Avance validée : {exp.title}",
+                expense_id=exp.id
+            )
+        from .services.call_for_funds_service import reconcile_open_calls_for_member
+        reconcile_open_calls_for_member(db, exp.member_id)
+
     return serialize_member_expense(exp)
 
 
@@ -4271,6 +4290,24 @@ def update_member_expense(
                     })
                     t.documents = json.dumps(t_docs)
             t.updated_at = datetime.utcnow()
+
+    if (expense.status or "").strip().upper() in ("APPROVED", "PAID", "VALIDATED") and (expense.payer_type or "member").strip().lower() != "sci" and expense.member_id:
+        existing_ledger = db.query(MemberLedgerEntry).filter(
+            MemberLedgerEntry.expense_id == expense.id,
+            MemberLedgerEntry.entry_type == "AVANCE"
+        ).first()
+        if not existing_ledger:
+            from .services.treasury_service import add_ledger_entry
+            add_ledger_entry(
+                db=db,
+                member_id=expense.member_id,
+                entry_type="AVANCE",
+                amount=float(expense.amount),
+                description=f"Avance validée : {expense.title}",
+                expense_id=expense.id
+            )
+        from .services.call_for_funds_service import reconcile_open_calls_for_member
+        reconcile_open_calls_for_member(db, expense.member_id)
 
     db.commit()
     db.refresh(expense)
@@ -5499,17 +5536,26 @@ def validate_task_unified(
     # Synchronisation si la tâche est liée à une avance de frais membre
     try:
         linked_expense = db.query(MemberExpense).filter(MemberExpense.task_id == task.id).first()
-        if linked_expense and linked_expense.status == "PENDING":
-            linked_expense.status = "VALIDATED"
-            from .services.treasury_service import add_ledger_entry
-            add_ledger_entry(
-                db=db,
-                member_id=linked_expense.member_id,
-                entry_type="AVANCE",
-                amount=float(linked_expense.amount),
-                description=f"Avance validée : {linked_expense.title}",
-                expense_id=linked_expense.id
-            )
+        if linked_expense and (linked_expense.payer_type or "member").strip().lower() != "sci":
+            if linked_expense.status == "PENDING":
+                linked_expense.status = "VALIDATED"
+            if (linked_expense.status or "").strip().upper() in ("APPROVED", "PAID", "VALIDATED") and linked_expense.member_id:
+                existing_ledger = db.query(MemberLedgerEntry).filter(
+                    MemberLedgerEntry.expense_id == linked_expense.id,
+                    MemberLedgerEntry.entry_type == "AVANCE"
+                ).first()
+                if not existing_ledger:
+                    from .services.treasury_service import add_ledger_entry
+                    add_ledger_entry(
+                        db=db,
+                        member_id=linked_expense.member_id,
+                        entry_type="AVANCE",
+                        amount=float(linked_expense.amount),
+                        description=f"Avance validée : {linked_expense.title}",
+                        expense_id=linked_expense.id
+                    )
+                from .services.call_for_funds_service import reconcile_open_calls_for_member
+                reconcile_open_calls_for_member(db, linked_expense.member_id)
             db.commit()
     except Exception as exp_sync_err:
         logger.error(f"[EXPENSE SYNC ERROR] Erreur validation avance liée à la tâche {task.id}: {exp_sync_err}")

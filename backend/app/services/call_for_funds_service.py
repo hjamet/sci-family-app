@@ -55,33 +55,36 @@ MONTH_NAMES_FR = [
 ]
 
 
+PLACEHOLDER_IBANS = {
+    "FR7616945000000000000000000",
+    "PENDING_SWAN_IBAN",
+}
+
+
 def is_bank_account_active(db: Optional[Session] = None) -> bool:
     """
     GARDE-FOU BANCAIRE STRICT :
     Vérifie si les coordonnées bancaires officielles Indy / Swan de la SCI sont validées et actives.
-    Tant que l'IBAN officiel n'est pas renseigné et validé (IS_BANK_ACCOUNT_ACTIVE=false),
-    la génération des avis bancaires réels et les envois d'emails sont bloqués avec le statut
-    « En attente de validation IBAN Swan ». Zéro e-mail envoyé.
+    Inspecte directement tous les comptes de `bank_accounts` : dès qu'un compte possède un IBAN
+    non vide dont la version normalisée n'est pas dans PLACEHOLDER_IBANS et ne commence pas
+    par FR7600000000, retourne True.
     """
-    env_active = os.getenv("IS_BANK_ACCOUNT_ACTIVE", "false").strip().lower() in ("true", "1", "yes")
-    if not env_active:
+    if db is not None:
+        accounts = db.query(BankAccount).all()
+        for account in accounts:
+            if not account or not account.iban:
+                continue
+            clean_iban = account.iban.replace(" ", "").strip().upper()
+            if (
+                clean_iban
+                and clean_iban not in PLACEHOLDER_IBANS
+                and not clean_iban.startswith("FR7600000000")
+                and "000000000000" not in clean_iban
+            ):
+                return True
         return False
 
-    # Si la variable d'environnement est activée, vérifions également qu'un IBAN réel existe en base
-    if db is not None:
-        try:
-            account = db.query(BankAccount).first()
-            if not account or not account.iban:
-                return False
-            clean_iban = account.iban.replace(" ", "").upper()
-            # Faux IBAN de dev avec plein de zéros
-            if "000000000000" in clean_iban or clean_iban == "FR7616945000000000000000000":
-                return False
-        except Exception as e:
-            logger.warning(f"Erreur vérification compte bancaire en base: {e}")
-            return False
-
-    return True
+    return os.getenv("IS_BANK_ACCOUNT_ACTIVE", "false").strip().lower() in ("true", "1", "yes")
 
 
 def is_treasury_contributions_started(year: int, month: int, db: Optional[Session] = None) -> bool:
@@ -120,14 +123,21 @@ def get_official_bank_info(db: Optional[Session] = None) -> Dict[str, str]:
     holder = SCI_NAME
 
     if db is not None:
-        try:
-            account = db.query(BankAccount).first()
-            if account and account.iban:
-                iban = account.iban
-            if account and account.aspsp_name:
-                bank_name = account.aspsp_name
-        except Exception:
-            pass
+        accounts = db.query(BankAccount).all()
+        chosen = None
+        for acc in accounts:
+            if acc and acc.iban:
+                clean = acc.iban.replace(" ", "").strip().upper()
+                if clean and clean not in PLACEHOLDER_IBANS and not clean.startswith("FR7600000000"):
+                    chosen = acc
+                    break
+        if not chosen and accounts:
+            chosen = accounts[0]
+        if chosen:
+            if chosen.iban:
+                iban = chosen.iban
+            if chosen.aspsp_name:
+                bank_name = chosen.aspsp_name
 
     return {
         "iban": iban,
@@ -226,7 +236,7 @@ def get_member_expenses_for_period(
 ) -> List[Dict[str, Any]]:
     """
     Récupère toutes les dépenses avancées enregistrées pour le membre sur le mois spécifié :
-    1. Depuis la table `member_expenses` (status='VALIDATED').
+    1. Depuis la table `member_expenses` (status in VALIDATED/PAID/APPROVED, du mois ou non encore rattachées à un appel antérieur).
     2. Depuis la table `bank_transactions` (dépenses manuelles rattachées au membre).
     """
     month_str = f"{month:02d}"
@@ -236,17 +246,47 @@ def get_member_expenses_for_period(
     prenom = member.prenom if member else ""
     full_name = member.name if member else prenom
 
+    existing_call = db.query(CallForFunds).filter(
+        CallForFunds.member_id == member_id,
+        CallForFunds.year == year,
+        CallForFunds.month == month
+    ).first()
+    existing_call_id = existing_call.id if existing_call else None
+
     expenses = []
 
     # 1. Dépenses spécifiques dans member_expenses (uniquement avances de frais membres validées, pas les factures directes SCI ni les PENDING)
+    period_cond = [MemberExpense.expense_date.like(f"{prefix_date}%")]
+    if existing_call_id is not None:
+        period_cond.append(MemberExpense.call_for_funds_id == existing_call_id)
+    period_cond.append(
+        and_(
+            MemberExpense.call_for_funds_id.is_(None),
+            MemberExpense.expense_date <= f"{prefix_date}-31"
+        )
+    )
+
     me_records = db.query(MemberExpense).filter(
         MemberExpense.member_id == member_id,
         MemberExpense.status.in_(["VALIDATED", "PAID", "APPROVED"]),
         or_(MemberExpense.payer_type == "member", MemberExpense.payer_type.is_(None)),
-        MemberExpense.expense_date.like(f"{prefix_date}%")
+        or_(*period_cond)
     ).all()
 
     for me in me_records:
+        if existing_call_id is not None:
+            if me.call_for_funds_id is not None and me.call_for_funds_id != existing_call_id:
+                continue
+            if (
+                existing_call.paid_at is not None
+                and me.created_at is not None
+                and me.created_at > existing_call.paid_at
+                and me.call_for_funds_id != existing_call_id
+            ):
+                continue
+        else:
+            if me.call_for_funds_id is not None and not str(me.expense_date or "").startswith(prefix_date):
+                continue
         expenses.append({
             "id": me.id,
             "source": "member_expense",
@@ -298,6 +338,72 @@ def get_member_expenses_for_period(
     return expenses
 
 
+def _compute_balance_before_period(
+    db: Session,
+    member_id: int,
+    year: int,
+    month: int
+) -> float:
+    """
+    Calcule de manière idempotente le solde disponible du membre juste avant l'échéance (year, month) :
+    exclut l'écriture ECHEANCE de (year, month) et des mois postérieurs, ainsi que les virements
+    ayant réglé un appel >= (year, month) ou postérieurs au 1er du mois lorsque des appels existent.
+    """
+    from ..models import MemberLedgerEntry
+
+    all_entries = db.query(MemberLedgerEntry).filter(
+        MemberLedgerEntry.member_id == member_id
+    ).all()
+    if not all_entries:
+        return 0.0
+
+    member_calls = db.query(CallForFunds).filter(
+        CallForFunds.member_id == member_id
+    ).all()
+    calls_by_id = {c.id: c for c in member_calls}
+    settled_tx_periods = {
+        c.bank_transaction_id: (c.year, c.month)
+        for c in member_calls
+        if c.bank_transaction_id is not None
+    }
+
+    member_exps = db.query(MemberExpense).filter(
+        MemberExpense.member_id == member_id
+    ).all()
+    exp_call_periods = {
+        e.id: (calls_by_id[e.call_for_funds_id].year, calls_by_id[e.call_for_funds_id].month)
+        for e in member_exps
+        if e.call_for_funds_id and e.call_for_funds_id in calls_by_id
+    }
+
+    period_start = datetime(year, month, 1)
+    has_Current_or_later_call = any((c.year, c.month) >= (year, month) for c in member_calls)
+
+    total = 0.0
+    for entry in all_entries:
+        etype = (entry.entry_type or "").upper()
+        if etype == "ECHEANCE":
+            if entry.call_for_funds_id and entry.call_for_funds_id in calls_by_id:
+                c = calls_by_id[entry.call_for_funds_id]
+                if (c.year, c.month) >= (year, month):
+                    continue
+            elif entry.entry_date and entry.entry_date >= period_start:
+                continue
+        elif etype == "VIREMENT":
+            if entry.bank_transaction_id and entry.bank_transaction_id in settled_tx_periods:
+                if settled_tx_periods[entry.bank_transaction_id] >= (year, month):
+                    continue
+            elif has_Current_or_later_call and entry.entry_date and entry.entry_date >= period_start:
+                continue
+        elif etype == "AVANCE":
+            if entry.expense_id and entry.expense_id in exp_call_periods:
+                if exp_call_periods[entry.expense_id] > (year, month):
+                    continue
+        total += float(entry.amount or 0.0)
+
+    return round(total, 2)
+
+
 def calculate_member_call_for_funds(
     db: Session,
     member: Member,
@@ -313,13 +419,11 @@ def calculate_member_call_for_funds(
       - Si 0 < Solde < Quote-part : Reliquat réclamé (statut EMIS ou PENDING_SWAN_IBAN).
       - Si Solde <= 0 : Quote-part intégrale réclamée.
     """
-    from .treasury_service import get_member_balance
-
     period_label = f"{MONTH_NAMES_FR[month]} {year}"
     theoretical = float(member.monthly_contribution if member.monthly_contribution is not None else 50.0)
 
-    # Solde de trésorerie disponible du membre avant cette échéance
-    balance_before = get_member_balance(db, member.id)
+    # Solde de trésorerie disponible du membre avant cette échéance (idempotent même si ECHEANCE déjà créée)
+    balance_before = _compute_balance_before_period(db, member.id, year, month)
 
     # Récupération des dépenses avancées enregistrées par le membre sur le mois (pour information)
     expenses = get_member_expenses_for_period(db, member.id, year, month)
@@ -831,12 +935,12 @@ def generate_and_save_monthly_call(
         call_obj = existing
         call_obj.theoretical_contribution = calc["theoretical_contribution"]
         call_obj.approved_expenses_total = calc["approved_expenses_total"]
+        call_obj.balance_before = calc.get("balance_before", 0.0)
+        call_obj.amount_due = calc.get("amount_due", calc["net_amount"])
+        call_obj.net_amount = calc["net_amount"]
         if is_already_settled:
             call_obj.status = "REGLE"
         else:
-            call_obj.balance_before = calc.get("balance_before", 0.0)
-            call_obj.amount_due = calc.get("amount_due", calc["net_amount"])
-            call_obj.net_amount = calc["net_amount"]
             call_obj.status = calc["status"]
         call_obj.iban = bank_info.get("iban")
         call_obj.bic = bank_info.get("bic")
@@ -938,8 +1042,34 @@ def reconcile_open_calls_for_member(db: Session, member_id: int) -> List[CallFor
     Inspecte et met à jour les avis d'appel de fonds non réglés par virement (EMIS, PENDING_SWAN_IBAN ou COUVERT)
     d'un membre en fonction de ses avances validées et de son solde de trésorerie courant.
     """
-    from .treasury_service import get_member_balance
+    from .treasury_service import get_member_balance, add_ledger_entry
     from ..models import MemberLedgerEntry
+
+    member = db.query(Member).filter(Member.id == member_id).first()
+
+    # S'assurer que tous les appels existants ont bien leur écriture ECHEANCE si le compte est actif
+    all_member_calls = db.query(CallForFunds).filter(
+        CallForFunds.member_id == member_id
+    ).order_by(CallForFunds.year.asc(), CallForFunds.month.asc()).all()
+
+    for c in all_member_calls:
+        if is_treasury_contributions_started(c.year, c.month, db):
+            debit = -float(c.theoretical_contribution or 0.0)
+            if debit < 0:
+                has_ech = db.query(MemberLedgerEntry).filter(
+                    MemberLedgerEntry.call_for_funds_id == c.id,
+                    MemberLedgerEntry.entry_type == "ECHEANCE"
+                ).first()
+                if not has_ech:
+                    add_ledger_entry(
+                        db=db,
+                        member_id=member_id,
+                        entry_type="ECHEANCE",
+                        amount=debit,
+                        description=f"Échéance {c.period_label}",
+                        call_for_funds_id=c.id,
+                        entry_date=datetime(c.year, c.month, 1)
+                    )
 
     open_calls = db.query(CallForFunds).filter(
         CallForFunds.member_id == member_id,
@@ -963,6 +1093,17 @@ def reconcile_open_calls_for_member(db: Session, member_id: int) -> List[CallFor
         approved_total = round(sum(e["amount"] for e in expenses), 2)
         call.approved_expenses_total = approved_total
 
+        for exp in expenses:
+            if exp.get("source") == "member_expense":
+                exp_rec = db.query(MemberExpense).filter(MemberExpense.id == exp["id"]).first()
+                if exp_rec and not exp_rec.call_for_funds_id:
+                    exp_rec.call_for_funds_id = call.id
+        db.flush()
+
+        calc = calculate_member_call_for_funds(db, member, call.year, call.month) if member else None
+        if calc is not None:
+            call.balance_before = calc.get("balance_before", 0.0)
+
         try:
             details_dict = json.loads(call.details_json) if call.details_json else {}
             if not isinstance(details_dict, dict):
@@ -971,12 +1112,6 @@ def reconcile_open_calls_for_member(db: Session, member_id: int) -> List[CallFor
             call.details_json = json.dumps(details_dict, ensure_ascii=False)
         except Exception:
             pass
-
-        for exp in expenses:
-            if exp.get("source") == "member_expense":
-                exp_rec = db.query(MemberExpense).filter(MemberExpense.id == exp["id"]).first()
-                if exp_rec and not exp_rec.call_for_funds_id:
-                    exp_rec.call_for_funds_id = call.id
 
         if balance >= 0.0:
             period_virement = next(
@@ -987,8 +1122,11 @@ def reconcile_open_calls_for_member(db: Session, member_id: int) -> List[CallFor
                 ),
                 None
             )
-            if period_virement:
+            expected_net = calc["net_amount"] if calc is not None else float(call.net_amount or 0.0)
+            if period_virement and expected_net > 0.0:
                 call.status = "REGLE"
+                call.amount_due = expected_net
+                call.net_amount = expected_net
                 if not call.paid_at:
                     call.paid_at = period_virement.entry_date or datetime.utcnow()
                 if not call.bank_transaction_id and period_virement.bank_transaction_id:

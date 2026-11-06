@@ -79,9 +79,15 @@ class ReconciliationService:
                 prenom_tokens.extend(["MAMAN", "ELISABETH", "ELIZABETH"])
                 fullname_tokens.extend(["ELISABETH JAMET", "ELIZABETH JAMET", "MAMAN JAMET"])
 
-            # Variantes pour Eugénie (nom d'épouse Ducrocq & nom de jeune fille Jamet)
+            # Variantes pour Eugénie (nom d'épouse Ducrocq, nom de jeune fille Jamet & époux Alexandre Ducrocq)
             if (m.prenom or "").lower() in ("eugenie", "eugénie"):
-                fullname_tokens.extend(["EUGENIE DUCROCQ", "EUGENIE JAMET"])
+                prenom_tokens.extend(["EUGENIE", "ALEXANDRE", "DUCROCQ"])
+                fullname_tokens.extend([
+                    "EUGENIE DUCROCQ",
+                    "EUGENIE JAMET",
+                    "ALEXANDRE DUCROCQ",
+                    "DUCROCQ ALEXANDRE",
+                ])
 
             # Variantes pour Frédéric
             if (m.prenom or "").lower() in ("frederic", "frédéric"):
