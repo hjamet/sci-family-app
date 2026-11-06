@@ -478,15 +478,23 @@ def calculate_member_call_for_funds(
     else:
         should_issue = True
         net_amount = theoretical
-        amount_due = theoretical
+        arrears = round(abs(balance_before), 2) if balance_before < 0 else 0.0
+        amount_due = round(theoretical + arrears, 2)
         if not bank_active:
             status = "PENDING_SWAN_IBAN"
             status_label = "En attente de validation IBAN Swan"
             reason = "Avis préparé mais bloqué en attente de l'IBAN officiel Indy / Swan. Zéro e-mail envoyé."
         else:
             status = "EMIS"
-            status_label = "Avis émis (prêt pour règlement par virement)"
-            reason = "Avis d'appel de fonds émis avec QR-code SEPA valide."
+            if arrears > 0:
+                status_label = f"Avis émis (incluant {arrears:.2f} € d'arriéré antérieur)"
+                reason = (
+                    f"Avis d'appel de fonds émis pour {amount_due:.2f} € "
+                    f"({theoretical:.2f} € du mois + {arrears:.2f} € d'arriéré antérieur) avec QR-code SEPA valide."
+                )
+            else:
+                status_label = "Avis émis (prêt pour règlement par virement)"
+                reason = "Avis d'appel de fonds émis avec QR-code SEPA valide."
 
     ref = f"AF-{year}{month:02d}-{member.prenom.upper()}"
     payment_ref = member.payment_reference or f"HLV-{member.prenom.upper()}"
@@ -729,6 +737,15 @@ def generate_call_for_funds_pdf(
     story.append(Paragraph("1. Décompte de la Cotisation &amp; Compensation des Frais Avancés", style_section_title))
     story.append(Spacer(1, 6))
 
+    balance_before_val = float(call_data.get("balance_before") or 0.0)
+    arrears_val = round(abs(balance_before_val), 2) if balance_before_val < 0 else 0.0
+    net_month_val = float(call_data.get("net_amount") or 0.0)
+    amount_due_val = float(
+        call_data.get("amount_due")
+        if call_data.get("amount_due") is not None
+        else round(net_month_val + arrears_val, 2)
+    )
+
     rows = [
         [
             Paragraph("<b>Désignation / Opération</b>", style_body_bold),
@@ -769,12 +786,27 @@ def generate_call_for_funds_pdf(
         Paragraph(f"<b>-{call_data.get('approved_expenses_total'):.2f} €</b>", style_body_bold),
     ])
 
+    if arrears_val > 0:
+        rows.append([
+            Paragraph(f"<b>Sous-total échéance du mois ({call_data.get('period_label')})</b>", style_body_bold),
+            Paragraph("-", style_body),
+            Paragraph("-", style_body),
+            Paragraph(f"<b>{net_month_val:.2f} €</b>", style_body_bold),
+        ])
+        rows.append([
+            Paragraph("<b>Arriéré antérieur non réglé (report solde débiteur)</b>", style_body_bold),
+            Paragraph("Grand Livre CCA", style_body),
+            Paragraph("Antérieur", style_body),
+            Paragraph(f"<font color='#b45309'><b>+{arrears_val:.2f} €</b></font>", style_body_bold),
+        ])
+
     # Ligne Solde Net à Régler (Mise en avant forte)
+    total_label = "TOTAL NET À RÉGLER (ÉCHÉANCE + ARRIÉRÉ)" if arrears_val > 0 else "SOLDE NET À RÉGLER POUR LE MOIS"
     rows.append([
-        Paragraph("<font size=10 color='#064e3b'><b>SOLDE NET À RÉGLER POUR LE MOIS</b></font>", style_body_bold),
+        Paragraph(f"<font size=10 color='#064e3b'><b>{total_label}</b></font>", style_body_bold),
         Paragraph("", style_body),
         Paragraph("", style_body),
-        Paragraph(f"<font size=11 color='#064e3b'><b>{call_data.get('net_amount'):.2f} €</b></font>", style_body_bold),
+        Paragraph(f"<font size=11 color='#064e3b'><b>{amount_due_val:.2f} €</b></font>", style_body_bold),
     ])
 
     t_decompte = Table(rows, colWidths=[9.5 * cm, 4.0 * cm, 2.5 * cm, 3.0 * cm])
@@ -799,7 +831,7 @@ def generate_call_for_funds_pdf(
     # Génération du QR Code SEPA
     iban_val = bank_info.get("iban", "FR76 1694 5000 0000 0000 0000 000")
     bic_val = bank_info.get("bic", DEFAULT_BIC)
-    net_val = float(call_data.get("net_amount", 50.0))
+    net_val = amount_due_val
     payment_ref = call_data.get("payment_reference", f"Apport CCA - {member.prenom}")
 
     qr_bytes = generate_epc_qr_image_bytes(
@@ -981,8 +1013,11 @@ def generate_and_save_monthly_call(
     if calc["should_issue"] and not is_already_settled and pdf_bytes:
         try:
             from .drive_service import GoogleDriveJailService
-            # Sous-dossier privé / admin pour les avis d'appels de fonds
-            calls_folder_id = os.getenv("GOOGLE_DRIVE_CALLS_FOR_FUNDS_FOLDER_ID", "1712huYEQ_7IYa4eUCQtcnXy3Zdd3S3zu")
+            # Sous-dossier dédié 'Appels de Fonds' sous Hellenvilliers SCI (14RcQbUF7WQb5kmVlfhdHmieV1OA0Pk-J)
+            default_calls_folder = "1mTgsx8K-SN4jMJTk8PO_SLiMoyq6Xr7b"
+            calls_folder_id = os.getenv("GOOGLE_DRIVE_CALLS_FOR_FUNDS_FOLDER_ID", default_calls_folder)
+            if calls_folder_id == "1712huYEQ_7IYa4eUCQtcnXy3Zdd3S3zu":
+                calls_folder_id = default_calls_folder
             drive_svc = GoogleDriveJailService(folder_id=calls_folder_id)
             if drive_svc.is_configured():
                 drive_file = drive_svc.upload_file(
@@ -1035,6 +1070,281 @@ def generate_and_save_monthly_call(
         db.commit()
 
     return call_obj
+
+
+def send_call_for_funds_notification(
+    db: Session,
+    call_obj: CallForFunds,
+    actually_send: bool = True
+) -> Dict[str, Any]:
+    """
+    Envoie officiellement l'avis d'appel de fonds par email via Resend avec :
+    - Le montant total à régler `amount_due` (intégrant tout arriéré antérieur `balance_before < 0`),
+    - Les coordonnées bancaires officielles Swan (`FR76 1732 8844 0071 5921 5570 591`),
+    - Le QR-Code SEPA EPC encodé au montant `amount_due`,
+    - L'avis officiel au format PDF en pièce jointe (`attachments`),
+    - Et met à jour `notification_sent = True` et `notification_sent_at` en base.
+    """
+    import base64
+    from .email_service import (
+        is_email_disabled,
+        is_test_mode,
+        check_firewall,
+        render_email_layout,
+        record_dispatched_email,
+        DEFAULT_FROM_EMAIL,
+        FALLBACK_FROM_EMAIL,
+        APP_BASE_URL,
+        RESEND_API_KEY,
+        httpx,
+    )
+
+    member = call_obj.member or db.query(Member).filter(Member.id == call_obj.member_id).first()
+    if not member:
+        raise ValueError(f"Membre introuvable pour l'appel de fonds id={call_obj.id}")
+
+    balance_before = float(call_obj.balance_before or 0.0)
+    arrears = round(abs(balance_before), 2) if balance_before < 0 else 0.0
+    net_amount = float(call_obj.net_amount or 0.0)
+    amount_due = float(call_obj.amount_due if call_obj.amount_due is not None else round(net_amount + arrears, 2))
+
+    if amount_due <= 0.0 or net_amount <= 0.0 or call_obj.status in ("COUVERT", "REGLE", "ANNULE"):
+        return {
+            "status": "neutralized_no_email",
+            "message": f"Appel id={call_obj.id} ({call_obj.status}, due={amount_due:.2f} €) : aucun email à envoyer."
+        }
+
+    if not is_bank_account_active(db):
+        return {
+            "status": "blocked_pending_iban",
+            "message": "En attente de validation IBAN Swan. Zéro e-mail envoyé."
+        }
+
+    if not getattr(member, "notif_new_invoices", True):
+        return {
+            "status": "preference_disabled",
+            "message": f"Notifications désactivées par {member.prenom}."
+        }
+
+    to_email = (getattr(member, "email", None) or "").strip()
+    if not to_email:
+        return {"status": "skipped_no_email", "message": "Aucune adresse e-mail renseignée."}
+
+    fw_block = check_firewall(to_email)
+    if fw_block is not None:
+        return fw_block
+
+    bank_info = get_official_bank_info(db)
+    iban_val = bank_info.get("iban", "")
+    bic_val = bank_info.get("bic", DEFAULT_BIC)
+    prenom = getattr(member, "prenom", "Associé")
+    period_label = call_obj.period_label or f"{MONTH_NAMES_FR[call_obj.month]} {call_obj.year}"
+    theoretical = float(call_obj.theoretical_contribution or 50.0)
+    expenses_total = float(call_obj.approved_expenses_total or 0.0)
+    payment_ref = call_obj.payment_reference or f"HLV-{prenom.upper()}"
+
+    details_raw = json.loads(call_obj.details_json) if call_obj.details_json else {}
+    deducted = details_raw.get("deducted_expenses", []) if isinstance(details_raw, dict) else []
+
+    # Lecture ou génération du PDF d'avis officiel pour pièce jointe
+    pdf_filename = call_obj.pdf_filename or f"SCI {call_obj.month:02d}{call_obj.year} Avis Appel de Fonds {prenom}.pdf"
+    pdf_path = os.path.join(DOCUMENTS_DIR, pdf_filename)
+    pdf_bytes = None
+    if os.path.exists(pdf_path):
+        with open(pdf_path, "rb") as f:
+            pdf_bytes = f.read()
+    if not pdf_bytes:
+        call_data_for_pdf = {
+            "reference": call_obj.reference,
+            "year": call_obj.year,
+            "month": call_obj.month,
+            "period_label": period_label,
+            "theoretical_contribution": theoretical,
+            "approved_expenses_total": expenses_total,
+            "balance_before": balance_before,
+            "net_amount": net_amount,
+            "amount_due": amount_due,
+            "payment_reference": payment_ref,
+            "deducted_expenses": deducted,
+        }
+        pdf_bytes = generate_call_for_funds_pdf(
+            call_data=call_data_for_pdf,
+            member=member,
+            bank_info=bank_info,
+            is_bank_pending=False
+        )
+        if pdf_bytes:
+            os.makedirs(DOCUMENTS_DIR, exist_ok=True)
+            with open(pdf_path, "wb") as f:
+                f.write(pdf_bytes)
+
+    qr_bytes = generate_epc_qr_image_bytes(
+        iban=iban_val,
+        bic=bic_val,
+        amount=amount_due,
+        beneficiary_name=SCI_NAME,
+        remittance_info=payment_ref,
+        is_specimen=False
+    )
+    qr_b64 = base64.b64encode(qr_bytes).decode("ascii")
+
+    subject = f"🏛️ SCI Hellenvilliers — Appel de fonds {period_label} ({amount_due:.2f} €)"
+    preheader = f"Votre avis d'appel de fonds pour {period_label} est disponible : {amount_due:.2f} € à régler."
+
+    expenses_rows_html = ""
+    valid_expenses = [exp for exp in deducted if isinstance(exp, dict)]
+    if valid_expenses:
+        for exp in valid_expenses:
+            expenses_rows_html += f"""
+            <tr>
+                <td style="padding: 6px 10px; border-bottom: 1px solid #f1f5f9; color: #475569;">Déduction avance : {exp.get('title', 'Dépense')}</td>
+                <td style="padding: 6px 10px; border-bottom: 1px solid #f1f5f9; text-align: right; color: #b91c1c; font-weight: 600;">-{float(exp.get('amount') or 0):.2f} €</td>
+            </tr>
+            """
+    else:
+        expenses_rows_html = """
+        <tr>
+            <td style="padding: 6px 10px; border-bottom: 1px solid #f1f5f9; color: #94a3b8; font-style: italic;">Aucune avance de frais enregistrée</td>
+            <td style="padding: 6px 10px; border-bottom: 1px solid #f1f5f9; text-align: right; color: #94a3b8;">0,00 €</td>
+        </tr>
+        """
+
+    arrears_rows_html = ""
+    if arrears > 0:
+        arrears_rows_html = f"""
+        <tr>
+            <td style="padding: 6px 10px; border-bottom: 1px solid #f1f5f9; font-weight: 600; color: #1e293b;">Sous-total échéance {period_label} :</td>
+            <td style="padding: 6px 10px; border-bottom: 1px solid #f1f5f9; text-align: right; font-weight: 600; color: #1e293b;">{net_amount:.2f} €</td>
+        </tr>
+        <tr>
+            <td style="padding: 6px 10px; border-bottom: 1px solid #f1f5f9; font-weight: 600; color: #b45309;">Arriéré antérieur non réglé (Octobre 2026) :</td>
+            <td style="padding: 6px 10px; border-bottom: 1px solid #f1f5f9; text-align: right; font-weight: 600; color: #b45309;">+{arrears:.2f} €</td>
+        </tr>
+        """
+
+    total_row_label = "Total net à régler (échéance + arriéré) :" if arrears > 0 else "Solde net à régler :"
+
+    content_html = f"""
+    <p>Bonjour {prenom},</p>
+    <p>Votre avis d'appel de fonds pour le mois de <strong>{period_label}</strong> a été établi pour la SCI Hellenvilliers (vous trouverez également l'avis officiel au format PDF en pièce jointe de cet e-mail) :</p>
+
+    <div style="background-color: #f8fafc; border: 1px solid #e2e8f0; border-left: 4px solid #064e3b; border-radius: 8px; padding: 18px; margin: 20px 0;">
+        <div style="font-size: 16px; font-weight: bold; color: #064e3b; margin-bottom: 12px;">
+            📋 Décompte de la quote-part — {period_label}
+        </div>
+        <table role="presentation" border="0" cellpadding="0" cellspacing="0" width="100%" style="font-size: 13.5px; line-height: 1.6;">
+            <tr>
+                <td style="padding: 6px 10px; border-bottom: 1px solid #f1f5f9;">Quote-part mensuelle théorique :</td>
+                <td style="padding: 6px 10px; border-bottom: 1px solid #f1f5f9; text-align: right; font-weight: bold; color: #1e293b;">+{theoretical:.2f} €</td>
+            </tr>
+            {expenses_rows_html}
+            {arrears_rows_html}
+            <tr style="background-color: #ecfdf5;">
+                <td style="padding: 10px; font-size: 15px; font-weight: bold; color: #064e3b;">{total_row_label}</td>
+                <td style="padding: 10px; font-size: 16px; font-weight: bold; text-align: right; color: #064e3b;">{amount_due:.2f} €</td>
+            </tr>
+        </table>
+    </div>
+
+    <div style="background-color: #f0fdf4; border: 1px solid #bbf7d0; border-radius: 8px; padding: 16px; margin: 20px 0;">
+        <div style="font-size: 14px; font-weight: bold; color: #166534; margin-bottom: 12px;">
+            🏦 Coordonnées pour virement bancaire SEPA
+        </div>
+        <table role="presentation" border="0" cellpadding="0" cellspacing="0" width="100%">
+            <tr>
+                <td style="vertical-align: top; padding-right: 16px;">
+                    <p style="font-size: 13px; color: #1e293b; margin: 0 0 10px 0; line-height: 1.6;">
+                        • Titulaire : <strong>SCI HELLENVILLIERS</strong><br/>
+                        • IBAN : <code style="font-family: monospace; font-size: 13px; background: #ffffff; padding: 2px 6px; border-radius: 4px; border: 1px solid #cbd5e1;">{iban_val}</code><br/>
+                        • BIC : <code style="font-family: monospace;">{bic_val}</code><br/>
+                        • Montant à régler : <strong>{amount_due:.2f} €</strong>
+                    </p>
+                    <p style="font-size: 12.5px; color: #064e3b; margin: 0 0 10px 0; line-height: 1.5; font-weight: 500;">
+                        💡 Il vous suffit d'effectuer votre virement depuis votre compte bancaire personnel (le virement sera automatiquement détecté et affecté à votre trésorerie à votre nom).
+                    </p>
+                    <p style="font-size: 12px; color: #475569; margin: 0;">
+                        📱 <em>Scannez le QR-Code SEPA EPC ci-contre ou dans le PDF joint avec votre application bancaire pour pré-remplir le virement instantanément.</em>
+                    </p>
+                </td>
+                <td style="vertical-align: middle; text-align: center; width: 130px;">
+                    <img src="data:image/png;base64,{qr_b64}" width="130" height="130" style="display: block; border-radius: 6px; border: 1px solid #cbd5e1; box-shadow: 0 2px 6px rgba(0,0,0,0.08);" alt="QR-Code SEPA EPC" />
+                </td>
+            </tr>
+        </table>
+    </div>
+
+    <p style="font-size: 12px; color: #64748b; margin-top: 24px; border-top: 1px solid #e2e8f0; padding-top: 12px;">
+        💡 <em>Vous pouvez consulter vos factures et gérer vos préférences à tout moment dans vos <a href="{APP_BASE_URL}/settings" style="color: #064e3b; text-decoration: underline;">Paramètres</a>.</em>
+    </p>
+    """
+
+    action_url = f"{APP_BASE_URL}/admin"
+    html_body = render_email_layout(
+        title="Appel de fonds mensuel",
+        preheader=preheader,
+        content_html=content_html,
+        action_url=action_url,
+        action_label="Consulter l'avis & télécharger le PDF"
+    )
+
+    will_send = actually_send and not is_email_disabled() and not is_test_mode()
+    email_entry = record_dispatched_email(
+        trigger_action="call_for_funds",
+        subject=subject,
+        recipients=to_email,
+        html_content=html_body,
+        recipients_names=[prenom],
+        status="sent" if will_send else "simulated"
+    )
+
+    if not will_send:
+        return {"status": "simulated", "id": email_entry["id"], "_email_dispatched": email_entry}
+
+    api_key = os.environ.get("RESEND_API_KEY", RESEND_API_KEY).strip()
+    if not api_key:
+        raise RuntimeError("RESEND_API_KEY manquante pour l'envoi réel de l'appel de fonds.")
+
+    payload: Dict[str, Any] = {
+        "from": DEFAULT_FROM_EMAIL,
+        "to": [to_email],
+        "subject": subject,
+        "html": html_body,
+    }
+    if pdf_bytes:
+        payload["attachments"] = [
+            {
+                "filename": pdf_filename,
+                "content": base64.b64encode(pdf_bytes).decode("ascii"),
+            }
+        ]
+
+    headers = {
+        "Authorization": f"Bearer {api_key}",
+        "Content-Type": "application/json",
+    }
+    url = "https://api.resend.com/emails"
+
+    with httpx.Client(timeout=15.0) as client:
+        resp = client.post(url, headers=headers, json=payload)
+        if resp.status_code == 403 and "domain" in resp.text.lower() and payload["from"] != FALLBACK_FROM_EMAIL:
+            payload["from"] = FALLBACK_FROM_EMAIL
+            resp = client.post(url, headers=headers, json=payload)
+
+        if resp.status_code not in (200, 201):
+            logger.error(f"[CALL FOR FUNDS EMAIL ERROR] Resend HTTP {resp.status_code}: {resp.text}")
+            return {"status": "error", "status_code": resp.status_code, "error": resp.text}
+
+        res = resp.json()
+        res["status"] = "sent"
+        res["status_code"] = resp.status_code
+        res["_email_dispatched"] = email_entry
+
+    call_obj.notification_sent = True
+    call_obj.notification_sent_at = datetime.utcnow()
+    call_obj.updated_at = datetime.utcnow()
+    db.commit()
+    db.refresh(call_obj)
+    return res
 
 
 def reconcile_open_calls_for_member(db: Session, member_id: int) -> List[CallForFunds]:
@@ -1138,13 +1448,16 @@ def reconcile_open_calls_for_member(db: Session, member_id: int) -> List[CallFor
         else:
             if float(call.theoretical_contribution or 0.0) > 0.0:
                 call.status = "EMIS" if bank_active else "PENDING_SWAN_IBAN"
-                call.amount_due = round(min(float(call.theoretical_contribution), abs(balance)), 2)
-                call.net_amount = call.amount_due
+                if calc is not None:
+                    call.net_amount = calc["net_amount"]
+                    call.amount_due = calc["amount_due"]
+                else:
+                    call.net_amount = round(min(float(call.theoretical_contribution), abs(balance)), 2)
+                    arrears = abs(float(call.balance_before or 0.0)) if float(call.balance_before or 0.0) < 0 else 0.0
+                    call.amount_due = round(call.net_amount + arrears, 2)
 
         call.updated_at = datetime.utcnow()
         updated_calls.append(call)
 
     db.commit()
     return updated_calls
-
-
