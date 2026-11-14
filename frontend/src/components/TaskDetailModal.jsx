@@ -65,7 +65,7 @@ const ALL_MEMBERS = [
   'Marguerite Jamet',
   'Eugénie Jamet',
   'Frédéric Jamet',
-  'Élisabeth Jamet',
+  'Maman (Élisabeth) Jamet',
 ];
 
 function parseChecklistItems(raw) {
@@ -171,7 +171,8 @@ export default function TaskDetailModal({
 }) {
   const isVoteInitiative = !!(initialTask?.isVoteInitiative || initialTask?.isVote || initialTask?.is_project);
   const isBugReportEffective = Boolean(isBugReport || initialTask?.isBugReport);
-  const isNewTask = !initialTask || !initialTask.id || isEditing || initialMode === 'edit';
+  const isNewTask = !initialTask || !initialTask.id;
+  const startInEditMode = isNewTask || isEditing || initialMode === 'edit';
 
   const currentUserName = typeof currentUser === 'object'
     ? (currentUser?.name || currentUser?.prenom || '')
@@ -206,7 +207,7 @@ export default function TaskDetailModal({
 
   // --- STATE HOOKS (Déclarés en tête absolue pour immunité totale contre la Temporal Dead Zone) ---
   const [task, setTask] = useState(initialTask || {});
-  const [mode, setMode] = useState(isNewTask ? 'edit' : (initialMode || 'view')); // 'view' | 'edit'
+  const [mode, setMode] = useState(startInEditMode ? 'edit' : (initialMode || 'view')); // 'view' | 'edit'
   const [isArbitratingExpense, setIsArbitratingExpense] = useState(false);
   const [isMobileChatOpen, setIsMobileChatOpen] = useState(false);
 
@@ -304,6 +305,7 @@ export default function TaskDetailModal({
   const fileUploadRef = useRef(null);
   const fileUploadEditRef = useRef(null);
   const validationSectionRef = useRef(null);
+  const hasPrefilledNewAssigneeRef = useRef(false);
 
   // --- VARIABLES DÉPENDANTES DU STATE / PROPS ---
   const isAssignedToCurrentUser = Boolean(
@@ -362,12 +364,16 @@ export default function TaskDetailModal({
     const origPriority = (task?.priority || 'Normale').trim();
     const origDeadline = task?.deadline ? task.deadline.slice(0, 10) : '';
     const origStatus = (task?.status || 'A_FAIRE').trim();
-    const origMembers = Array.isArray(task?.assigned_members)
-      ? [...task.assigned_members].sort().join(',')
-      : (task?.assignee || '');
-    const currentMembers = Array.isArray(editMembers)
-      ? [...editMembers].sort().join(',')
-      : '';
+    const origMembers = (Array.isArray(task?.assigned_members)
+      ? task.assigned_members
+      : (task?.assignee ? [task.assignee] : []))
+      .map((m) => resolveMemberDisplayName(m) || m)
+      .sort()
+      .join(',');
+    const currentMembers = (Array.isArray(editMembers) ? editMembers : [])
+      .map((m) => resolveMemberDisplayName(m) || m)
+      .sort()
+      .join(',');
 
     if (editTitle.trim() !== origTitle) return true;
     if (editDescription.trim() !== origDesc) return true;
@@ -452,12 +458,13 @@ export default function TaskDetailModal({
     setEditPriority(t.priority || 'Normale');
     setEditDeadline(t.deadline ? t.deadline.slice(0, 10) : '');
     setEditStatus(t.status || 'A_FAIRE');
-    setEditMembers(isVoteInitiative ? [currentUserName || 'Henri Jamet'] : (Array.isArray(t.assigned_members) ? t.assigned_members : (t.assignee ? [t.assignee] : [])));
-    setViewAssignedMembers(
-      Array.isArray(t.assigned_members) && t.assigned_members.length > 0
-        ? t.assigned_members
-        : (t.assignee ? [t.assignee] : [])
-    );
+    const normMembers = (arr) => arr.map((m) => resolveMemberDisplayName(m) || m).filter(Boolean);
+    const rawAssigned = Array.isArray(t.assigned_members) && t.assigned_members.length > 0
+      ? t.assigned_members
+      : (t.assignee ? [t.assignee] : []);
+    const canonAssigned = normMembers(rawAssigned);
+    setEditMembers(isVoteInitiative ? [currentUserName || 'Henri Jamet'] : canonAssigned);
+    setViewAssignedMembers(canonAssigned);
     setViewAutoAssign(Boolean(t.auto_assign_by_workload));
     setEditChecklist(isNew ? [] : parseChecklistItems(t.checklist));
     setEditDocuments(parseTaskDocuments(t.documents || t.completion_docs || t.document_urls));
@@ -776,6 +783,7 @@ export default function TaskDetailModal({
   useEffect(() => {
     isSavedRef.current = false;
     isDeletedRef.current = false;
+    hasPrefilledNewAssigneeRef.current = false;
     tempDocIdsRef.current = Array.isArray(tempUploadedDocIds) && tempUploadedDocIds.length > 0
       ? tempUploadedDocIds
       : (initialTask?.tempUploadedDocIds || []);
@@ -888,7 +896,8 @@ export default function TaskDetailModal({
               }
               return prev;
             });
-            if (isNewTask) {
+            if (isNewTask && !hasPrefilledNewAssigneeRef.current) {
+              hasPrefilledNewAssigneeRef.current = true;
               setEditMembers((prev) => {
                 if (!prev || prev.length === 0) {
                   return [top1Name];
@@ -963,7 +972,8 @@ export default function TaskDetailModal({
   useEffect(() => {
     if (!isOpen) return;
     setIsMobileChatOpen(false);
-    const isNew = !initialTask || !initialTask.id || isEditing || initialMode === 'edit';
+    const isNew = !initialTask || !initialTask.id;
+    const startInEdit = isNew || isEditing || initialMode === 'edit';
     const taskObj = initialTask && initialTask.id ? initialTask : {
       title: initialTask?.title || '',
       description: initialTask?.description || '',
@@ -983,7 +993,7 @@ export default function TaskDetailModal({
 
     setTask(taskObj);
     syncEditFields(taskObj, isNew);
-    setMode(isNew ? 'edit' : (initialMode || 'view'));
+    setMode(startInEdit ? 'edit' : (initialMode || 'view'));
 
     if (initialTask?.comments && Array.isArray(initialTask.comments) && initialTask.comments.length > 0) {
       setComments(initialTask.comments);
@@ -1782,7 +1792,7 @@ export default function TaskDetailModal({
                           Responsables &amp; Attribution de la mission
                         </h3>
                       </div>
-                      {!isEditingAssignment && isCoordinator && (
+                      {!isEditingAssignment && (
                         <button
                           type="button"
                           onClick={() => {
@@ -2528,20 +2538,6 @@ export default function TaskDetailModal({
                       </div>
                     )}
 
-                    {/* Attribution équitable des membres en mode édition / création (Annotation 1) */}
-                    {!isVoteInitiative && (
-                      <TaskEquityAssignmentSelector
-                        selectedMembers={editMembers}
-                        onChangeMembers={setEditMembers}
-                        autoAssign={editAutoAssignByWorkload}
-                        onChangeAutoAssign={setEditAutoAssignByWorkload}
-                        recommendations={recommendations}
-                        allTasks={allTasksList}
-                        currentTaskId={task?.id}
-                        title="Membres assignés & Répartition équitable"
-                      />
-                    )}
-
                     {/* Presence on site required */}
                     <label className="flex items-center gap-3 p-3 bg-canvas-slate rounded-xl border border-slate-200 select-none cursor-pointer">
                       <input
@@ -2748,6 +2744,28 @@ export default function TaskDetailModal({
                     </div>
                   </div>
                 </section>
+
+                {/* Section Attribution & Recommandation d'Équité (toujours visible & éditable en mode édition - Annotation 1) */}
+                {!isVoteInitiative && (
+                  <section className="bg-white border border-emerald-300 rounded-2xl p-4 sm:p-5 shadow-xs flex flex-col gap-3">
+                    <div className="flex items-center justify-between border-b border-slate-100 pb-3">
+                      <h3 className="font-headline-sm text-sm sm:text-base font-bold text-forest-deep flex items-center gap-2">
+                        <span className="material-symbols-outlined text-emerald-700 text-[20px]">group</span>
+                        <span>Attribution &amp; Recommandation d'Équité</span>
+                      </h3>
+                    </div>
+                    <TaskEquityAssignmentSelector
+                      selectedMembers={editMembers}
+                      onChangeMembers={setEditMembers}
+                      autoAssign={editAutoAssignByWorkload}
+                      onChangeAutoAssign={setEditAutoAssignByWorkload}
+                      recommendations={recommendations}
+                      allTasks={allTasksList}
+                      currentTaskId={task?.id}
+                      title="Membres assignés & Répartition équitable"
+                    />
+                  </section>
+                )}
 
                 {/* Section 3 : Documents & Pièces jointes (Annotations 12, 13 & 14) */}
                 <section className="bg-white border border-slate-200 rounded-2xl p-4 sm:p-5 shadow-xs flex flex-col gap-4">

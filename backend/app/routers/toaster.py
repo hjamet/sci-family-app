@@ -29,7 +29,7 @@ load_dotenv()
 
 router = APIRouter(prefix="/api/toaster", tags=["Grille-Pain IA (Sandbox)"])
 
-GEMINI_MODEL = "models/gemini-4-argon"
+GEMINI_MODEL = "models/gemini-4-hydrogen"
 GEMINI_ENDPOINT = f"https://generativelanguage.googleapis.com/v1beta/{GEMINI_MODEL}:generateContent"
 
 
@@ -811,7 +811,7 @@ def toaster_chat_endpoint(
     db: Session = Depends(get_db),
 ):
     """
-    Orchestrateur conversationnel et multimodal via models/gemini-4-argon :
+    Orchestrateur conversationnel et multimodal via models/gemini-4-hydrogen (Thinking HIGH) :
     Fournit le contexte temps réel du bac à sable et les 6 déclarations d'outils métier,
     et renvoie la réponse + une Carte d'Action Hybride (action_card) lorsque pertinent.
     """
@@ -896,10 +896,13 @@ def toaster_chat_endpoint(
         "tools": [{"functionDeclarations": TOASTER_FUNCTION_DECLARATIONS}],
         "generationConfig": {
             "temperature": 0.2,
+            "thinkingConfig": {
+                "thinkingLevel": "HIGH",
+            },
         },
     }
 
-    with httpx.Client(timeout=45.0) as client:
+    with httpx.Client(timeout=55.0) as client:
         resp = client.post(url, json=gemini_payload)
 
     if resp.status_code != 200:

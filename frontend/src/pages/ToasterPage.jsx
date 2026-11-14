@@ -1,13 +1,13 @@
 import React, { useState, useEffect, useRef, useMemo } from 'react';
 
 const STATUTORY_MEMBERS_FALLBACK = [
-  { id: 6, prenom: 'Maman', nom: 'Maman (Élisabeth) Jamet', displayLabel: 'Maman (Élisabeth) Jamet' },
+  { id: 7, prenom: 'Maman', nom: 'Maman (Élisabeth) Jamet', displayLabel: 'Maman (Élisabeth) Jamet' },
   { id: 1, prenom: 'Henri', nom: 'Henri Jamet', displayLabel: 'Henri Jamet' },
-  { id: 7, prenom: 'Frédéric', nom: 'Frédéric Jamet', displayLabel: 'Frédéric Jamet' },
-  { id: 3, prenom: 'Marguerite', nom: 'Marguerite Jamet', displayLabel: 'Marguerite Jamet' },
-  { id: 2, prenom: 'Hortense', nom: 'Hortense Jamet', displayLabel: 'Hortense Jamet' },
-  { id: 5, prenom: 'Joséphine', nom: 'Joséphine Jamet', displayLabel: 'Joséphine Jamet' },
-  { id: 4, prenom: 'Eugénie', nom: 'Eugénie Ducrocq', displayLabel: 'Eugénie Ducrocq' },
+  { id: 6, prenom: 'Frédéric', nom: 'Frédéric Jamet', displayLabel: 'Frédéric Jamet' },
+  { id: 2, prenom: 'Marguerite', nom: 'Marguerite Jamet', displayLabel: 'Marguerite Jamet' },
+  { id: 3, prenom: 'Hortense', nom: 'Hortense Jamet', displayLabel: 'Hortense Jamet' },
+  { id: 4, prenom: 'Joséphine', nom: 'Joséphine Jamet', displayLabel: 'Joséphine Jamet' },
+  { id: 5, prenom: 'Eugénie', nom: 'Eugénie Jamet', displayLabel: 'Eugénie Jamet' },
 ];
 
 function formatAssociateLabel(member) {
@@ -65,7 +65,7 @@ export default function ToasterPage({ currentUser }) {
     if (currentUser && typeof currentUser === 'object' && currentUser.id) {
       return Number(currentUser.id);
     }
-    return 6; // Par défaut : Maman (Élisabeth) Jamet pour tester l'ergonomie immédiatement
+    return 7; // Par défaut : Maman (Élisabeth) Jamet pour tester l'ergonomie immédiatement
   });
 
   // État du bac à sable
@@ -1041,7 +1041,7 @@ export default function ToasterPage({ currentUser }) {
               <span className="material-symbols-outlined animate-spin text-primary text-[18px]">
                 progress_activity
               </span>
-              <span>Gemini 4 Argon analyse votre demande et le contexte du domaine...</span>
+              <span>Gemini 4 Hydrogen réfléchit à votre demande et au contexte du domaine...</span>
             </div>
           )}
 

@@ -8,11 +8,11 @@ const ASSOCIATES_LIST = [
   { id: 'all', label: 'Tous les 7 associés' },
   { id: 'henri', label: 'Henri Jamet', dotColor: 'bg-teal-600' },
   { id: 'frederic', label: 'Frédéric Jamet', dotColor: 'bg-emerald-700' },
-  { id: 'elisabeth', label: 'Élisabeth Jamet', dotColor: 'bg-emerald-600' },
+  { id: 'elisabeth', label: 'Maman (Élisabeth) Jamet', dotColor: 'bg-emerald-600' },
   { id: 'josephine', label: 'Joséphine Jamet', dotColor: 'bg-sky-600' },
   { id: 'hortense', label: 'Hortense Jamet', dotColor: 'bg-amber-600' },
   { id: 'marguerite', label: 'Marguerite Jamet', dotColor: 'bg-rose-600' },
-  { id: 'eugenie', label: 'Eugénie Ducrocq', dotColor: 'bg-purple-600' },
+  { id: 'eugenie', label: 'Eugénie Jamet', dotColor: 'bg-purple-600' },
 ];
 
 const MONTH_NAMES_FR = [

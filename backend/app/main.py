@@ -174,6 +174,7 @@ try:
         is_bank_account_active,
         calculate_member_call_for_funds,
         generate_and_save_monthly_call,
+        send_call_for_funds_notification,
         get_official_bank_info,
         DOCUMENTS_DIR as CFF_DOCUMENTS_DIR
     )
@@ -181,6 +182,7 @@ except ImportError:
     is_bank_account_active = lambda *args, **kwargs: False
     calculate_member_call_for_funds = None
     generate_and_save_monthly_call = None
+    send_call_for_funds_notification = None
     get_official_bank_info = None
     CFF_DOCUMENTS_DIR = None
 from .migrate_notifications import migrate_engine
@@ -5108,10 +5110,12 @@ def get_task_recommendations_endpoint(
     """
     target_subject = subject or category
     target_complexity = complexity
+    excluded_task_id = None
     if task_id:
         try:
             existing = resolve_task_by_id_or_ref(task_id, db)
             if existing:
+                excluded_task_id = existing.id
                 if not target_subject:
                     target_subject = existing.subject or existing.category
                 if not target_complexity:
@@ -5122,6 +5126,8 @@ def get_task_recommendations_endpoint(
     all_members = db.query(Member).all()
     all_reservations = db.query(Reservation).all()
     all_tasks = db.query(Task).all()
+    if excluded_task_id is not None:
+        all_tasks = [t for t in all_tasks if t.id != excluded_task_id]
 
     recommendations = get_task_recommendations(
         members=all_members,
@@ -5179,8 +5185,11 @@ def update_task(
         u_name = (current_user.name or "").strip().lower()
         is_creator = bool((u_prenom and u_prenom in cb) or (u_name and u_name in cb))
 
-    # Contrôle d'habilitation : coordinateur, créateur ou membre assigné
-    if current_user and not is_coord and not is_creator:
+    is_assignment_only = bool(payload) and set(payload.keys()).issubset({
+        "assigned_members", "assignee", "assignee_id", "auto_assign_by_workload"
+    })
+    # Contrôle d'habilitation : coordinateur, créateur, membre assigné ou réattribution ouverte entre associés
+    if current_user and not is_coord and not is_creator and not is_assignment_only:
         is_assigned = False
         if task.assignee_id and task.assignee_id == current_user.id:
             is_assigned = True
@@ -10558,34 +10567,27 @@ def generate_calls_for_funds(
 
     for mem in members:
         call_obj = generate_and_save_monthly_call(db, mem, y, m)
+        effective_due = float(
+            call_obj.amount_due
+            if getattr(call_obj, "amount_due", None) is not None
+            else (call_obj.net_amount or 0.0)
+        )
 
         # Règle d'exclusion absolue : associé à jour ou solde créditeur
-        if call_obj.net_amount <= 0 or call_obj.status == "COUVERT":
+        if effective_due <= 0 or call_obj.status == "COUVERT":
             logger.info(
                 f"[APPEL DE FONDS EXCLUSION] Associé {mem.name} ({mem.prenom}) sauté : "
-                f"solde suffisant ou créditeur (net_amount={call_obj.net_amount:.2f} €, statut={call_obj.status}). "
+                f"solde suffisant ou créditeur (amount_due={effective_due:.2f} €, net_amount={call_obj.net_amount:.2f} €, statut={call_obj.status}). "
                 f"Aucun avis ni email envoyé."
             )
 
-        # Gestion des notifications e-mails
+        # Gestion des notifications e-mails (inclut arriérés + QR EPC sur amount_due + PDF en PJ)
         if request_data.send_notifications and call_obj.status == "EMIS":
-            if bank_active and mem.notif_new_invoices and call_obj.net_amount > 0:
-                details_raw = json.loads(call_obj.details_json) if call_obj.details_json else {}
-                deducted_list = details_raw.get("deducted_expenses", []) if isinstance(details_raw, dict) else (details_raw if isinstance(details_raw, list) else [])
-                call_data = {
-                    "reference": call_obj.reference,
-                    "period_label": call_obj.period_label,
-                    "theoretical_contribution": call_obj.theoretical_contribution,
-                    "approved_expenses_total": call_obj.approved_expenses_total,
-                    "net_amount": call_obj.net_amount,
-                    "payment_reference": call_obj.payment_reference,
-                    "deducted_expenses": deducted_list
-                }
-                email_res = send_call_for_funds_email(mem, call_data, actually_send=True, db=db)
+            if bank_active and mem.notif_new_invoices and effective_due > 0:
+                if send_call_for_funds_notification is None:
+                    raise RuntimeError("send_call_for_funds_notification indisponible.")
+                email_res = send_call_for_funds_notification(db, call_obj, actually_send=True)
                 if email_res.get("status") in ("sent", "simulated"):
-                    call_obj.notification_sent = True
-                    call_obj.notification_sent_at = datetime.utcnow()
-                    db.commit()
                     notifications_sent += 1
             else:
                 notifications_blocked += 1
@@ -10602,6 +10604,8 @@ def generate_calls_for_funds(
             "period_label": call_obj.period_label,
             "theoretical_contribution": call_obj.theoretical_contribution,
             "approved_expenses_total": call_obj.approved_expenses_total,
+            "balance_before": getattr(call_obj, "balance_before", 0.0),
+            "amount_due": effective_due,
             "net_amount": call_obj.net_amount,
             "status": call_obj.status,
             "pdf_url": call_obj.pdf_url,
@@ -11740,32 +11744,25 @@ async def cron_calls_for_funds(request: Request, db: Session = Depends(get_db)):
 
     for m in members:
         call_obj = generate_and_save_monthly_call(db, m, now.year, now.month)
+        effective_due = float(
+            call_obj.amount_due
+            if getattr(call_obj, "amount_due", None) is not None
+            else (call_obj.net_amount or 0.0)
+        )
 
         # Règle d'exclusion absolue : associé à jour ou solde créditeur (ex: Frédéric Jamet)
-        if call_obj.net_amount <= 0 or call_obj.status == "COUVERT":
+        if effective_due <= 0 or call_obj.status == "COUVERT":
             logger.info(
                 f"[CRON APPEL DE FONDS EXCLUSION] Associé {m.name} ({m.prenom}) sauté : "
-                f"solde suffisant ou créditeur (net_amount={call_obj.net_amount:.2f} €, statut={call_obj.status}). "
+                f"solde suffisant ou créditeur (amount_due={effective_due:.2f} €, net_amount={call_obj.net_amount:.2f} €, statut={call_obj.status}). "
                 f"Aucun avis ni email envoyé."
             )
             notifications_skipped += 1
-        elif bank_active and getattr(m, "notif_new_invoices", True) and call_obj.status == "EMIS" and call_obj.net_amount > 0 and not call_obj.notification_sent:
-            details_raw = json.loads(call_obj.details_json) if call_obj.details_json else {}
-            deducted_list = details_raw.get("deducted_expenses", []) if isinstance(details_raw, dict) else (details_raw if isinstance(details_raw, list) else [])
-            call_data = {
-                "reference": call_obj.reference,
-                "period_label": call_obj.period_label,
-                "theoretical_contribution": call_obj.theoretical_contribution,
-                "approved_expenses_total": call_obj.approved_expenses_total,
-                "net_amount": call_obj.net_amount,
-                "payment_reference": call_obj.payment_reference,
-                "deducted_expenses": deducted_list
-            }
-            email_res = send_call_for_funds_email(m, call_data, actually_send=True, db=db)
+        elif bank_active and getattr(m, "notif_new_invoices", True) and call_obj.status == "EMIS" and effective_due > 0 and not call_obj.notification_sent:
+            if send_call_for_funds_notification is None:
+                raise RuntimeError("send_call_for_funds_notification indisponible.")
+            email_res = send_call_for_funds_notification(db, call_obj, actually_send=True)
             if email_res.get("status") in ("sent", "simulated"):
-                call_obj.notification_sent = True
-                call_obj.notification_sent_at = datetime.utcnow()
-                db.commit()
                 notifications_sent += 1
             else:
                 notifications_skipped += 1
@@ -11776,7 +11773,7 @@ async def cron_calls_for_funds(request: Request, db: Session = Depends(get_db)):
             "member_id": m.id,
             "member_name": m.name,
             "status": call_obj.status,
-            "amount_due": getattr(call_obj, "amount_due", call_obj.net_amount),
+            "amount_due": effective_due,
             "net_amount": call_obj.net_amount,
             "notification_sent": call_obj.notification_sent
         })

@@ -1,4 +1,7 @@
 import React, { useMemo, useState } from 'react';
+import { resolveMemberDisplayName } from '../../utils/taskAssignment';
+
+const canonName = (n) => resolveMemberDisplayName(n) || String(n || '').trim();
 
 const DEFAULT_ASSOCIATES = [
   'Henri Jamet',
@@ -6,7 +9,7 @@ const DEFAULT_ASSOCIATES = [
   'Hortense Jamet',
   'Marguerite Jamet',
   'Eugénie Jamet',
-  'Élisabeth Jamet',
+  'Maman (Élisabeth) Jamet',
 ];
 
 const COMPLEXITY_WEIGHTS = {
@@ -105,7 +108,7 @@ export default function TaskEquityAssignmentSelector({
       recommendations.forEach((rec, idx) => {
         const rName = rec.name || rec.member_name || rec.prenom || '';
         if (rName) {
-          recMap.set(rName.toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g, ''), {
+          recMap.set(canonName(rName).toLowerCase(), {
             rec,
             idx,
           });
@@ -114,7 +117,7 @@ export default function TaskEquityAssignmentSelector({
     }
 
     const associatesData = eligibleAssociates.map((assocName) => {
-      const cleanAssoc = assocName.toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '');
+      const cleanAssoc = canonName(assocName).toLowerCase();
       const recInfo = recMap.get(cleanAssoc);
 
       let activeCount = 0;
@@ -225,13 +228,13 @@ export default function TaskEquityAssignmentSelector({
   const handleToggleAssociate = (assocName) => {
     if (readOnly) return;
     const current = Array.isArray(selectedMembers) ? selectedMembers : [];
-    let updated;
-
-    if (current.includes(assocName)) {
-      updated = current.filter((m) => m !== assocName);
-    } else {
-      updated = [...current, assocName];
-    }
+    const targetCanon = canonName(assocName);
+    const alreadySelected = current.some((m) => canonName(m) === targetCanon);
+    const normalizedCurrent = current.map(canonName).filter(Boolean);
+    const dedupCurrent = [...new Set(normalizedCurrent)];
+    const updated = alreadySelected
+      ? dedupCurrent.filter((m) => m !== targetCanon)
+      : [...dedupCurrent, targetCanon];
 
     if (typeof onChangeMembers === 'function') {
       onChangeMembers(updated);
@@ -313,7 +316,7 @@ export default function TaskEquityAssignmentSelector({
       {/* Grille des associés triés par équité */}
       <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-2">
         {sortedAssociatesByEquity.map((associate, idx) => {
-          const isSelected = Array.isArray(selectedMembers) && selectedMembers.includes(associate.name);
+          const isSelected = Array.isArray(selectedMembers) && selectedMembers.some((m) => canonName(m) === canonName(associate.name));
           const isTop1 = idx === 0;
 
           return (

@@ -80,21 +80,21 @@ function getISOWeekAndYear(dateStr) {
 const ASSOCIATES_LIST = [
   'Henri Jamet',
   'Frédéric Jamet',
-  'Élisabeth Jamet',
+  'Maman (Élisabeth) Jamet',
   'Joséphine Jamet',
   'Hortense Jamet',
   'Marguerite Jamet',
-  'Eugénie Ducrocq',
+  'Eugénie Jamet',
 ];
 
 const FAMILY_MEMBERS = [
   { id: 'frederic', name: 'Frédéric Jamet', role: 'Usufruitier', initials: 'FJ', color: 'bg-emerald-800 text-white' },
-  { id: 'elisabeth', name: 'Élisabeth Jamet', role: 'Usufruitière', initials: 'ÉJ', color: 'bg-teal-700 text-white' },
+  { id: 'elisabeth', name: 'Maman (Élisabeth) Jamet', role: 'Usufruitière', initials: 'ÉJ', color: 'bg-teal-700 text-white' },
   { id: 'henri', name: 'Henri Jamet', role: 'Gérant', initials: 'HJ', color: 'bg-forest-deep text-white' },
   { id: 'josephine', name: 'Joséphine Jamet', role: 'Coordinatrice', initials: 'JJ', color: 'bg-amber-rich text-white' },
   { id: 'hortense', name: 'Hortense Jamet', role: 'Associée', initials: 'HJ', color: 'bg-lime-700 text-white' },
   { id: 'marguerite', name: 'Marguerite Jamet', role: 'Associée', initials: 'MJ', color: 'bg-teal-800 text-white' },
-  { id: 'eugenie', name: 'Eugénie Ducrocq', role: 'Associée', initials: 'ED', color: 'bg-amber-700 text-white' },
+  { id: 'eugenie', name: 'Eugénie Jamet', role: 'Associée', initials: 'EJ', color: 'bg-amber-700 text-white' },
 ];
 
 const ROOMS = [
@@ -150,17 +150,27 @@ const ROOMS = [
 ];
 
 export function resolveSafeUserName(val) {
+  let raw = '';
   if (!val) return '';
-  if (typeof val === 'string') return val.trim();
-  if (typeof val === 'object') {
-    if (typeof val.fullName === 'string' && val.fullName.trim()) return val.fullName.trim();
-    if (typeof val.name === 'string' && val.name.trim()) return val.name.trim();
-    if (typeof val.prenom === 'string' && val.prenom.trim()) {
-      return `${val.prenom.trim()} Jamet`;
-    }
-    if (typeof val.username === 'string' && val.username.trim()) return val.username.trim();
+  if (typeof val === 'string') {
+    raw = val.trim();
+  } else if (typeof val === 'object') {
+    if (typeof val.fullName === 'string' && val.fullName.trim()) raw = val.fullName.trim();
+    else if (typeof val.name === 'string' && val.name.trim()) raw = val.name.trim();
+    else if (typeof val.prenom === 'string' && val.prenom.trim()) raw = `${val.prenom.trim()} Jamet`;
+    else if (typeof val.username === 'string' && val.username.trim()) raw = val.username.trim();
+    else raw = String(val || '').trim();
+  } else {
+    raw = String(val || '').trim();
   }
-  return String(val || '').trim();
+  const clean = raw.toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '');
+  if (clean.includes('elisabeth') || clean === 'maman' || clean.includes('maman (')) {
+    return 'Maman (Élisabeth) Jamet';
+  }
+  if (clean.includes('eugenie')) {
+    return 'Eugénie Jamet';
+  }
+  return raw;
 }
 
 export function normalizeTimeInput(val, fallback = '15:00') {
@@ -477,18 +487,26 @@ function BookingModalContent({
 
       // a) Chauffage Presbytère
       let initPresb = false;
+      let heatingExplicit = false;
+      let isHeatingCutOff = false;
       const heatingSegment = domoSegments.find((seg) => seg.includes('chauffage presbyt'));
       if (heatingSegment) {
-        initPresb = !isCutSegment(heatingSegment);
+        heatingExplicit = true;
+        isHeatingCutOff = isCutSegment(heatingSegment);
+        initPresb = !isHeatingCutOff;
         setPresbytereHeating(initPresb);
         setPresbytereHeatingManual(true);
       }
 
       // b) Eau Chaude Sanitaire (DHW)
       let initDhw = false;
+      let dhwExplicit = false;
+      let isDhwCutOff = false;
       const dhwSegment = domoSegments.find((seg) => seg.includes('eau chaude') || seg.startsWith('ecs'));
       if (dhwSegment) {
-        initDhw = !isCutSegment(dhwSegment);
+        dhwExplicit = true;
+        isDhwCutOff = isCutSegment(dhwSegment);
+        initDhw = !isDhwCutOff;
         setDhwHeating(initDhw);
         setDhwHeatingManual(true);
       }
@@ -581,11 +599,11 @@ function BookingModalContent({
           return found ? found.house === 'presbytere' : false;
         });
         if (hasPresb) {
-          if (!isDhwCutOff && !dhwHeatingManual && !initDhw) {
+          if (!isDhwCutOff && !dhwExplicit && !initDhw) {
             initDhw = true;
             setDhwHeating(true);
           }
-          if (!isHeatingCutOff && !presbytereHeatingManual && !initPresb) {
+          if (!isHeatingCutOff && !heatingExplicit && !initPresb) {
             const isWinter = isWinterSeason(initStart);
             initPresb = isWinter;
             setPresbytereHeating(isWinter);
@@ -1328,7 +1346,7 @@ function BookingModalContent({
                       Asservissement Chauffage Presbytère
                     </span>
                     <span className="font-body-md text-xs text-on-surface-variant mt-0.5">
-                      Passage auto à 20°C en saison hivernale (Nov-Mars), maintien à 12°C hors saison.
+                      Passage auto à 20 °C en saison hivernale (préchauffage anticipé avant votre arrivée), veille hors-gel (6 °C) hors séjour.
                     </span>
                   </div>
                 </label>
@@ -1383,6 +1401,15 @@ function BookingModalContent({
                 </label>
               </div>
             </div>
+
+            {presbytereHeating && (
+              <div className="p-3 rounded-DEFAULT bg-emerald-50/90 border border-emerald-200 text-xs text-emerald-950 leading-relaxed flex items-start gap-2">
+                <span className="shrink-0">⏱️</span>
+                <span>
+                  <strong>Anticipation thermique automatique :</strong> inutile d'avancer votre heure d'arrivée pour chauffer plus tôt — la chaudière ViCare calcule l'inertie (~0,75 °C/h modulé par la météo) et démarre d'elle-même en amont pour que le Presbytère atteigne 20 °C pile à l'heure d'arrivée indiquée.
+                </span>
+              </div>
+            )}
           </section>
 
           {/* SECTION 5: Composition du groupe & Invités extérieurs (Parité Stitch) */}

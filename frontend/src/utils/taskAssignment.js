@@ -22,7 +22,7 @@ export const MEMBER_ID_TO_NAME = {
   4: 'Joséphine Jamet',
   5: 'Eugénie Jamet',
   6: 'Frédéric Jamet',
-  7: 'Élisabeth Jamet',
+  7: 'Maman (Élisabeth) Jamet',
 };
 
 export function resolveMemberDisplayName(val) {
