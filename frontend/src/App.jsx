@@ -211,6 +211,14 @@ export default function App() {
   };
 
   const handleLoginSuccess = async ({ token, user }) => {
+    let targetAfterLogin = '/';
+    try {
+      const savedRedirect = sessionStorage.getItem('sci_post_login_redirect');
+      if (savedRedirect && savedRedirect.startsWith('/') && !savedRedirect.startsWith('/login')) {
+        targetAfterLogin = savedRedirect;
+        sessionStorage.removeItem('sci_post_login_redirect');
+      }
+    } catch (_) {}
     if (token) {
       localStorage.setItem('sci_token', token);
       const userPrenom = typeof user === 'string'
@@ -221,11 +229,16 @@ export default function App() {
         await login(user, token);
       }
     }
-    navigate('/');
+    navigate(targetAfterLogin, { replace: true });
   };
 
   // Login Route handling
   if (!isAuthenticated) {
+    if (location.pathname && location.pathname !== '/' && location.pathname !== '/login') {
+      try {
+        sessionStorage.setItem('sci_post_login_redirect', `${location.pathname}${location.search || ''}`);
+      } catch (_) {}
+    }
     return (
       <>
         <GlobalErrorAlert />

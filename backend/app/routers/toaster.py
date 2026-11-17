@@ -6,13 +6,15 @@ from datetime import datetime
 from typing import Any, Dict, List, Optional
 
 import httpx
-from fastapi import APIRouter, Body, Depends, HTTPException, Query
+from fastapi import APIRouter, Body, Depends, HTTPException, Query, Request
+from fastapi.responses import RedirectResponse
 from pydantic import BaseModel, Field
 from sqlalchemy.orm import Session
 
 from ..database import get_db
 from ..services.toaster_sandbox import (
     execute_sandbox_action,
+    execute_sandbox_read_tool,
     get_sandbox_state,
     init_or_reset_sandbox,
 )
@@ -319,28 +321,128 @@ TOASTER_FUNCTION_DECLARATIONS: List[Dict[str, Any]] = [
         },
     },
     {
-        "name": "consult_treasury_and_ledger",
+        "name": "read_treasury_and_banking",
         "description": (
-            "Consulte et explique en détail la situation financière exacte du membre actif : "
-            "solde du grand livre (CCA), cotisation mensuelle, mois couverts, avances de frais, "
-            "et appels de fonds."
+            "Outil de LECTURE SEULE : consulte le solde bancaire réel Swan de la SCI, l'IBAN officiel, "
+            "les dernières transactions bancaires, les soldes CCA et appels de fonds des 7 associés, "
+            "ainsi que les factures et avances de frais enregistrées."
         ),
         "parameters": {
             "type": "OBJECT",
             "properties": {
-                "assistant_message": {
+                "member_name": {
                     "type": "STRING",
-                    "description": "Explication détaillée, claire et chiffrée de la trésorerie et du grand livre du membre.",
-                },
-                "include_ledger_details": {
-                    "type": "BOOLEAN",
-                    "description": "True pour inclure le récapitulatif des écritures et appels de fonds.",
+                    "description": "Prénom optionnel d'un associé sur lequel zoomer (ex: 'Frédéric', 'Joséphine', 'Henri').",
                 },
             },
-            "required": ["assistant_message"],
+        },
+    },
+    {
+        "name": "read_tasks_and_equity",
+        "description": (
+            "Outil de LECTURE SEULE : lit le détail complet des tâches du domaine (descriptions complètes, "
+            "numéros de téléphone d'artisans, consignes pas-à-pas, commentaires, pièces jointes PDF et "
+            "répartition des points de contribution/équité entre associés)."
+        ),
+        "parameters": {
+            "type": "OBJECT",
+            "properties": {
+                "task_id": {
+                    "type": "INTEGER",
+                    "description": "ID précis d'une tâche si connue (ex: 84, 79, 80, 83).",
+                },
+                "status_filter": {
+                    "type": "STRING",
+                    "description": "Filtre optionnel par statut ('EN_COURS', 'TERMINEE', 'A_FAIRE', 'ALL').",
+                },
+                "search_query": {
+                    "type": "STRING",
+                    "description": "Mot-clé optionnel (ex: 'fioul', 'fosse', 'piscine', 'Josse').",
+                },
+            },
+        },
+    },
+    {
+        "name": "read_stays_and_calendar",
+        "description": (
+            "Outil de LECTURE SEULE : consulte le calendrier complet des séjours (dates et heures exactes "
+            "d'arrivée/départ, bâtiment Presbytère/Rosings, chambres réservées, nombre d'occupants et "
+            "options domotiques chauffage/ECS)."
+        ),
+        "parameters": {
+            "type": "OBJECT",
+            "properties": {
+                "include_past": {
+                    "type": "BOOLEAN",
+                    "description": "True pour inclure les séjours passés, False pour uniquement les séjours à venir.",
+                },
+            },
+        },
+    },
+    {
+        "name": "read_polls_and_votes",
+        "description": (
+            "Outil de LECTURE SEULE : consulte tous les scrutins, sondages multi-dates et projets "
+            "(ouverts, proposés ou archivés), leurs options, commentaires et les votes individuels des 7 associés."
+        ),
+        "parameters": {
+            "type": "OBJECT",
+            "properties": {
+                "project_id": {
+                    "type": "INTEGER",
+                    "description": "ID précis d'un scrutin si connu.",
+                },
+            },
+        },
+    },
+    {
+        "name": "read_heating_and_pool_status",
+        "description": (
+            "Outil de LECTURE SEULE : lit la télémétrie détaillée de la chaudière Viessmann ViCare du Presbytère "
+            "(températures, mode, programmation jour 20 °C / abaissement nuit 6 °C à 21h00, état en ligne de la "
+            "passerelle Vitoconnect, heures brûleur, estimation fioul et historique récent) et de la piscine Klereo."
+        ),
+        "parameters": {
+            "type": "OBJECT",
+            "properties": {},
+        },
+    },
+    {
+        "name": "read_documents_and_contracts",
+        "description": (
+            "Outil de LECTURE SEULE : recherche parmi les ~88 documents officiels de la SCI sur le site "
+            "(contrats SEPASE, factures d'eau/fioul/artisans, avis de taxe foncière DGFiP, RIB Swan, statuts, "
+            "PV d'AG, rapport Bompais) OU lit intégralement le contenu PDF/image d'un document précis via document_id."
+        ),
+        "parameters": {
+            "type": "OBJECT",
+            "properties": {
+                "search_query": {
+                    "type": "STRING",
+                    "description": "Mots-clés de recherche (ex: 'taxe fonciere', 'sepase presbytere', 'josse', 'rib', 'bompais').",
+                },
+                "category": {
+                    "type": "STRING",
+                    "description": "Catégorie optionnelle (ex: 'Factures', 'Fiscalité', 'Chauffage', 'Eau').",
+                },
+                "document_id": {
+                    "type": "INTEGER",
+                    "description": "ID exact d'un document (ex: 163, 177, 162) pour charger et lire directement son PDF/image.",
+                },
+            },
         },
     },
 ]
+
+READ_ONLY_TOOL_NAMES = {
+    "read_treasury_and_banking",
+    "consult_treasury_and_ledger",
+    "read_tasks_and_equity",
+    "read_stays_and_calendar",
+    "read_polls_and_votes",
+    "read_heating_and_pool_status",
+    "read_documents_and_contracts",
+}
 
 
 def _normalize_date_2026(date_str: Optional[str]) -> Optional[str]:
@@ -358,28 +460,36 @@ def _normalize_date_2026(date_str: Optional[str]) -> Optional[str]:
 def _build_system_prompt(state: Dict[str, Any], attachment_name: Optional[str] = None) -> str:
     member = state.get("active_member") or {}
     treasury = state.get("treasury") or {}
+    swan = state.get("swan_banking") or {}
+    assoc_balances = state.get("associates_balances") or []
     heating = state.get("heating_telemetry") or {}
     stays = state.get("stays") or []
     tasks = state.get("tasks") or []
     votes = state.get("open_votes") or []
+    docs_count = state.get("documents_count") or 0
 
     stays_txt = "\n".join(
-        f"  - Séjour #{s['id']} : {s['property_name']} du {s['start_date']} au {s['end_date']} "
-        f"par {s['user_name']} ({s['guest_count']} pers., statut={s['status']})"
+        f"  - Séjour #{s['id']} : {s['property_name']} du {s['start_date']} ({s.get('arrival_time', '15:00')}) "
+        f"au {s['end_date']} ({s.get('departure_time', '11:00')}) par {s['user_name']} ({s['guest_count']} pers., statut={s['status']})"
         for s in stays[:15]
     ) or "  (Aucun séjour enregistré)"
 
     tasks_txt = "\n".join(
-        f"  - Tâche #{t['id']} [{t['status']}] ({t['subject']}) : « {t['title']} » "
+        f"  - Tâche #{t['id']} [{t['status']}] ({t['subject']}, {t.get('charge_points', 3)} pts) : « {t['title']} » "
         f"(assignée à: {', '.join(str(x) for x in t.get('assigned_members', [])) or 'Non assignée'})"
         for t in tasks[:20]
     ) or "  (Aucune tâche)"
 
     votes_txt = "\n".join(
-        f"  - Scrutin #{v['id']} [{v['status']}] : « {v['title']} » (coût estimé: {v['estimated_cost']:.2f} €, "
-        f"options: {v['options'] or ['POUR', 'CONTRE', 'ABSTENTION']}, votre vote actuel: {v.get('member_vote') or 'Non voté'})"
+        f"  - Scrutin #{v['id']} [{v['status']}] : « {v['title']} » (options: {v['options'] or ['POUR', 'CONTRE', 'ABSTENTION']}, "
+        f"choix multiples={v.get('allow_multiple_choices')}, votre vote: {v.get('member_vote') or 'Non voté'})"
         for v in votes[:15]
     ) or "  (Aucun scrutin)"
+
+    assoc_txt = " | ".join(
+        f"{a['name']}: {a['cca_balance']:+.2f} € (cotis. {a['monthly_contribution']:.0f} €/m)"
+        for a in assoc_balances
+    )
 
     entries_txt = "\n".join(
         f"  - {e.get('entry_date', '')[:10]} | {e.get('entry_type')} | {float(e.get('amount') or 0):+.2f} € | "
@@ -393,21 +503,34 @@ def _build_system_prompt(state: Dict[str, Any], attachment_name: Optional[str] =
         for c in (treasury.get("calls_for_funds") or [])[:6]
     ) or "  (Aucun appel de fonds)"
 
+    gateway_note = (
+        f"HORS LIGNE depuis {heating.get('recorded_at')} (dernier relevé servi)"
+        if heating.get("is_gateway_offline")
+        else f"EN LIGNE (relevé {heating.get('recorded_at')})"
+    )
+
     attach_info = (
         f"\nDOCUMENT / PIÈCE JOINTE FOURNIE DANS CE MESSAGE : « {attachment_name} » (analyse son contenu visuel/texte avec précision)."
         if attachment_name
         else ""
     )
 
-    return f"""Tu es l'assistant familial intelligent (« Mode Grille-Pain ») de la SCI Hellenvilliers (Domaine familial en Normandie : Presbytère et Rosings).
+    return f"""Tu es l'assistant familial intelligent (« Mode Grille-Pain ») de la SCI Hellenvilliers (Domaine familial en Normandie : Presbytère, Rosings et L'Annexe).
 Date du jour de référence : {datetime.utcnow().strftime('%Y-%m-%d')} (année 2026).
 
-ASSOCIÉ CONNECTÉ ACTUEL :
+MODE DE SÉCURITÉ ACTIF (BAC À SABLE ISOLÉ) :
+- LECTURE 100 % BRANCHÉE SUR LES VRAIES DONNÉES : tu disposes de 6 outils `read_*` (`read_treasury_and_banking`, `read_tasks_and_equity`, `read_stays_and_calendar`, `read_polls_and_votes`, `read_heating_and_pool_status`, `read_documents_and_contracts`) reliés aux données réelles de la SCI ({docs_count} documents officiels PDF/images consultables). Appelle systématiquement l'outil `read_*` approprié dès qu'une question porte sur le détail d'une tâche (numéros d'artisans, consignes), un document/contrat/facture, les transactions bancaires ou l'historique thermique.
+- ÉCRITURE 100 % INTERCEPTÉE (ZÉRO MODIFICATION DE L'ÉTAT RÉEL) : toute demande d'écriture passe par un outil `propose_*` qui génère une Carte d'Action Hybride (🟢 déduit / 🔴 manquant) et ne s'exécute QUE dans le miroir SQLite éphémère du bac à sable, avec coupe-circuit total sur PostgreSQL prod, la chaudière ViCare, la piscine Klereo et les e-mails Resend.
+
+ASSOCIÉ INCARNÉ ACTUEL :
 - ID : {member.get('id')} | Nom : {member.get('name')} (Prénom : {member.get('prenom')}) | Rôle : {member.get('role')}
 - Référence virement permanente : {member.get('payment_reference')}
 - Quote-part mensuelle statutaire : {float(treasury.get('monthly_contribution') or 50.0):.2f} € / mois
-- Solde actuel du Grand Livre (Compte Courant d'Associé) : {float(treasury.get('balance') or 0.0):+.2f} € ({treasury.get('covered_months', 0)} mois d'avance couverts)
-- Note cotisation : {treasury.get('contribution_note') or 'Cotisation individuelle standard'}
+- Solde actuel du Grand Livre (CCA) : {float(treasury.get('balance') or 0.0):+.2f} € ({treasury.get('covered_months', 0)} mois d'avance couverts)
+
+TRÉSORERIE GLOBALE SCI & COMPTE SWAN :
+- Compte Swan ({swan.get('iban')}) : solde réel = {float(swan.get('balance') or 0.0):.2f} € (dernière synchro : {swan.get('last_synced_at')})
+- Soldes CCA des 7 associés : {assoc_txt}
 
 ÉCRITURES RÉCENTES DU GRAND LIVRE DE {member.get('prenom', '').upper()} :
 {entries_txt}
@@ -416,28 +539,29 @@ APPELS DE FONDS DE {member.get('prenom', '').upper()} :
 {calls_txt}
 
 ÉTAT THERMIQUE & CHAUDIÈRE FIOUL (PRESBYTÈRE) & PISCINE :
-- Mode chaudière ViCare : {heating.get('mode')} | Consigne : {heating.get('target_temperature')} °C
+- Passerelle Vitoconnect : {gateway_note}
+- Mode chaudière ViCare : {heating.get('mode')} | Consigne confort jour : {heating.get('comfort_temperature', 20.0)} °C (04h30–21h00) | Réduit nuit : {heating.get('reduced_temperature', 6.0)} °C (21h00–04h30, pas de chauffe la nuit)
 - Température ambiante Presbytère : {heating.get('room_temperature')} °C | Extérieure : {heating.get('outside_temperature')} °C
-- Cuve de fioul : {heating.get('fuel_liters_remaining')} L restants ({heating.get('fuel_percent')} %)
+- Cuve de fioul (3 000 L, estimation logicielle sur compteurs brûleur) : {heating.get('fuel_liters_remaining')} L restants ({heating.get('fuel_percent')} %)
 - Piscine Klereo : mode {heating.get('pool_mode')} ({heating.get('pool_temperature')} °C, filtration {heating.get('pool_filtration_mode')})
 
-SÉJOURS ENREGISTRÉS DANS LE BAC À SABLE :
+SÉJOURS ENREGISTRÉS :
 {stays_txt}
 
-TÂCHES DU DOMAINE :
+TÂCHES DU DOMAINE (appelle `read_tasks_and_equity` pour lire les descriptions détaillées et contacts) :
 {tasks_txt}
 
-SCRUTINS & PROJETS OUVERTS :
+SCRUTINS & SONDAGES :
 {votes_txt}
 {attach_info}
 
 RÈGLES D'OR D'ORCHESTRATION :
-1. Dès que l'associé exprime une intention d'action (réserver/modifier/annuler un séjour, régler le chauffage ou la piscine, déposer une facture/photo/PDF, cocher une tâche comme terminée ou créer une tâche, voter sur un scrutin ou créer un sondage), appelle OBLIGATOIREMENT l'outil `propose_*` correspondant.
-2. Ne devine pas en silence un paramètre critique non mentionné par l'utilisateur :
+1. Pour toute question d'information détaillée (numéro d'un artisan dans une tâche, contenu d'une facture/contrat PDF, détail des virements Swan, votes d'un scrutin, paramètres ViCare), appelle d'abord le ou les outils `read_*` correspondants pour vérifier les faits exacts avant de répondre.
+2. Dès que l'associé exprime une intention d'action (réserver/modifier/annuler un séjour, régler le chauffage ou la piscine, déposer une facture/photo/PDF, cocher une tâche comme terminée ou créer une tâche, voter sur un scrutin ou créer un sondage), appelle OBLIGATOIREMENT l'outil `propose_*` correspondant.
+3. Ne devine pas en silence un paramètre critique non mentionné par l'utilisateur :
    - Pour un séjour (`propose_stay_action`), si l'utilisateur n'a pas mentionné le chauffage, mets `heating_explicitly_stated=false`. S'il n'a pas précisé le bâtiment (`Presbytère` ou `Rosings`), laisse `building` vide `""`.
    - Pour une facture (`propose_invoice_or_document_upload`), extrais l'artisan, la date, le montant TTC et l'objet, et si l'utilisateur n'a pas explicitement dit s'il l'avait avancée personnellement ou si la SCI devait la payer, mets `payer_explicitly_stated=false`.
-3. Si l'utilisateur pose une question sur sa trésorerie, son solde, ses appels de fonds ou ses avances, appelle `consult_treasury_and_ledger` ou réponds directement avec les chiffres exacts ci-dessus au centime près.
-4. Sois chaleureux, concis et précis, en vouvoyant ou tutoyant naturellement comme un majordome familial bienveillant."""
+4. Sois chaleureux, concis et précis au centime près, sans jamais inventer de chiffre."""
 
 
 def _build_action_card(
@@ -805,6 +929,24 @@ def reset_toaster_sandbox_endpoint(
     }
 
 
+@router.get("/chat")
+def toaster_chat_get_info(request: Request):
+    """
+    Si un utilisateur clique sur /api/toaster/chat dans un navigateur, redirige directement
+    vers l'interface conversationnelle déployée /grille-pain (au lieu d'un 404 Not Found).
+    """
+    accept = (request.headers.get("accept") or "").lower()
+    if "text/html" in accept:
+        return RedirectResponse(url="/grille-pain", status_code=302)
+    return {
+        "status": "ok",
+        "endpoint": "POST /api/toaster/chat",
+        "ui_url": "https://hellenvilliers.henri-jamet.com/grille-pain",
+        "model": GEMINI_MODEL,
+        "mode": "sandbox_isolated_writes_with_live_reads",
+    }
+
+
 @router.post("/chat")
 def toaster_chat_endpoint(
     req: ToasterChatRequest,
@@ -812,8 +954,9 @@ def toaster_chat_endpoint(
 ):
     """
     Orchestrateur conversationnel et multimodal via models/gemini-4-hydrogen (Thinking HIGH) :
-    Fournit le contexte temps réel du bac à sable et les 6 déclarations d'outils métier,
-    et renvoie la réponse + une Carte d'Action Hybride (action_card) lorsque pertinent.
+    - Exécute en boucle multi-tours tous les outils de LECTURE SEULE (`read_*`) sur les vraies données ;
+    - Intercepte 100 % des intentions d'ÉCRITURE (`propose_*`) sous forme de Carte d'Action Hybride
+      exécutable uniquement dans le bac à sable SQLite isolé (zéro écriture Postgres prod / ViCare / Klereo / SMTP).
     """
     state = get_sandbox_state(prod_db=db, member_id=req.member_id)
     system_prompt = _build_system_prompt(state=state, attachment_name=req.attachment_name)
@@ -875,7 +1018,6 @@ def toaster_chat_endpoint(
         if not parts:
             continue
 
-        # Gemini exige que le premier message soit de rôle 'user'
         if not contents and role == "model":
             continue
 
@@ -890,83 +1032,126 @@ def toaster_chat_endpoint(
     api_key = _get_toaster_api_key()
     url = f"{GEMINI_ENDPOINT}?key={api_key}"
 
-    gemini_payload = {
-        "systemInstruction": {"parts": [{"text": system_prompt}]},
-        "contents": contents,
-        "tools": [{"functionDeclarations": TOASTER_FUNCTION_DECLARATIONS}],
-        "generationConfig": {
-            "temperature": 0.2,
-            "thinkingConfig": {
-                "thinkingLevel": "HIGH",
-            },
-        },
-    }
+    tools_called_trace: List[str] = []
+    write_func_call: Optional[Dict[str, Any]] = None
+    text_fragments: List[str] = []
 
     with httpx.Client(timeout=55.0) as client:
-        resp = client.post(url, json=gemini_payload)
+        for _step in range(4):
+            gemini_payload = {
+                "systemInstruction": {"parts": [{"text": system_prompt}]},
+                "contents": contents,
+                "tools": [{"functionDeclarations": TOASTER_FUNCTION_DECLARATIONS}],
+                "generationConfig": {
+                    "temperature": 0.2,
+                    "thinkingConfig": {
+                        "thinkingLevel": "HIGH",
+                    },
+                },
+            }
+            resp = client.post(url, json=gemini_payload)
+            if resp.status_code != 200:
+                logger.error(f"[TOASTER GEMINI ERROR] HTTP {resp.status_code}: {resp.text}")
+                raise HTTPException(
+                    status_code=502,
+                    detail=f"Erreur lors de l'appel à {GEMINI_MODEL} (HTTP {resp.status_code}) : {resp.text}",
+                )
 
-    if resp.status_code != 200:
-        logger.error(f"[TOASTER GEMINI ERROR] HTTP {resp.status_code}: {resp.text}")
-        raise HTTPException(
-            status_code=502,
-            detail=f"Erreur lors de l'appel à {GEMINI_MODEL} (HTTP {resp.status_code}) : {resp.text}",
-        )
+            data = resp.json()
+            candidates = data.get("candidates") or []
+            if not candidates:
+                raise HTTPException(status_code=502, detail=f"Réponse vide de {GEMINI_MODEL} : {data}")
 
-    data = resp.json()
-    candidates = data.get("candidates") or []
-    if not candidates:
-        raise HTTPException(status_code=502, detail=f"Réponse vide de {GEMINI_MODEL} : {data}")
+            model_content = candidates[0].get("content") or {"role": "model", "parts": []}
+            parts_out = model_content.get("parts") or []
 
-    parts_out = (candidates[0].get("content") or {}).get("parts") or []
-    text_fragments: List[str] = []
-    func_call: Optional[Dict[str, Any]] = None
+            step_texts: List[str] = []
+            read_calls: List[Dict[str, Any]] = []
+            step_write_call: Optional[Dict[str, Any]] = None
 
-    for part in parts_out:
-        if part.get("thought"):
-            continue
-        if "text" in part and part["text"]:
-            text_fragments.append(part["text"])
-        if "functionCall" in part and part["functionCall"]:
-            func_call = part["functionCall"]
+            for part in parts_out:
+                if part.get("thought"):
+                    continue
+                if "text" in part and part["text"]:
+                    step_texts.append(part["text"])
+                if "functionCall" in part and part["functionCall"]:
+                    fc = part["functionCall"]
+                    fc_name = fc.get("name") or ""
+                    tools_called_trace.append(fc_name)
+                    if fc_name in READ_ONLY_TOOL_NAMES:
+                        read_calls.append(fc)
+                    else:
+                        step_write_call = fc
+
+            if step_write_call is not None:
+                write_func_call = step_write_call
+                text_fragments = step_texts
+                break
+
+            if read_calls and _step < 3:
+                # Préserver intégralement model_content (y compris thoughtSignature de Gemini 4)
+                contents.append(model_content)
+                response_parts: List[Dict[str, Any]] = []
+                for rc in read_calls:
+                    rc_name = rc.get("name") or ""
+                    rc_args = rc.get("args") or {}
+                    tool_result = execute_sandbox_read_tool(
+                        prod_db=db,
+                        member_id=req.member_id,
+                        tool_name=rc_name,
+                        args=rc_args,
+                    )
+                    inline_att = tool_result.pop("_inline_attachment", None) if isinstance(tool_result, dict) else None
+                    response_parts.append(
+                        {
+                            "functionResponse": {
+                                "name": rc_name,
+                                "response": {"result": tool_result},
+                            }
+                        }
+                    )
+                    if inline_att and inline_att.get("data"):
+                        response_parts.append(
+                            {
+                                "inlineData": {
+                                    "mimeType": inline_att.get("mimeType") or "application/pdf",
+                                    "data": inline_att["data"],
+                                }
+                            }
+                        )
+                contents.append({"role": "user", "parts": response_parts})
+                continue
+
+            text_fragments = step_texts
+            break
 
     reply_text = "\n".join(text_fragments).strip()
     action_card: Optional[Dict[str, Any]] = None
-    tool_called: Optional[str] = None
+    tool_called: Optional[str] = tools_called_trace[-1] if tools_called_trace else None
 
-    if func_call:
-        tool_called = func_call.get("name")
-        tool_args = func_call.get("args") or {}
+    if write_func_call:
+        w_name = write_func_call.get("name") or ""
+        tool_called = w_name
+        tool_args = write_func_call.get("args") or {}
         assistant_msg = str(tool_args.get("assistant_message") or "").strip()
         if assistant_msg and not reply_text:
             reply_text = assistant_msg
 
-        if tool_called == "consult_treasury_and_ledger":
-            treasury = state.get("treasury") or {}
-            member = state.get("active_member") or {}
-            if not reply_text:
-                reply_text = (
-                    f"Voici l'état exact de votre trésorerie ({member.get('name')}) :\n"
-                    f"• Solde cumulé au Grand Livre (CCA) : {float(treasury.get('balance') or 0.0):+.2f} €\n"
-                    f"• Quote-part mensuelle : {float(treasury.get('monthly_contribution') or 50.0):.2f} € / mois "
-                    f"({treasury.get('covered_months', 0)} mois d'avance couverts)\n"
-                    f"• Référence permanente de virement : {member.get('payment_reference')}"
-                )
-        else:
-            action_card = _build_action_card(
-                func_name=tool_called,
-                args=tool_args,
-                state=state,
-                attachment_name=req.attachment_name,
-            )
-            if not reply_text and action_card:
-                if action_card["missing_fields"]:
-                    questions = " ".join(m["question"] for m in action_card["missing_fields"])
-                    reply_text = f"J'ai préparé la carte « {action_card['title']} ». {questions}"
-                else:
-                    reply_text = f"J'ai préparé la carte « {action_card['title']} ». Vous pouvez vérifier les champs et valider l'exécution dans le bac à sable."
+        action_card = _build_action_card(
+            func_name=w_name,
+            args=tool_args,
+            state=state,
+            attachment_name=req.attachment_name,
+        )
+        if not reply_text and action_card:
+            if action_card["missing_fields"]:
+                questions = " ".join(m["question"] for m in action_card["missing_fields"])
+                reply_text = f"J'ai préparé la carte « {action_card['title']} ». {questions}"
+            else:
+                reply_text = f"J'ai préparé la carte « {action_card['title']} ». Vous pouvez vérifier les champs et valider l'exécution dans le bac à sable."
 
     if not reply_text:
-        reply_text = "Je suis à votre disposition pour gérer vos séjours, le chauffage, vos factures, les tâches ou les scrutins."
+        reply_text = "Je suis à votre disposition pour consulter toutes les données de la SCI ou préparer vos actions dans le bac à sable."
 
     return {
         "model": GEMINI_MODEL,
@@ -975,6 +1160,7 @@ def toaster_chat_endpoint(
         "content": reply_text,
         "role": "assistant",
         "tool_called": tool_called,
+        "tools_called": tools_called_trace,
         "action_card": action_card,
         "state": state,
     }

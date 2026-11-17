@@ -262,6 +262,20 @@ export default function Header({
                   ))}
                 </div>
 
+                <div className="border-b border-slate-100 py-1">
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setIsUserMenuOpen(false);
+                      if (onNavigate) onNavigate('/grille-pain', 'grille-pain');
+                    }}
+                    className="w-full px-4 py-2.5 text-left text-xs font-bold text-primary hover:bg-sage-soft flex items-center gap-2 transition-colors cursor-pointer"
+                  >
+                    <span className="material-symbols-outlined text-[18px]">smart_toy</span>
+                    Assistant Grille-Pain (Test)
+                  </button>
+                </div>
+
                 <div className="pt-1">
                   <button
                     type="button"

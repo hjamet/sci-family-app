@@ -271,17 +271,29 @@ def init_or_reset_sandbox(prod_db: Session) -> Dict[str, Any]:
 
 
 def ensure_sandbox_initialized(prod_db: Session) -> None:
-    """Initialise le bac à sable SQLite s'il n'existe pas encore ou ne contient aucun membre."""
+    """
+    Initialise le bac à sable SQLite s'il n'existe pas encore ou ne contient aucun membre.
+    Si aucune action utilisateur n'a été jouée dans le bac à sable (0 log d'audit) et que le
+    fichier SQLite date de plus de 60 s, resynchronise automatiquement depuis PostgreSQL prod
+    afin que la lecture reflète toujours l'état réel à jour.
+    """
     if not os.path.exists(SANDBOX_DB_PATH):
         init_or_reset_sandbox(prod_db)
         return
     Base.metadata.create_all(bind=sandbox_engine)
     with SandboxSessionLocal() as s_db:
         member_count = s_db.query(Member).count()
-        if member_count == 0:
+        audit_count = s_db.query(SandboxAuditLog).count()
+    if member_count == 0:
+        init_or_reset_sandbox(prod_db)
+        return
+    if audit_count == 0:
+        file_age_s = datetime.utcnow().timestamp() - os.path.getmtime(SANDBOX_DB_PATH)
+        if file_age_s > 60.0:
             init_or_reset_sandbox(prod_db)
-        else:
-            _sync_unified_heating_telemetry(s_db)
+            return
+    with SandboxSessionLocal() as s_db:
+        _sync_unified_heating_telemetry(s_db)
 
 
 def log_sandbox_audit(
@@ -662,26 +674,79 @@ def get_sandbox_state(prod_db: Session, member_id: Optional[int] = None) -> Dict
             )
 
         telemetry = _sync_unified_heating_telemetry(s_db)
-        fuel_liters = float(telemetry.fuel_liters_remaining or 1850.0)
+        fuel_liters = float(telemetry.fuel_liters_remaining or 942.1)
+        is_gateway_offline = False
+        if telemetry.recorded_at:
+            is_gateway_offline = (datetime.utcnow() - telemetry.recorded_at).total_seconds() > 1200
         heating_data = {
             "mode": telemetry.mode,
             "target_temperature": float(telemetry.target_temperature or 20.0),
+            "comfort_temperature": 20.0,
+            "reduced_temperature": 6.0,
+            "night_schedule_note": "Jour confort 20.0 °C (04h30–21h00) • Nuit abaissement réduit 6.0 °C (21h00–04h30, pas de chauffe la nuit)",
             "room_temperature": float(telemetry.room_temperature or 15.8),
             "outside_temperature": float(telemetry.outside_temperature or 11.2),
             "boiler_temperature": float(telemetry.boiler_temperature or 42.0),
             "dhw_temperature": float(telemetry.dhw_temperature or 50.0),
             "is_heating_active": bool(telemetry.is_heating_active),
             "burner_active": bool(telemetry.burner_active),
-            "burner_hours": float(telemetry.burner_hours or 1420.5),
+            "burner_hours": float(telemetry.burner_hours or 4605.0),
             "fuel_liters_remaining": fuel_liters,
-            "fuel_capacity_liters": 5000.0,
-            "fuel_percent": round((fuel_liters / 5000.0) * 100.0, 1),
+            "fuel_capacity_liters": 3000.0,
+            "fuel_percent": round((fuel_liters / 3000.0) * 100.0, 1),
+            "is_gateway_offline": is_gateway_offline,
             "pool_mode": telemetry.pool_mode or "eco",
             "pool_filtration_mode": telemetry.pool_filtration_mode or "auto",
             "pool_temperature": float(telemetry.pool_temperature or 26.0),
             "updated_by": telemetry.updated_by,
             "recorded_at": telemetry.recorded_at.isoformat() + "Z" if telemetry.recorded_at else None,
         }
+
+        bank_accounts = s_db.query(BankAccount).order_by(BankAccount.id.desc()).all()
+        real_bank = next(
+            (
+                b
+                for b in bank_accounts
+                if b.iban and "000000000000" not in b.iban.replace(" ", "")
+            ),
+            bank_accounts[0] if bank_accounts else None,
+        )
+        recent_txs = (
+            s_db.query(BankTransaction)
+            .order_by(BankTransaction.booking_date.desc(), BankTransaction.id.desc())
+            .limit(10)
+            .all()
+        )
+        swan_banking = {
+            "bank_name": real_bank.aspsp_name if real_bank else "Swan",
+            "iban": real_bank.iban if real_bank else "FR76 1732 8844 0071 5921 5570 591",
+            "balance": float(real_bank.balance or 0.0) if real_bank else 0.0,
+            "last_synced_at": real_bank.last_synced_at.isoformat() + "Z" if (real_bank and real_bank.last_synced_at) else None,
+            "recent_transactions": [
+                {
+                    "id": tx.id,
+                    "booking_date": tx.booking_date,
+                    "amount": float(tx.amount or 0.0),
+                    "counterparty": tx.debtor_name if float(tx.amount or 0.0) >= 0 else tx.creditor_name,
+                    "label": tx.remittance_information,
+                }
+                for tx in recent_txs
+            ],
+        }
+        associates_balances = []
+        for m in members:
+            m_sum = get_member_treasury_summary(s_db, m)
+            associates_balances.append(
+                {
+                    "id": m.id,
+                    "name": _format_member_display_name(m),
+                    "prenom": m.prenom,
+                    "monthly_contribution": float(m.monthly_contribution or 0.0),
+                    "cca_balance": float(m_sum.get("balance") or 0.0),
+                    "covered_months": int(m_sum.get("covered_months") or 0),
+                }
+            )
+        docs_count = s_db.query(AdminDocument).count()
 
         audit_rows = s_db.query(SandboxAuditLog).order_by(SandboxAuditLog.id.desc()).limit(100).all()
         audit_logs = [format_audit_log(a) for a in audit_rows]
@@ -705,6 +770,9 @@ def get_sandbox_state(prod_db: Session, member_id: Optional[int] = None) -> Dict
         member_summary = {
             "member": active_member_dict,
             "treasury": treasury_summary,
+            "swan_banking": swan_banking,
+            "associates_balances": associates_balances,
+            "documents_count": docs_count,
             "stays": stays_list,
             "tasks": tasks_list,
             "open_votes": polls_list,
@@ -717,6 +785,9 @@ def get_sandbox_state(prod_db: Session, member_id: Optional[int] = None) -> Dict
             "active_member": active_member_dict,
             "member_summary": member_summary,
             "treasury": treasury_summary,
+            "swan_banking": swan_banking,
+            "associates_balances": associates_balances,
+            "documents_count": docs_count,
             "stays": stays_list,
             "tasks": tasks_list,
             "open_votes": polls_list,
@@ -1352,4 +1423,368 @@ def execute_sandbox_action(
         "state": new_state,
         **new_state,
     }
+
+
+def execute_sandbox_read_tool(
+    prod_db: Session,
+    member_id: Optional[int],
+    tool_name: str,
+    args: Dict[str, Any],
+) -> Dict[str, Any]:
+    """
+    Exécute un outil de LECTURE SEULE stricte (zéro écriture ni en prod PostgreSQL, ni en bac à sable).
+    Retourne un dictionnaire JSON structuré (et éventuellement _inline_attachment si un PDF/image précis est inspecté).
+    """
+    import base64
+    from .drive_service import drive_jail_service
+    from .workload_balancer import calculate_workload_distribution
+
+    ensure_sandbox_initialized(prod_db)
+    args = dict(args or {})
+
+    with SandboxSessionLocal() as s_db:
+        if tool_name in ("read_treasury_and_banking", "consult_treasury_and_ledger"):
+            target_name = str(args.get("member_name") or "").strip().lower()
+            members = s_db.query(Member).order_by(Member.id.asc()).all()
+            target_member = None
+            if target_name:
+                target_member = next(
+                    (
+                        m
+                        for m in members
+                        if target_name in (m.prenom or "").lower() or target_name in (m.name or "").lower()
+                    ),
+                    None,
+                )
+            if not target_member and member_id is not None:
+                target_member = s_db.query(Member).filter(Member.id == member_id).first()
+            if not target_member and members:
+                target_member = members[0]
+
+            bank_accounts = s_db.query(BankAccount).order_by(BankAccount.id.desc()).all()
+            real_bank = next(
+                (b for b in bank_accounts if b.iban and "000000000000" not in b.iban.replace(" ", "")),
+                bank_accounts[0] if bank_accounts else None,
+            )
+            txs = (
+                s_db.query(BankTransaction)
+                .order_by(BankTransaction.booking_date.desc(), BankTransaction.id.desc())
+                .limit(25)
+                .all()
+            )
+            expenses = s_db.query(MemberExpense).order_by(MemberExpense.id.desc()).limit(25).all()
+            associates = []
+            for m in members:
+                msum = get_member_treasury_summary(s_db, m)
+                calls = (
+                    s_db.query(CallForFunds)
+                    .filter(CallForFunds.member_id == m.id)
+                    .order_by(CallForFunds.year.desc(), CallForFunds.month.desc())
+                    .limit(4)
+                    .all()
+                )
+                associates.append(
+                    {
+                        "id": m.id,
+                        "name": _format_member_display_name(m),
+                        "prenom": m.prenom,
+                        "monthly_contribution": float(m.monthly_contribution or 0.0),
+                        "payment_reference": m.payment_reference,
+                        "cca_balance": float(msum.get("balance") or 0.0),
+                        "covered_months": int(msum.get("covered_months") or 0),
+                        "recent_entries": msum.get("recent_entries") or [],
+                        "calls_for_funds": [
+                            {
+                                "reference": c.reference,
+                                "period": c.period_label,
+                                "amount_due": float(c.amount_due if c.amount_due is not None else (c.net_amount or 0.0)),
+                                "status": c.status,
+                            }
+                            for c in calls
+                        ],
+                    }
+                )
+
+            return {
+                "swan_bank_account": {
+                    "bank_name": real_bank.aspsp_name if real_bank else "Swan",
+                    "iban": real_bank.iban if real_bank else "FR76 1732 8844 0071 5921 5570 591",
+                    "bic": "SWNBFR22",
+                    "holder": "SCI HELLENVILLIERS",
+                    "balance_eur": float(real_bank.balance or 0.0) if real_bank else 0.0,
+                    "last_synced_at": real_bank.last_synced_at.isoformat() + "Z" if (real_bank and real_bank.last_synced_at) else None,
+                },
+                "total_monthly_contributions_eur": sum(float(m.monthly_contribution or 0.0) for m in members),
+                "recent_bank_transactions": [
+                    {
+                        "id": t.id,
+                        "booking_date": t.booking_date,
+                        "amount_eur": float(t.amount or 0.0),
+                        "creditor_name": t.creditor_name,
+                        "debtor_name": t.debtor_name,
+                        "remittance_information": t.remittance_information,
+                    }
+                    for t in txs
+                ],
+                "associates": associates,
+                "focused_member": next((a for a in associates if target_member and a["id"] == target_member.id), None),
+                "member_expenses_and_advances": [
+                    {
+                        "id": e.id,
+                        "member_prenom": e.member_prenom,
+                        "title": e.title,
+                        "amount_eur": float(e.amount or 0.0),
+                        "expense_date": e.expense_date,
+                        "payer_type": e.payer_type,
+                        "status": e.status,
+                        "document_id": e.document_id,
+                    }
+                    for e in expenses
+                ],
+            }
+
+        if tool_name == "read_tasks_and_equity":
+            task_id = args.get("task_id")
+            status_filter = str(args.get("status_filter") or "").strip().upper()
+            search_q = str(args.get("search_query") or "").strip().lower()
+
+            q = s_db.query(Task).order_by(Task.id.desc())
+            if task_id is not None:
+                q = q.filter(Task.id == int(task_id))
+            tasks_rows = q.all()
+
+            out_tasks = []
+            for t in tasks_rows:
+                if status_filter and status_filter not in ("ALL", "TOUS") and (t.status or "").upper() != status_filter:
+                    continue
+                hay = f"{t.ref or ''} {t.title or ''} {t.description or ''} {t.subject or ''} {t.assigned_members or ''}".lower()
+                if search_q and search_q not in hay:
+                    continue
+                comments = (
+                    s_db.query(TaskComment)
+                    .filter(TaskComment.task_id == t.id)
+                    .order_by(TaskComment.created_at.asc())
+                    .all()
+                )
+                linked_docs = (
+                    s_db.query(AdminDocument)
+                    .filter(AdminDocument.task_id == t.id)
+                    .order_by(AdminDocument.id.desc())
+                    .all()
+                )
+                out_tasks.append(
+                    {
+                        "id": t.id,
+                        "ref": t.ref,
+                        "title": t.title,
+                        "description": t.description,
+                        "subject": t.subject,
+                        "category": t.category,
+                        "priority": t.priority,
+                        "status": t.status,
+                        "charge_points": t.charge_points or 3,
+                        "assigned_members": t.assigned_members,
+                        "is_recurring": bool(t.is_recurring),
+                        "recurrence": f"{t.recurrence_interval} {t.recurrence_unit}" if t.is_recurring else None,
+                        "last_completed_at": str(t.last_completed_at) if t.last_completed_at else None,
+                        "comments": [
+                            {"author": c.author_name, "content": c.content, "created_at": str(c.created_at)}
+                            for c in comments
+                        ],
+                        "linked_documents": [
+                            {"id": d.id, "title": d.title, "file_name": d.file_name, "url": f"/api/documents/{d.id}/download"}
+                            for d in linked_docs
+                        ],
+                    }
+                )
+
+            workload = calculate_workload_distribution(s_db)
+            return {
+                "count": len(out_tasks),
+                "tasks": out_tasks,
+                "workload_equity_summary": workload,
+            }
+
+        if tool_name == "read_stays_and_calendar":
+            include_past = bool(args.get("include_past", True))
+            today_str = datetime.utcnow().strftime("%Y-%m-%d")
+            stays_rows = s_db.query(Reservation).order_by(Reservation.start_date.asc()).all()
+            stays_out = []
+            for r in stays_rows:
+                if not include_past and (r.end_date or "") < today_str:
+                    continue
+                stays_out.append(
+                    {
+                        "id": r.id,
+                        "property_name": r.property_name or ("Presbytère" if r.property_id == 2 else "Rosings"),
+                        "user_name": r.user_name,
+                        "start_date": r.start_date,
+                        "end_date": r.end_date,
+                        "arrival_time": r.arrival_time or "15:00",
+                        "departure_time": r.departure_time or "11:00",
+                        "status": r.status,
+                        "guest_count": r.guest_count or 1,
+                        "chambers_used": r.chambers_used or 1,
+                        "selected_rooms": r.selected_rooms,
+                        "notes": r.notes,
+                    }
+                )
+            return {"count": len(stays_out), "stays": stays_out}
+
+        if tool_name == "read_polls_and_votes":
+            proj_id = args.get("project_id")
+            q = s_db.query(Project).order_by(Project.id.desc())
+            if proj_id is not None:
+                q = q.filter(Project.id == int(proj_id))
+            projs = q.all()
+            out_projs = []
+            for p in projs:
+                votes = s_db.query(ProjectVote).filter(ProjectVote.project_id == p.id).all()
+                comments = s_db.query(ProjectComment).filter(ProjectComment.project_id == p.id).all()
+                opts = []
+                if p.options:
+                    try:
+                        opts = json.loads(p.options) if isinstance(p.options, str) else p.options
+                    except Exception:
+                        opts = [p.options]
+                out_projs.append(
+                    {
+                        "id": p.id,
+                        "title": p.title,
+                        "description": p.description,
+                        "category": p.category,
+                        "status": p.status,
+                        "estimated_cost_eur": float(p.estimated_cost or 0.0),
+                        "submitted_by": p.submitted_by,
+                        "allow_multiple_choices": bool(p.allow_multiple_choices),
+                        "options": opts,
+                        "votes": [
+                            {"user_name": v.user_name, "vote": v.vote, "comment": v.comment, "voted_at": str(v.voted_at)}
+                            for v in votes
+                        ],
+                        "comments": [
+                            {"author": c.author_name, "content": c.content, "created_at": str(c.created_at)}
+                            for c in comments
+                        ],
+                    }
+                )
+            return {"count": len(out_projs), "polls_and_projects": out_projs}
+
+        if tool_name == "read_heating_and_pool_status":
+            telemetry = _sync_unified_heating_telemetry(s_db)
+            snapshot = s_db.query(HeatingLiveSnapshot).filter(HeatingLiveSnapshot.id == 1).first()
+            snap_payload = json.loads(snapshot.payload) if (snapshot and snapshot.payload) else {}
+            age_s = (datetime.utcnow() - snapshot.recorded_at).total_seconds() if (snapshot and snapshot.recorded_at) else 0.0
+            hist = (
+                s_db.query(HeatingTelemetryHistory)
+                .order_by(HeatingTelemetryHistory.recorded_at.desc())
+                .limit(10)
+                .all()
+            )
+            fuel_l = float(telemetry.fuel_liters_remaining or 942.1)
+            return {
+                "boiler_model": "Viessmann Vitoladens 300-C (22 kW condensation fioul) + Vitoconnect 100 OPTO2 (Presbytère)",
+                "gateway_online": age_s <= 1200,
+                "last_telemetry_at": snapshot.recorded_at.isoformat() + "Z" if (snapshot and snapshot.recorded_at) else None,
+                "active_mode": telemetry.mode,
+                "active_program": snap_payload.get("active_program"),
+                "comfort_temperature_c": 20.0,
+                "reduced_night_temperature_c": 6.0,
+                "dhw_target_temperature_c": float(snap_payload.get("dhw_configured_temperature") or 52.0),
+                "schedule_summary": "Chauffe confort 20.0 °C en journée (04h30–21h00) lors d'un séjour actif ; abaissement nocturne réduit à 6.0 °C de 21h00 à 04h30 (pas de chauffe la nuit) ; mode standby hors-gel complet hors séjour.",
+                "room_temperature_c": telemetry.room_temperature,
+                "outside_temperature_c": telemetry.outside_temperature,
+                "boiler_temperature_c": telemetry.boiler_temperature,
+                "dhw_temperature_c": telemetry.dhw_temperature,
+                "burner_active": bool(telemetry.burner_active),
+                "burner_hours": telemetry.burner_hours,
+                "burner_starts": snap_payload.get("burner_starts"),
+                "fuel_tank": {
+                    "liters_remaining_estimated": fuel_l,
+                    "capacity_liters": 3000.0,
+                    "percent_estimated": round((fuel_l / 3000.0) * 100.0, 1),
+                    "method": "Estimation logicielle déductive depuis jaugeage manuel au râteau du 17/10/2026 (46 cm / 130 cm ≈ 1 062 L à 4 531 h / 25 072 starts) moins consommation brûleur Viessmann (gicleur Danfoss 0,50/80° H LEV DA : 1,62 L/h ou 0,293 L/démarrage). Marge d'incertitude ±100–150 L (pas de sonde connectée dans la cuve).",
+                },
+                "pool_klereo": {
+                    "mode": telemetry.pool_mode,
+                    "filtration_mode": telemetry.pool_filtration_mode,
+                    "target_temperature_c": telemetry.pool_temperature,
+                },
+                "recent_history": [
+                    {
+                        "recorded_at": h.recorded_at.isoformat() + "Z" if h.recorded_at else None,
+                        "room_c": h.room_temperature,
+                        "outside_c": h.outside_temperature,
+                        "mode": h.mode,
+                        "fuel_l": h.fuel_liters_remaining,
+                    }
+                    for h in hist
+                ],
+            }
+
+        if tool_name == "read_documents_and_contracts":
+            doc_id = args.get("document_id")
+            search_q = str(args.get("search_query") or "").strip().lower()
+            cat_q = str(args.get("category") or "").strip().lower()
+
+            if doc_id is not None:
+                real_doc = prod_db.query(AdminDocument).filter(AdminDocument.id == int(doc_id)).first()
+                if not real_doc:
+                    return {"error": f"Aucun document trouvé avec id={doc_id}."}
+                raw_bytes = real_doc.file_data
+                mime = real_doc.file_type or "application/pdf"
+                if not raw_bytes and real_doc.drive_file_id and drive_jail_service.is_configured():
+                    raw_bytes, meta = drive_jail_service.download_file(real_doc.drive_file_id)
+                    if meta and meta.get("mimeType"):
+                        mime = meta["mimeType"]
+                result_doc: Dict[str, Any] = {
+                    "id": real_doc.id,
+                    "title": real_doc.title,
+                    "category": real_doc.category,
+                    "file_name": real_doc.file_name,
+                    "file_type": mime,
+                    "uploaded_by": real_doc.uploaded_by,
+                    "notes": real_doc.notes,
+                    "download_url": f"https://hellenvilliers.henri-jamet.com/api/documents/{real_doc.id}/download",
+                }
+                if raw_bytes and len(raw_bytes) <= 8 * 1024 * 1024:
+                    result_doc["_inline_attachment"] = {
+                        "mimeType": mime,
+                        "data": base64.b64encode(raw_bytes).decode("ascii"),
+                        "file_name": real_doc.file_name or f"document_{real_doc.id}.pdf",
+                    }
+                    result_doc["content_loaded"] = True
+                else:
+                    result_doc["content_loaded"] = False
+                return result_doc
+
+            docs_rows = s_db.query(AdminDocument).order_by(AdminDocument.id.desc()).all()
+            matched = []
+            for d in docs_rows:
+                hay = f"{d.title or ''} {d.file_name or ''} {d.category or ''} {d.notes or ''} {d.tags or ''}".lower()
+                if search_q:
+                    tokens = [tok for tok in search_q.split() if len(tok) >= 2]
+                    if tokens and not all(tok in hay for tok in tokens):
+                        continue
+                if cat_q and cat_q not in (d.category or "").lower():
+                    continue
+                matched.append(
+                    {
+                        "id": d.id,
+                        "title": d.title,
+                        "category": d.category,
+                        "file_name": d.file_name,
+                        "uploaded_by": d.uploaded_by,
+                        "created_at": str(d.created_at)[:10] if d.created_at else None,
+                        "download_url": f"https://hellenvilliers.henri-jamet.com/api/documents/{d.id}/download",
+                    }
+                )
+            return {
+                "total_matching_documents": len(matched),
+                "documents": matched[:40],
+                "hint": "Appelle à nouveau read_documents_and_contracts avec document_id=<id> pour lire le contenu exact PDF/image d'un document précis.",
+            }
+
+    return {"error": f"Outil de lecture inconnu : {tool_name}"}
+
 

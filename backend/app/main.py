@@ -8007,7 +8007,12 @@ def get_persisted_heating_status(db: Session, force_refresh: bool = False) -> di
     now = datetime.utcnow()
     snapshot = get_live_snapshot(db)
     if snapshot is not None and not force_refresh:
-        return serve_snapshot(snapshot, is_cached_last_known=False, now=now)
+        is_stale = snapshot_age_seconds(snapshot, now) > 1200
+        stale_reason = (
+            f"Passerelle Vitoconnect hors ligne (dernier relevé reçu le {snapshot.recorded_at.strftime('%d/%m/%Y à %H:%M UTC')})"
+            if is_stale else None
+        )
+        return serve_snapshot(snapshot, is_cached_last_known=is_stale, live_error=stale_reason, now=now)
 
     try:
         status_data = ViCareService.get_status(force_refresh=force_refresh)
