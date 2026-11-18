@@ -9,7 +9,7 @@ export const STATUTORY_ASSOCIATES = [
   { id: 'hortense', name: 'Hortense Jamet', firstName: 'Hortense', role: 'Associée', isGerance: false, initials: 'HJ', avatarBg: 'bg-rose-600 text-white' },
   { id: 'marguerite', name: 'Marguerite Jamet', firstName: 'Marguerite', role: 'Associée', isGerance: false, initials: 'MJ', avatarBg: 'bg-amber-600 text-white' },
   { id: 'eugenie', name: 'Eugénie Jamet', firstName: 'Eugénie', role: 'Associée', isGerance: false, initials: 'EJ', avatarBg: 'bg-teal-600 text-white' },
-  { id: 'elisabeth', name: 'Maman (Élisabeth) Jamet', firstName: 'Élisabeth', role: 'Associée', isGerance: false, initials: 'EJ', avatarBg: 'bg-blue-700 text-white' },
+  { id: 'elisabeth', name: 'Élisabeth Jamet', firstName: 'Élisabeth', role: 'Associée', isGerance: false, initials: 'EJ', avatarBg: 'bg-blue-700 text-white' },
   { id: 'frederic', name: 'Frédéric Jamet', firstName: 'Frédéric', role: 'Associé', isGerance: false, initials: 'FJ', avatarBg: 'bg-slate-700 text-white' },
 ];
 

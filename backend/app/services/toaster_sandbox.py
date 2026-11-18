@@ -465,8 +465,18 @@ def intercept_email_notification(
     )
 
 
-def _format_member_display_name(m: Member) -> str:
+def _format_member_prenom(m: Member) -> str:
     prenom = (m.prenom or "").strip()
+    email_low = (m.email or "").strip().lower()
+    if email_low == "elizabeth_jamet@yahoo.fr" or prenom.lower() in ("maman", "elisabeth", "elizabeth"):
+        return "Élisabeth"
+    return prenom or "Associé"
+
+
+def _format_member_display_name(m: Member) -> str:
+    prenom = _format_member_prenom(m)
+    if prenom == "Élisabeth":
+        return "Élisabeth Jamet"
     nom = (m.name or "").strip()
     if nom and prenom and prenom.lower() in nom.lower():
         return nom
@@ -496,7 +506,7 @@ def get_sandbox_state(prod_db: Session, member_id: Optional[int] = None) -> Dict
         members_list = [
             {
                 "id": m.id,
-                "prenom": m.prenom,
+                "prenom": _format_member_prenom(m),
                 "nom": _format_member_display_name(m),
                 "name": _format_member_display_name(m),
                 "email": m.email,
@@ -504,7 +514,11 @@ def get_sandbox_state(prod_db: Session, member_id: Optional[int] = None) -> Dict
                 "is_coordinator": bool(m.is_coordinator),
                 "avatar_color": m.avatar_color,
                 "monthly_contribution": float(m.monthly_contribution or 50.0),
-                "payment_reference": m.payment_reference or f"HLV-{m.prenom.upper()}",
+                "payment_reference": (
+                    "HLV-ELISABETH"
+                    if _format_member_prenom(m) == "Élisabeth"
+                    else (m.payment_reference or f"HLV-{_format_member_prenom(m).upper()}")
+                ),
             }
             for m in members
         ]
@@ -754,13 +768,17 @@ def get_sandbox_state(prod_db: Session, member_id: Optional[int] = None) -> Dict
         active_member_dict = (
             {
                 "id": active_member.id,
-                "prenom": active_member.prenom,
+                "prenom": _format_member_prenom(active_member),
                 "nom": _format_member_display_name(active_member),
                 "name": _format_member_display_name(active_member),
                 "email": active_member.email,
                 "role": active_member.role,
                 "is_coordinator": bool(active_member.is_coordinator),
-                "payment_reference": active_member.payment_reference or f"HLV-{active_member.prenom.upper()}",
+                "payment_reference": (
+                    "HLV-ELISABETH"
+                    if _format_member_prenom(active_member) == "Élisabeth"
+                    else (active_member.payment_reference or f"HLV-{_format_member_prenom(active_member).upper()}")
+                ),
                 "monthly_contribution": float(active_member.monthly_contribution or 50.0),
             }
             if active_member
@@ -1783,6 +1801,393 @@ def execute_sandbox_read_tool(
                 "total_matching_documents": len(matched),
                 "documents": matched[:40],
                 "hint": "Appelle à nouveau read_documents_and_contracts avec document_id=<id> pour lire le contenu exact PDF/image d'un document précis.",
+            }
+
+        if tool_name == "inspect_ui_skill":
+            skill_id = str(args.get("skill_id") or "ui_components").strip().lower()
+            skills_catalog: Dict[str, Dict[str, Any]] = {
+                "ui_components": {
+                    "skill_id": "ui_components",
+                    "title": "Catalogue complet des composants interactifs partageables via display_ui_component",
+                    "usage_rule": "Appelle display_ui_component(component_id=..., props={...}) dès qu'un rendu visuel ou un bouton d'ouverture de formulaire enrichit la réponse. Ne répète jamais en longue liste texte ce que le composant affiche déjà : accompagne-le de 1 à 3 phrases naturelles.",
+                    "components": {
+                        "stays_calendar": {
+                            "props": {"month": "1..12 (ex: 11 pour novembre)", "year": "2026 ou 2027", "building": "'all' | 'Presbytère' | 'Rosings'"},
+                            "renders": "Calendrier mensuel interactif des séjours avec navigation par mois, pastilles par associé et bouton '+ Réserver un séjour'.",
+                        },
+                        "fuel_and_heating_graph": {
+                            "props": {"initial_tab": "'annual' (courbe stock fioul & livraisons) | 'temperatures' (courbes int./ext. & brûleur) | 'daily' (allumages quotidiens)"},
+                            "renders": "Graphe interactif officiel 3 onglets (cuve fioul 3 000 L, livraisons Éts Josse, températures Presbytère et état passerelle Vitoconnect).",
+                        },
+                        "pool_status_widget": {
+                            "props": {},
+                            "renders": "Carte télémétrie en direct de la piscine Klereo (température eau/air, pH, Redox, filtration, PAC 20 kW).",
+                        },
+                        "poll_status_card": {
+                            "props": {"project_id": "ID optionnel d'un scrutin précis (ex: 40 ou 41)", "search_query": "Mot-clé optionnel (ex: 'ménage', 'assemblée')"},
+                            "renders": "Carte de vote interactive style WhatsApp avec barres de progression, détail des votes des 7 associés et vote en 1 clic dans le bac à sable.",
+                        },
+                        "tasks_overview_card": {
+                            "props": {"assigned_to": "Prénom optionnel (ex: 'Joséphine', 'Henri', 'Élisabeth')", "status_filter": "'EN_COURS' | 'A_FAIRE' | 'TERMINEE' | 'ALL'", "task_id": "ID optionnel"},
+                            "renders": "Cartes visuelles des tâches avec points, responsable, PDF rattachés et bouton d'ouverture de création de tâche.",
+                        },
+                        "treasury_overview_card": {
+                            "props": {"member_name": "Prénom optionnel"},
+                            "renders": "Carte financière synthétique : solde bancaire Swan, IBAN copiable, soldes CCA des 7 associés et derniers mouvements.",
+                        },
+                        "document_viewer_card": {
+                            "props": {"document_id": "ID d'un document précis (ex: 177, 163, 162)", "search_query": "Recherche si plusieurs documents"},
+                            "renders": "Cartes de documents officiels avec boutons 'Consulter' (visionneuse PDF intégrée) et 'Télécharger'.",
+                        },
+                        "action_modal_buttons": {
+                            "props": {
+                                "buttons": "Liste d'objets {modal_type: 'stay'|'task'|'poll'|'document', label: string, prefill: object}",
+                            },
+                            "renders": "Boutons d'action ronds et modernes ouvrant directement le formulaire interactif correspondant (réservation, création de tâche, création de scrutin, dépôt de document/facture) en mode bac à sable sécurisé.",
+                        },
+                    },
+                },
+                "sejours_et_chauffage": {
+                    "skill_id": "sejours_et_chauffage",
+                    "summary": "7 chambres au total : Presbytère (5 ch. : Suite de Frédéric & Élisabeth, Chambre de Henri, Première Chambre du Couloir, La Mezzanine de Joséphine, Chambre du bas d'Eugénie) et Rosings (2 ch. : Chambre Haut Droite de Marguerite, Chambre Haut Gauche d'Hortense). Chauffage ViCare Presbytère : veille hors-gel standby hors séjour ; en séjour dhwAndHeating avec 20 °C de 04h30 à 21h00 + ECS 52 °C, et réduit nocturne 6 °C de 21h00 à 04h30. Jauge fioul déduite des compteurs brûleur depuis le jaugeage Bompais du 17/10/2026 (46 cm ≈ 1 062 L sur 3 000 L, gicleur Danfoss 1,62 L/h, incertitude ±100–150 L).",
+                },
+                "taches_et_artisans": {
+                    "skill_id": "taches_et_artisans",
+                    "summary": "Artisans clés : Chauffage EURL Ervan Bompais (06 83 22 56 24 / 02 32 34 47 55) ; Fioul Éts Josse SAS ; Fosses septiques SARL Les Vidanges Conchoises (02 32 30 17 51 / 02 32 29 71 16, cycle 30 mois) ; Piscine Declercq Conches. Points d'équité : 1 (négligeable) à 8 (très élevée) ; Frédéric est exempté des corvées physiques.",
+                },
+                "votes_et_ag": {
+                    "skill_id": "votes_et_ag",
+                    "summary": "Les scrutins (table projects) peuvent être en statut PROPOSED (préparés avant ouverture officielle) ou EN_VOTE (ouverts aux 7 associés : Henri, Marguerite, Hortense, Joséphine, Eugénie, Frédéric, Élisabeth), à choix unique (POUR/CONTRE/ABSTENTION) ou à choix multiples de dates (allow_multiple_choices=true, ex. #40 Ménage de printemps 2027 et #41 Dates des prochaines AG 2027).",
+                },
+                "tresorerie_et_documents": {
+                    "skill_id": "tresorerie_et_documents",
+                    "summary": "Compte officiel SCI HELLENVILLIERS chez Swan SAS (IBAN FR76 1732 8844 0071 5921 5570 591, BIC SWNBFR22). Cotisations mensuelles automatiques le 1er du mois : 1 250 €/mois au total (1 000 €/mois mutualisés pour Frédéric & Élisabeth, et 50 €/mois pour chacun des 5 autres associés : Henri, Marguerite, Hortense, Joséphine, Eugénie). Toute avance de frais validée crédite le CCA du membre.",
+                },
+            }
+            if skill_id in skills_catalog:
+                return skills_catalog[skill_id]
+            return {
+                "available_skills": list(skills_catalog.keys()),
+                "ui_components_guide": skills_catalog["ui_components"],
+            }
+
+        if tool_name == "display_ui_component":
+            comp_id = str(args.get("component_id") or "").strip().lower()
+            raw_props = args.get("props") if isinstance(args.get("props"), dict) else {}
+            props = dict(raw_props)
+            # Fusionner aussi les clés passées directement à la racine d'args par commodité
+            for k, v in args.items():
+                if k not in ("component_id", "props") and v is not None and k not in props:
+                    props[k] = v
+
+            if comp_id in ("stays_calendar", "calendar", "calendrier"):
+                now_dt = datetime.utcnow()
+                month_val = int(props.get("month") or now_dt.month)
+                year_val = int(props.get("year") or now_dt.year)
+                building_filter = str(props.get("building") or "all")
+                stays_rows = s_db.query(Reservation).order_by(Reservation.start_date.asc()).all()
+                stays_data = [
+                    {
+                        "id": r.id,
+                        "property_id": r.property_id,
+                        "property_name": r.property_name or ("Presbytère" if r.property_id == 2 else "Rosings"),
+                        "user_name": ("Élisabeth Jamet" if "maman" in (r.user_name or "").lower() else r.user_name),
+                        "start_date": r.start_date,
+                        "end_date": r.end_date,
+                        "arrival_time": r.arrival_time or "15:00",
+                        "departure_time": r.departure_time or "11:00",
+                        "status": r.status,
+                        "guest_count": r.guest_count or 1,
+                        "chambers_used": r.chambers_used or 1,
+                        "selected_rooms": r.selected_rooms,
+                        "notes": r.notes,
+                    }
+                    for r in stays_rows
+                    if (r.status or "").lower() != "annulée"
+                ]
+                ui_payload = {
+                    "component_id": "stays_calendar",
+                    "month": max(1, min(12, month_val)),
+                    "year": year_val,
+                    "building": building_filter,
+                    "stays": stays_data,
+                }
+                return {
+                    "status": "rendered_in_chat",
+                    "component_id": "stays_calendar",
+                    "stays_count": len(stays_data),
+                    "_ui_component": ui_payload,
+                }
+
+            if comp_id in ("fuel_and_heating_graph", "fuel_graph", "heating_graph", "fioul", "heating"):
+                telemetry = _sync_unified_heating_telemetry(s_db)
+                snapshot = s_db.query(HeatingLiveSnapshot).filter(HeatingLiveSnapshot.id == 1).first()
+                snap_payload = json.loads(snapshot.payload) if (snapshot and snapshot.payload) else {}
+                age_s = (datetime.utcnow() - snapshot.recorded_at).total_seconds() if (snapshot and snapshot.recorded_at) else 0.0
+                initial_tab = str(props.get("initial_tab") or "annual").strip().lower()
+                if initial_tab not in ("annual", "temperatures", "daily"):
+                    initial_tab = "annual"
+                heating_status_obj = {
+                    "mode": telemetry.mode,
+                    "target_temperature": float(telemetry.target_temperature or 20.0),
+                    "comfort_temperature": 20.0,
+                    "reduced_temperature": 6.0,
+                    "room_temperature": telemetry.room_temperature,
+                    "outside_temperature": telemetry.outside_temperature,
+                    "boiler_temperature": telemetry.boiler_temperature,
+                    "dhw_temperature": telemetry.dhw_temperature,
+                    "burner_hours": telemetry.burner_hours or snap_payload.get("burner_hours") or 4605,
+                    "burner_starts": snap_payload.get("burner_starts") or 25445,
+                    "fuel_liters_remaining": float(telemetry.fuel_liters_remaining or 942.1),
+                    "fuel_level_percent": round((float(telemetry.fuel_liters_remaining or 942.1) / 3000.0) * 100.0, 1),
+                    "is_cached_last_known": age_s > 1200,
+                    "last_seen_at": snapshot.recorded_at.isoformat() + "Z" if (snapshot and snapshot.recorded_at) else None,
+                }
+                ui_payload = {
+                    "component_id": "fuel_and_heating_graph",
+                    "initial_tab": initial_tab,
+                    "heating_status": heating_status_obj,
+                }
+                return {
+                    "status": "rendered_in_chat",
+                    "component_id": "fuel_and_heating_graph",
+                    "initial_tab": initial_tab,
+                    "fuel_liters_remaining": heating_status_obj["fuel_liters_remaining"],
+                    "gateway_offline": heating_status_obj["is_cached_last_known"],
+                    "_ui_component": ui_payload,
+                }
+
+            if comp_id in ("pool_status_widget", "pool", "piscine"):
+                telemetry = _sync_unified_heating_telemetry(s_db)
+                pool_live: Dict[str, Any] = {
+                    "mode": telemetry.pool_mode or "eco",
+                    "filtration_mode": telemetry.pool_filtration_mode or "auto",
+                    "target_temperature": telemetry.pool_temperature or 0.5,
+                }
+                try:
+                    from .klereo_service import KlereoService
+                    live_kl = KlereoService.get_status()
+                    if isinstance(live_kl, dict):
+                        pool_live.update(live_kl)
+                except Exception:
+                    pass
+                ui_payload = {
+                    "component_id": "pool_status_widget",
+                    "pool": pool_live,
+                }
+                return {
+                    "status": "rendered_in_chat",
+                    "component_id": "pool_status_widget",
+                    "water_temperature": pool_live.get("water_temperature"),
+                    "_ui_component": ui_payload,
+                }
+
+            if comp_id in ("poll_status_card", "poll", "vote", "votes", "scrutin"):
+                proj_id = props.get("project_id")
+                search_q = str(props.get("search_query") or "").strip().lower()
+                q = s_db.query(Project).order_by(Project.id.desc())
+                if proj_id is not None:
+                    q = q.filter(Project.id == int(proj_id))
+                projs = q.all()
+                matched_polls = []
+                for p in projs:
+                    if proj_id is None and search_q:
+                        hay = f"{p.title or ''} {p.description or ''} {p.category or ''}".lower()
+                        if search_q not in hay:
+                            continue
+                    elif proj_id is None and not search_q:
+                        if (p.status or "").upper() not in ("EN_VOTE", "PROPOSED", "SOUMIS"):
+                            continue
+                    votes = s_db.query(ProjectVote).filter(ProjectVote.project_id == p.id).all()
+                    opts = []
+                    if p.options:
+                        try:
+                            opts = json.loads(p.options) if isinstance(p.options, str) else p.options
+                        except Exception:
+                            opts = [p.options]
+                    matched_polls.append(
+                        {
+                            "id": p.id,
+                            "title": p.title,
+                            "description": p.description,
+                            "category": p.category,
+                            "status": p.status,
+                            "estimated_cost": float(p.estimated_cost or 0.0),
+                            "submitted_by": ("Élisabeth Jamet" if "maman" in (p.submitted_by or "").lower() else p.submitted_by),
+                            "allow_multiple_choices": bool(p.allow_multiple_choices),
+                            "options": opts if isinstance(opts, list) else [],
+                            "votes": [
+                                {
+                                    "id": v.id,
+                                    "user_name": ("Élisabeth Jamet" if "maman" in (v.user_name or "").lower() else v.user_name),
+                                    "vote": v.vote,
+                                    "comment": v.comment,
+                                }
+                                for v in votes
+                            ],
+                        }
+                    )
+                ui_payload = {
+                    "component_id": "poll_status_card",
+                    "polls": matched_polls[:5],
+                }
+                return {
+                    "status": "rendered_in_chat",
+                    "component_id": "poll_status_card",
+                    "polls_rendered": [ {"id": p["id"], "title": p["title"], "status": p["status"]} for p in matched_polls[:5] ],
+                    "_ui_component": ui_payload,
+                }
+
+            if comp_id in ("tasks_overview_card", "tasks", "taches"):
+                t_id = props.get("task_id")
+                assigned_q = str(props.get("assigned_to") or "").strip().lower()
+                status_q = str(props.get("status_filter") or "EN_COURS").strip().upper()
+                q = s_db.query(Task).order_by(Task.id.desc())
+                if t_id is not None:
+                    q = q.filter(Task.id == int(t_id))
+                rows = q.all()
+                cards = []
+                for t in rows:
+                    if t_id is None and status_q not in ("ALL", "TOUS", ""):
+                        if status_q == "ACTIVE" and (t.status or "").upper() in ("TERMINEE", "TERMINE"):
+                            continue
+                        elif status_q != "ACTIVE" and (t.status or "").upper() != status_q:
+                            continue
+                    assigned_raw = t.assigned_members or "[]"
+                    try:
+                        assigned_arr = json.loads(assigned_raw) if isinstance(assigned_raw, str) else assigned_raw
+                    except Exception:
+                        assigned_arr = [str(assigned_raw)]
+                    assigned_clean = [
+                        ("Élisabeth Jamet" if "maman" in str(x).lower() else str(x))
+                        for x in (assigned_arr if isinstance(assigned_arr, list) else [assigned_arr])
+                    ]
+                    if assigned_q and not any(assigned_q in a.lower() for a in assigned_clean):
+                        continue
+                    linked_docs = s_db.query(AdminDocument).filter(AdminDocument.task_id == t.id).all()
+                    cards.append(
+                        {
+                            "id": t.id,
+                            "ref": t.ref or f"T-{t.id}",
+                            "title": t.title,
+                            "description": t.description,
+                            "subject": t.subject,
+                            "priority": t.priority,
+                            "status": t.status,
+                            "charge_points": t.charge_points or 3,
+                            "assigned_members": assigned_clean,
+                            "documents": [
+                                {"id": d.id, "title": d.title or d.file_name, "url": f"/api/documents/{d.id}/download"}
+                                for d in linked_docs
+                            ],
+                        }
+                    )
+                ui_payload = {
+                    "component_id": "tasks_overview_card",
+                    "filter_label": props.get("assigned_to") or status_q,
+                    "tasks": cards[:12],
+                }
+                return {
+                    "status": "rendered_in_chat",
+                    "component_id": "tasks_overview_card",
+                    "tasks_rendered_count": len(cards[:12]),
+                    "_ui_component": ui_payload,
+                }
+
+            if comp_id in ("treasury_overview_card", "treasury", "tresorerie", "banque"):
+                res_fin = execute_sandbox_read_tool(prod_db, member_id, "read_treasury_and_banking", props)
+                ui_payload = {
+                    "component_id": "treasury_overview_card",
+                    "swan_bank_account": res_fin.get("swan_bank_account"),
+                    "associates": res_fin.get("associates"),
+                    "recent_transactions": (res_fin.get("recent_bank_transactions") or [])[:6],
+                }
+                return {
+                    "status": "rendered_in_chat",
+                    "component_id": "treasury_overview_card",
+                    "balance_eur": (res_fin.get("swan_bank_account") or {}).get("balance_eur"),
+                    "_ui_component": ui_payload,
+                }
+
+            if comp_id in ("document_viewer_card", "document", "documents"):
+                doc_id = props.get("document_id")
+                search_q = str(props.get("search_query") or "").strip().lower()
+                docs_out = []
+                if doc_id is not None:
+                    d = s_db.query(AdminDocument).filter(AdminDocument.id == int(doc_id)).first()
+                    if d:
+                        docs_out.append(
+                            {
+                                "id": d.id,
+                                "title": d.title or d.file_name,
+                                "file_name": d.file_name,
+                                "category": d.category,
+                                "uploaded_by": ("Élisabeth Jamet" if "maman" in (d.uploaded_by or "").lower() else d.uploaded_by),
+                                "created_at": str(d.created_at)[:10] if d.created_at else None,
+                                "download_url": f"/api/documents/{d.id}/download",
+                            }
+                        )
+                else:
+                    for d in s_db.query(AdminDocument).order_by(AdminDocument.id.desc()).all():
+                        hay = f"{d.title or ''} {d.file_name or ''} {d.category or ''} {d.notes or ''}".lower()
+                        if search_q:
+                            toks = [tok for tok in search_q.split() if len(tok) >= 2]
+                            if toks and not all(tok in hay for tok in toks):
+                                continue
+                        docs_out.append(
+                            {
+                                "id": d.id,
+                                "title": d.title or d.file_name,
+                                "file_name": d.file_name,
+                                "category": d.category,
+                                "uploaded_by": ("Élisabeth Jamet" if "maman" in (d.uploaded_by or "").lower() else d.uploaded_by),
+                                "created_at": str(d.created_at)[:10] if d.created_at else None,
+                                "download_url": f"/api/documents/{d.id}/download",
+                            }
+                        )
+                        if len(docs_out) >= 6:
+                            break
+                ui_payload = {
+                    "component_id": "document_viewer_card",
+                    "documents": docs_out,
+                }
+                return {
+                    "status": "rendered_in_chat",
+                    "component_id": "document_viewer_card",
+                    "documents_rendered_count": len(docs_out),
+                    "_ui_component": ui_payload,
+                }
+
+            if comp_id in ("action_modal_buttons", "modal_buttons", "buttons", "quick_actions"):
+                raw_buttons = props.get("buttons")
+                if not isinstance(raw_buttons, list) or not raw_buttons:
+                    m_type = str(props.get("modal_type") or "stay").lower()
+                    default_labels = {
+                        "stay": "Ouvrir le formulaire de réservation de séjour",
+                        "task": "Ouvrir le formulaire de création de tâche",
+                        "poll": "Ouvrir le formulaire de création de vote",
+                        "document": "Déposer une facture ou un document",
+                    }
+                    raw_buttons = [
+                        {
+                            "modal_type": m_type,
+                            "label": props.get("label") or default_labels.get(m_type, "Ouvrir le formulaire"),
+                            "prefill": props.get("prefill") or {},
+                        }
+                    ]
+                ui_payload = {
+                    "component_id": "action_modal_buttons",
+                    "buttons": raw_buttons,
+                }
+                return {
+                    "status": "rendered_in_chat",
+                    "component_id": "action_modal_buttons",
+                    "buttons_count": len(raw_buttons),
+                    "_ui_component": ui_payload,
+                }
+
+            return {
+                "error": f"Composant UI inconnu : '{comp_id}'. Valeurs supportées : stays_calendar, fuel_and_heating_graph, pool_status_widget, poll_status_card, tasks_overview_card, treasury_overview_card, document_viewer_card, action_modal_buttons.",
             }
 
     return {"error": f"Outil de lecture inconnu : {tool_name}"}

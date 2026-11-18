@@ -65,7 +65,7 @@ const ALL_MEMBERS = [
   'Marguerite Jamet',
   'Eugénie Jamet',
   'Frédéric Jamet',
-  'Maman (Élisabeth) Jamet',
+  'Élisabeth Jamet',
 ];
 
 function parseChecklistItems(raw) {

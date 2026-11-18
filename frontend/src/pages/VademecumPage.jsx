@@ -501,8 +501,8 @@ function FuelDeliveryModal({ isOpen, onClose, onSuccess }) {
   );
 }
 
-function FuelInteractiveGraph({ fuelHistory, heatingStatus, onRefreshFuel }) {
-  const [activeTab, setActiveTab] = useState('temperatures'); // 'temperatures' | 'annual' | 'daily'
+export function FuelInteractiveGraph({ fuelHistory, heatingStatus, onRefreshFuel, initialTab = 'temperatures', hideDeliveryButton = false }) {
+  const [activeTab, setActiveTab] = useState(initialTab); // 'temperatures' | 'annual' | 'daily'
   const [isDeliveryModalOpen, setIsDeliveryModalOpen] = useState(false);
 
   // Tant que fuelHistory est null, conteneur fixe h-[250px] pour éviter tout saut de layout
@@ -798,14 +798,16 @@ function FuelInteractiveGraph({ fuelHistory, heatingStatus, onRefreshFuel }) {
                   Total livré : {totalDelivered.toLocaleString('fr-FR')} L • Restant : {remainingLiters != null ? `${Math.round(remainingLiters).toLocaleString('fr-FR')} L` : '-- L'}
                 </span>
               </div>
-              <button
-                type="button"
-                onClick={() => setIsDeliveryModalOpen(true)}
-                className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-emerald-700 hover:bg-emerald-800 text-white text-xs font-bold shadow-xs hover:shadow-sm transition-all cursor-pointer shrink-0 self-start sm:self-auto"
-              >
-                <span className="material-symbols-outlined text-[16px]">local_shipping</span>
-                <span>+ Enregistrer une livraison</span>
-              </button>
+              {!hideDeliveryButton && (
+                <button
+                  type="button"
+                  onClick={() => setIsDeliveryModalOpen(true)}
+                  className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-emerald-700 hover:bg-emerald-800 text-white text-xs font-bold shadow-xs hover:shadow-sm transition-all cursor-pointer shrink-0 self-start sm:self-auto"
+                >
+                  <span className="material-symbols-outlined text-[16px]">local_shipping</span>
+                  <span>+ Enregistrer une livraison</span>
+                </button>
+              )}
             </div>
 
             {deliveries.length === 0 ? (

@@ -367,7 +367,7 @@ def get_task_recommendations(
     # Ordre de départ canonique si égalité parfaite (sans Frédéric Jamet)
     priority_order = [
         "Joséphine Jamet", "Hortense Jamet", "Marguerite Jamet",
-        "Eugénie Jamet", "Maman (Élisabeth) Jamet", "Henri Jamet"
+        "Eugénie Jamet", "Élisabeth Jamet", "Henri Jamet"
     ]
 
     for m in eligible_members:

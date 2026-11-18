@@ -8,7 +8,7 @@ const ASSOCIATES_LIST = [
   { id: 'all', label: 'Tous les 7 associés' },
   { id: 'henri', label: 'Henri Jamet', dotColor: 'bg-teal-600' },
   { id: 'frederic', label: 'Frédéric Jamet', dotColor: 'bg-emerald-700' },
-  { id: 'elisabeth', label: 'Maman (Élisabeth) Jamet', dotColor: 'bg-emerald-600' },
+  { id: 'elisabeth', label: 'Élisabeth Jamet', dotColor: 'bg-emerald-600' },
   { id: 'josephine', label: 'Joséphine Jamet', dotColor: 'bg-sky-600' },
   { id: 'hortense', label: 'Hortense Jamet', dotColor: 'bg-amber-600' },
   { id: 'marguerite', label: 'Marguerite Jamet', dotColor: 'bg-rose-600' },
@@ -1170,8 +1170,8 @@ export default function CalendarPage({ properties, currentUser = 'Henri Jamet' }
                             if (normName.includes('henri')) {
                               labelText = 'Henri';
                               badgeBg = 'bg-teal-700 text-white hover:ring-teal-500/60';
-                            } else if (normName.includes('frédéric') || normName.includes('frederic') || normName.includes('parent') || normName.includes('élisabeth') || normName.includes('elisabeth')) {
-                              labelText = normName.includes('parent') ? 'Parents' : firstName;
+                            } else if (normName.includes('frédéric') || normName.includes('frederic') || normName.includes('parent') || normName.includes('élisabeth') || normName.includes('elisabeth') || normName.includes('maman')) {
+                              labelText = normName.includes('parent') ? 'Frédéric & Élisabeth' : (normName.includes('maman') ? 'Élisabeth' : firstName);
                               badgeBg = 'bg-emerald-800 text-white hover:ring-emerald-600/60';
                             } else if (normName.includes('hortense')) {
                               labelText = 'Hortense';

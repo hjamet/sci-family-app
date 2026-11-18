@@ -77,7 +77,7 @@ DEFAULT_ONBOARDING_PAGES: List[Dict[str, Any]] = [
             {
                 "icon": "cottage",
                 "title": "Page Séjour et vadémécum",
-                "text": "Pendant que vous êtes sur place, l'onglet Séjour affiche les missions qui vous sont attribuées à faire sur place, la température de la piscine Klereo, le niveau de la cuve à fioul, ainsi que la liste des super fiches du vadémécum de papa ! :D"
+                "text": "Pendant que vous êtes sur place, l'onglet Séjour affiche les missions qui vous sont attribuées à faire sur place, la température de la piscine Klereo, le niveau de la cuve à fioul, ainsi que la liste des super fiches du vadémécum de Frédéric ! :D"
             }
         ]
     },

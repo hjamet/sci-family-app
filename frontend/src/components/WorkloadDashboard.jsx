@@ -24,7 +24,7 @@ const ALL_7_MEMBERS = [
   { id: 4, prenom: 'Joséphine', fullName: 'Joséphine Jamet', role: 'Coordinatrice Adjointe', color: 'from-emerald-500 to-teal-600', badgeColor: 'bg-emerald-50 text-emerald-700 border-emerald-200' },
   { id: 5, prenom: 'Eugénie', fullName: 'Eugénie Jamet', role: 'Membre Associé', color: 'from-amber-500 to-orange-600', badgeColor: 'bg-amber-50 text-amber-700 border-amber-200' },
   { id: 6, prenom: 'Frédéric', fullName: 'Frédéric Jamet', role: 'Membre Associé', color: 'from-blue-500 to-indigo-600', badgeColor: 'bg-blue-50 text-blue-700 border-blue-200' },
-  { id: 7, prenom: 'Élisabeth', aliases: ['Maman', 'Elisabeth'], fullName: 'Maman (Élisabeth) Jamet', role: 'Membre Associé', color: 'from-teal-500 to-emerald-600', badgeColor: 'bg-teal-50 text-teal-700 border-teal-200' },
+  { id: 7, prenom: 'Élisabeth', aliases: ['Maman', 'Elisabeth', 'Elizabeth'], fullName: 'Élisabeth Jamet', role: 'Membre Associé', color: 'from-teal-500 to-emerald-600', badgeColor: 'bg-teal-50 text-teal-700 border-teal-200' },
 ];
 
 function isTaskCompleted(task) {

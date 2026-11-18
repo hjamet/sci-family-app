@@ -534,7 +534,7 @@ export default function MemberTreasurySection({
                   Cotisations mensuelles attendues
                 </span>
                 <span className="text-xs text-slate-500 mt-0.5 block">
-                  5 × 50 € + 1 000 € (couple parental)
+                  5 × 50 € + 1 000 € (Frédéric &amp; Élisabeth)
                 </span>
               </div>
               <span className="font-mono text-base font-bold text-forest-deep">
@@ -596,7 +596,7 @@ export default function MemberTreasurySection({
                           <div>{m.member_name}</div>
                           {m.is_joint_couple && (
                             <div className="text-[10px] font-normal text-slate-500">
-                              {isFrederic ? 'Foyer parental (couple)' : 'Foyer parental (avec Frédéric)'}
+                              {isFrederic ? 'Quote-part commune (avec Élisabeth)' : 'Quote-part commune (avec Frédéric)'}
                             </div>
                           )}
                         </td>

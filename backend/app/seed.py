@@ -95,8 +95,8 @@ def seed_database(db: Session = None, force: bool = False):
                     avatar_color="emerald"
                 ),
                 Member(
-                    prenom="Maman",
-                    name="Maman (Élisabeth) Jamet",
+                    prenom="Élisabeth",
+                    name="Élisabeth Jamet",
                     email="elizabeth_jamet@yahoo.fr",
                     password=hash_password(os.getenv("USER_MAMAN_PASS") or os.getenv("MEMBER_PASSWORD_MAMAN", "W1tY2mK9vL5nR1pT")),
                     role="Membre Associé",

@@ -108,15 +108,15 @@ def get_member_treasury_summary(db: Session, member: Member) -> Dict[str, Any]:
     bank_active = is_bank_account_active(db)
     bank_info = get_official_bank_info(db)
 
-    # Détection du couple parental (Frédéric et Elizabeth / Maman)
-    is_maman = (member.email or "").lower() == "elizabeth_jamet@yahoo.fr" or (member.prenom or "").lower() == "maman"
+    # Détection du compte joint Frédéric & Élisabeth (1 000 €/mois mutualisés)
+    is_elisabeth = (member.email or "").lower() == "elizabeth_jamet@yahoo.fr" or (member.prenom or "").lower() in ("maman", "elisabeth", "élisabeth", "elizabeth")
     is_frederic = (member.email or "").lower() == "frdjamet@gmail.com" or (member.prenom or "").lower() in ("frédéric", "frederic")
-    is_joint_couple = is_maman or is_frederic
-    joint_partner_name = "Frédéric Jamet" if is_maman else "Maman (Élisabeth) Jamet" if is_frederic else None
+    is_joint_couple = is_elisabeth or is_frederic
+    joint_partner_name = "Frédéric Jamet" if is_elisabeth else "Élisabeth Jamet" if is_frederic else None
     contribution_note = (
-        "Incluse dans la quote-part commune avec Frédéric (1 000,00 €/mois pour le foyer)"
-        if is_maman
-        else "Quote-part commune pour le couple Frédéric & Élisabeth (1 000,00 €/mois)"
+        "Incluse dans la quote-part commune avec Frédéric (1 000,00 €/mois)"
+        if is_elisabeth
+        else "Quote-part commune Frédéric & Élisabeth (1 000,00 €/mois)"
         if is_frederic
         else None
     )

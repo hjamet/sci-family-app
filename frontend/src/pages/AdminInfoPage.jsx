@@ -1959,15 +1959,16 @@ export default function AdminInfoPage({ currentUser }) {
               </button>
             </div>
 
-            {/* Dépôt d'une pièce directement depuis la barre de recherche (même modale que #btn-open-upload) */}
+            {/* Bouton principal d'ajout de nouveau document directement dans la barre d'outils (Annotation 1) */}
             <button
               id="btn-open-upload-toolbar"
               type="button"
               onClick={openDocumentUploadModal}
-              className="h-[52px] px-4 rounded-DEFAULT bg-white dark:bg-slate-900 border-2 border-primary text-primary hover:bg-sage-soft font-label-sm text-label-sm font-bold flex items-center gap-2 shadow-xs transition-all cursor-pointer whitespace-nowrap group"
+              className="h-[52px] px-5 rounded-DEFAULT bg-primary text-on-primary hover:bg-forest-deep font-label-md text-sm font-bold flex items-center gap-2 shadow-sm hover:shadow-md transition-all cursor-pointer whitespace-nowrap group"
+              title="Déposer un nouveau document ou une facture dans l'espace documentaire"
             >
               <span className="material-symbols-outlined text-[20px] group-hover:scale-110 transition-transform">upload_file</span>
-              <span>+ Déposer une pièce</span>
+              <span>+ Nouveau document</span>
             </button>
 
           </div>

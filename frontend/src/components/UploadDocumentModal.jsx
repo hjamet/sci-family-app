@@ -46,7 +46,13 @@ export default function UploadDocumentModal({
   mode = 'document', // 'document' | 'invoice'
   isInvoice = false
 }) {
-  const isInvoiceMode = mode === 'invoice' || Boolean(isInvoice);
+  const [activeMode, setActiveMode] = useState(() => (mode === 'invoice' || Boolean(isInvoice) ? 'invoice' : 'document'));
+  useEffect(() => {
+    if (isOpen) {
+      setActiveMode(mode === 'invoice' || Boolean(isInvoice) ? 'invoice' : 'document');
+    }
+  }, [isOpen, mode, isInvoice]);
+  const isInvoiceMode = activeMode === 'invoice';
   const [categoriesList, setCategoriesList] = useState([]);
   const [uploadOrganisme, setUploadOrganisme] = useState('');
   const [uploadTitle, setUploadTitle] = useState('');
@@ -332,6 +338,36 @@ export default function UploadDocumentModal({
         <form onSubmit={handleSubmit} className="flex flex-col flex-1 min-h-0 overflow-hidden">
           
           <div className="overflow-y-auto p-4 sm:p-5 space-y-4 flex-1">
+            {/* Sélecteur rapide Type de dépôt (Document administratif vs Facture/Dépense) */}
+            {!targetTaskId && !targetProjectId && (
+              <div className="grid grid-cols-2 gap-1.5 p-1 rounded-xl bg-surface-container-low border border-border-subtle">
+                <button
+                  type="button"
+                  onClick={() => setActiveMode('document')}
+                  className={`py-2 px-3 rounded-lg text-xs font-bold flex items-center justify-center gap-1.5 transition-all cursor-pointer ${
+                    !isInvoiceMode
+                      ? 'bg-primary text-white shadow-xs'
+                      : 'text-on-surface-variant hover:text-on-surface'
+                  }`}
+                >
+                  <span className="material-symbols-outlined text-[16px]">folder_open</span>
+                  <span>Document (RIB, contrat, PV)</span>
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setActiveMode('invoice')}
+                  className={`py-2 px-3 rounded-lg text-xs font-bold flex items-center justify-center gap-1.5 transition-all cursor-pointer ${
+                    isInvoiceMode
+                      ? 'bg-primary text-white shadow-xs'
+                      : 'text-on-surface-variant hover:text-on-surface'
+                  }`}
+                >
+                  <span className="material-symbols-outlined text-[16px]">receipt_long</span>
+                  <span>Facture ou dépense</span>
+                </button>
+              </div>
+            )}
+
             {/* Zone Drag & Drop */}
             <div>
               <label className="block font-label-md text-xs font-bold text-on-surface mb-1.5">

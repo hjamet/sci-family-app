@@ -80,7 +80,7 @@ function getISOWeekAndYear(dateStr) {
 const ASSOCIATES_LIST = [
   'Henri Jamet',
   'Frédéric Jamet',
-  'Maman (Élisabeth) Jamet',
+  'Élisabeth Jamet',
   'Joséphine Jamet',
   'Hortense Jamet',
   'Marguerite Jamet',
@@ -89,7 +89,7 @@ const ASSOCIATES_LIST = [
 
 const FAMILY_MEMBERS = [
   { id: 'frederic', name: 'Frédéric Jamet', role: 'Usufruitier', initials: 'FJ', color: 'bg-emerald-800 text-white' },
-  { id: 'elisabeth', name: 'Maman (Élisabeth) Jamet', role: 'Usufruitière', initials: 'ÉJ', color: 'bg-teal-700 text-white' },
+  { id: 'elisabeth', name: 'Élisabeth Jamet', role: 'Usufruitière', initials: 'ÉJ', color: 'bg-teal-700 text-white' },
   { id: 'henri', name: 'Henri Jamet', role: 'Gérant', initials: 'HJ', color: 'bg-forest-deep text-white' },
   { id: 'josephine', name: 'Joséphine Jamet', role: 'Coordinatrice', initials: 'JJ', color: 'bg-amber-rich text-white' },
   { id: 'hortense', name: 'Hortense Jamet', role: 'Associée', initials: 'HJ', color: 'bg-lime-700 text-white' },
@@ -145,7 +145,7 @@ const ROOMS = [
     name: 'Suite',
     house: 'presbytere',
     capacity: '2 personnes',
-    assignment: 'Chambre des parents',
+    assignment: 'Chambre de Frédéric & Élisabeth',
   },
 ];
 
@@ -164,8 +164,8 @@ export function resolveSafeUserName(val) {
     raw = String(val || '').trim();
   }
   const clean = raw.toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '');
-  if (clean.includes('elisabeth') || clean === 'maman' || clean.includes('maman (')) {
-    return 'Maman (Élisabeth) Jamet';
+  if (clean.includes('elisabeth') || clean.includes('elizabeth') || clean === 'maman' || clean.includes('maman (')) {
+    return 'Élisabeth Jamet';
   }
   if (clean.includes('eugenie')) {
     return 'Eugénie Jamet';

@@ -1,8 +1,14 @@
-import React, { useState, useEffect, useRef, useMemo } from 'react';
+import React, { useState, useEffect, useRef, useMemo, useCallback } from 'react';
+import {
+  ToasterMarkdown,
+  ToasterActivityAccordion,
+  ToasterComponentRenderer,
+  ToasterSandboxFormModal,
+} from '../components/ToasterSharedComponents';
 
 const STATUTORY_MEMBERS_FALLBACK = [
-  { id: 7, prenom: 'Maman', nom: 'Maman (Élisabeth) Jamet', displayLabel: 'Maman (Élisabeth) Jamet' },
   { id: 1, prenom: 'Henri', nom: 'Henri Jamet', displayLabel: 'Henri Jamet' },
+  { id: 7, prenom: 'Élisabeth', nom: 'Élisabeth Jamet', displayLabel: 'Élisabeth Jamet' },
   { id: 6, prenom: 'Frédéric', nom: 'Frédéric Jamet', displayLabel: 'Frédéric Jamet' },
   { id: 2, prenom: 'Marguerite', nom: 'Marguerite Jamet', displayLabel: 'Marguerite Jamet' },
   { id: 3, prenom: 'Hortense', nom: 'Hortense Jamet', displayLabel: 'Hortense Jamet' },
@@ -10,19 +16,34 @@ const STATUTORY_MEMBERS_FALLBACK = [
   { id: 5, prenom: 'Eugénie', nom: 'Eugénie Jamet', displayLabel: 'Eugénie Jamet' },
 ];
 
+function sanitizeFamilyLabel(raw) {
+  if (!raw) return '';
+  return String(raw)
+    .replace(/Maman\s*\(\s*[ÉE]lisabeth\s*\)\s*Jamet/gi, 'Élisabeth Jamet')
+    .replace(/\bMaman\s+Jamet\b/gi, 'Élisabeth Jamet')
+    .replace(/\bMaman\b/gi, 'Élisabeth')
+    .replace(/\bPapa\b/gi, 'Frédéric')
+    .trim();
+}
+
 function formatAssociateLabel(member) {
   if (!member) return 'Associé';
-  if (member.displayLabel) return member.displayLabel;
-  const prenom = (member.prenom || member.first_name || '').trim();
-  const nom = (member.nom || member.name || member.last_name || '').trim();
+  if (member.displayLabel) return sanitizeFamilyLabel(member.displayLabel);
+  const prenom = sanitizeFamilyLabel((member.prenom || member.first_name || '').trim());
+  const nom = sanitizeFamilyLabel((member.nom || member.name || member.last_name || '').trim());
   if (nom && prenom && nom.toLowerCase().includes(prenom.toLowerCase())) {
     return nom;
   }
   const full = `${prenom} ${nom}`.trim();
-  if (full.toLowerCase().includes('élisabeth') || full.toLowerCase().includes('elisabeth') || full.toLowerCase().includes('maman')) {
-    return 'Maman (Élisabeth) Jamet';
+  if (full.toLowerCase().includes('élisabeth') || full.toLowerCase().includes('elisabeth')) {
+    return 'Élisabeth Jamet';
   }
   return full || 'Associé';
+}
+
+function formatAssociatePrenom(member) {
+  const full = formatAssociateLabel(member);
+  return full.split(' ')[0] || 'Associé';
 }
 
 function formatCurrency(val) {
@@ -60,96 +81,103 @@ const AUDIT_CATEGORY_META = {
 };
 
 export default function ToasterPage({ currentUser }) {
-  // Identité incarnée dans le bac à sable
   const [selectedMemberId, setSelectedMemberId] = useState(() => {
     if (currentUser && typeof currentUser === 'object' && currentUser.id) {
       return Number(currentUser.id);
     }
-    return 7; // Par défaut : Maman (Élisabeth) Jamet pour tester l'ergonomie immédiatement
+    return 1;
   });
 
-  // État du bac à sable
   const [sandboxState, setSandboxState] = useState(null);
   const [loadingState, setLoadingState] = useState(true);
   const [resetingSandbox, setResetingSandbox] = useState(false);
   const [errorBanner, setErrorBanner] = useState(null);
   const [toastMessage, setToastMessage] = useState(null);
-
-  // Tiroir latéral d'audit des actions matérielles & e-mails interceptés
   const [isAuditDrawerOpen, setIsAuditDrawerOpen] = useState(false);
 
-  // Fil de conversation
+  // Fil de conversation & streaming SSE
   const [messages, setMessages] = useState([]);
   const [inputText, setInputText] = useState('');
   const [isSending, setIsSending] = useState(false);
 
+  // Modale de formulaire interactif bac à sable ouverte depuis un composant partagé
+  const [sandboxModalState, setSandboxModalState] = useState(null);
+
   // Pièce jointe multimodale (Photo / PDF)
-  const [attachment, setAttachment] = useState(null); // { name, mime, base64, size }
+  const [attachment, setAttachment] = useState(null);
   const fileInputRef = useRef(null);
 
-  // Dictée vocale Web Speech API
+  // Dictée vocale fluide avec envoi automatique sans insérer dans l'input
   const [isListening, setIsListening] = useState(false);
   const recognitionRef = useRef(null);
+  const voiceTranscriptRef = useRef('');
+  const voiceAbortedRef = useRef(false);
+  const sendVoiceTriggerRef = useRef(null);
 
-  // Édition inline d'un champ déduit 🟢 : { msgId, fieldKey, tempValue }
+  // Édition inline d'un champ déduit 🟢 / saisie libre 🔴
   const [editingField, setEditingField] = useState(null);
-  // Saisie libre optionnelle sur un champ manquant 🔴 : { [msgId_fieldKey]: string }
   const [customMissingInputs, setCustomMissingInputs] = useState({});
 
   const chatEndRef = useRef(null);
+  const messagesRef = useRef(messages);
+  useEffect(() => {
+    messagesRef.current = messages;
+  }, [messages]);
 
-  const showToast = (msg) => {
+  const showToast = useCallback((msg) => {
     setToastMessage(msg);
     setTimeout(() => setToastMessage(null), 4000);
-  };
+  }, []);
 
-  // Support de la reconnaissance vocale navigateur
   const speechSupported = useMemo(() => {
     if (typeof window === 'undefined') return false;
     return Boolean(window.SpeechRecognition || window.webkitSpeechRecognition);
   }, []);
 
-  // Chargement de l'état du bac à sable pour l'associé sélectionné
-  const loadSandboxState = async (memberId = selectedMemberId) => {
-    setLoadingState(true);
-    setErrorBanner(null);
-    try {
-      const res = await fetch(`/api/toaster/state?member_id=${encodeURIComponent(memberId)}`, {
-        method: 'GET',
-        headers: getAuthHeaders(),
-      });
-      if (!res.ok) {
-        let detail = `Erreur HTTP ${res.status}`;
-        try {
-          const errJson = await res.json();
-          detail = errJson.detail || errJson.error || errJson.message || detail;
-        } catch (_) {}
-        throw new Error(detail);
+  const loadSandboxState = useCallback(
+    async (memberId = selectedMemberId) => {
+      setLoadingState(true);
+      setErrorBanner(null);
+      try {
+        const res = await fetch(`/api/toaster/state?member_id=${encodeURIComponent(memberId)}`, {
+          method: 'GET',
+          headers: getAuthHeaders(),
+        });
+        if (!res.ok) {
+          let detail = `Erreur HTTP ${res.status}`;
+          try {
+            const errJson = await res.json();
+            detail = errJson.detail || errJson.error || errJson.message || detail;
+          } catch (_) {}
+          throw new Error(detail);
+        }
+        const data = await res.json();
+        setSandboxState(data);
+      } catch (err) {
+        console.error('Erreur chargement état bac à sable:', err);
+        setErrorBanner(`Impossible de charger l'état du bac à sable : ${err.message}`);
+      } finally {
+        setLoadingState(false);
       }
-      const data = await res.json();
-      setSandboxState(data);
-    } catch (err) {
-      console.error('Erreur chargement état bac à sable:', err);
-      setErrorBanner(`Impossible de charger l'état du bac à sable : ${err.message}`);
-    } finally {
-      setLoadingState(false);
-    }
-  };
+    },
+    [selectedMemberId]
+  );
 
   useEffect(() => {
     loadSandboxState(selectedMemberId);
-  }, [selectedMemberId]);
+  }, [selectedMemberId, loadSandboxState]);
 
   useEffect(() => {
     chatEndRef.current?.scrollIntoView({ behavior: 'smooth' });
   }, [messages, isSending]);
 
-  // Liste des membres disponibles dans le sélecteur
   const membersOptions = useMemo(() => {
     const rawMembers = sandboxState?.members;
     if (Array.isArray(rawMembers) && rawMembers.length > 0) {
       return rawMembers.map((m) => ({
         ...m,
+        prenom: sanitizeFamilyLabel(m.prenom),
+        name: sanitizeFamilyLabel(m.name || m.nom),
         displayLabel: formatAssociateLabel(m),
       }));
     }
@@ -165,7 +193,6 @@ export default function ToasterPage({ currentUser }) {
     );
   }, [membersOptions, selectedMemberId, sandboxState]);
 
-  // Solde CCA actuel du membre dans le bac à sable
   const activeCcaBalance = useMemo(() => {
     if (!sandboxState) return null;
     const candidates = [
@@ -174,15 +201,10 @@ export default function ToasterPage({ currentUser }) {
       sandboxState.active_member?.solde_cca,
       sandboxState.member_summary?.cca_balance,
       sandboxState.member_summary?.balance,
-      sandboxState.member_summary?.solde_cca,
-      sandboxState.member?.cca_balance,
-      sandboxState.member?.balance,
-      sandboxState.treasury?.cca_balance,
       sandboxState.treasury?.balance,
       sandboxState.cca_balance,
       activeMemberObj?.cca_balance,
       activeMemberObj?.balance,
-      activeMemberObj?.solde_cca,
     ];
     for (const c of candidates) {
       if (c !== undefined && c !== null && !isNaN(Number(c))) {
@@ -192,13 +214,11 @@ export default function ToasterPage({ currentUser }) {
     return 0;
   }, [sandboxState, activeMemberObj]);
 
-  // Journal d'audit du bac à sable
   const auditLogs = useMemo(() => {
     const logs = sandboxState?.sandbox_audit_logs || sandboxState?.audit_logs || [];
     return Array.isArray(logs) ? logs : [];
   }, [sandboxState]);
 
-  // Réinitialisation complète du bac à sable
   const handleResetSandbox = async () => {
     setResetingSandbox(true);
     setErrorBanner(null);
@@ -228,7 +248,6 @@ export default function ToasterPage({ currentUser }) {
     }
   };
 
-  // Sélection et conversion en base64 d'une photo ou d'un PDF
   const handleFileSelect = (e) => {
     const file = e.target.files?.[0];
     if (!file) return;
@@ -250,43 +269,7 @@ export default function ToasterPage({ currentUser }) {
     e.target.value = '';
   };
 
-  // Dictée vocale
-  const handleToggleSpeech = () => {
-    if (!speechSupported) {
-      setErrorBanner('La reconnaissance vocale n’est pas supportée par ce navigateur.');
-      return;
-    }
-    if (isListening && recognitionRef.current) {
-      recognitionRef.current.stop();
-      setIsListening(false);
-      return;
-    }
-
-    const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
-    const recognition = new SpeechRecognition();
-    recognition.lang = 'fr-FR';
-    recognition.interimResults = false;
-    recognition.maxAlternatives = 1;
-
-    recognition.onstart = () => setIsListening(true);
-    recognition.onend = () => setIsListening(false);
-    recognition.onerror = (event) => {
-      console.warn('Erreur dictée vocale:', event.error);
-      setIsListening(false);
-    };
-    recognition.onresult = (event) => {
-      const transcript = event.results?.[0]?.[0]?.transcript || '';
-      if (transcript) {
-        setInputText((prev) => (prev ? `${prev.trim()} ${transcript}` : transcript));
-      }
-    };
-
-    recognitionRef.current = recognition;
-    recognition.start();
-  };
-
-  // Normalisation d'une action_card reçue du backend
-  const normalizeActionCard = (rawCard) => {
+  const normalizeActionCard = useCallback((rawCard) => {
     if (!rawCard || typeof rawCard !== 'object') return null;
     const deduced = Array.isArray(rawCard.deduced_fields)
       ? rawCard.deduced_fields.map((f) => ({
@@ -321,7 +304,7 @@ export default function ToasterPage({ currentUser }) {
 
     return {
       action_type: rawCard.action_type || 'action',
-      title: rawCard.title || 'Proposition d’action',
+      title: sanitizeFamilyLabel(rawCard.title || 'Proposition d’action'),
       deduced_fields: deduced,
       missing_fields: missing,
       ready_to_execute: missing.length === 0 ? true : Boolean(rawCard.ready_to_execute && missing.length === 0),
@@ -331,102 +314,320 @@ export default function ToasterPage({ currentUser }) {
       executionResult: null,
       executionError: null,
     };
-  };
+  }, []);
 
-  // Envoi d'un message à POST /api/toaster/chat
-  const handleSendMessage = async (e) => {
-    if (e) e.preventDefault();
-    const trimmed = inputText.trim();
-    if ((!trimmed && !attachment) || isSending) return;
+  // Envoi unifié (clavier ou fin d'enregistrement vocal direct) avec flux SSE /api/toaster/chat/stream
+  const sendMessagePayload = useCallback(
+    async ({ textOverride = null, clearComposerText = true } = {}) => {
+      const rawText = textOverride !== null ? String(textOverride) : inputText;
+      const trimmed = rawText.trim();
+      const currentAttachment = textOverride !== null ? null : attachment;
 
-    const userMsg = {
-      id: `user-${Date.now()}`,
-      role: 'user',
-      content: trimmed || (attachment ? `[Pièce jointe : ${attachment.name}]` : ''),
-      attachment: attachment ? { name: attachment.name, mime: attachment.mime, size: attachment.size } : null,
-      timestamp: new Date().toISOString(),
-    };
+      if ((!trimmed && !currentAttachment) || isSending) return;
 
-    const currentAttachment = attachment;
-    const nextMessages = [...messages, userMsg];
-    setMessages(nextMessages);
-    setInputText('');
-    setAttachment(null);
-    setIsSending(true);
-    setErrorBanner(null);
+      const nowTs = Date.now();
+      const userMsg = {
+        id: `user-${nowTs}`,
+        role: 'user',
+        content: trimmed || (currentAttachment ? `[Pièce jointe : ${currentAttachment.name}]` : ''),
+        attachment: currentAttachment
+          ? { name: currentAttachment.name, mime: currentAttachment.mime, size: currentAttachment.size }
+          : null,
+        timestamp: new Date().toISOString(),
+      };
 
-    try {
-      const apiMessages = nextMessages.map((m) => ({
+      const assistantId = `assistant-${nowTs + 1}`;
+      const assistantPlaceholder = {
+        id: assistantId,
+        role: 'assistant',
+        content: '',
+        thoughts: '',
+        toolSteps: [],
+        uiComponents: [],
+        action_card: null,
+        isStreaming: true,
+        timestamp: new Date().toISOString(),
+      };
+
+      const historyForApi = [...messagesRef.current, userMsg].map((m) => ({
         role: m.role === 'assistant' || m.role === 'model' ? 'assistant' : 'user',
         content: m.content,
       }));
 
+      setMessages((prev) => [...prev, userMsg, assistantPlaceholder]);
+      if (clearComposerText) {
+        setInputText('');
+        setAttachment(null);
+      }
+      setIsSending(true);
+      setErrorBanner(null);
+
+      const updateAssistant = (updater) => {
+        setMessages((prev) =>
+          prev.map((m) => (m.id === assistantId ? updater(m) : m))
+        );
+      };
+
       const body = {
         member_id: Number(selectedMemberId),
-        messages: apiMessages,
+        messages: historyForApi,
         attachment_base64: currentAttachment ? currentAttachment.base64 : null,
         attachment_mime: currentAttachment ? currentAttachment.mime : null,
         attachment_name: currentAttachment ? currentAttachment.name : null,
       };
 
-      const res = await fetch('/api/toaster/chat', {
+      try {
+        const res = await fetch('/api/toaster/chat/stream', {
+          method: 'POST',
+          headers: getAuthHeaders(),
+          body: JSON.stringify(body),
+        });
+
+        if (!res.ok) {
+          let detail = `Erreur HTTP ${res.status}`;
+          try {
+            const errJson = await res.json();
+            detail = errJson.detail || errJson.error || errJson.message || detail;
+          } catch (_) {}
+          throw new Error(detail);
+        }
+
+        if (!res.body) {
+          throw new Error('Flux de réponse indisponible.');
+        }
+
+        const reader = res.body.getReader();
+        const decoder = new TextDecoder('utf-8');
+        let sseBuffer = '';
+
+        while (true) {
+          const { value, done } = await reader.read();
+          if (done) break;
+          sseBuffer += decoder.decode(value, { stream: true });
+          const frames = sseBuffer.split('\n\n');
+          sseBuffer = frames.pop() || '';
+
+          for (const frame of frames) {
+            const lines = frame.split('\n');
+            for (const line of lines) {
+              const trimmedLine = line.trim();
+              if (!trimmedLine.startsWith('data:')) continue;
+              const jsonPayload = trimmedLine.slice(5).trim();
+              if (!jsonPayload) continue;
+
+              let ev;
+              try {
+                ev = JSON.parse(jsonPayload);
+              } catch (_) {
+                continue;
+              }
+
+              if (ev.type === 'error') {
+                throw new Error(ev.detail || "Erreur lors du traitement de la demande.");
+              }
+
+              if (ev.type === 'thought_delta' && ev.delta) {
+                updateAssistant((m) => ({
+                  ...m,
+                  thoughts: `${m.thoughts || ''}${ev.delta}`,
+                }));
+              } else if (ev.type === 'tool_step' && ev.step) {
+                updateAssistant((m) => {
+                  const prevSteps = Array.isArray(m.toolSteps) ? [...m.toolSteps] : [];
+                  const existingIdx = prevSteps.findIndex((s) => s.id === ev.step.id);
+                  if (existingIdx >= 0) {
+                    prevSteps[existingIdx] = ev.step;
+                  } else {
+                    prevSteps.push(ev.step);
+                  }
+                  return { ...m, toolSteps: prevSteps };
+                });
+              } else if (ev.type === 'ui_component' && ev.component) {
+                updateAssistant((m) => ({
+                  ...m,
+                  uiComponents: [...(m.uiComponents || []), ev.component],
+                }));
+              } else if (ev.type === 'text_delta' && ev.delta) {
+                updateAssistant((m) => ({
+                  ...m,
+                  content: sanitizeFamilyLabel(`${m.content || ''}${ev.delta}`),
+                }));
+              } else if (ev.type === 'action_card' && ev.action_card) {
+                const cardObj = normalizeActionCard(ev.action_card);
+                updateAssistant((m) => ({
+                  ...m,
+                  action_card: cardObj,
+                }));
+              } else if (ev.type === 'done') {
+                const finalReply = sanitizeFamilyLabel(
+                  ev.reply || ev.message || ev.content || ''
+                );
+                const finalCard = ev.action_card ? normalizeActionCard(ev.action_card) : null;
+                updateAssistant((m) => ({
+                  ...m,
+                  content: finalReply || m.content,
+                  thoughts: ev.thoughts !== undefined ? ev.thoughts : m.thoughts,
+                  toolSteps: Array.isArray(ev.tool_steps) && ev.tool_steps.length > 0 ? ev.tool_steps : m.toolSteps,
+                  uiComponents:
+                    Array.isArray(ev.ui_components) && ev.ui_components.length > 0
+                      ? ev.ui_components
+                      : m.uiComponents,
+                  action_card: finalCard || m.action_card,
+                  isStreaming: false,
+                }));
+                if (ev.state) {
+                  setSandboxState(ev.state);
+                }
+              }
+            }
+          }
+        }
+
+        // Sécurité de clôture du statut streaming
+        updateAssistant((m) => (m.isStreaming ? { ...m, isStreaming: false } : m));
+      } catch (err) {
+        console.error('Erreur /api/toaster/chat/stream:', err);
+        setErrorBanner(`Erreur lors de l'appel à l'assistant : ${err.message}`);
+        setMessages((prev) =>
+          prev.filter((m) => !(m.id === assistantId && !m.content && !m.action_card))
+        );
+      } finally {
+        setIsSending(false);
+      }
+    },
+    [inputText, attachment, isSending, selectedMemberId, normalizeActionCard]
+  );
+
+  useEffect(() => {
+    sendVoiceTriggerRef.current = sendMessagePayload;
+  }, [sendMessagePayload]);
+
+  const handleSendMessage = (e) => {
+    if (e) e.preventDefault();
+    sendMessagePayload({ textOverride: null, clearComposerText: true });
+  };
+
+  // Dictée vocale moderne : écoute fluide et envoi direct à la fin sans insérer le transcript dans l'input
+  const handleToggleSpeech = () => {
+    if (!speechSupported) {
+      setErrorBanner('La reconnaissance vocale n’est pas supportée par ce navigateur.');
+      return;
+    }
+    if (isListening && recognitionRef.current) {
+      voiceAbortedRef.current = false;
+      recognitionRef.current.stop();
+      return;
+    }
+
+    const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
+    const recognition = new SpeechRecognition();
+    recognition.lang = 'fr-FR';
+    recognition.interimResults = true;
+    recognition.continuous = false;
+    recognition.maxAlternatives = 1;
+
+    voiceTranscriptRef.current = '';
+    voiceAbortedRef.current = false;
+
+    recognition.onstart = () => {
+      setIsListening(true);
+      setErrorBanner(null);
+    };
+
+    recognition.onresult = (event) => {
+      const pieces = [];
+      for (let i = 0; i < event.results.length; i += 1) {
+        const seg = event.results[i]?.[0]?.transcript || '';
+        if (seg) pieces.push(seg.trim());
+      }
+      voiceTranscriptRef.current = pieces.join(' ').trim();
+    };
+
+    recognition.onerror = (event) => {
+      if (event.error !== 'aborted' && event.error !== 'no-speech') {
+        console.warn('Erreur dictée vocale:', event.error);
+      }
+      setIsListening(false);
+    };
+
+    recognition.onend = () => {
+      setIsListening(false);
+      const finalSpoken = voiceTranscriptRef.current.trim();
+      voiceTranscriptRef.current = '';
+      if (!voiceAbortedRef.current && finalSpoken && sendVoiceTriggerRef.current) {
+        sendVoiceTriggerRef.current({ textOverride: finalSpoken, clearComposerText: false });
+      }
+    };
+
+    recognitionRef.current = recognition;
+    recognition.start();
+  };
+
+  const handleCancelSpeech = () => {
+    voiceAbortedRef.current = true;
+    voiceTranscriptRef.current = '';
+    if (recognitionRef.current) {
+      try {
+        recognitionRef.current.abort();
+      } catch (_) {}
+    }
+    setIsListening(false);
+  };
+
+  // Actions bac à sable directes depuis les composants interactifs partagés (vote, tâche, modales)
+  const executeDirectSandboxAction = useCallback(
+    async (actionType, payload) => {
+      setErrorBanner(null);
+      const res = await fetch('/api/toaster/execute', {
         method: 'POST',
         headers: getAuthHeaders(),
-        body: JSON.stringify(body),
+        body: JSON.stringify({
+          member_id: Number(selectedMemberId),
+          action_type: actionType,
+          payload,
+        }),
       });
-
       if (!res.ok) {
         let detail = `Erreur HTTP ${res.status}`;
         try {
           const errJson = await res.json();
           detail = errJson.detail || errJson.error || errJson.message || detail;
         } catch (_) {}
+        setErrorBanner(detail);
         throw new Error(detail);
       }
+      const resData = await res.json();
+      showToast(resData.message || 'Action enregistrée dans le bac à sable.');
+      await loadSandboxState(selectedMemberId);
+      return resData;
+    },
+    [selectedMemberId, loadSandboxState, showToast]
+  );
 
-      const data = await res.json();
-      const replyText =
-        data.reply ||
-        data.message ||
-        data.text ||
-        data.content ||
-        data.assistant_message ||
-        (data.action_card ? 'Voici la proposition préparée pour votre demande :' : 'Réponse reçue.');
+  const handleDirectSandboxVote = useCallback(
+    async (voteId, choicePayload) => {
+      const choiceStr = Array.isArray(choicePayload) ? choicePayload.join(', ') : String(choicePayload || 'POUR');
+      await executeDirectSandboxAction('vote', {
+        operation: 'cast',
+        vote_id: voteId,
+        choice: choiceStr,
+      });
+    },
+    [executeDirectSandboxAction]
+  );
 
-      const normalizedCard = normalizeActionCard(data.action_card || data.card);
+  const handleDirectSandboxTaskComplete = useCallback(
+    async (task) => {
+      await executeDirectSandboxAction('task', {
+        operation: 'complete',
+        task_id: task.id,
+        title: task.title,
+      });
+    },
+    [executeDirectSandboxAction]
+  );
 
-      const assistantMsg = {
-        id: `assistant-${Date.now()}`,
-        role: 'assistant',
-        content: replyText,
-        action_card: normalizedCard,
-        timestamp: new Date().toISOString(),
-      };
-
-      setMessages((prev) => [...prev, assistantMsg]);
-
-      if (data.sandbox_audit_logs || data.audit_logs) {
-        setSandboxState((prev) =>
-          prev
-            ? {
-                ...prev,
-                sandbox_audit_logs: data.sandbox_audit_logs || data.audit_logs,
-              }
-            : prev
-        );
-      }
-      if (data.state) {
-        setSandboxState(data.state);
-      }
-    } catch (err) {
-      console.error('Erreur /api/toaster/chat:', err);
-      setErrorBanner(`Erreur lors de l'appel à l'agent Grille-Pain : ${err.message}`);
-    } finally {
-      setIsSending(false);
-    }
-  };
-
-  // Clic sur une option d'un champ ROUGE (🔴) -> bascule immédiate en VERT (🟢) !
+  // Clic sur une option d'un champ ROUGE (🔴) -> bascule immédiate en VERT (🟢)
   const handleResolveMissingField = (msgId, missingField, chosenOption) => {
     setMessages((prev) =>
       prev.map((m) => {
@@ -550,11 +751,12 @@ export default function ToasterPage({ currentUser }) {
       }
 
       const resData = await res.json();
-      const confirmText =
+      const confirmText = sanitizeFamilyLabel(
         resData.message ||
-        resData.confirmation ||
-        resData.reply ||
-        'Action confirmée et exécutée dans le bac à sable.';
+          resData.confirmation ||
+          resData.reply ||
+          'Action confirmée et exécutée dans le bac à sable.'
+      );
       const newLogs = resData.intercepted_logs || resData.new_audit_logs || resData.sandbox_audit_logs || [];
 
       setMessages((prev) =>
@@ -599,16 +801,16 @@ export default function ToasterPage({ currentUser }) {
   };
 
   return (
-    <div className="relative flex flex-col w-full max-w-5xl mx-auto pb-12 min-h-[calc(100vh-120px)]">
+    <div className="relative flex flex-col w-full max-w-5xl mx-auto pb-10 min-h-[calc(100vh-120px)]">
       {/* Notification Toast */}
       {toastMessage && (
-        <div className="fixed bottom-6 right-6 z-50 bg-forest-deep text-white px-5 py-3 rounded-2xl shadow-xl flex items-center gap-3 border border-emerald-500/30 animate-in fade-in duration-200">
+        <div className="fixed bottom-6 right-6 z-50 bg-forest-deep text-white px-5 py-3 rounded-full shadow-xl flex items-center gap-3 border border-emerald-500/30 animate-in fade-in duration-200">
           <span className="material-symbols-outlined text-emerald-300 text-[20px]">check_circle</span>
           <span className="text-xs font-semibold">{toastMessage}</span>
           <button
             type="button"
             onClick={() => setToastMessage(null)}
-            className="text-white/70 hover:text-white ml-2 cursor-pointer"
+            className="text-white/70 hover:text-white ml-1 cursor-pointer"
           >
             <span className="material-symbols-outlined text-[16px]">close</span>
           </button>
@@ -618,25 +820,22 @@ export default function ToasterPage({ currentUser }) {
       {/* ===================================================================== */}
       {/* 1. BANDEAU SUPÉRIEUR BAC À SABLE                                      */}
       {/* ===================================================================== */}
-      <section className="rounded-2xl bg-surface-container-lowest border-2 border-emerald-600/30 shadow-sm p-4 sm:p-5 mb-4">
+      <section className="rounded-3xl bg-surface-container-lowest border border-emerald-600/25 shadow-2xs p-4 sm:p-5 mb-4">
         <div className="flex flex-col lg:flex-row lg:items-center justify-between gap-4">
-          {/* Badge de sécurité Bac à Sable & Titre */}
           <div className="space-y-1.5">
-            <div className="inline-flex items-center gap-2 px-3 py-1 rounded-full bg-emerald-100/90 dark:bg-emerald-950/60 text-emerald-900 dark:text-emerald-200 border border-emerald-300 text-xs font-bold">
+            <div className="inline-flex items-center gap-2 px-3 py-1 rounded-full bg-emerald-50 text-emerald-900 border border-emerald-200 text-xs font-semibold">
               <span>🛡️ Mode Bac à Sable Isolé (Zéro impact Prod / ViCare / E-mails)</span>
             </div>
             <div className="flex items-center gap-2.5 pt-1">
-              <span className="material-symbols-outlined text-primary text-[26px]">smart_toy</span>
+              <span className="material-symbols-outlined text-primary text-[25px]">smart_toy</span>
               <h1 className="font-headline-md text-lg sm:text-xl font-bold text-forest-deep">
                 Assistant Familial « Grille-Pain » • SCI Hellenvilliers
               </h1>
             </div>
           </div>
 
-          {/* Sélecteur d'identité + Solde CCA + Actions Bac à Sable */}
           <div className="flex flex-wrap items-center gap-2.5">
-            {/* Sélecteur d'associé incarné */}
-            <div className="flex items-center gap-2 bg-canvas-slate px-3 py-2 rounded-xl border border-border-subtle">
+            <div className="flex items-center gap-2 bg-canvas-slate px-3.5 py-2 rounded-full border border-border-subtle">
               <span className="material-symbols-outlined text-primary text-[18px]">person</span>
               <label htmlFor="toaster-member-select" className="text-xs font-semibold text-on-surface-variant whitespace-nowrap">
                 Incarner :
@@ -645,7 +844,7 @@ export default function ToasterPage({ currentUser }) {
                 id="toaster-member-select"
                 value={selectedMemberId}
                 onChange={(e) => setSelectedMemberId(Number(e.target.value))}
-                className="bg-white dark:bg-slate-900 border border-border-subtle rounded-lg px-2.5 py-1 text-xs font-bold text-forest-deep focus:outline-none focus:border-primary cursor-pointer"
+                className="bg-white dark:bg-slate-900 border border-border-subtle rounded-full px-3 py-1 text-xs font-bold text-forest-deep focus:outline-none focus:border-primary cursor-pointer"
               >
                 {membersOptions.map((m) => (
                   <option key={m.id} value={m.id}>
@@ -654,10 +853,9 @@ export default function ToasterPage({ currentUser }) {
                 ))}
               </select>
 
-              {/* Solde CCA dans le bac à sable */}
               <span
                 id="toaster-member-cca-badge"
-                className={`ml-1 px-2.5 py-1 rounded-lg text-xs font-bold tabular-nums border ${
+                className={`ml-0.5 px-2.5 py-0.5 rounded-full text-xs font-bold tabular-nums border ${
                   activeCcaBalance > 0
                     ? 'bg-emerald-50 text-emerald-800 border-emerald-200'
                     : activeCcaBalance < 0
@@ -670,27 +868,25 @@ export default function ToasterPage({ currentUser }) {
               </span>
             </div>
 
-            {/* Bouton Tiroir d'Audit des actions matérielles & e-mails interceptés */}
             <button
               id="btn-toggle-sandbox-audit"
               type="button"
               onClick={() => setIsAuditDrawerOpen((prev) => !prev)}
-              className="inline-flex items-center gap-1.5 px-3.5 py-2.5 rounded-xl bg-amber-50 hover:bg-amber-100 text-amber-950 border border-amber-300 text-xs font-bold transition-all cursor-pointer shadow-2xs"
+              className="inline-flex items-center gap-1.5 px-3.5 py-2 rounded-full bg-amber-50 hover:bg-amber-100 text-amber-950 border border-amber-300 text-xs font-bold transition-all cursor-pointer shadow-2xs"
             >
-              <span className="material-symbols-outlined text-[18px] text-amber-700">security</span>
+              <span className="material-symbols-outlined text-[17px] text-amber-700">security</span>
               <span>Actions matérielles &amp; e-mails interceptés</span>
               <span className="px-1.5 py-0.5 rounded-full bg-amber-200 text-amber-950 text-[11px] font-extrabold">
                 {auditLogs.length}
               </span>
             </button>
 
-            {/* Bouton Réinitialiser le bac à sable */}
             <button
               id="btn-reset-sandbox"
               type="button"
               onClick={handleResetSandbox}
               disabled={resetingSandbox}
-              className="inline-flex items-center gap-1.5 px-3.5 py-2.5 rounded-xl bg-white hover:bg-rose-50 text-slate-700 hover:text-rose-800 border border-border-subtle hover:border-rose-300 text-xs font-semibold transition-all cursor-pointer disabled:opacity-50"
+              className="inline-flex items-center gap-1.5 px-3.5 py-2 rounded-full bg-white hover:bg-rose-50 text-slate-700 hover:text-rose-800 border border-border-subtle hover:border-rose-300 text-xs font-semibold transition-all cursor-pointer disabled:opacity-50"
             >
               <span className={`material-symbols-outlined text-[17px] ${resetingSandbox ? 'animate-spin' : ''}`}>
                 restart_alt
@@ -706,7 +902,7 @@ export default function ToasterPage({ currentUser }) {
         <div
           id="toaster-error-banner"
           role="alert"
-          className="mb-4 p-3.5 rounded-xl bg-rose-50 border-2 border-rose-300 text-rose-950 text-xs font-semibold flex items-center justify-between gap-3"
+          className="mb-4 px-4 py-3 rounded-2xl bg-rose-50 border border-rose-300 text-rose-950 text-xs font-semibold flex items-center justify-between gap-3"
         >
           <div className="flex items-center gap-2">
             <span className="material-symbols-outlined text-rose-600 text-[20px]">error</span>
@@ -723,52 +919,80 @@ export default function ToasterPage({ currentUser }) {
       )}
 
       {/* ===================================================================== */}
-      {/* 2. ZONE DE CONVERSATION & CARTES D'ACTION HYBRIDES (🟢 / 🔴)          */}
+      {/* 2. ZONE DE CONVERSATION, COMPOSANTS PARTAGÉS & CARTES D'ACTION        */}
       {/* ===================================================================== */}
-      <div className="flex-1 bg-surface-container-lowest rounded-2xl border border-border-subtle shadow-sm flex flex-col overflow-hidden min-h-[480px]">
-        {/* Fil de messages */}
+      <div className="flex-1 bg-surface-container-lowest rounded-3xl border border-border-subtle shadow-sm flex flex-col overflow-hidden min-h-[500px]">
         <div className="flex-1 overflow-y-auto p-4 sm:p-6 space-y-5">
           {messages.length === 0 ? (
             <div className="h-full min-h-[340px] flex flex-col items-center justify-center text-center max-w-xl mx-auto px-4 py-8">
-              <div className="w-14 h-14 rounded-2xl bg-sage-soft text-primary flex items-center justify-center mb-3 shadow-xs">
-                <span className="material-symbols-outlined text-[30px]">chat_bubble</span>
+              <div className="w-14 h-14 rounded-full bg-sage-soft text-primary flex items-center justify-center mb-3.5 shadow-2xs">
+                <span className="material-symbols-outlined text-[28px]">chat_bubble</span>
               </div>
               <h2 className="font-headline-sm text-base sm:text-lg font-bold text-forest-deep">
-                Bonjour {formatAssociateLabel(activeMemberObj)}, que souhaitez-vous faire au Domaine ?
+                Bonjour {formatAssociatePrenom(activeMemberObj)}, que souhaitez-vous consulter ou préparer au Domaine ?
               </h2>
               <p className="text-xs sm:text-sm text-on-surface-variant mt-1.5 leading-relaxed">
-                Écrivez une phrase naturelle ou joignez la photo/PDF d’une facture. L’assistant prépare une carte de confirmation avec les champs déduits en{' '}
-                <strong className="text-emerald-700">🟢 Vert</strong> et les précisions éventuelles en{' '}
-                <strong className="text-rose-700">🔴 Rouge</strong> avant toute exécution dans le bac à sable.
+                Posez une question en langage naturel, dictez à la voix ou joignez un justificatif. L’assistant peut afficher directement le calendrier, la jauge fioul, les sondages ou préparer une carte de validation sécurisée.
               </p>
             </div>
           ) : (
             messages.map((msg) => {
               const isUser = msg.role === 'user';
               const card = msg.action_card;
-              const typeMeta = card ? ACTION_TYPE_META[card.action_type] || { icon: 'bolt', badge: card.action_type, color: 'bg-slate-100 text-slate-800 border-slate-300' } : null;
+              const typeMeta = card
+                ? ACTION_TYPE_META[card.action_type] || {
+                    icon: 'bolt',
+                    badge: card.action_type,
+                    color: 'bg-slate-100 text-slate-800 border-slate-300',
+                  }
+                : null;
+              const showBubble = Boolean(msg.content || msg.attachment);
 
               return (
                 <div
                   key={msg.id}
                   className={`flex flex-col ${isUser ? 'items-end' : 'items-start'}`}
                 >
-                  {/* Bulle de texte */}
-                  <div
-                    className={`max-w-2xl rounded-2xl px-4 py-3 text-sm leading-relaxed shadow-2xs ${
-                      isUser
-                        ? 'bg-primary text-white rounded-br-xs'
-                        : 'bg-canvas-slate text-on-surface border border-border-subtle rounded-bl-xs'
-                    }`}
-                  >
-                    {msg.attachment && (
-                      <div className="mb-2 inline-flex items-center gap-1.5 px-2.5 py-1 rounded-lg bg-white/15 border border-white/25 text-xs font-semibold">
-                        <span className="material-symbols-outlined text-[16px]">attach_file</span>
-                        <span>{msg.attachment.name}</span>
-                      </div>
-                    )}
-                    <div className="whitespace-pre-wrap">{msg.content}</div>
-                  </div>
+                  {/* Accordéon pliable automatique : Raisonnement & Appels d'outils (zéro nom de modèle) */}
+                  {!isUser && (
+                    <ToasterActivityAccordion
+                      thoughts={msg.thoughts}
+                      toolSteps={msg.toolSteps}
+                      isStreaming={Boolean(msg.isStreaming)}
+                    />
+                  )}
+
+                  {/* Bulle de texte avec rendu Markdown complet */}
+                  {showBubble && (
+                    <div
+                      className={`max-w-2xl rounded-2xl px-4 py-3 text-sm leading-relaxed shadow-2xs ${
+                        isUser
+                          ? 'bg-primary text-white rounded-br-xs'
+                          : 'bg-canvas-slate text-on-surface border border-border-subtle rounded-bl-xs'
+                      }`}
+                    >
+                      {msg.attachment && (
+                        <div className="mb-2 inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full bg-white/15 border border-white/25 text-xs font-semibold">
+                          <span className="material-symbols-outlined text-[15px]">attach_file</span>
+                          <span>{msg.attachment.name}</span>
+                        </div>
+                      )}
+                      <ToasterMarkdown content={msg.content} isUser={isUser} />
+                    </div>
+                  )}
+
+                  {/* Composants interactifs du site partagés directement dans la conversation */}
+                  {!isUser && msg.uiComponents && msg.uiComponents.length > 0 && (
+                    <ToasterComponentRenderer
+                      components={msg.uiComponents}
+                      activeMemberName={formatAssociateLabel(activeMemberObj)}
+                      onOpenSandboxModal={(mType, prefill = {}) =>
+                        setSandboxModalState({ type: mType, prefill })
+                      }
+                      onCastSandboxVote={handleDirectSandboxVote}
+                      onCompleteSandboxTask={handleDirectSandboxTaskComplete}
+                    />
+                  )}
 
                   {/* Carte d'Action Hybride 🟢 Vert / 🔴 Rouge */}
                   {card && (
@@ -776,7 +1000,6 @@ export default function ToasterPage({ currentUser }) {
                       data-testid="toaster-action-card"
                       className="mt-3 w-full max-w-2xl rounded-2xl bg-white dark:bg-slate-900 border-2 border-primary/30 shadow-md overflow-hidden animate-in fade-in duration-200"
                     >
-                      {/* En-tête de la Carte */}
                       <div className="px-4 py-3 bg-sage-soft/50 border-b border-border-subtle flex items-center justify-between gap-2 flex-wrap">
                         <div className="flex items-center gap-2">
                           <span className="material-symbols-outlined text-primary text-[20px]">
@@ -792,11 +1015,10 @@ export default function ToasterPage({ currentUser }) {
                       </div>
 
                       <div className="p-4 space-y-4">
-                        {/* 1. Champs déduits par l'IA en VERT (🟢) — cliquables pour édition inline */}
                         <div className="space-y-2">
                           <div className="flex items-center justify-between">
                             <span className="text-[11px] font-bold uppercase tracking-wider text-emerald-800 dark:text-emerald-300">
-                              🟢 Champs déduits par l’IA (cliquez sur une puce pour modifier)
+                              🟢 Champs déduits (cliquez sur une puce pour modifier)
                             </span>
                           </div>
                           {card.deduced_fields.length === 0 ? (
@@ -813,7 +1035,7 @@ export default function ToasterPage({ currentUser }) {
                                   return (
                                     <div
                                       key={field.key}
-                                      className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-xl bg-emerald-50 border-2 border-emerald-500 text-xs"
+                                      className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full bg-emerald-50 border-2 border-emerald-500 text-xs"
                                     >
                                       <span className="font-bold text-emerald-900">🟢 {field.label} :</span>
                                       <input
@@ -831,14 +1053,14 @@ export default function ToasterPage({ currentUser }) {
                                             setEditingField(null);
                                           }
                                         }}
-                                        className="px-2 py-0.5 bg-white border border-emerald-300 rounded text-xs font-semibold text-slate-900 focus:outline-none w-36"
+                                        className="px-2 py-0.5 bg-white border border-emerald-300 rounded-full text-xs font-semibold text-slate-900 focus:outline-none w-36"
                                       />
                                       <button
                                         type="button"
                                         onClick={() =>
                                           handleSaveEditedDeducedField(msg.id, field.key, editingField.tempValue)
                                         }
-                                        className="px-1.5 py-0.5 rounded bg-emerald-700 text-white font-bold text-[11px] cursor-pointer"
+                                        className="px-2 py-0.5 rounded-full bg-emerald-700 text-white font-bold text-[11px] cursor-pointer"
                                       >
                                         OK
                                       </button>
@@ -859,7 +1081,7 @@ export default function ToasterPage({ currentUser }) {
                                       })
                                     }
                                     title="Cliquer pour modifier cette valeur"
-                                    className="group inline-flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-emerald-50 hover:bg-emerald-100/90 text-emerald-950 border border-emerald-300 text-xs font-semibold transition-all cursor-pointer shadow-2xs"
+                                    className="group inline-flex items-center gap-1.5 px-3 py-1.5 rounded-full bg-emerald-50 hover:bg-emerald-100/90 text-emerald-950 border border-emerald-300 text-xs font-semibold transition-all cursor-pointer shadow-2xs"
                                   >
                                     <span>🟢</span>
                                     <span className="font-bold">{field.label} :</span>
@@ -876,9 +1098,8 @@ export default function ToasterPage({ currentUser }) {
                           )}
                         </div>
 
-                        {/* 2. Champs manquants ou ambigus en ROUGE (🔴) avec boutons de choix cliquables */}
                         {card.missing_fields.length > 0 && (
-                          <div className="space-y-2.5 p-3.5 rounded-xl bg-rose-50/90 border-2 border-rose-300">
+                          <div className="space-y-2.5 p-3.5 rounded-2xl bg-rose-50/90 border-2 border-rose-300">
                             <span className="text-[11px] font-bold uppercase tracking-wider text-rose-900 block">
                               🔴 Précisions requises avant validation ({card.missing_fields.length})
                             </span>
@@ -898,7 +1119,6 @@ export default function ToasterPage({ currentUser }) {
                                       <span>{mField.question || mField.label}</span>
                                     </div>
 
-                                    {/* Boutons d'options cliquables qui passent immédiatement le champ en 🟢 Vert */}
                                     {mField.options && mField.options.length > 0 && (
                                       <div className="flex flex-wrap gap-2 pt-0.5">
                                         {mField.options.map((opt, idx) => (
@@ -906,7 +1126,7 @@ export default function ToasterPage({ currentUser }) {
                                             key={`${mField.key}-opt-${idx}`}
                                             type="button"
                                             onClick={() => handleResolveMissingField(msg.id, mField, opt)}
-                                            className="px-3 py-1.5 rounded-lg bg-rose-100 hover:bg-emerald-600 text-rose-950 hover:text-white border border-rose-300 hover:border-emerald-700 text-xs font-bold transition-all cursor-pointer shadow-2xs"
+                                            className="px-3 py-1.5 rounded-full bg-rose-100 hover:bg-emerald-600 text-rose-950 hover:text-white border border-rose-300 hover:border-emerald-700 text-xs font-bold transition-all cursor-pointer shadow-2xs"
                                           >
                                             {opt.label}
                                           </button>
@@ -914,7 +1134,6 @@ export default function ToasterPage({ currentUser }) {
                                       </div>
                                     )}
 
-                                    {/* Saisie libre alternative si l'utilisateur veut préciser une autre valeur */}
                                     <div className="flex items-center gap-1.5 pt-1">
                                       <input
                                         type="text"
@@ -935,7 +1154,7 @@ export default function ToasterPage({ currentUser }) {
                                             });
                                           }
                                         }}
-                                        className="flex-1 h-8 px-2.5 rounded-lg bg-canvas-slate border border-border-subtle text-xs text-on-surface focus:outline-none focus:border-primary"
+                                        className="flex-1 h-8 px-3 rounded-full bg-canvas-slate border border-border-subtle text-xs text-on-surface focus:outline-none focus:border-primary"
                                       />
                                       {customVal.trim() && (
                                         <button
@@ -946,7 +1165,7 @@ export default function ToasterPage({ currentUser }) {
                                               value: customVal.trim(),
                                             })
                                           }
-                                          className="px-2.5 h-8 rounded-lg bg-emerald-700 text-white text-xs font-bold cursor-pointer"
+                                          className="px-3 h-8 rounded-full bg-emerald-700 text-white text-xs font-bold cursor-pointer"
                                         >
                                           Valider
                                         </button>
@@ -959,16 +1178,14 @@ export default function ToasterPage({ currentUser }) {
                           </div>
                         )}
 
-                        {/* Erreur d'exécution éventuelle */}
                         {card.executionError && (
                           <div className="p-3 rounded-xl bg-rose-50 border border-rose-300 text-rose-900 text-xs font-semibold">
                             ⚠️ {card.executionError}
                           </div>
                         )}
 
-                        {/* Résultat après exécution dans le bac à sable */}
                         {card.executed && card.executionResult ? (
-                          <div className="p-3.5 rounded-xl bg-emerald-50 border-2 border-emerald-400 text-emerald-950 space-y-2">
+                          <div className="p-3.5 rounded-2xl bg-emerald-50 border-2 border-emerald-400 text-emerald-950 space-y-2">
                             <div className="flex items-center gap-2 font-bold text-xs sm:text-sm text-emerald-900">
                               <span className="material-symbols-outlined text-emerald-600 text-[20px]">verified</span>
                               <span>{card.executionResult.message}</span>
@@ -981,7 +1198,7 @@ export default function ToasterPage({ currentUser }) {
                                 {card.executionResult.logs.map((log, lIdx) => (
                                   <div
                                     key={log.id || lIdx}
-                                    className="text-xs bg-white/90 px-2.5 py-1.5 rounded-lg border border-emerald-200 flex items-center justify-between gap-2"
+                                    className="text-xs bg-white/90 px-3 py-1.5 rounded-xl border border-emerald-200 flex items-center justify-between gap-2"
                                   >
                                     <span className="font-semibold text-slate-800">
                                       [{log.category}] {log.title}
@@ -999,7 +1216,6 @@ export default function ToasterPage({ currentUser }) {
                             )}
                           </div>
                         ) : (
-                          /* Bouton principal Confirmer et exécuter l'action */
                           <div className="pt-2 border-t border-border-subtle flex items-center justify-between gap-3 flex-wrap">
                             <span className="text-xs text-on-surface-variant">
                               {card.missing_fields.length > 0
@@ -1011,7 +1227,7 @@ export default function ToasterPage({ currentUser }) {
                               type="button"
                               disabled={card.missing_fields.length > 0 || card.executing}
                               onClick={() => handleExecuteActionCard(msg.id)}
-                              className={`px-5 py-2.5 rounded-xl text-xs sm:text-sm font-bold flex items-center gap-2 transition-all shadow-sm ${
+                              className={`px-5 py-2.5 rounded-full text-xs sm:text-sm font-bold flex items-center gap-2 transition-all shadow-sm ${
                                 card.missing_fields.length > 0 || card.executing
                                   ? 'bg-slate-200 text-slate-500 cursor-not-allowed'
                                   : 'bg-emerald-700 hover:bg-emerald-800 text-white cursor-pointer'
@@ -1036,31 +1252,22 @@ export default function ToasterPage({ currentUser }) {
             })
           )}
 
-          {isSending && (
-            <div className="flex items-center gap-2.5 text-xs font-semibold text-on-surface-variant px-3 py-2">
-              <span className="material-symbols-outlined animate-spin text-primary text-[18px]">
-                progress_activity
-              </span>
-              <span>Gemini 4 Hydrogen réfléchit à votre demande et au contexte du domaine...</span>
-            </div>
-          )}
-
           <div ref={chatEndRef} />
         </div>
 
         {/* =================================================================== */}
-        {/* 3. BARRE DE SAISIE MULTIMODALE ÉPURÉE (Bas de page)                 */}
+        {/* 3. BARRE DE SAISIE MODERNE ULTRA-LÉGÈRE, ARRONDI FLUIDE & VOIX      */}
         {/* =================================================================== */}
         <form
           onSubmit={handleSendMessage}
-          className="p-3 sm:p-4 bg-canvas-slate border-t border-border-subtle flex flex-col gap-2"
+          className="p-3 sm:p-4 bg-white/95 dark:bg-slate-950/90 backdrop-blur-md border-t border-slate-100 dark:border-slate-800 flex flex-col gap-2"
         >
-          {/* Aperçu de la pièce jointe sélectionnée */}
+          {/* Puce légère de pièce jointe sélectionnée */}
           {attachment && (
-            <div className="inline-flex items-center justify-between gap-2 px-3 py-1.5 rounded-xl bg-emerald-50 border border-emerald-300 text-emerald-950 text-xs font-semibold self-start">
+            <div className="inline-flex items-center justify-between gap-2 px-3.5 py-1.5 rounded-full bg-emerald-50/90 border border-emerald-200 text-emerald-950 text-xs font-semibold self-start animate-in fade-in duration-150">
               <div className="flex items-center gap-1.5">
-                <span className="material-symbols-outlined text-[16px] text-emerald-700">description</span>
-                <span>{attachment.name}</span>
+                <span className="material-symbols-outlined text-[15px] text-emerald-700">description</span>
+                <span className="max-w-[240px] truncate">{attachment.name}</span>
                 <span className="text-[10px] text-emerald-700">
                   ({Math.max(1, Math.round(attachment.size / 1024))} Ko)
                 </span>
@@ -1068,16 +1275,23 @@ export default function ToasterPage({ currentUser }) {
               <button
                 type="button"
                 onClick={() => setAttachment(null)}
-                className="text-emerald-800 hover:text-rose-600 cursor-pointer ml-2"
+                className="w-5 h-5 rounded-full hover:bg-emerald-200/60 flex items-center justify-center text-emerald-800 hover:text-rose-600 cursor-pointer ml-1"
                 title="Retirer la pièce jointe"
               >
-                <span className="material-symbols-outlined text-[16px]">close</span>
+                <span className="material-symbols-outlined text-[14px]">close</span>
               </button>
             </div>
           )}
 
-          <div className="flex items-center gap-2">
-            {/* Bouton + Photo / PDF */}
+          {/* Pilule arrondie minimaliste */}
+          <div
+            className={`flex items-center gap-2 p-1.5 rounded-full border transition-all duration-300 ${
+              isListening
+                ? 'bg-emerald-50/60 border-emerald-400/80 shadow-[0_0_0_4px_rgba(16,185,129,0.10)]'
+                : 'bg-slate-50/90 hover:bg-slate-50 focus-within:bg-white border-slate-200/90 focus-within:border-primary/45 focus-within:shadow-[0_6px_24px_-6px_rgba(6,78,59,0.14)]'
+            }`}
+          >
+            {/* Bouton "+" minimaliste & circulaire (Annotation 3) */}
             <input
               ref={fileInputRef}
               type="file"
@@ -1089,56 +1303,103 @@ export default function ToasterPage({ currentUser }) {
               id="btn-toaster-attach"
               type="button"
               onClick={() => fileInputRef.current?.click()}
-              className="h-11 px-3.5 rounded-xl bg-white hover:bg-surface-container text-forest-deep border border-border-subtle text-xs font-bold inline-flex items-center gap-1.5 shrink-0 transition-all cursor-pointer shadow-2xs"
-              title="Joindre une photo ou un PDF de facture pour lecture automatique OCR"
+              className="w-10 h-10 rounded-full bg-white hover:bg-emerald-50 text-slate-600 hover:text-primary border border-slate-200/80 hover:border-emerald-300 inline-flex items-center justify-center shrink-0 transition-all duration-200 cursor-pointer shadow-2xs active:scale-95"
+              title="Joindre une photo ou un PDF"
+              aria-label="Joindre une photo ou un PDF"
             >
-              <span className="material-symbols-outlined text-[18px] text-primary">add_photo_alternate</span>
-              <span className="hidden sm:inline">+ Photo / PDF</span>
+              <span className="material-symbols-outlined text-[21px] leading-none">add</span>
             </button>
 
-            {/* Bouton Dictée Vocale */}
+            {/* Zone centrale : champ épuré ou onde d'écoute vocale fluide */}
+            {isListening ? (
+              <div className="flex-1 flex items-center justify-between px-3 py-1.5 min-w-0">
+                <div className="flex items-center gap-2.5 min-w-0">
+                  <div className="flex items-center gap-1 h-5 shrink-0" aria-hidden="true">
+                    <span className="w-1 h-2.5 rounded-full bg-emerald-500 animate-pulse" />
+                    <span className="w-1 h-4 rounded-full bg-emerald-600 animate-bounce [animation-duration:650ms]" />
+                    <span className="w-1 h-3 rounded-full bg-emerald-500 animate-bounce [animation-duration:800ms] [animation-delay:120ms]" />
+                    <span className="w-1 h-4.5 rounded-full bg-emerald-600 animate-bounce [animation-duration:700ms] [animation-delay:220ms]" />
+                    <span className="w-1 h-2.5 rounded-full bg-emerald-500 animate-pulse [animation-delay:300ms]" />
+                  </div>
+                  <span className="text-xs sm:text-sm font-medium text-emerald-900 truncate">
+                    Écoute en cours… parlez librement, envoi direct dès la fin
+                  </span>
+                </div>
+                <button
+                  type="button"
+                  onClick={handleCancelSpeech}
+                  className="w-7 h-7 rounded-full hover:bg-rose-100 text-slate-400 hover:text-rose-600 inline-flex items-center justify-center transition-colors cursor-pointer shrink-0"
+                  title="Annuler l'enregistrement vocal"
+                >
+                  <span className="material-symbols-outlined text-[17px]">close</span>
+                </button>
+              </div>
+            ) : (
+              <input
+                id="toaster-chat-input"
+                type="text"
+                value={inputText}
+                onChange={(e) => setInputText(e.target.value)}
+                placeholder="Posez une question ou décrivez une action au domaine…"
+                className="flex-1 h-10 px-2.5 bg-transparent text-sm text-slate-800 dark:text-slate-100 placeholder:text-slate-400 focus:outline-none min-w-0"
+              />
+            )}
+
+            {/* Bouton Voix rond avec animation fluide d'ondes concentriques (Annotation 2) */}
             {speechSupported && (
               <button
                 id="btn-toaster-voice"
                 type="button"
                 onClick={handleToggleSpeech}
-                className={`h-11 px-3 rounded-xl border text-xs font-bold inline-flex items-center gap-1 shrink-0 transition-all cursor-pointer shadow-2xs ${
+                disabled={isSending}
+                className={`relative w-10 h-10 rounded-full inline-flex items-center justify-center shrink-0 transition-all duration-300 cursor-pointer disabled:opacity-40 ${
                   isListening
-                    ? 'bg-rose-600 text-white border-rose-700 animate-pulse'
-                    : 'bg-white hover:bg-surface-container text-slate-700 border-border-subtle'
+                    ? 'bg-emerald-600 text-white shadow-md scale-105 ring-4 ring-emerald-500/20'
+                    : 'bg-white hover:bg-emerald-50 text-slate-600 hover:text-primary border border-slate-200/80 hover:border-emerald-300 shadow-2xs active:scale-95'
                 }`}
-                title={isListening ? 'Arrêter la dictée vocale' : 'Dicter votre message à la voix'}
+                title={
+                  isListening
+                    ? "Terminer et envoyer directement le message vocal"
+                    : "Parler à l'assistant (envoi direct à la fin)"
+                }
+                aria-label={isListening ? 'Terminer et envoyer le message vocal' : 'Message vocal'}
               >
-                <span className="material-symbols-outlined text-[18px]">
-                  {isListening ? 'mic_off' : 'mic'}
+                {isListening && (
+                  <span
+                    className="absolute inset-0 rounded-full bg-emerald-400/40 animate-ping pointer-events-none"
+                    style={{ animationDuration: '1.6s' }}
+                  />
+                )}
+                <span className="material-symbols-outlined text-[20px] relative z-10 leading-none">
+                  {isListening ? 'graphic_eq' : 'mic'}
                 </span>
-                <span className="hidden md:inline">{isListening ? 'Écoute...' : 'Voix'}</span>
               </button>
             )}
 
-            {/* Champ texte */}
-            <input
-              id="toaster-chat-input"
-              type="text"
-              value={inputText}
-              onChange={(e) => setInputText(e.target.value)}
-              placeholder="Ex : Je viens au Presbytère le week-end prochain avec Frédéric..."
-              className="flex-1 h-11 px-4 rounded-xl bg-white dark:bg-slate-900 border border-border-subtle text-sm text-on-surface focus:outline-none focus:border-primary focus:ring-2 focus:ring-primary/15"
-            />
-
-            {/* Bouton Envoyer */}
+            {/* Bouton d'envoi rond minimaliste */}
             <button
               id="btn-toaster-send"
               type="submit"
-              disabled={isSending || (!inputText.trim() && !attachment)}
-              className="h-11 px-5 rounded-xl bg-primary hover:bg-forest-deep text-white text-xs sm:text-sm font-bold inline-flex items-center gap-1.5 shrink-0 transition-all cursor-pointer shadow-sm disabled:opacity-50"
+              disabled={isSending || isListening || (!inputText.trim() && !attachment)}
+              className="w-10 h-10 rounded-full bg-primary hover:bg-forest-deep text-white inline-flex items-center justify-center shrink-0 transition-all duration-200 cursor-pointer shadow-xs disabled:opacity-35 disabled:cursor-not-allowed active:scale-95"
+              title="Envoyer"
+              aria-label="Envoyer"
             >
-              <span className="material-symbols-outlined text-[18px]">send</span>
-              <span>Envoyer</span>
+              <span className={`material-symbols-outlined text-[20px] leading-none ${isSending ? 'animate-spin' : ''}`}>
+                {isSending ? 'progress_activity' : 'arrow_upward'}
+              </span>
             </button>
           </div>
         </form>
       </div>
+
+      {/* Modale de formulaire bac à sable ouverte depuis un composant partagé */}
+      <ToasterSandboxFormModal
+        modalState={sandboxModalState}
+        onClose={() => setSandboxModalState(null)}
+        onSubmitSandboxAction={executeDirectSandboxAction}
+        members={membersOptions}
+      />
 
       {/* ===================================================================== */}
       {/* 4. TIROIR LATÉRAL : ACTIONS MATÉRIELLES & E-MAILS INTERCEPTÉS         */}
@@ -1182,7 +1443,7 @@ export default function ToasterPage({ currentUser }) {
                 auditLogs.map((log, idx) => {
                   const meta = AUDIT_CATEGORY_META[log.category] || {
                     icon: 'info',
-                    label: log.category || ' Trace',
+                    label: log.category || 'Trace',
                     badgeClass: 'bg-slate-100 text-slate-800 border-slate-300',
                   };
                   let parsedPayload = log.payload_json || log.payload || log.details;
@@ -1195,7 +1456,7 @@ export default function ToasterPage({ currentUser }) {
                   return (
                     <div
                       key={log.id || idx}
-                      className="p-3.5 rounded-xl bg-canvas-slate border border-border-subtle space-y-2 shadow-2xs"
+                      className="p-3.5 rounded-2xl bg-canvas-slate border border-border-subtle space-y-2 shadow-2xs"
                     >
                       <div className="flex items-center justify-between gap-2 flex-wrap">
                         <span className={`inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full text-[11px] font-bold border ${meta.badgeClass}`}>
@@ -1213,10 +1474,10 @@ export default function ToasterPage({ currentUser }) {
                         )}
                       </div>
 
-                      <div className="text-xs font-bold text-slate-900">{log.title}</div>
+                      <div className="text-xs font-bold text-slate-900">{sanitizeFamilyLabel(log.title)}</div>
 
                       {parsedPayload && (
-                        <pre className="text-[11px] font-mono bg-white p-2.5 rounded-lg border border-slate-200 overflow-x-auto text-slate-700 whitespace-pre-wrap">
+                        <pre className="text-[11px] font-mono bg-white p-2.5 rounded-xl border border-slate-200 overflow-x-auto text-slate-700 whitespace-pre-wrap">
                           {typeof parsedPayload === 'object'
                             ? JSON.stringify(parsedPayload, null, 2)
                             : String(parsedPayload)}

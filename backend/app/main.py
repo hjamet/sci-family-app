@@ -1410,7 +1410,7 @@ def login(req: LoginRequest, request: Request, db: Session = Depends(get_db)):
         rate_limiter.record_login_failure(ip)
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
-            detail=f"[Auth Error] Identifiant '{identifier_clean}' inconnu. Prénoms valides des 7 membres SCI : Henri, Marguerite, Hortense, Joséphine, Eugénie, Frédéric, Maman."
+            detail=f"[Auth Error] Identifiant '{identifier_clean}' inconnu. Prénoms valides des 7 membres SCI : Henri, Marguerite, Hortense, Joséphine, Eugénie, Frédéric, Élisabeth."
         )
 
     # 3. Bcrypt Password Verification

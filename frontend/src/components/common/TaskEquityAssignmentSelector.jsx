@@ -9,7 +9,7 @@ const DEFAULT_ASSOCIATES = [
   'Hortense Jamet',
   'Marguerite Jamet',
   'Eugénie Jamet',
-  'Maman (Élisabeth) Jamet',
+  'Élisabeth Jamet',
 ];
 
 const COMPLEXITY_WEIGHTS = {

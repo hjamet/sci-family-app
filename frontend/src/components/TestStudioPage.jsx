@@ -19,7 +19,7 @@ const FAMILY_MEMBERS = [
   { prenom: 'Joséphine', role: 'Coordinatrice Adjointe', color: 'bg-emerald-500 text-white', badgeBg: 'bg-emerald-50 border-emerald-200 text-emerald-800' },
   { prenom: 'Eugénie', role: 'Membre Associé', color: 'bg-amber-500 text-white', badgeBg: 'bg-amber-50 border-amber-200 text-amber-800' },
   { prenom: 'Frédéric', role: 'Membre Associé', color: 'bg-blue-500 text-white', badgeBg: 'bg-blue-50 border-blue-200 text-blue-800' },
-  { prenom: 'Maman', role: 'Membre Associé', color: 'bg-teal-500 text-white', badgeBg: 'bg-teal-50 border-teal-200 text-teal-800' }
+  { prenom: 'Élisabeth', role: 'Membre Associé', color: 'bg-teal-500 text-white', badgeBg: 'bg-teal-50 border-teal-200 text-teal-800' }
 ];
 
 const INITIAL_TASKS = [
@@ -45,7 +45,7 @@ export default function TestStudioPage({ currentUser }) {
     Joséphine: { status: 'PRESENT', startDate: '2026-08-10', endDate: '2026-08-17', week: 33 },
     Eugénie: { status: 'IMPOSSIBLE', startDate: '', endDate: '', week: 33 },
     Frédéric: { status: 'PRESENT', startDate: '2026-08-11', endDate: '2026-08-16', week: 33 },
-    Maman: { status: 'PRESENT', startDate: '2026-08-10', endDate: '2026-08-17', week: 33 }
+    Élisabeth: { status: 'PRESENT', startDate: '2026-08-10', endDate: '2026-08-17', week: 33 }
   });
 
   const [tasksList, setTasksList] = useState(INITIAL_TASKS);
@@ -401,7 +401,7 @@ export default function TestStudioPage({ currentUser }) {
         let v = 'POUR';
         if (presetType === 'UNANIMOUS_YES') v = 'POUR';
         else if (presetType === 'MAJORITY_YES') v = m.prenom === 'Frédéric' || m.prenom === 'Eugénie' ? 'CONTRE' : 'POUR';
-        else if (presetType === 'VETO_AG') v = m.prenom === 'Maman' ? 'REPORT_PROCHAINE_AG' : 'POUR';
+        else if (presetType === 'VETO_AG') v = m.prenom === 'Élisabeth' ? 'REPORT_PROCHAINE_AG' : 'POUR';
 
         await castProjectVote(selectedProject.id, {
           user_name: m.prenom,
@@ -1166,7 +1166,7 @@ export default function TestStudioPage({ currentUser }) {
                   onClick={() => handleApplyVotePreset('VETO_AG')}
                   className="px-3 py-1.5 bg-amber-50 text-amber-700 border border-amber-200 rounded-xl text-xs font-bold hover:bg-amber-100 transition"
                 >
-                  Veto AG (Maman)
+                  Veto AG (Élisabeth)
                 </button>
               </div>
             </div>
