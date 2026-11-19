@@ -470,7 +470,7 @@ COHÉRENCE STRICTE DES CYCLES DE VIE & VALIDATION EXPLICITE DES ACTIONS RÉELLES
 - **Séjours** : renseigne toujours date ET heure (`arrival_time`/`departure_time`), participants internes (`selected_members`) et invités extérieurs (`external_guests`), et différencie Eau Chaude Sanitaire (`activate_dhw`, 52 °C), Chauffage Presbytère (`activate_heating`, 20 °C, qui inclut l'ECS) et Piscine (`activate_pool`, 27 °C).
 - **Tâches (cycle de vie officiel)** : toute nouvelle tâche est créée en statut `PROPOSED` SANS responsable pré-assigné (c'est lors de la validation par les coordinateurs Henri ou Joséphine que le responsable est choisi). Ne propose JAMAIS de champ statut ni responsable lors d'une création de tâche !
 - **Scrutins / Votes (cycle de vie officiel)** : toute nouvelle proposition de scrutin est créée en statut `PROPOSED` (en attente de validation/ouverture par un coordinateur) avec un lieu/catégorie canonique, une description claire, une priorité, un budget estimé éventuel, le mode choix unique/multiple et au moins 2 options.
-- Pour toute action de création ou modification, appelle TOUJOURS l'outil `propose_*` correspondant afin de présenter une carte récapitulative modifiable que l'associé devra confirmer en un clic.
+- Pour toute action de création ou modification, appelle TOUJOURS l'outil `propose_*` correspondant afin de présenter une carte récapitulative modifiable que l'associé devra confirmer en un clic. **INTERDICTION ABSOLUE** de répondre « dans la carte ci-dessous » ou « j'ai pré-rempli » sans avoir effectivement invoqué l'outil `propose_*` dans ce tour !
 - Si la passerelle ViCare du Presbytère est hors ligne au moment où l'utilisateur demande d'allumer le chauffage, prépare tout de même la carte `propose_heating_or_pool_action` si souhaité mais préviens clairement dans ta réponse que la passerelle Vitoconnect est actuellement hors ligne."""
 
 
@@ -1208,6 +1208,8 @@ def _stream_toaster_orchestration(
 
     MAX_STEPS = 5
     retried_empty_thought = False
+    retried_missing_action = False
+    force_any_tool = False
 
     with httpx.Client(timeout=55.0) as client:
         for step_idx in range(MAX_STEPS + 1):
@@ -1226,6 +1228,9 @@ def _stream_toaster_orchestration(
             }
             if force_text_only:
                 gemini_payload["toolConfig"] = {"functionCallingConfig": {"mode": "NONE"}}
+            elif force_any_tool:
+                gemini_payload["toolConfig"] = {"functionCallingConfig": {"mode": "ANY"}}
+                force_any_tool = False
 
             accumulated_parts: List[Dict[str, Any]] = []
             step_texts: List[str] = []
@@ -1412,6 +1417,48 @@ def _stream_toaster_orchestration(
                                 step_texts.append(clean_s)
                                 yield {"type": "text_delta", "delta": clean_s}
 
+            # Garde-fou anti-hallucination de carte en multi-tour : si le modèle annonce une carte
+            # ci-dessous (« dans la carte ci-dessous », « j'ai pré-rempli ») sans avoir appelé d'outil,
+            # forcer 1 tour d'appel d'outil (mode ANY) pour émettre la vraie action_card !
+            if (
+                step_texts
+                and not write_func_call
+                and not ui_components_out
+                and not force_text_only
+                and not retried_missing_action
+            ):
+                joined_low = "".join(step_texts).lower()
+                if any(
+                    phrase in joined_low
+                    for phrase in (
+                        "carte ci-dessous",
+                        "ci-dessous avant de confirmer",
+                        "j'ai pré-rempli",
+                        "je te prépare la proposition",
+                        "je te prépare la réservation",
+                        "je te prépare le scrutin",
+                    )
+                ):
+                    retried_missing_action = True
+                    force_any_tool = True
+                    final_text_parts.extend(step_texts)
+                    if accumulated_parts:
+                        contents.append({"role": "model", "parts": accumulated_parts})
+                    contents.append(
+                        {
+                            "role": "user",
+                            "parts": [
+                                {
+                                    "text": (
+                                        "Tu viens d'annoncer une carte récapitulative ci-dessous sans invoquer d'outil. "
+                                        "Appelle IMMEDIATEMENT l'outil propose_* correspondant avec tous les paramètres demandés."
+                                    )
+                                }
+                            ],
+                        }
+                    )
+                    continue
+
             final_text_parts.extend(step_texts)
             break
 
@@ -1450,20 +1497,20 @@ def _stream_toaster_orchestration(
         yield {"type": "text_delta", "delta": reply_text}
 
     # Filet de sécurité serveur (Annotation 9) : si la réponse mentionne des tâches à valider / arbitrer
-    # ou cite des IDs de tâches (#87, etc.) sans avoir affiché de tasks_overview_card ni action_card task,
+    # ou cite des IDs de tâches (#87, etc.) sans avoir affiché de tasks_overview_card ni action_card,
     # injecter automatiquement le composant interactif permettant d'ouvrir le modal de consultation & validation !
     has_tasks_card = any(c.get("component_id") == "tasks_overview_card" for c in ui_components_out)
-    has_task_action = bool(action_card and action_card.get("action_type") == "task")
-    if reply_text and not has_tasks_card and not has_task_action:
+    if reply_text and not has_tasks_card and not action_card:
         reply_low = reply_text.lower()
-        mentions_task_review = any(
+        state_tasks = state.get("tasks") or []
+        known_task_ids = {int(t["id"]) for t in state_tasks if t.get("id") is not None}
+        cited_ids = [int(m) for m in re.findall(r"#(\d+)", reply_text) if int(m) in known_task_ids]
+        mentions_task_topic = bool(cited_ids) or ("tâche" in reply_low) or ("tache" in reply_low)
+        mentions_review_kw = any(
             kw in reply_low
-            for kw in ("à valider", "a valider", "en attente de validation", "arbitrer", "proposition", "proposed", "tâche #", "tache #")
+            for kw in ("à valider", "a valider", "en attente de validation", "arbitrer", "proposed", "pending_validation", "tâche #", "tache #")
         )
-        if mentions_task_review:
-            state_tasks = state.get("tasks") or []
-            known_task_ids = {int(t["id"]) for t in state_tasks if t.get("id") is not None}
-            cited_ids = [int(m) for m in re.findall(r"#(\d+)", reply_text) if int(m) in known_task_ids]
+        if mentions_task_topic and mentions_review_kw:
             review_ids = [
                 int(t["id"])
                 for t in state_tasks
