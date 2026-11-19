@@ -1575,6 +1575,8 @@ def execute_toaster_read_tool(
         }
 
     if tool_name == "read_vademecum":
+        import re as _re
+
         item_id = args.get("item_id")
         search_q = _norm_text(args.get("search_query"))
         cat_q = _norm_text(args.get("category"))
@@ -1589,14 +1591,20 @@ def execute_toaster_read_tool(
         matched = []
         for it in rows:
             prop_name = props_map.get(it.property_id, "Presbytère" if it.property_id == 2 else "Rosings")
-            if cat_q and cat_q not in _norm_text(it.category):
-                continue
-            if prop_q and prop_q not in _norm_text(prop_name):
-                continue
-            hay = _norm_text(f"{it.title} {it.category} {it.content} {it.code_to_copy or ''} {prop_name}")
+            hay_raw = _norm_text(f"{it.title} {it.category} {it.content} {it.code_to_copy or ''} {prop_name}")
+            hay_compact = _re.sub(r"[^a-z0-9]", "", hay_raw)
+            if cat_q:
+                cat_norm = _re.sub(r"[^a-z0-9]", "", cat_q)
+                if cat_norm and cat_norm not in _re.sub(r"[^a-z0-9]", "", _norm_text(it.category)):
+                    continue
+            if prop_q:
+                prop_compact = _re.sub(r"[^a-z0-9]", "", prop_q)
+                if prop_compact and prop_compact not in hay_compact:
+                    continue
             if search_q:
-                toks = [tok for tok in search_q.split() if len(tok) >= 2]
-                if toks and not all(tok in hay for tok in toks):
+                toks = [_re.sub(r"[^a-z0-9]", "", tok) for tok in _re.split(r"[\s\-_/]+", search_q)]
+                toks = [t for t in toks if len(t) >= 2]
+                if toks and not all(tok in hay_compact for tok in toks):
                     continue
             matched.append(
                 {
@@ -1916,15 +1924,23 @@ def execute_toaster_read_tool(
 
         if comp_id in ("vademecum_card", "vademecum", "fiches_pratiques"):
             res_vad = execute_toaster_read_tool(prod_db, member_id, "read_vademecum", props)
+            items_found = (res_vad.get("items") or [])[:10]
+            if not items_found:
+                return {
+                    "status": "no_match",
+                    "component_id": "vademecum_card",
+                    "items_count": 0,
+                    "hint": "Aucune fiche trouvée avec ce filtre. Appelle read_vademecum sans filtre building/category ou avec un mot-clé plus large.",
+                }
             ui_payload = {
                 "component_id": "vademecum_card",
                 "query": props.get("search_query") or props.get("category") or "",
-                "items": (res_vad.get("items") or [])[:10],
+                "items": items_found,
             }
             return {
                 "status": "rendered_in_chat",
                 "component_id": "vademecum_card",
-                "items_count": len(ui_payload["items"]),
+                "items_count": len(items_found),
                 "_ui_component": ui_payload,
             }
 
