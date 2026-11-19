@@ -114,6 +114,7 @@ export default function App() {
     if (path === '/vademecum' || path === '/sejour' || path === '/energie' || path === '/chauffage') return 'sejour';
     if (path === '/parametres' || path === '/settings') return 'parametres';
     if (path === '/statistiques' || path === '/stats') return 'statistiques';
+    if (path === '/grille-pain') return 'grille-pain';
     return 'home';
   };
 
@@ -205,6 +206,9 @@ export default function App() {
       settings: '/parametres',
       statistiques: '/statistiques',
       stats: '/statistiques',
+      'grille-pain': '/grille-pain',
+      toaster: '/grille-pain',
+      assistant: '/grille-pain',
     };
     const targetPath = routeMap[tabId] || (typeof tabId === 'string' && tabId.startsWith('/') ? tabId : '/');
     navigate(targetPath);

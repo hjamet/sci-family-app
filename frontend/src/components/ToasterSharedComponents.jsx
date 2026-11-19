@@ -493,40 +493,558 @@ function SharedFuelGraph({ data }) {
 
 function SharedPoolWidget({ data }) {
   const p = data?.pool || {};
+  const hasLiveError = Boolean(p.live_error);
+  const wifiDown = p.wifi_box_ok === false || hasLiveError;
+  const radioDown =
+    !wifiDown &&
+    (p.radio_error === true ||
+      p.radio_link_ok === false ||
+      String(p.klereo_alert_code || '').toLowerCase() === 'radiopb');
+
+  const statusBadge = wifiDown
+    ? { label: 'Boîtier Wi-Fi hors ligne', cls: 'bg-rose-50 text-rose-800 border-rose-200', icon: 'wifi_off' }
+    : radioDown
+    ? { label: 'Liaison radio piscine coupée', cls: 'bg-amber-50 text-amber-900 border-amber-300', icon: 'signal_wifi_off' }
+    : { label: 'En ligne', cls: 'bg-emerald-50 text-emerald-800 border-emerald-200', icon: 'check_circle' };
+
+  const alertMessages = [];
+  if (p.live_error) alertMessages.push(p.live_error);
+  if (p.radio_alert) alertMessages.push(p.radio_alert);
+  if (Array.isArray(p.alerts)) {
+    p.alerts.forEach((a) => {
+      if (a && !alertMessages.includes(a)) alertMessages.push(a);
+    });
+  }
+
+  const probeFallback = radioDown ? 'Radio coupée' : wifiDown ? 'Hors ligne' : '—';
+
   return (
     <div className="mt-2.5 w-full max-w-2xl rounded-2xl bg-white border border-border-subtle p-4 shadow-sm space-y-3">
-      <div className="flex items-center justify-between">
-        <div className="flex items-center gap-2">
-          <span className="w-8 h-8 rounded-full bg-sky-50 text-sky-700 flex items-center justify-center">
-            <span className="material-symbols-outlined text-[18px]">pool</span>
+      <div className="flex items-start justify-between gap-2 flex-wrap">
+        <div className="flex items-center gap-2.5">
+          <span className="w-9 h-9 rounded-full bg-sky-50 text-sky-700 flex items-center justify-center shrink-0">
+            <span className="material-symbols-outlined text-[19px]">pool</span>
           </span>
           <div>
-            <h4 className="text-sm font-bold text-forest-deep">Piscine Klereo Connect (En direct)</h4>
-            <p className="text-[11px] text-slate-500">{p.filtration_state || `Filtration : ${p.filtration_mode || 'auto'}`}</p>
+            <h4 className="text-sm font-bold text-forest-deep">Piscine Klereo Connect (Rosings)</h4>
+            <p className="text-[11px] text-slate-500">
+              {p.filtration_state || `Filtration : ${p.filtration_mode || 'auto'}`}
+              {p.last_sync_label ? ` • Synchro : ${p.last_sync_label}` : ''}
+            </p>
           </div>
         </div>
-        <span className="px-2.5 py-1 rounded-full bg-emerald-50 text-emerald-800 border border-emerald-200 text-[11px] font-bold">
-          En ligne
+        <span className={`inline-flex items-center gap-1 px-2.5 py-1 rounded-full border text-[11px] font-bold ${statusBadge.cls}`}>
+          <span className="material-symbols-outlined text-[14px]">{statusBadge.icon}</span>
+          <span>{statusBadge.label}</span>
         </span>
       </div>
+
+      {alertMessages.length > 0 && (
+        <div className={`p-3 rounded-xl border text-xs space-y-1 ${wifiDown ? 'bg-rose-50 border-rose-200 text-rose-900' : 'bg-amber-50 border-amber-300 text-amber-950'}`}>
+          {alertMessages.map((msg, i) => (
+            <div key={i} className="flex items-start gap-1.5 font-medium">
+              <span className="material-symbols-outlined text-[15px] shrink-0 mt-0.5">warning</span>
+              <span>{msg}</span>
+            </div>
+          ))}
+        </div>
+      )}
+
+      <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 text-xs">
+        <div className="p-2.5 rounded-xl bg-canvas-slate border border-border-subtle flex items-center justify-between gap-2">
+          <div>
+            <span className="text-[10px] font-bold uppercase text-slate-500 block">Filtration</span>
+            <span className="font-bold text-slate-800">{p.filtration_state || p.filtration_mode || 'Auto'}</span>
+            {p.filtration_cycle && <span className="block text-[10.5px] text-slate-500">{p.filtration_cycle}</span>}
+          </div>
+          <span className="material-symbols-outlined text-sky-600 text-[20px]">water_pump</span>
+        </div>
+        <div className="p-2.5 rounded-xl bg-canvas-slate border border-border-subtle flex items-center justify-between gap-2">
+          <div>
+            <span className="text-[10px] font-bold uppercase text-slate-500 block">Pompe à chaleur</span>
+            <span className="font-bold text-slate-800">
+              {p.pac_status_label || (p.mode === 'confort' ? 'Chauffage confort' : 'Hors-gel / Éco')}
+            </span>
+            <span className="block text-[10.5px] text-slate-500">
+              {p.pac_status_subtext || `Consigne : ${p.target_temperature ?? 0.5} °C`}
+            </span>
+          </div>
+          <span className="material-symbols-outlined text-amber-600 text-[20px]">heat_pump</span>
+        </div>
+      </div>
+
       <div className="grid grid-cols-2 sm:grid-cols-4 gap-2.5 text-xs">
         <div className="p-2.5 rounded-xl bg-sky-50/60 border border-sky-100">
           <span className="text-[10px] text-sky-700 font-bold uppercase block">Eau</span>
-          <span className="text-base font-bold text-slate-900">{p.water_temperature != null ? `${Number(p.water_temperature).toFixed(1)} °C` : '—'}</span>
+          <span className="text-base font-bold text-slate-900">
+            {p.water_temperature != null ? `${Number(p.water_temperature).toFixed(1)} °C` : '—'}
+          </span>
+          {p.water_temperature == null && <span className="block text-[10px] text-amber-700">{probeFallback}</span>}
         </div>
         <div className="p-2.5 rounded-xl bg-slate-50 border border-slate-200/70">
           <span className="text-[10px] text-slate-500 font-bold uppercase block">Air ext.</span>
-          <span className="text-base font-bold text-slate-900">{p.air_temperature != null ? `${Number(p.air_temperature).toFixed(1)} °C` : '—'}</span>
+          <span className="text-base font-bold text-slate-900">
+            {p.air_temperature != null ? `${Number(p.air_temperature).toFixed(1)} °C` : '—'}
+          </span>
+          {p.air_temperature == null && <span className="block text-[10px] text-amber-700">{probeFallback}</span>}
         </div>
         <div className="p-2.5 rounded-xl bg-slate-50 border border-slate-200/70">
           <span className="text-[10px] text-slate-500 font-bold uppercase block">pH</span>
-          <span className="text-base font-bold text-slate-900">{p.ph_value != null ? Number(p.ph_value).toFixed(2) : '—'}</span>
+          <span className="text-base font-bold text-slate-900">
+            {p.ph_value != null ? Number(p.ph_value).toFixed(2) : '—'}
+          </span>
+          {p.ph_value == null && <span className="block text-[10px] text-amber-700">{probeFallback}</span>}
         </div>
         <div className="p-2.5 rounded-xl bg-slate-50 border border-slate-200/70">
           <span className="text-[10px] text-slate-500 font-bold uppercase block">Redox</span>
-          <span className="text-base font-bold text-slate-900">{p.redox_value != null ? `${Math.round(p.redox_value)} mV` : '—'}</span>
+          <span className="text-base font-bold text-slate-900">
+            {p.redox_value != null ? `${Math.round(p.redox_value)} mV` : '—'}
+          </span>
+          {p.redox_value == null && <span className="block text-[10px] text-amber-700">{probeFallback}</span>}
         </div>
       </div>
+    </div>
+  );
+}
+
+function SharedLeaderboardWidget({ data }) {
+  const members = Array.isArray(data?.members) ? data.members : [];
+  const maxTasks = Math.max(1, ...members.map((m) => Number(m.score_taches || 0)));
+  const maxUsage = Math.max(1, ...members.map((m) => Number(m.score_usage || 0)));
+  const medals = ['🥇', '🥈', '🥉'];
+
+  return (
+    <div className="mt-2.5 w-full max-w-2xl rounded-2xl bg-white border border-border-subtle p-4 shadow-sm space-y-3">
+      <div className="flex items-center justify-between gap-2 pb-2.5 border-b border-border-subtle flex-wrap">
+        <div className="flex items-center gap-2">
+          <span className="w-8 h-8 rounded-full bg-indigo-50 text-indigo-700 flex items-center justify-center">
+            <span className="material-symbols-outlined text-[18px]">leaderboard</span>
+          </span>
+          <div>
+            <h4 className="text-sm font-bold text-forest-deep">Classement &amp; Équité Participative</h4>
+            <p className="text-[11px] text-slate-500">
+              {data?.period_label || 'Toute la période'} • Tâches réalisées + créations validées vs jours de séjour
+            </p>
+          </div>
+        </div>
+      </div>
+
+      <div className="space-y-2">
+        {members.map((m, idx) => {
+          const taskPct = Math.min(100, Math.round((Number(m.score_taches || 0) / maxTasks) * 100));
+          const usagePct = Math.min(100, Math.round((Number(m.score_usage || 0) / maxUsage) * 100));
+          return (
+            <div
+              key={m.member_id || m.prenom || idx}
+              className="p-2.5 rounded-xl bg-canvas-slate border border-border-subtle space-y-1.5"
+            >
+              <div className="flex items-center justify-between gap-2">
+                <div className="flex items-center gap-2 min-w-0">
+                  <span className="w-6 text-center text-sm font-black text-slate-600 shrink-0">
+                    {idx < 3 ? medals[idx] : `#${m.rank || idx + 1}`}
+                  </span>
+                  <span className="text-xs font-bold text-forest-deep truncate">{m.name || m.prenom}</span>
+                  {m.is_exempt && (
+                    <span className="px-2 py-0.5 rounded-full bg-blue-50 text-blue-700 border border-blue-200 text-[10px] font-bold">
+                      Exempté corvées
+                    </span>
+                  )}
+                </div>
+                <div className="flex items-center gap-2 shrink-0 text-xs">
+                  <span className="px-2 py-0.5 rounded-full bg-emerald-50 text-emerald-800 border border-emerald-200 font-mono font-bold">
+                    Ratio {Number(m.ratio || 0).toFixed(2)}
+                  </span>
+                </div>
+              </div>
+
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 text-[11px]">
+                <div className="space-y-0.5">
+                  <div className="flex justify-between text-slate-600">
+                    <span>Tâches ({m.completed_tasks_count ?? 0} finies + {m.created_bonus_count ?? 0} créées)</span>
+                    <span className="font-bold text-emerald-800">{m.score_taches ?? 0}</span>
+                  </div>
+                  <div className="h-1.5 rounded-full bg-slate-200 overflow-hidden">
+                    <div className="h-full rounded-full bg-emerald-600" style={{ width: `${taskPct}%` }} />
+                  </div>
+                </div>
+                <div className="space-y-0.5">
+                  <div className="flex justify-between text-slate-600">
+                    <span>Occupation ({m.stays_count ?? 0} séjour{(m.stays_count ?? 0) > 1 ? 's' : ''})</span>
+                    <span className="font-bold text-indigo-800">{m.score_usage ?? 0} j</span>
+                  </div>
+                  <div className="h-1.5 rounded-full bg-slate-200 overflow-hidden">
+                    <div className="h-full rounded-full bg-indigo-500" style={{ width: `${usagePct}%` }} />
+                  </div>
+                </div>
+              </div>
+            </div>
+          );
+        })}
+      </div>
+    </div>
+  );
+}
+
+function SharedCustomChartWidget({ data }) {
+  const [hoveredIdx, setHoveredIdx] = useState(null);
+  const title = data?.title || 'Graphique personnalisé';
+  const subtitle = data?.subtitle || '';
+  const chartType = String(data?.chart_type || 'bar').toLowerCase();
+  const unit = data?.unit ? ` ${data.unit}` : '';
+  const labels = Array.isArray(data?.labels) ? data.labels : [];
+  const series = Array.isArray(data?.series) ? data.series : [];
+
+  const fmtVal = (v) =>
+    `${Number(v || 0).toLocaleString('fr-FR', { maximumFractionDigits: 1 })}${unit}`;
+
+  if (labels.length === 0 || series.length === 0) return null;
+
+  const allValues = series.flatMap((s) => (s.values || []).map((v) => Number(v || 0)));
+  const maxVal = Math.max(1, ...allValues);
+  const minVal = Math.min(0, ...allValues);
+  const span = Math.max(1, maxVal - minVal);
+
+  const renderChartBody = () => {
+    if (chartType === 'horizontal_bar') {
+      const s0 = series[0];
+      return (
+        <div className="space-y-2.5 pt-1">
+          {labels.map((lbl, idx) => {
+            const val = Number(s0.values?.[idx] || 0);
+            const pct = Math.max(2, Math.min(100, Math.round((Math.abs(val) / maxVal) * 100)));
+            return (
+              <div key={idx} className="space-y-1 text-xs">
+                <div className="flex items-center justify-between gap-2">
+                  <span className="font-semibold text-slate-700 truncate">{lbl}</span>
+                  <span className="font-mono font-bold text-forest-deep shrink-0">{fmtVal(val)}</span>
+                </div>
+                <div className="h-2.5 rounded-full bg-slate-100 overflow-hidden">
+                  <div
+                    className="h-full rounded-full transition-all duration-300"
+                    style={{ width: `${pct}%`, backgroundColor: s0.color || '#059669' }}
+                  />
+                </div>
+              </div>
+            );
+          })}
+        </div>
+      );
+    }
+
+    if (chartType === 'pie' || chartType === 'donut') {
+      const s0 = series[0];
+      const palette = ['#059669', '#0284c7', '#d97706', '#7c3aed', '#e11d48', '#0d9488', '#4f46e5'];
+      const vals = labels.map((_, i) => Math.max(0, Number(s0.values?.[i] || 0)));
+      const total = vals.reduce((acc, v) => acc + v, 0) || 1;
+      let startAngle = -Math.PI / 2;
+      const cx = 90;
+      const cy = 90;
+      const r = 74;
+      const innerR = chartType === 'donut' ? 42 : 0;
+
+      const slices = vals.map((v, i) => {
+        const angle = (v / total) * Math.PI * 2;
+        const endAngle = startAngle + angle;
+        const largeArc = angle > Math.PI ? 1 : 0;
+        const x1 = cx + r * Math.cos(startAngle);
+        const y1 = cy + r * Math.sin(startAngle);
+        const x2 = cx + r * Math.cos(endAngle);
+        const y2 = cy + r * Math.sin(endAngle);
+        let d;
+        if (innerR > 0) {
+          const ix1 = cx + innerR * Math.cos(endAngle);
+          const iy1 = cy + innerR * Math.sin(endAngle);
+          const ix2 = cx + innerR * Math.cos(startAngle);
+          const iy2 = cy + innerR * Math.sin(startAngle);
+          d = `M ${x1} ${y1} A ${r} ${r} 0 ${largeArc} 1 ${x2} ${y2} L ${ix1} ${iy1} A ${innerR} ${innerR} 0 ${largeArc} 0 ${ix2} ${iy2} Z`;
+        } else {
+          d = `M ${cx} ${cy} L ${x1} ${y1} A ${r} ${r} 0 ${largeArc} 1 ${x2} ${y2} Z`;
+        }
+        startAngle = endAngle;
+        return { d, color: palette[i % palette.length], label: labels[i], value: v, pct: Math.round((v / total) * 100) };
+      });
+
+      return (
+        <div className="flex flex-col sm:flex-row items-center gap-4 pt-1">
+          <svg viewBox="0 0 180 180" className="w-40 h-40 shrink-0">
+            {slices.map((sl, i) => (
+              <path
+                key={i}
+                d={sl.d}
+                fill={sl.color}
+                stroke="#ffffff"
+                strokeWidth="2"
+                opacity={hoveredIdx === null || hoveredIdx === i ? 1 : 0.45}
+                onMouseEnter={() => setHoveredIdx(i)}
+                onMouseLeave={() => setHoveredIdx(null)}
+                className="transition-opacity cursor-pointer"
+              />
+            ))}
+            {chartType === 'donut' && (
+              <text x={cx} y={cy + 4} textAnchor="middle" className="fill-slate-800 font-bold text-[12px]">
+                {fmtVal(total)}
+              </text>
+            )}
+          </svg>
+          <div className="flex-1 w-full space-y-1.5 text-xs">
+            {slices.map((sl, i) => (
+              <div
+                key={i}
+                onMouseEnter={() => setHoveredIdx(i)}
+                onMouseLeave={() => setHoveredIdx(null)}
+                className="flex items-center justify-between gap-2 px-2 py-1 rounded-lg hover:bg-slate-50 cursor-pointer"
+              >
+                <div className="flex items-center gap-2 min-w-0">
+                  <span className="w-2.5 h-2.5 rounded-full shrink-0" style={{ backgroundColor: sl.color }} />
+                  <span className="text-slate-700 font-medium truncate">{sl.label}</span>
+                </div>
+                <span className="font-mono font-bold text-slate-900 shrink-0">
+                  {fmtVal(sl.value)} ({sl.pct}%)
+                </span>
+              </div>
+            ))}
+          </div>
+        </div>
+      );
+    }
+
+    // SVG vertical bar or line/area chart
+    const W = 560;
+    const H = 220;
+    const padL = 48;
+    const padR = 16;
+    const padT = 18;
+    const padB = 38;
+    const plotW = W - padL - padR;
+    const plotH = H - padT - padB;
+    const yFor = (v) => padT + plotH - ((Number(v || 0) - minVal) / span) * plotH;
+    const zeroY = yFor(0);
+    const ticks = [0, 0.25, 0.5, 0.75, 1].map((t) => minVal + t * span);
+
+    if (chartType === 'line' || chartType === 'area') {
+      const stepX = labels.length > 1 ? plotW / (labels.length - 1) : plotW / 2;
+      return (
+        <svg viewBox={`0 0 ${W} ${H}`} className="w-full h-auto overflow-visible">
+          {ticks.map((tk, i) => {
+            const y = yFor(tk);
+            return (
+              <g key={i}>
+                <line x1={padL} x2={W - padR} y1={y} y2={y} stroke="#e2e8f0" strokeDasharray="3 3" />
+                <text x={padL - 6} y={y + 3} textAnchor="end" className="fill-slate-400 text-[9.5px] font-mono">
+                  {Math.round(tk)}
+                </text>
+              </g>
+            );
+          })}
+          {series.map((s, sIdx) => {
+            const pts = labels.map((_, i) => ({
+              x: labels.length > 1 ? padL + i * stepX : padL + plotW / 2,
+              y: yFor(s.values?.[i] ?? 0),
+              v: Number(s.values?.[i] ?? 0),
+            }));
+            const poly = pts.map((pt) => `${pt.x},${pt.y}`).join(' ');
+            const areaD = `M ${pts[0].x} ${zeroY} ${pts.map((pt) => `L ${pt.x} ${pt.y}`).join(' ')} L ${pts[pts.length - 1].x} ${zeroY} Z`;
+            return (
+              <g key={sIdx}>
+                {chartType === 'area' && <path d={areaD} fill={s.color} opacity="0.14" />}
+                <polyline fill="none" stroke={s.color} strokeWidth="2.5" strokeLinejoin="round" points={poly} />
+                {pts.map((pt, i) => (
+                  <g key={i} onMouseEnter={() => setHoveredIdx(i)} onMouseLeave={() => setHoveredIdx(null)}>
+                    <circle cx={pt.x} cy={pt.y} r={hoveredIdx === i ? 5 : 3.5} fill="#fff" stroke={s.color} strokeWidth="2.2" />
+                    {hoveredIdx === i && (
+                      <text x={pt.x} y={pt.y - 9} textAnchor="middle" className="fill-slate-900 text-[10px] font-bold">
+                        {fmtVal(pt.v)}
+                      </text>
+                    )}
+                  </g>
+                ))}
+              </g>
+            );
+          })}
+          {labels.map((lb, i) => {
+            const x = labels.length > 1 ? padL + i * stepX : padL + plotW / 2;
+            const showLabel = labels.length <= 8 || i % Math.ceil(labels.length / 7) === 0 || i === labels.length - 1;
+            return showLabel ? (
+              <text key={i} x={x} y={H - 12} textAnchor="middle" className="fill-slate-500 text-[9.5px]">
+                {String(lb).slice(0, 12)}
+              </text>
+            ) : null;
+          })}
+        </svg>
+      );
+    }
+
+    // Grouped vertical bars
+    const groupW = plotW / labels.length;
+    const barW = Math.max(8, Math.min(34, (groupW - 10) / series.length));
+
+    return (
+      <svg viewBox={`0 0 ${W} ${H}`} className="w-full h-auto overflow-visible">
+        {ticks.map((tk, i) => {
+          const y = yFor(tk);
+          return (
+            <g key={i}>
+              <line x1={padL} x2={W - padR} y1={y} y2={y} stroke="#e2e8f0" strokeDasharray="3 3" />
+              <text x={padL - 6} y={y + 3} textAnchor="end" className="fill-slate-400 text-[9.5px] font-mono">
+                {Math.round(tk)}
+              </text>
+            </g>
+          );
+        })}
+        {labels.map((lb, i) => {
+          const groupCenter = padL + i * groupW + groupW / 2;
+          const totalGroupBarsW = series.length * barW + (series.length - 1) * 3;
+          const startX = groupCenter - totalGroupBarsW / 2;
+          return (
+            <g key={i} onMouseEnter={() => setHoveredIdx(i)} onMouseLeave={() => setHoveredIdx(null)}>
+              {series.map((s, sIdx) => {
+                const v = Number(s.values?.[i] ?? 0);
+                const yTop = v >= 0 ? yFor(v) : zeroY;
+                const hBar = Math.max(2, Math.abs(yFor(v) - zeroY));
+                const bx = startX + sIdx * (barW + 3);
+                return (
+                  <g key={sIdx}>
+                    <rect
+                      x={bx}
+                      y={yTop}
+                      width={barW}
+                      height={hBar}
+                      rx="4"
+                      fill={s.color || '#059669'}
+                      opacity={hoveredIdx === null || hoveredIdx === i ? 0.92 : 0.45}
+                    />
+                    {(hoveredIdx === i || (labels.length <= 7 && series.length === 1)) && (
+                      <text x={bx + barW / 2} y={yTop - 5} textAnchor="middle" className="fill-slate-800 text-[9.5px] font-bold">
+                        {fmtVal(v)}
+                      </text>
+                    )}
+                  </g>
+                );
+              })}
+              <text x={groupCenter} y={H - 12} textAnchor="middle" className="fill-slate-500 text-[9.5px]">
+                {String(lb).slice(0, 12)}
+              </text>
+            </g>
+          );
+        })}
+      </svg>
+    );
+  };
+
+  return (
+    <div className="mt-2.5 w-full max-w-2xl rounded-2xl bg-white border border-border-subtle p-4 shadow-sm space-y-3">
+      <div className="flex items-start justify-between gap-2 pb-2 border-b border-border-subtle flex-wrap">
+        <div>
+          <h4 className="text-sm font-bold text-forest-deep">{title}</h4>
+          {subtitle && <p className="text-[11px] text-slate-500 mt-0.5">{subtitle}</p>}
+        </div>
+        {series.length > 1 && chartType !== 'pie' && chartType !== 'donut' && (
+          <div className="flex flex-wrap gap-2">
+            {series.map((s, i) => (
+              <span key={i} className="inline-flex items-center gap-1.5 text-[11px] font-semibold text-slate-600">
+                <span className="w-2.5 h-2.5 rounded-full" style={{ backgroundColor: s.color }} />
+                <span>{s.name}</span>
+              </span>
+            ))}
+          </div>
+        )}
+      </div>
+      {renderChartBody()}
+    </div>
+  );
+}
+
+function SharedVademecumWidget({ data, onOpenSandboxModal }) {
+  const items = Array.isArray(data?.items) ? data.items : [];
+  const [copiedId, setCopiedId] = useState(null);
+
+  const handleCopy = (item) => {
+    if (!item?.code_to_copy) return;
+    navigator.clipboard?.writeText(item.code_to_copy);
+    setCopiedId(item.id);
+    setTimeout(() => setCopiedId(null), 2000);
+  };
+
+  const importanceStyles = {
+    CRITIQUE: 'bg-rose-50 text-rose-800 border-rose-200',
+    IMPORTANT: 'bg-amber-50 text-amber-900 border-amber-200',
+    INFO: 'bg-emerald-50 text-emerald-800 border-emerald-200',
+  };
+
+  return (
+    <div className="mt-2.5 w-full max-w-2xl rounded-2xl bg-white border border-border-subtle p-4 shadow-sm space-y-3">
+      <div className="flex items-center justify-between gap-2 pb-2 border-b border-border-subtle">
+        <div className="flex items-center gap-2">
+          <span className="w-8 h-8 rounded-full bg-emerald-50 text-primary flex items-center justify-center">
+            <span className="material-symbols-outlined text-[18px]">menu_book</span>
+          </span>
+          <div>
+            <h4 className="text-sm font-bold text-forest-deep">
+              Vademecum du Domaine ({items.length} fiche{items.length > 1 ? 's' : ''})
+            </h4>
+            {data?.query && <p className="text-[11px] text-slate-500">Filtre : « {data.query} »</p>}
+          </div>
+        </div>
+        <button
+          type="button"
+          onClick={() => onOpenSandboxModal?.('vademecum', {})}
+          className="inline-flex items-center gap-1 px-3 py-1 rounded-full bg-primary hover:bg-forest-deep text-white text-xs font-bold cursor-pointer"
+        >
+          <span className="material-symbols-outlined text-[14px]">add</span>
+          <span>Nouvelle fiche</span>
+        </button>
+      </div>
+
+      {items.length === 0 ? (
+        <p className="text-xs text-slate-500 py-3 text-center">Aucune fiche Vademecum correspondante.</p>
+      ) : (
+        <div className="space-y-2.5">
+          {items.map((item) => (
+            <div key={item.id} className="p-3 rounded-xl bg-canvas-slate border border-border-subtle space-y-2">
+              <div className="flex items-start justify-between gap-2 flex-wrap">
+                <div className="space-y-0.5">
+                  <div className="flex items-center gap-1.5 flex-wrap">
+                    <span className="px-2 py-0.5 rounded-full bg-white border border-slate-200 text-[10px] font-bold text-slate-700">
+                      {item.property_name || 'Presbytère'}
+                    </span>
+                    <span className="px-2 py-0.5 rounded-full bg-sage-soft text-[10px] font-bold text-forest-deep">
+                      {item.category}
+                    </span>
+                    {item.importance && (
+                      <span
+                        className={`px-2 py-0.5 rounded-full border text-[10px] font-bold ${
+                          importanceStyles[item.importance] || importanceStyles.INFO
+                        }`}
+                      >
+                        {item.importance}
+                      </span>
+                    )}
+                  </div>
+                  <h5 className="text-xs sm:text-sm font-bold text-forest-deep pt-0.5">{item.title}</h5>
+                </div>
+              </div>
+
+              <p className="text-xs text-slate-700 whitespace-pre-wrap leading-relaxed">{item.content}</p>
+
+              {item.code_to_copy && (
+                <div className="flex items-center justify-between gap-2 px-3 py-2 rounded-xl bg-white border border-emerald-200">
+                  <code className="text-xs font-mono font-bold text-emerald-950 break-all">{item.code_to_copy}</code>
+                  <button
+                    type="button"
+                    onClick={() => handleCopy(item)}
+                    className="inline-flex items-center gap-1 px-2.5 py-1 rounded-full bg-emerald-50 hover:bg-emerald-100 text-emerald-900 text-[11px] font-bold cursor-pointer shrink-0"
+                  >
+                    <span className="material-symbols-outlined text-[14px]">
+                      {copiedId === item.id ? 'check' : 'content_copy'}
+                    </span>
+                    <span>{copiedId === item.id ? 'Copié !' : 'Copier'}</span>
+                  </button>
+                </div>
+              )}
+            </div>
+          ))}
+        </div>
+      )}
     </div>
   );
 }
@@ -563,7 +1081,7 @@ function SharedPollsWidget({ data, activeMemberName, onCastSandboxVote, onOpenSa
           className="inline-flex items-center gap-1.5 px-3.5 py-1.5 rounded-full bg-white hover:bg-purple-50 text-purple-900 border border-purple-200 text-xs font-semibold shadow-2xs cursor-pointer"
         >
           <span className="material-symbols-outlined text-[15px]">add</span>
-          <span>Créer un nouveau vote (Bac à sable)</span>
+          <span>Créer un nouveau vote</span>
         </button>
       </div>
     </div>
@@ -626,7 +1144,7 @@ function SharedTasksWidget({ data, onCompleteSandboxTask, onOpenSandboxModal }) 
                       type="button"
                       onClick={() => onCompleteSandboxTask?.(t)}
                       className="px-2.5 py-1 rounded-full bg-emerald-50 hover:bg-emerald-600 text-emerald-800 hover:text-white border border-emerald-200 text-[11px] font-bold transition-colors cursor-pointer shrink-0"
-                      title="Marquer comme terminée dans le bac à sable"
+                      title="Marquer comme terminée"
                     >
                       ✓ Valider
                     </button>
@@ -767,6 +1285,7 @@ function SharedActionButtons({ data, onOpenSandboxModal }) {
     task: 'add_task',
     poll: 'how_to_vote',
     document: 'upload_file',
+    vademecum: 'menu_book',
   };
 
   return (
@@ -815,6 +1334,15 @@ export function ToasterComponentRenderer({
           }
           if (cid === 'pool_status_widget') {
             return <SharedPoolWidget key={idx} data={comp} />;
+          }
+          if (cid === 'leaderboard_card') {
+            return <SharedLeaderboardWidget key={idx} data={comp} />;
+          }
+          if (cid === 'custom_chart_card') {
+            return <SharedCustomChartWidget key={idx} data={comp} />;
+          }
+          if (cid === 'vademecum_card') {
+            return <SharedVademecumWidget key={idx} data={comp} onOpenSandboxModal={onOpenSandboxModal} />;
           }
           if (cid === 'poll_status_card') {
             return (
@@ -874,8 +1402,49 @@ export function ToasterComponentRenderer({
 }
 
 // ============================================================================
-// 4. MODALE INTERACTIVE BAC À SABLE (Réservation, Tâche, Vote, Document)
+// 4. MODALE INTERACTIVE DE FORMULAIRE (Séjour, Tâche, Vote, Document, Vademecum)
 // ============================================================================
+export const DOMAIN_ROOMS_CATALOG = {
+  Presbytère: [
+    { name: 'Suite', shortLabel: 'Suite (Frédéric & Élisabeth)' },
+    { name: 'Deuxième Chambre du Couloir', shortLabel: '2ᵉ Couloir (Henri)' },
+    { name: 'Première Chambre du Couloir', shortLabel: '1ʳᵉ Couloir (Anc. Hortense)' },
+    { name: 'La Mezzanine', shortLabel: 'Mezzanine (Joséphine)' },
+    { name: 'Chambre du bas', shortLabel: 'Chambre du bas (Eugénie)' },
+  ],
+  Rosings: [
+    { name: 'Chambre Haut Droite', shortLabel: 'Haut Droite (Marguerite)' },
+    { name: 'Chambre Haut Gauche', shortLabel: 'Haut Gauche (Hortense)' },
+  ],
+};
+
+export function getMaxRoomsForBuilding(building) {
+  const low = String(building || '').toLowerCase();
+  if ((low.includes('presbyt') && low.includes('rosing')) || low.includes('domaine') || low.includes('deux')) return 7;
+  if (low.includes('rosing')) return 2;
+  return 5;
+}
+
+export function getRoomsListForBuilding(building) {
+  const low = String(building || '').toLowerCase();
+  if ((low.includes('presbyt') && low.includes('rosing')) || low.includes('domaine') || low.includes('deux')) {
+    return [...DOMAIN_ROOMS_CATALOG.Presbytère, ...DOMAIN_ROOMS_CATALOG.Rosings];
+  }
+  if (low.includes('rosing')) return DOMAIN_ROOMS_CATALOG.Rosings;
+  return DOMAIN_ROOMS_CATALOG.Presbytère;
+}
+
+const VADEMECUM_CATS = [
+  'Arrivée & Clés',
+  'Chauffage & Eau Chaude',
+  'Piscine',
+  'Ordures Ménagères',
+  'Wifi & Multimédia',
+  'Artisans & Dépannage',
+  'Bâtiments & Réseaux Techniques',
+  'Sécurité & Urgences',
+];
+
 export function ToasterSandboxFormModal({ modalState, onClose, onSubmitSandboxAction, members = [] }) {
   const isOpen = Boolean(modalState?.type);
   const type = modalState?.type || 'stay';
@@ -885,6 +1454,8 @@ export function ToasterSandboxFormModal({ modalState, onClose, onSubmitSandboxAc
   const [startDate, setStartDate] = useState('2026-11-20');
   const [endDate, setEndDate] = useState('2026-11-22');
   const [guestCount, setGuestCount] = useState(2);
+  const [chambersUsed, setChambersUsed] = useState(1);
+  const [selectedRooms, setSelectedRooms] = useState([]);
   const [activateHeating, setActivateHeating] = useState(true);
 
   const [taskTitle, setTaskTitle] = useState('');
@@ -894,6 +1465,7 @@ export function ToasterSandboxFormModal({ modalState, onClose, onSubmitSandboxAc
   const [taskDesc, setTaskDesc] = useState('');
 
   const [pollTitle, setPollTitle] = useState('');
+  const [pollDesc, setPollDesc] = useState('');
   const [pollOptionsText, setPollOptionsText] = useState('Samedi 10 avril 2027\nSamedi 17 avril 2027\nSamedi 24 avril 2027');
   const [pollMulti, setPollMulti] = useState(true);
 
@@ -901,29 +1473,64 @@ export function ToasterSandboxFormModal({ modalState, onClose, onSubmitSandboxAc
   const [invTitle, setInvTitle] = useState('');
   const [invAmount, setInvAmount] = useState('');
   const [invAdvanced, setInvAdvanced] = useState(true);
+
+  const [vadBuilding, setVadBuilding] = useState('Presbytère');
+  const [vadCategory, setVadCategory] = useState('Arrivée & Clés');
+  const [vadTitle, setVadTitle] = useState('');
+  const [vadContent, setVadContent] = useState('');
+  const [vadCode, setVadCode] = useState('');
+  const [vadImportance, setVadImportance] = useState('INFO');
+
   const [submitting, setSubmitting] = useState(false);
+
+  const maxRooms = getMaxRoomsForBuilding(building);
+  const availableRooms = getRoomsListForBuilding(building);
 
   useEffect(() => {
     if (!isOpen) return;
-    if (prefill.building) setBuilding(prefill.building);
+    if (prefill.building) {
+      setBuilding(prefill.building);
+      setVadBuilding(prefill.building);
+    }
     if (prefill.start_date) setStartDate(prefill.start_date);
     if (prefill.end_date) setEndDate(prefill.end_date);
     if (prefill.title) {
       setTaskTitle(prefill.title);
       setPollTitle(prefill.title);
       setInvTitle(prefill.title);
+      setVadTitle(prefill.title);
     }
+    if (prefill.description) setPollDesc(prefill.description);
+    if (prefill.content) setVadContent(prefill.content);
+    if (prefill.category) setVadCategory(prefill.category);
+    if (prefill.code_to_copy) setVadCode(prefill.code_to_copy);
   }, [isOpen, prefill]);
+
+  useEffect(() => {
+    setChambersUsed((prev) => Math.max(1, Math.min(maxRooms, Number(prev) || 1)));
+    setSelectedRooms((prev) => prev.filter((rn) => availableRooms.some((ar) => ar.name === rn)));
+  }, [building, maxRooms]);
 
   if (!isOpen) return null;
 
   const titles = {
-    stay: { icon: 'calendar_month', label: 'Nouvelle réservation de séjour (Bac à sable)' },
-    task: { icon: 'add_task', label: 'Créer une tâche opérationnelle (Bac à sable)' },
-    poll: { icon: 'how_to_vote', label: 'Créer un scrutin / sondage (Bac à sable)' },
-    document: { icon: 'receipt_long', label: 'Enregistrer une facture / dépense (Bac à sable)' },
+    stay: { icon: 'calendar_month', label: 'Nouvelle réservation de séjour' },
+    task: { icon: 'add_task', label: 'Créer une tâche opérationnelle' },
+    poll: { icon: 'how_to_vote', label: 'Créer un scrutin / sondage' },
+    document: { icon: 'receipt_long', label: 'Enregistrer une facture / dépense' },
+    vademecum: { icon: 'menu_book', label: 'Ajouter une fiche au Vademecum' },
   };
   const header = titles[type] || titles.stay;
+
+  const toggleRoomChip = (roomName) => {
+    setSelectedRooms((prev) => {
+      const next = prev.includes(roomName) ? prev.filter((r) => r !== roomName) : [...prev, roomName];
+      if (next.length > 0) {
+        setChambersUsed(Math.min(maxRooms, next.length));
+      }
+      return next;
+    });
+  };
 
   const handleSubmit = async (e) => {
     e.preventDefault();
@@ -936,7 +1543,8 @@ export function ToasterSandboxFormModal({ modalState, onClose, onSubmitSandboxAc
           start_date: startDate,
           end_date: endDate,
           guest_count: Number(guestCount) || 1,
-          chambers_used: Math.max(1, Math.ceil((Number(guestCount) || 1) / 2)),
+          chambers_used: Math.max(1, Math.min(maxRooms, Number(chambersUsed) || 1)),
+          selected_rooms: selectedRooms,
           activate_heating: activateHeating,
         });
       } else if (type === 'task') {
@@ -956,6 +1564,7 @@ export function ToasterSandboxFormModal({ modalState, onClose, onSubmitSandboxAc
         await onSubmitSandboxAction('vote', {
           operation: 'create',
           title: pollTitle.trim(),
+          description: pollDesc.trim() || pollTitle.trim(),
           options: opts.length > 0 ? opts : ['POUR', 'CONTRE', 'ABSTENTION'],
           allow_multiple_choices: pollMulti,
         });
@@ -967,6 +1576,16 @@ export function ToasterSandboxFormModal({ modalState, onClose, onSubmitSandboxAc
           building,
           advanced_by_member: invAdvanced,
         });
+      } else if (type === 'vademecum') {
+        await onSubmitSandboxAction('vademecum', {
+          operation: 'create',
+          building: vadBuilding,
+          category: vadCategory,
+          title: vadTitle.trim(),
+          content: vadContent.trim(),
+          code_to_copy: vadCode.trim(),
+          importance: vadImportance,
+        });
       }
       onClose();
     } finally {
@@ -976,8 +1595,8 @@ export function ToasterSandboxFormModal({ modalState, onClose, onSubmitSandboxAc
 
   return (
     <div className="fixed inset-0 z-50 bg-slate-900/45 backdrop-blur-xs flex items-center justify-center p-4 animate-in fade-in duration-150">
-      <div className="w-full max-w-md rounded-3xl bg-white dark:bg-slate-900 border border-border-subtle shadow-2xl overflow-hidden">
-        <div className="px-5 py-4 bg-canvas-slate border-b border-border-subtle flex items-center justify-between">
+      <div className="w-full max-w-md rounded-3xl bg-white dark:bg-slate-900 border border-border-subtle shadow-2xl overflow-hidden max-h-[90vh] flex flex-col">
+        <div className="px-5 py-4 bg-canvas-slate border-b border-border-subtle flex items-center justify-between shrink-0">
           <div className="flex items-center gap-2">
             <span className="material-symbols-outlined text-primary text-[20px]">{header.icon}</span>
             <h3 className="text-sm font-bold text-forest-deep">{header.label}</h3>
@@ -991,22 +1610,26 @@ export function ToasterSandboxFormModal({ modalState, onClose, onSubmitSandboxAc
           </button>
         </div>
 
-        <form onSubmit={handleSubmit} className="p-5 space-y-3.5 text-xs">
+        <form onSubmit={handleSubmit} className="p-5 space-y-3.5 text-xs overflow-y-auto">
           {type === 'stay' && (
             <>
               <div>
                 <label className="font-bold text-slate-700 block mb-1">Bâtiment</label>
-                <div className="grid grid-cols-2 gap-2">
-                  {['Presbytère', 'Rosings'].map((b) => (
+                <div className="grid grid-cols-3 gap-1.5">
+                  {[
+                    { val: 'Presbytère', lbl: 'Presbytère (5)' },
+                    { val: 'Rosings', lbl: 'Rosings (2)' },
+                    { val: 'Presbytère & Rosings', lbl: 'Tout (7)' },
+                  ].map((b) => (
                     <button
-                      key={b}
+                      key={b.val}
                       type="button"
-                      onClick={() => setBuilding(b)}
-                      className={`py-2 rounded-xl font-bold border cursor-pointer ${
-                        building === b ? 'bg-primary text-white border-primary' : 'bg-slate-50 text-slate-700 border-slate-200'
+                      onClick={() => setBuilding(b.val)}
+                      className={`py-2 px-1.5 rounded-xl font-bold border cursor-pointer text-[11px] ${
+                        building === b.val ? 'bg-primary text-white border-primary' : 'bg-slate-50 text-slate-700 border-slate-200'
                       }`}
                     >
-                      {b}
+                      {b.lbl}
                     </button>
                   ))}
                 </div>
@@ -1033,28 +1656,61 @@ export function ToasterSandboxFormModal({ modalState, onClose, onSubmitSandboxAc
                   />
                 </div>
               </div>
-              <div className="grid grid-cols-2 gap-2.5 items-center">
+              <div className="grid grid-cols-2 gap-2.5">
                 <div>
                   <label className="font-bold text-slate-700 block mb-1">Occupants</label>
                   <input
                     type="number"
                     min="1"
-                    max="15"
+                    max="20"
                     value={guestCount}
                     onChange={(e) => setGuestCount(e.target.value)}
                     className="w-full h-10 px-3 rounded-xl border border-slate-200"
                   />
                 </div>
-                <label className="flex items-center gap-2 pt-5 cursor-pointer font-semibold text-slate-700">
+                <div>
+                  <label className="font-bold text-slate-700 block mb-1">Chambres (max {maxRooms})</label>
                   <input
-                    type="checkbox"
-                    checked={activateHeating}
-                    onChange={(e) => setActivateHeating(e.target.checked)}
-                    className="rounded text-primary"
+                    type="number"
+                    min="1"
+                    max={maxRooms}
+                    value={chambersUsed}
+                    onChange={(e) => setChambersUsed(Math.max(1, Math.min(maxRooms, Number(e.target.value) || 1)))}
+                    className="w-full h-10 px-3 rounded-xl border border-slate-200"
                   />
-                  <span>Chauffage 20 °C</span>
-                </label>
+                </div>
               </div>
+              <div>
+                <label className="font-bold text-slate-700 block mb-1.5">Chambres précises (optionnel)</label>
+                <div className="flex flex-wrap gap-1.5">
+                  {availableRooms.map((r) => {
+                    const active = selectedRooms.includes(r.name);
+                    return (
+                      <button
+                        key={r.name}
+                        type="button"
+                        onClick={() => toggleRoomChip(r.name)}
+                        className={`px-2.5 py-1 rounded-full border text-[11px] font-semibold cursor-pointer transition-colors ${
+                          active
+                            ? 'bg-emerald-700 text-white border-emerald-700'
+                            : 'bg-slate-50 text-slate-700 border-slate-200 hover:border-emerald-400'
+                        }`}
+                      >
+                        {active ? '✓ ' : ''}{r.shortLabel}
+                      </button>
+                    );
+                  })}
+                </div>
+              </div>
+              <label className="flex items-center gap-2 pt-1 cursor-pointer font-semibold text-slate-700">
+                <input
+                  type="checkbox"
+                  checked={activateHeating}
+                  onChange={(e) => setActivateHeating(e.target.checked)}
+                  className="rounded text-primary"
+                />
+                <span>Activer le chauffage Presbytère (20 °C)</span>
+              </label>
             </>
           )}
 
@@ -1131,10 +1787,20 @@ export function ToasterSandboxFormModal({ modalState, onClose, onSubmitSandboxAc
                 <input
                   type="text"
                   required
-                  placeholder="Ex : Choix du week-end d'entretien d'automne"
+                  placeholder="Ex : Dates du ménage de printemps 2027"
                   value={pollTitle}
                   onChange={(e) => setPollTitle(e.target.value)}
                   className="w-full h-10 px-3 rounded-xl border border-slate-200"
+                />
+              </div>
+              <div>
+                <label className="font-bold text-slate-700 block mb-1">Texte explicatif du scrutin</label>
+                <textarea
+                  rows={2}
+                  placeholder="Contexte et question posée aux associés..."
+                  value={pollDesc}
+                  onChange={(e) => setPollDesc(e.target.value)}
+                  className="w-full p-2.5 rounded-xl border border-slate-200"
                 />
               </div>
               <div>
@@ -1207,6 +1873,82 @@ export function ToasterSandboxFormModal({ modalState, onClose, onSubmitSandboxAc
             </>
           )}
 
+          {type === 'vademecum' && (
+            <>
+              <div className="grid grid-cols-2 gap-2.5">
+                <div>
+                  <label className="font-bold text-slate-700 block mb-1">Bâtiment</label>
+                  <select
+                    value={vadBuilding}
+                    onChange={(e) => setVadBuilding(e.target.value)}
+                    className="w-full h-10 px-3 rounded-xl border border-slate-200 bg-white"
+                  >
+                    <option>Presbytère</option>
+                    <option>Rosings</option>
+                  </select>
+                </div>
+                <div>
+                  <label className="font-bold text-slate-700 block mb-1">Catégorie</label>
+                  <select
+                    value={vadCategory}
+                    onChange={(e) => setVadCategory(e.target.value)}
+                    className="w-full h-10 px-3 rounded-xl border border-slate-200 bg-white"
+                  >
+                    {VADEMECUM_CATS.map((c) => (
+                      <option key={c}>{c}</option>
+                    ))}
+                  </select>
+                </div>
+              </div>
+              <div>
+                <label className="font-bold text-slate-700 block mb-1">Titre de la fiche *</label>
+                <input
+                  type="text"
+                  required
+                  placeholder="Ex : Wi-Fi Domaine (Fibre Presbytère)"
+                  value={vadTitle}
+                  onChange={(e) => setVadTitle(e.target.value)}
+                  className="w-full h-10 px-3 rounded-xl border border-slate-200"
+                />
+              </div>
+              <div>
+                <label className="font-bold text-slate-700 block mb-1">Instructions pratiques *</label>
+                <textarea
+                  rows={3}
+                  required
+                  value={vadContent}
+                  onChange={(e) => setVadContent(e.target.value)}
+                  placeholder="Détails clairs et utiles pour la famille..."
+                  className="w-full p-2.5 rounded-xl border border-slate-200"
+                />
+              </div>
+              <div className="grid grid-cols-2 gap-2.5">
+                <div>
+                  <label className="font-bold text-slate-700 block mb-1">Code à copier (optionnel)</label>
+                  <input
+                    type="text"
+                    placeholder="Mot de passe, digicode..."
+                    value={vadCode}
+                    onChange={(e) => setVadCode(e.target.value)}
+                    className="w-full h-10 px-3 rounded-xl border border-slate-200 font-mono"
+                  />
+                </div>
+                <div>
+                  <label className="font-bold text-slate-700 block mb-1">Importance</label>
+                  <select
+                    value={vadImportance}
+                    onChange={(e) => setVadImportance(e.target.value)}
+                    className="w-full h-10 px-3 rounded-xl border border-slate-200 bg-white"
+                  >
+                    <option value="INFO">INFO</option>
+                    <option value="IMPORTANT">IMPORTANT</option>
+                    <option value="CRITIQUE">CRITIQUE</option>
+                  </select>
+                </div>
+              </div>
+            </>
+          )}
+
           <div className="pt-2 flex items-center justify-end gap-2">
             <button
               type="button"
@@ -1220,7 +1962,7 @@ export function ToasterSandboxFormModal({ modalState, onClose, onSubmitSandboxAc
               disabled={submitting}
               className="px-5 py-2 rounded-full bg-primary hover:bg-forest-deep text-white font-bold shadow-xs cursor-pointer disabled:opacity-50"
             >
-              {submitting ? 'Exécution...' : 'Exécuter en bac à sable'}
+              {submitting ? 'Enregistrement...' : 'Confirmer et enregistrer'}
             </button>
           </div>
         </form>
@@ -1228,3 +1970,5 @@ export function ToasterSandboxFormModal({ modalState, onClose, onSubmitSandboxAc
     </div>
   );
 }
+
+export const ToasterActionFormModal = ToasterSandboxFormModal;

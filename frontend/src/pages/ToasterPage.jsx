@@ -3,7 +3,9 @@ import {
   ToasterMarkdown,
   ToasterActivityAccordion,
   ToasterComponentRenderer,
-  ToasterSandboxFormModal,
+  ToasterActionFormModal,
+  getMaxRoomsForBuilding,
+  getRoomsListForBuilding,
 } from '../components/ToasterSharedComponents';
 
 const STATUTORY_MEMBERS_FALLBACK = [
@@ -15,6 +17,14 @@ const STATUTORY_MEMBERS_FALLBACK = [
   { id: 4, prenom: 'Joséphine', nom: 'Joséphine Jamet', displayLabel: 'Joséphine Jamet' },
   { id: 5, prenom: 'Eugénie', nom: 'Eugénie Jamet', displayLabel: 'Eugénie Jamet' },
 ];
+
+const MONTHS_FR = [
+  'janvier', 'février', 'mars', 'avril', 'mai', 'juin',
+  'juillet', 'août', 'septembre', 'octobre', 'novembre', 'décembre',
+];
+const DAYS_FULL_FR = ['Dimanche', 'Lundi', 'Mardi', 'Mercredi', 'Jeudi', 'Vendredi', 'Samedi'];
+const DAYS_SHORT_FR = ['Dim.', 'Lun.', 'Mar.', 'Mer.', 'Jeu.', 'Ven.', 'Sam.'];
+const CAL_HEADERS_FR = ['L', 'M', 'M', 'J', 'V', 'S', 'D'];
 
 function sanitizeFamilyLabel(raw) {
   if (!raw) return '';
@@ -62,6 +72,142 @@ function getAuthHeaders() {
   return headers;
 }
 
+function formatFrenchDateOption(startDate, endDate = null) {
+  const d1 = new Date(startDate.getFullYear(), startDate.getMonth(), startDate.getDate());
+  if (!endDate || d1.getTime() === endDate.getTime()) {
+    return `${DAYS_FULL_FR[d1.getDay()]} ${d1.getDate()} ${MONTHS_FR[d1.getMonth()]} ${d1.getFullYear()}`;
+  }
+  const d2 = new Date(endDate.getFullYear(), endDate.getMonth(), endDate.getDate());
+  const first = d1 <= d2 ? d1 : d2;
+  const second = d1 <= d2 ? d2 : d1;
+  if (first.getMonth() === second.getMonth() && first.getFullYear() === second.getFullYear()) {
+    return `${DAYS_SHORT_FR[first.getDay()]} ${first.getDate()} – ${DAYS_SHORT_FR[second.getDay()]} ${second.getDate()} ${MONTHS_FR[second.getMonth()]} ${second.getFullYear()}`;
+  }
+  return `${DAYS_SHORT_FR[first.getDay()]} ${first.getDate()} ${MONTHS_FR[first.getMonth()]} – ${DAYS_SHORT_FR[second.getDay()]} ${second.getDate()} ${MONTHS_FR[second.getMonth()]} ${second.getFullYear()}`;
+}
+
+function MiniFrenchDatePicker({ onPickDateLabel, onClose }) {
+  const now = new Date();
+  const [year, setYear] = useState(now.getMonth() >= 10 ? now.getFullYear() + 1 : now.getFullYear());
+  const [month, setMonth] = useState(now.getMonth() >= 10 ? 3 : now.getMonth()); // 0-indexed (3 = avril)
+  const [rangeMode, setRangeMode] = useState(true);
+  const [rangeStart, setRangeStart] = useState(null);
+
+  const firstDay = new Date(year, month, 1);
+  const startOffset = (firstDay.getDay() + 6) % 7;
+  const daysInMonth = new Date(year, month + 1, 0).getDate();
+  const cells = [];
+  for (let i = 0; i < startOffset; i += 1) cells.push(null);
+  for (let d = 1; d <= daysInMonth; d += 1) cells.push(new Date(year, month, d));
+
+  const prevMonth = () => {
+    if (month === 0) {
+      setMonth(11);
+      setYear((y) => y - 1);
+    } else {
+      setMonth((m) => m - 1);
+    }
+  };
+  const nextMonth = () => {
+    if (month === 11) {
+      setMonth(0);
+      setYear((y) => y + 1);
+    } else {
+      setMonth((m) => m + 1);
+    }
+  };
+
+  const handleDayClick = (dt) => {
+    if (!rangeMode) {
+      onPickDateLabel(formatFrenchDateOption(dt));
+      onClose();
+      return;
+    }
+    if (!rangeStart) {
+      setRangeStart(dt);
+    } else {
+      onPickDateLabel(formatFrenchDateOption(rangeStart, dt));
+      setRangeStart(null);
+      onClose();
+    }
+  };
+
+  return (
+    <div className="mt-1.5 p-3 rounded-2xl bg-white border border-purple-200 shadow-lg w-64 space-y-2 z-30">
+      <div className="flex items-center justify-between gap-1">
+        <button type="button" onClick={prevMonth} className="w-6 h-6 rounded-full hover:bg-slate-100 flex items-center justify-center cursor-pointer">
+          <span className="material-symbols-outlined text-[16px]">chevron_left</span>
+        </button>
+        <span className="text-xs font-bold text-forest-deep capitalize">
+          {MONTHS_FR[month]} {year}
+        </span>
+        <button type="button" onClick={nextMonth} className="w-6 h-6 rounded-full hover:bg-slate-100 flex items-center justify-center cursor-pointer">
+          <span className="material-symbols-outlined text-[16px]">chevron_right</span>
+        </button>
+      </div>
+
+      <div className="flex items-center justify-between gap-1 text-[10.5px]">
+        <div className="inline-flex rounded-full bg-slate-100 p-0.5">
+          <button
+            type="button"
+            onClick={() => { setRangeMode(false); setRangeStart(null); }}
+            className={`px-2 py-0.5 rounded-full font-semibold cursor-pointer ${!rangeMode ? 'bg-white text-purple-800 shadow-2xs' : 'text-slate-600'}`}
+          >
+            1 jour
+          </button>
+          <button
+            type="button"
+            onClick={() => { setRangeMode(true); setRangeStart(null); }}
+            className={`px-2 py-0.5 rounded-full font-semibold cursor-pointer ${rangeMode ? 'bg-white text-purple-800 shadow-2xs' : 'text-slate-600'}`}
+          >
+            Week-end / Plage
+          </button>
+        </div>
+        <button type="button" onClick={onClose} className="text-slate-400 hover:text-slate-700 cursor-pointer">
+          <span className="material-symbols-outlined text-[15px]">close</span>
+        </button>
+      </div>
+
+      {rangeMode && (
+        <p className="text-[10px] text-purple-700 font-medium">
+          {rangeStart
+            ? `Début : ${rangeStart.getDate()} ${MONTHS_FR[rangeStart.getMonth()]} — cliquez la date de fin`
+            : 'Cliquez le jour de début, puis le jour de fin'}
+        </p>
+      )}
+
+      <div className="grid grid-cols-7 gap-0.5 text-center text-[10px] font-bold text-slate-400">
+        {CAL_HEADERS_FR.map((h, i) => (
+          <div key={i}>{h}</div>
+        ))}
+      </div>
+      <div className="grid grid-cols-7 gap-0.5">
+        {cells.map((dt, idx) => {
+          if (!dt) return <div key={`e-${idx}`} className="h-7" />;
+          const isStart = rangeStart && dt.getTime() === rangeStart.getTime();
+          const isWeekend = dt.getDay() === 0 || dt.getDay() === 6;
+          return (
+            <button
+              key={dt.toISOString()}
+              type="button"
+              onClick={() => handleDayClick(dt)}
+              className={`h-7 rounded-lg text-[11px] font-semibold transition-colors cursor-pointer ${
+                isStart
+                  ? 'bg-purple-700 text-white font-bold'
+                  : isWeekend
+                  ? 'bg-purple-50 text-purple-900 hover:bg-purple-600 hover:text-white'
+                  : 'text-slate-700 hover:bg-emerald-50 hover:text-emerald-900'
+              }`}
+            >
+              {dt.getDate()}
+            </button>
+          );
+        })}
+      </div>
+    </div>
+  );
+}
+
 const ACTION_TYPE_META = {
   stay: { icon: 'calendar_month', badge: 'Séjour & Réservation', color: 'bg-amber-100 text-amber-900 border-amber-300' },
   heating: { icon: 'thermostat', badge: 'Chauffage & Piscine', color: 'bg-teal-100 text-teal-900 border-teal-300' },
@@ -70,14 +216,8 @@ const ACTION_TYPE_META = {
   task: { icon: 'task_alt', badge: 'Tâche & Chantier', color: 'bg-sky-100 text-sky-900 border-sky-300' },
   vote: { icon: 'how_to_vote', badge: 'Scrutin & Vote', color: 'bg-purple-100 text-purple-900 border-purple-300' },
   poll: { icon: 'how_to_vote', badge: 'Scrutin & Vote', color: 'bg-purple-100 text-purple-900 border-purple-300' },
+  vademecum: { icon: 'menu_book', badge: 'Vademecum', color: 'bg-emerald-100 text-emerald-900 border-emerald-300' },
   treasury: { icon: 'account_balance', badge: 'Trésorerie & CCA', color: 'bg-emerald-100 text-emerald-900 border-emerald-300' },
-};
-
-const AUDIT_CATEGORY_META = {
-  VICARE: { icon: 'local_fire_department', label: 'Commande ViCare interceptée', badgeClass: 'bg-amber-100 text-amber-900 border-amber-300' },
-  KLEREO: { icon: 'pool', label: 'Commande Piscine Klereo interceptée', badgeClass: 'bg-sky-100 text-sky-900 border-sky-300' },
-  EMAIL: { icon: 'mail', label: 'E-mail intercepté (non envoyé)', badgeClass: 'bg-purple-100 text-purple-900 border-purple-300' },
-  DB_MUTATION: { icon: 'database', label: 'Écriture SQLite Bac à Sable', badgeClass: 'bg-emerald-100 text-emerald-900 border-emerald-300' },
 };
 
 export default function ToasterPage({ currentUser }) {
@@ -88,35 +228,35 @@ export default function ToasterPage({ currentUser }) {
     return 1;
   });
 
-  const [sandboxState, setSandboxState] = useState(null);
+  const [portalState, setPortalState] = useState(null);
   const [loadingState, setLoadingState] = useState(true);
-  const [resetingSandbox, setResetingSandbox] = useState(false);
   const [errorBanner, setErrorBanner] = useState(null);
+  const [lastFailedPrompt, setLastFailedPrompt] = useState(null);
   const [toastMessage, setToastMessage] = useState(null);
-  const [isAuditDrawerOpen, setIsAuditDrawerOpen] = useState(false);
 
   // Fil de conversation & streaming SSE
   const [messages, setMessages] = useState([]);
   const [inputText, setInputText] = useState('');
   const [isSending, setIsSending] = useState(false);
 
-  // Modale de formulaire interactif bac à sable ouverte depuis un composant partagé
-  const [sandboxModalState, setSandboxModalState] = useState(null);
+  // Modale de formulaire ouverte depuis un composant partagé
+  const [actionModalState, setActionModalState] = useState(null);
 
   // Pièce jointe multimodale (Photo / PDF)
   const [attachment, setAttachment] = useState(null);
   const fileInputRef = useRef(null);
 
-  // Dictée vocale fluide avec envoi automatique sans insérer dans l'input
+  // Dictée vocale fluide
   const [isListening, setIsListening] = useState(false);
   const recognitionRef = useRef(null);
   const voiceTranscriptRef = useRef('');
   const voiceAbortedRef = useRef(false);
   const sendVoiceTriggerRef = useRef(null);
 
-  // Édition inline d'un champ déduit 🟢 / saisie libre 🔴
+  // Édition inline d'un champ déduit 🟢 / saisie libre 🔴 / calendrier options vote
   const [editingField, setEditingField] = useState(null);
   const [customMissingInputs, setCustomMissingInputs] = useState({});
+  const [openDatePickerTarget, setOpenDatePickerTarget] = useState(null); // { msgId, optIdx }
 
   const chatEndRef = useRef(null);
   const messagesRef = useRef(messages);
@@ -134,10 +274,9 @@ export default function ToasterPage({ currentUser }) {
     return Boolean(window.SpeechRecognition || window.webkitSpeechRecognition);
   }, []);
 
-  const loadSandboxState = useCallback(
+  const loadPortalState = useCallback(
     async (memberId = selectedMemberId) => {
       setLoadingState(true);
-      setErrorBanner(null);
       try {
         const res = await fetch(`/api/toaster/state?member_id=${encodeURIComponent(memberId)}`, {
           method: 'GET',
@@ -152,10 +291,13 @@ export default function ToasterPage({ currentUser }) {
           throw new Error(detail);
         }
         const data = await res.json();
-        setSandboxState(data);
+        setPortalState(data);
+        if (data?.active_member?.id && Number(data.active_member.id) !== Number(memberId)) {
+          setSelectedMemberId(Number(data.active_member.id));
+        }
       } catch (err) {
-        console.error('Erreur chargement état bac à sable:', err);
-        setErrorBanner(`Impossible de charger l'état du bac à sable : ${err.message}`);
+        console.error('Erreur chargement état Grille-Pain:', err);
+        setErrorBanner(`Impossible de charger les données du portail : ${err.message}`);
       } finally {
         setLoadingState(false);
       }
@@ -163,16 +305,32 @@ export default function ToasterPage({ currentUser }) {
     [selectedMemberId]
   );
 
+  // Synchroniser automatiquement avec l'utilisateur connecté
   useEffect(() => {
-    loadSandboxState(selectedMemberId);
-  }, [selectedMemberId, loadSandboxState]);
+    if (!currentUser) return;
+    if (typeof currentUser === 'object' && currentUser.id) {
+      setSelectedMemberId(Number(currentUser.id));
+    } else if (typeof currentUser === 'string' && portalState?.members?.length) {
+      const target = currentUser.toLowerCase();
+      const found = portalState.members.find(
+        (m) =>
+          (m.prenom && target.includes(m.prenom.toLowerCase())) ||
+          (m.name && target.includes(m.name.toLowerCase()))
+      );
+      if (found) setSelectedMemberId(Number(found.id));
+    }
+  }, [currentUser, portalState?.members]);
+
+  useEffect(() => {
+    loadPortalState(selectedMemberId);
+  }, [selectedMemberId, loadPortalState]);
 
   useEffect(() => {
     chatEndRef.current?.scrollIntoView({ behavior: 'smooth' });
   }, [messages, isSending]);
 
   const membersOptions = useMemo(() => {
-    const rawMembers = sandboxState?.members;
+    const rawMembers = portalState?.members;
     if (Array.isArray(rawMembers) && rawMembers.length > 0) {
       return rawMembers.map((m) => ({
         ...m,
@@ -182,29 +340,22 @@ export default function ToasterPage({ currentUser }) {
       }));
     }
     return STATUTORY_MEMBERS_FALLBACK;
-  }, [sandboxState]);
+  }, [portalState]);
 
   const activeMemberObj = useMemo(() => {
     return (
+      portalState?.active_member ||
       membersOptions.find((m) => Number(m.id) === Number(selectedMemberId)) ||
-      sandboxState?.active_member ||
-      sandboxState?.member ||
       membersOptions[0]
     );
-  }, [membersOptions, selectedMemberId, sandboxState]);
+  }, [membersOptions, selectedMemberId, portalState]);
 
   const activeCcaBalance = useMemo(() => {
-    if (!sandboxState) return null;
+    if (!portalState) return null;
     const candidates = [
-      sandboxState.active_member?.cca_balance,
-      sandboxState.active_member?.balance,
-      sandboxState.active_member?.solde_cca,
-      sandboxState.member_summary?.cca_balance,
-      sandboxState.member_summary?.balance,
-      sandboxState.treasury?.balance,
-      sandboxState.cca_balance,
-      activeMemberObj?.cca_balance,
-      activeMemberObj?.balance,
+      portalState.active_member?.cca_balance,
+      portalState.treasury?.balance,
+      portalState.member_summary?.treasury?.balance,
     ];
     for (const c of candidates) {
       if (c !== undefined && c !== null && !isNaN(Number(c))) {
@@ -212,41 +363,7 @@ export default function ToasterPage({ currentUser }) {
       }
     }
     return 0;
-  }, [sandboxState, activeMemberObj]);
-
-  const auditLogs = useMemo(() => {
-    const logs = sandboxState?.sandbox_audit_logs || sandboxState?.audit_logs || [];
-    return Array.isArray(logs) ? logs : [];
-  }, [sandboxState]);
-
-  const handleResetSandbox = async () => {
-    setResetingSandbox(true);
-    setErrorBanner(null);
-    try {
-      const res = await fetch('/api/toaster/reset', {
-        method: 'POST',
-        headers: getAuthHeaders(),
-        body: JSON.stringify({ member_id: selectedMemberId }),
-      });
-      if (!res.ok) {
-        let detail = `Erreur HTTP ${res.status}`;
-        try {
-          const errJson = await res.json();
-          detail = errJson.detail || errJson.error || errJson.message || detail;
-        } catch (_) {}
-        throw new Error(detail);
-      }
-      setMessages([]);
-      setAttachment(null);
-      await loadSandboxState(selectedMemberId);
-      showToast('Bac à sable réinitialisé depuis la base de production PostgreSQL.');
-    } catch (err) {
-      console.error('Erreur réinitialisation bac à sable:', err);
-      setErrorBanner(`Échec de la réinitialisation du bac à sable : ${err.message}`);
-    } finally {
-      setResetingSandbox(false);
-    }
-  };
+  }, [portalState]);
 
   const handleFileSelect = (e) => {
     const file = e.target.files?.[0];
@@ -302,6 +419,25 @@ export default function ToasterPage({ currentUser }) {
       }
     });
 
+    if (rawCard.action_type === 'vote' || rawCard.action_type === 'poll') {
+      if (!Array.isArray(basePayload.options)) {
+        const rawOpts = basePayload.options;
+        basePayload.options =
+          typeof rawOpts === 'string' && rawOpts.trim()
+            ? rawOpts.split(/[,\n]/).map((s) => s.trim()).filter(Boolean)
+            : ['POUR', 'CONTRE', 'ABSTENTION'];
+      }
+    }
+    if (rawCard.action_type === 'stay') {
+      if (!Array.isArray(basePayload.selected_rooms)) {
+        const sr = basePayload.selected_rooms;
+        basePayload.selected_rooms =
+          typeof sr === 'string' && sr.trim()
+            ? sr.split(',').map((s) => s.trim()).filter(Boolean)
+            : [];
+      }
+    }
+
     return {
       action_type: rawCard.action_type || 'action',
       title: sanitizeFamilyLabel(rawCard.title || 'Proposition d’action'),
@@ -316,7 +452,6 @@ export default function ToasterPage({ currentUser }) {
     };
   }, []);
 
-  // Envoi unifié (clavier ou fin d'enregistrement vocal direct) avec flux SSE /api/toaster/chat/stream
   const sendMessagePayload = useCallback(
     async ({ textOverride = null, clearComposerText = true } = {}) => {
       const rawText = textOverride !== null ? String(textOverride) : inputText;
@@ -349,10 +484,13 @@ export default function ToasterPage({ currentUser }) {
         timestamp: new Date().toISOString(),
       };
 
-      const historyForApi = [...messagesRef.current, userMsg].map((m) => ({
-        role: m.role === 'assistant' || m.role === 'model' ? 'assistant' : 'user',
-        content: m.content,
-      }));
+      // Fix Ann. 5/6 : ne jamais inclure dans l'historique un tour assistant vide issu d'une erreur précédente
+      const historyForApi = [...messagesRef.current, userMsg]
+        .filter((m) => m.role === 'user' || (m.content && m.content.trim().length > 0))
+        .map((m) => ({
+          role: m.role === 'assistant' || m.role === 'model' ? 'assistant' : 'user',
+          content: m.content,
+        }));
 
       setMessages((prev) => [...prev, userMsg, assistantPlaceholder]);
       if (clearComposerText) {
@@ -361,6 +499,7 @@ export default function ToasterPage({ currentUser }) {
       }
       setIsSending(true);
       setErrorBanner(null);
+      setLastFailedPrompt(null);
 
       const updateAssistant = (updater) => {
         setMessages((prev) =>
@@ -374,6 +513,76 @@ export default function ToasterPage({ currentUser }) {
         attachment_base64: currentAttachment ? currentAttachment.base64 : null,
         attachment_mime: currentAttachment ? currentAttachment.mime : null,
         attachment_name: currentAttachment ? currentAttachment.name : null,
+      };
+
+      let receivedDone = false;
+
+      const processSseFrame = (frame) => {
+        const lines = frame.split('\n');
+        for (const line of lines) {
+          const trimmedLine = line.trim();
+          if (!trimmedLine.startsWith('data:')) continue;
+          const jsonPayload = trimmedLine.slice(5).trim();
+          if (!jsonPayload) continue;
+
+          let ev;
+          try {
+            ev = JSON.parse(jsonPayload);
+          } catch (_) {
+            continue;
+          }
+
+          if (ev.type === 'error') {
+            throw new Error(ev.detail || 'Erreur lors du traitement de la demande.');
+          }
+
+          if (ev.type === 'thought_delta' && ev.delta) {
+            updateAssistant((m) => ({
+              ...m,
+              thoughts: `${m.thoughts || ''}${ev.delta}`,
+            }));
+          } else if (ev.type === 'tool_step' && ev.step) {
+            updateAssistant((m) => {
+              const prevSteps = Array.isArray(m.toolSteps) ? [...m.toolSteps] : [];
+              const existingIdx = prevSteps.findIndex((s) => s.id === ev.step.id);
+              if (existingIdx >= 0) prevSteps[existingIdx] = ev.step;
+              else prevSteps.push(ev.step);
+              return { ...m, toolSteps: prevSteps };
+            });
+          } else if (ev.type === 'ui_component' && ev.component) {
+            updateAssistant((m) => ({
+              ...m,
+              uiComponents: [...(m.uiComponents || []), ev.component],
+            }));
+          } else if (ev.type === 'text_delta' && ev.delta) {
+            updateAssistant((m) => ({
+              ...m,
+              content: sanitizeFamilyLabel(`${m.content || ''}${ev.delta}`),
+            }));
+          } else if (ev.type === 'action_card' && ev.action_card) {
+            const cardObj = normalizeActionCard(ev.action_card);
+            updateAssistant((m) => ({
+              ...m,
+              action_card: cardObj,
+            }));
+          } else if (ev.type === 'done') {
+            receivedDone = true;
+            const finalReply = sanitizeFamilyLabel(ev.reply || ev.message || ev.content || '');
+            const finalCard = ev.action_card ? normalizeActionCard(ev.action_card) : null;
+            updateAssistant((m) => ({
+              ...m,
+              content: finalReply || m.content,
+              thoughts: ev.thoughts !== undefined ? ev.thoughts : m.thoughts,
+              toolSteps: Array.isArray(ev.tool_steps) && ev.tool_steps.length > 0 ? ev.tool_steps : m.toolSteps,
+              uiComponents: Array.isArray(ev.ui_components) ? ev.ui_components : m.uiComponents,
+              action_card: finalCard || m.action_card,
+              isStreaming: false,
+            }));
+            if (ev.state) {
+              setPortalState(ev.state);
+            }
+          }
+        }
       };
 
       try {
@@ -406,91 +615,33 @@ export default function ToasterPage({ currentUser }) {
           sseBuffer += decoder.decode(value, { stream: true });
           const frames = sseBuffer.split('\n\n');
           sseBuffer = frames.pop() || '';
-
           for (const frame of frames) {
-            const lines = frame.split('\n');
-            for (const line of lines) {
-              const trimmedLine = line.trim();
-              if (!trimmedLine.startsWith('data:')) continue;
-              const jsonPayload = trimmedLine.slice(5).trim();
-              if (!jsonPayload) continue;
-
-              let ev;
-              try {
-                ev = JSON.parse(jsonPayload);
-              } catch (_) {
-                continue;
-              }
-
-              if (ev.type === 'error') {
-                throw new Error(ev.detail || "Erreur lors du traitement de la demande.");
-              }
-
-              if (ev.type === 'thought_delta' && ev.delta) {
-                updateAssistant((m) => ({
-                  ...m,
-                  thoughts: `${m.thoughts || ''}${ev.delta}`,
-                }));
-              } else if (ev.type === 'tool_step' && ev.step) {
-                updateAssistant((m) => {
-                  const prevSteps = Array.isArray(m.toolSteps) ? [...m.toolSteps] : [];
-                  const existingIdx = prevSteps.findIndex((s) => s.id === ev.step.id);
-                  if (existingIdx >= 0) {
-                    prevSteps[existingIdx] = ev.step;
-                  } else {
-                    prevSteps.push(ev.step);
-                  }
-                  return { ...m, toolSteps: prevSteps };
-                });
-              } else if (ev.type === 'ui_component' && ev.component) {
-                updateAssistant((m) => ({
-                  ...m,
-                  uiComponents: [...(m.uiComponents || []), ev.component],
-                }));
-              } else if (ev.type === 'text_delta' && ev.delta) {
-                updateAssistant((m) => ({
-                  ...m,
-                  content: sanitizeFamilyLabel(`${m.content || ''}${ev.delta}`),
-                }));
-              } else if (ev.type === 'action_card' && ev.action_card) {
-                const cardObj = normalizeActionCard(ev.action_card);
-                updateAssistant((m) => ({
-                  ...m,
-                  action_card: cardObj,
-                }));
-              } else if (ev.type === 'done') {
-                const finalReply = sanitizeFamilyLabel(
-                  ev.reply || ev.message || ev.content || ''
-                );
-                const finalCard = ev.action_card ? normalizeActionCard(ev.action_card) : null;
-                updateAssistant((m) => ({
-                  ...m,
-                  content: finalReply || m.content,
-                  thoughts: ev.thoughts !== undefined ? ev.thoughts : m.thoughts,
-                  toolSteps: Array.isArray(ev.tool_steps) && ev.tool_steps.length > 0 ? ev.tool_steps : m.toolSteps,
-                  uiComponents:
-                    Array.isArray(ev.ui_components) && ev.ui_components.length > 0
-                      ? ev.ui_components
-                      : m.uiComponents,
-                  action_card: finalCard || m.action_card,
-                  isStreaming: false,
-                }));
-                if (ev.state) {
-                  setSandboxState(ev.state);
-                }
-              }
-            }
+            processSseFrame(frame);
           }
         }
 
-        // Sécurité de clôture du statut streaming
-        updateAssistant((m) => (m.isStreaming ? { ...m, isStreaming: false } : m));
+        // Flush final du tampon SSE (Fix Ann. 5/6)
+        sseBuffer += decoder.decode();
+        if (sseBuffer.trim()) {
+          for (const frame of sseBuffer.split('\n\n')) {
+            if (frame.trim()) processSseFrame(frame);
+          }
+        }
+
+        if (!receivedDone) {
+          throw new Error(
+            "La connexion avec l'assistant a été interrompue avant la fin de la réponse (timeout). Cliquez sur Réessayer."
+          );
+        }
       } catch (err) {
         console.error('Erreur /api/toaster/chat/stream:', err);
         setErrorBanner(`Erreur lors de l'appel à l'assistant : ${err.message}`);
+        setLastFailedPrompt(trimmed);
+        // Fail-Fast : retirer la bulle assistant incomplète (et éviter toute fuite dans le tour suivant)
         setMessages((prev) =>
           prev.filter((m) => !(m.id === assistantId && !m.content && !m.action_card))
         );
+        updateAssistant((m) => (m.isStreaming ? { ...m, isStreaming: false } : m));
       } finally {
         setIsSending(false);
       }
@@ -507,7 +658,6 @@ export default function ToasterPage({ currentUser }) {
     sendMessagePayload({ textOverride: null, clearComposerText: true });
   };
 
-  // Dictée vocale moderne : écoute fluide et envoi direct à la fin sans insérer le transcript dans l'input
   const handleToggleSpeech = () => {
     if (!speechSupported) {
       setErrorBanner('La reconnaissance vocale n’est pas supportée par ce navigateur.');
@@ -574,8 +724,7 @@ export default function ToasterPage({ currentUser }) {
     setIsListening(false);
   };
 
-  // Actions bac à sable directes depuis les composants interactifs partagés (vote, tâche, modales)
-  const executeDirectSandboxAction = useCallback(
+  const executeDirectPortalAction = useCallback(
     async (actionType, payload) => {
       setErrorBanner(null);
       const res = await fetch('/api/toaster/execute', {
@@ -597,130 +746,204 @@ export default function ToasterPage({ currentUser }) {
         throw new Error(detail);
       }
       const resData = await res.json();
-      showToast(resData.message || 'Action enregistrée dans le bac à sable.');
-      await loadSandboxState(selectedMemberId);
+      showToast(resData.message || 'Action enregistrée sur le portail.');
+      await loadPortalState(selectedMemberId);
       return resData;
     },
-    [selectedMemberId, loadSandboxState, showToast]
+    [selectedMemberId, loadPortalState, showToast]
   );
 
-  const handleDirectSandboxVote = useCallback(
-    async (voteId, choicePayload) => {
-      const choiceStr = Array.isArray(choicePayload) ? choicePayload.join(', ') : String(choicePayload || 'POUR');
-      await executeDirectSandboxAction('vote', {
-        operation: 'cast',
-        vote_id: voteId,
-        choice: choiceStr,
+  const handleDirectVote = useCallback(
+    async (pollOrId, choicePayload) => {
+      const projId = typeof pollOrId === 'object' && pollOrId !== null ? pollOrId.id : pollOrId;
+      await executeDirectPortalAction('vote', {
+        operation: 'vote',
+        project_id: projId,
+        vote: choicePayload,
       });
     },
-    [executeDirectSandboxAction]
+    [executeDirectPortalAction]
   );
 
-  const handleDirectSandboxTaskComplete = useCallback(
+  const handleDirectTaskComplete = useCallback(
     async (task) => {
-      await executeDirectSandboxAction('task', {
+      await executeDirectPortalAction('task', {
         operation: 'complete',
         task_id: task.id,
         title: task.title,
       });
     },
-    [executeDirectSandboxAction]
+    [executeDirectPortalAction]
   );
 
-  // Clic sur une option d'un champ ROUGE (🔴) -> bascule immédiate en VERT (🟢)
-  const handleResolveMissingField = (msgId, missingField, chosenOption) => {
+  // Helper générique pour muter une carte d'action
+  const updateCardInMessage = (msgId, cardUpdater) => {
     setMessages((prev) =>
-      prev.map((m) => {
-        if (m.id !== msgId || !m.action_card) return m;
-        const card = m.action_card;
-        const remainingMissing = card.missing_fields.filter((f) => f.key !== missingField.key);
-        const displayValue =
-          chosenOption.label !== undefined && chosenOption.label !== ''
-            ? String(chosenOption.label)
-            : String(chosenOption.value);
-        const rawValue = chosenOption.value !== undefined ? chosenOption.value : chosenOption.label;
-
-        const existingDeducedIdx = card.deduced_fields.findIndex((d) => d.key === missingField.key);
-        let updatedDeduced;
-        if (existingDeducedIdx >= 0) {
-          updatedDeduced = card.deduced_fields.map((d, idx) =>
-            idx === existingDeducedIdx ? { ...d, value: displayValue, raw_value: rawValue } : d
-          );
-        } else {
-          updatedDeduced = [
-            ...card.deduced_fields,
-            {
-              key: missingField.key,
-              label: missingField.label || missingField.question,
-              value: displayValue,
-              raw_value: rawValue,
-            },
-          ];
-        }
-
-        const updatedPayload = {
-          ...(card.payload || {}),
-          [missingField.key]: rawValue,
-        };
-
-        return {
-          ...m,
-          action_card: {
-            ...card,
-            deduced_fields: updatedDeduced,
-            missing_fields: remainingMissing,
-            ready_to_execute: remainingMissing.length === 0,
-            payload: updatedPayload,
-          },
-        };
-      })
+      prev.map((m) => (m.id === msgId && m.action_card ? { ...m, action_card: cardUpdater(m.action_card) } : m))
     );
   };
 
-  // Modification inline d'un champ VERT (🟢)
+  const handleResolveMissingField = (msgId, missingField, chosenOption) => {
+    updateCardInMessage(msgId, (card) => {
+      const remainingMissing = card.missing_fields.filter((f) => f.key !== missingField.key);
+      const displayValue =
+        chosenOption.label !== undefined && chosenOption.label !== ''
+          ? String(chosenOption.label)
+          : String(chosenOption.value);
+      const rawValue = chosenOption.value !== undefined ? chosenOption.value : chosenOption.label;
+
+      const existingDeducedIdx = card.deduced_fields.findIndex((d) => d.key === missingField.key);
+      const updatedDeduced =
+        existingDeducedIdx >= 0
+          ? card.deduced_fields.map((d, idx) =>
+              idx === existingDeducedIdx ? { ...d, value: displayValue, raw_value: rawValue } : d
+            )
+          : [
+              ...card.deduced_fields,
+              {
+                key: missingField.key,
+                label: missingField.label || missingField.question,
+                value: displayValue,
+                raw_value: rawValue,
+              },
+            ];
+
+      const updatedPayload = {
+        ...(card.payload || {}),
+        [missingField.key]: rawValue,
+      };
+      if (card.action_type === 'stay' && missingField.key === 'building') {
+        const newMax = getMaxRoomsForBuilding(rawValue);
+        updatedPayload.max_chambers = newMax;
+        if (Number(updatedPayload.chambers_used || 1) > newMax) {
+          updatedPayload.chambers_used = newMax;
+        }
+      }
+
+      return {
+        ...card,
+        deduced_fields: updatedDeduced,
+        missing_fields: remainingMissing,
+        ready_to_execute: remainingMissing.length === 0,
+        payload: updatedPayload,
+      };
+    });
+  };
+
   const handleSaveEditedDeducedField = (msgId, fieldKey, newValue) => {
     const trimmed = String(newValue ?? '').trim();
     if (!trimmed) {
       setEditingField(null);
       return;
     }
-    setMessages((prev) =>
-      prev.map((m) => {
-        if (m.id !== msgId || !m.action_card) return m;
-        const card = m.action_card;
-        const updatedDeduced = card.deduced_fields.map((d) =>
-          d.key === fieldKey ? { ...d, value: trimmed, raw_value: trimmed } : d
-        );
-        const updatedPayload = {
-          ...(card.payload || {}),
-          [fieldKey]: trimmed,
-        };
-        return {
-          ...m,
-          action_card: {
-            ...card,
-            deduced_fields: updatedDeduced,
-            payload: updatedPayload,
-          },
-        };
-      })
-    );
+    updateCardInMessage(msgId, (card) => {
+      let valToStore = trimmed;
+      if (fieldKey === 'chambers_used' || fieldKey === 'guest_count' || fieldKey === 'charge_points') {
+        valToStore = Number(trimmed) || 1;
+      }
+      if (card.action_type === 'stay' && fieldKey === 'chambers_used') {
+        const maxR = getMaxRoomsForBuilding(card.payload?.building);
+        valToStore = Math.max(1, Math.min(maxR, Number(valToStore) || 1));
+      }
+      const updatedDeduced = card.deduced_fields.map((d) =>
+        d.key === fieldKey ? { ...d, value: String(valToStore), raw_value: valToStore } : d
+      );
+      const updatedPayload = { ...(card.payload || {}), [fieldKey]: valToStore };
+      if (card.action_type === 'stay' && fieldKey === 'building') {
+        const maxR = getMaxRoomsForBuilding(valToStore);
+        updatedPayload.max_chambers = maxR;
+      }
+      return {
+        ...card,
+        deduced_fields: updatedDeduced,
+        payload: updatedPayload,
+      };
+    });
     setEditingField(null);
   };
 
-  // Exécution d'une Carte d'Action Hybride via POST /api/toaster/execute
+  // Helpers dédiés Ann. 1 & 2 (Options de scrutin ligne par ligne + texte description)
+  const handleUpdatePollOption = (msgId, optIdx, newVal) => {
+    updateCardInMessage(msgId, (card) => {
+      const opts = Array.isArray(card.payload?.options) ? [...card.payload.options] : [];
+      opts[optIdx] = newVal;
+      return { ...card, payload: { ...(card.payload || {}), options: opts } };
+    });
+  };
+
+  const handleDeletePollOption = (msgId, optIdx) => {
+    updateCardInMessage(msgId, (card) => {
+      const opts = (Array.isArray(card.payload?.options) ? card.payload.options : []).filter((_, i) => i !== optIdx);
+      return { ...card, payload: { ...(card.payload || {}), options: opts } };
+    });
+  };
+
+  const handleAddPollOption = (msgId, initialText = '') => {
+    updateCardInMessage(msgId, (card) => {
+      const opts = Array.isArray(card.payload?.options) ? [...card.payload.options] : [];
+      opts.push(initialText);
+      return { ...card, payload: { ...(card.payload || {}), options: opts } };
+    });
+  };
+
+  // Helpers dédiés Ann. 4 (Chambres séjour : stepper borné + sélection optionnelle par nom)
+  const handleSetStayChambers = (msgId, nextCount) => {
+    updateCardInMessage(msgId, (card) => {
+      const maxR = getMaxRoomsForBuilding(card.payload?.building);
+      const safeCount = Math.max(1, Math.min(maxR, Number(nextCount) || 1));
+      const remainingMissing = card.missing_fields.filter((f) => f.key !== 'chambers_used');
+      const hasDeduced = card.deduced_fields.some((d) => d.key === 'chambers_used');
+      const updatedDeduced = hasDeduced
+        ? card.deduced_fields.map((d) =>
+            d.key === 'chambers_used' ? { ...d, value: String(safeCount), raw_value: safeCount } : d
+          )
+        : [...card.deduced_fields, { key: 'chambers_used', label: 'Chambres occupées', value: String(safeCount), raw_value: safeCount }];
+      return {
+        ...card,
+        deduced_fields: updatedDeduced,
+        missing_fields: remainingMissing,
+        payload: { ...(card.payload || {}), chambers_used: safeCount, max_chambers: maxR },
+      };
+    });
+  };
+
+  const handleToggleStayRoom = (msgId, roomName) => {
+    updateCardInMessage(msgId, (card) => {
+      const maxR = getMaxRoomsForBuilding(card.payload?.building);
+      const prevRooms = Array.isArray(card.payload?.selected_rooms) ? card.payload.selected_rooms : [];
+      const nextRooms = prevRooms.includes(roomName)
+        ? prevRooms.filter((r) => r !== roomName)
+        : prevRooms.length < maxR
+        ? [...prevRooms, roomName]
+        : prevRooms;
+      const nextCount = nextRooms.length > 0 ? nextRooms.length : Math.min(maxR, Number(card.payload?.chambers_used || 1));
+      const remainingMissing = card.missing_fields.filter((f) => f.key !== 'chambers_used');
+      const hasDeduced = card.deduced_fields.some((d) => d.key === 'chambers_used');
+      const updatedDeduced = hasDeduced
+        ? card.deduced_fields.map((d) =>
+            d.key === 'chambers_used' ? { ...d, value: String(nextCount), raw_value: nextCount } : d
+          )
+        : [...card.deduced_fields, { key: 'chambers_used', label: 'Chambres occupées', value: String(nextCount), raw_value: nextCount }];
+      return {
+        ...card,
+        deduced_fields: updatedDeduced,
+        missing_fields: remainingMissing,
+        payload: {
+          ...(card.payload || {}),
+          selected_rooms: nextRooms,
+          chambers_used: nextCount,
+          max_chambers: maxR,
+        },
+      };
+    });
+  };
+
   const handleExecuteActionCard = async (msgId) => {
     const targetMsg = messages.find((m) => m.id === msgId);
     if (!targetMsg || !targetMsg.action_card) return;
     const card = targetMsg.action_card;
 
-    setMessages((prev) =>
-      prev.map((m) =>
-        m.id === msgId
-          ? { ...m, action_card: { ...m.action_card, executing: true, executionError: null } }
-          : m
-      )
-    );
+    updateCardInMessage(msgId, (c) => ({ ...c, executing: true, executionError: null }));
     setErrorBanner(null);
 
     try {
@@ -730,6 +953,9 @@ export default function ToasterPage({ currentUser }) {
           finalPayload[d.key] = d.raw_value !== undefined ? d.raw_value : d.value;
         }
       });
+      if (card.action_type === 'vote' && Array.isArray(finalPayload.options)) {
+        finalPayload.options = finalPayload.options.map((o) => String(o || '').trim()).filter(Boolean);
+      }
 
       const res = await fetch('/api/toaster/execute', {
         method: 'POST',
@@ -752,50 +978,25 @@ export default function ToasterPage({ currentUser }) {
 
       const resData = await res.json();
       const confirmText = sanitizeFamilyLabel(
-        resData.message ||
-          resData.confirmation ||
-          resData.reply ||
-          'Action confirmée et exécutée dans le bac à sable.'
+        resData.message || resData.confirmation || resData.reply || 'Action confirmée et appliquée.'
       );
-      const newLogs = resData.intercepted_logs || resData.new_audit_logs || resData.sandbox_audit_logs || [];
 
-      setMessages((prev) =>
-        prev.map((m) =>
-          m.id === msgId
-            ? {
-                ...m,
-                action_card: {
-                  ...m.action_card,
-                  executing: false,
-                  executed: true,
-                  executionResult: {
-                    message: confirmText,
-                    logs: Array.isArray(newLogs) ? newLogs : [],
-                  },
-                },
-              }
-            : m
-        )
-      );
+      updateCardInMessage(msgId, (c) => ({
+        ...c,
+        executing: false,
+        executed: true,
+        executionResult: { message: confirmText },
+      }));
 
       showToast(confirmText);
-      await loadSandboxState(selectedMemberId);
+      await loadPortalState(selectedMemberId);
     } catch (err) {
       console.error('Erreur /api/toaster/execute:', err);
-      setMessages((prev) =>
-        prev.map((m) =>
-          m.id === msgId
-            ? {
-                ...m,
-                action_card: {
-                  ...m.action_card,
-                  executing: false,
-                  executionError: err.message,
-                },
-              }
-            : m
-        )
-      );
+      updateCardInMessage(msgId, (c) => ({
+        ...c,
+        executing: false,
+        executionError: err.message,
+      }));
       setErrorBanner(`Échec de l'exécution de l'action : ${err.message}`);
     }
   };
@@ -817,122 +1018,89 @@ export default function ToasterPage({ currentUser }) {
         </div>
       )}
 
-      {/* ===================================================================== */}
-      {/* 1. BANDEAU SUPÉRIEUR BAC À SABLE                                      */}
-      {/* ===================================================================== */}
-      <section className="rounded-3xl bg-surface-container-lowest border border-emerald-600/25 shadow-2xs p-4 sm:p-5 mb-4">
-        <div className="flex flex-col lg:flex-row lg:items-center justify-between gap-4">
-          <div className="space-y-1.5">
-            <div className="inline-flex items-center gap-2 px-3 py-1 rounded-full bg-emerald-50 text-emerald-900 border border-emerald-200 text-xs font-semibold">
-              <span>🛡️ Mode Bac à Sable Isolé (Zéro impact Prod / ViCare / E-mails)</span>
-            </div>
-            <div className="flex items-center gap-2.5 pt-1">
-              <span className="material-symbols-outlined text-primary text-[25px]">smart_toy</span>
-              <h1 className="font-headline-md text-lg sm:text-xl font-bold text-forest-deep">
-                Assistant Familial « Grille-Pain » • SCI Hellenvilliers
-              </h1>
-            </div>
-          </div>
-
-          <div className="flex flex-wrap items-center gap-2.5">
-            <div className="flex items-center gap-2 bg-canvas-slate px-3.5 py-2 rounded-full border border-border-subtle">
-              <span className="material-symbols-outlined text-primary text-[18px]">person</span>
-              <label htmlFor="toaster-member-select" className="text-xs font-semibold text-on-surface-variant whitespace-nowrap">
-                Incarner :
-              </label>
-              <select
-                id="toaster-member-select"
-                value={selectedMemberId}
-                onChange={(e) => setSelectedMemberId(Number(e.target.value))}
-                className="bg-white dark:bg-slate-900 border border-border-subtle rounded-full px-3 py-1 text-xs font-bold text-forest-deep focus:outline-none focus:border-primary cursor-pointer"
-              >
-                {membersOptions.map((m) => (
-                  <option key={m.id} value={m.id}>
-                    {m.displayLabel || formatAssociateLabel(m)}
-                  </option>
-                ))}
-              </select>
-
-              <span
-                id="toaster-member-cca-badge"
-                className={`ml-0.5 px-2.5 py-0.5 rounded-full text-xs font-bold tabular-nums border ${
-                  activeCcaBalance > 0
-                    ? 'bg-emerald-50 text-emerald-800 border-emerald-200'
-                    : activeCcaBalance < 0
-                    ? 'bg-rose-50 text-rose-800 border-rose-200'
-                    : 'bg-white text-slate-700 border-slate-200'
-                }`}
-                title="Solde du Compte Courant d'Associé (CCA) dans le bac à sable"
-              >
-                CCA : {loadingState ? '...' : formatCurrency(activeCcaBalance)}
-              </span>
-            </div>
-
-            <button
-              id="btn-toggle-sandbox-audit"
-              type="button"
-              onClick={() => setIsAuditDrawerOpen((prev) => !prev)}
-              className="inline-flex items-center gap-1.5 px-3.5 py-2 rounded-full bg-amber-50 hover:bg-amber-100 text-amber-950 border border-amber-300 text-xs font-bold transition-all cursor-pointer shadow-2xs"
-            >
-              <span className="material-symbols-outlined text-[17px] text-amber-700">security</span>
-              <span>Actions matérielles &amp; e-mails interceptés</span>
-              <span className="px-1.5 py-0.5 rounded-full bg-amber-200 text-amber-950 text-[11px] font-extrabold">
-                {auditLogs.length}
-              </span>
-            </button>
-
-            <button
-              id="btn-reset-sandbox"
-              type="button"
-              onClick={handleResetSandbox}
-              disabled={resetingSandbox}
-              className="inline-flex items-center gap-1.5 px-3.5 py-2 rounded-full bg-white hover:bg-rose-50 text-slate-700 hover:text-rose-800 border border-border-subtle hover:border-rose-300 text-xs font-semibold transition-all cursor-pointer disabled:opacity-50"
-            >
-              <span className={`material-symbols-outlined text-[17px] ${resetingSandbox ? 'animate-spin' : ''}`}>
-                restart_alt
-              </span>
-              <span>{resetingSandbox ? 'Réinitialisation...' : 'Réinitialiser le bac à sable'}</span>
-            </button>
+      {/* En-tête épuré de l'interface finale (zéro bannière bac à sable) */}
+      <header className="flex flex-wrap items-center justify-between gap-3 px-1 pb-3">
+        <div className="flex items-center gap-2.5">
+          <span className="w-9 h-9 rounded-full bg-sage-soft text-primary flex items-center justify-center shadow-2xs">
+            <span className="material-symbols-outlined text-[21px]">smart_toy</span>
+          </span>
+          <div>
+            <h1 className="font-headline-sm text-base sm:text-lg font-bold text-forest-deep leading-tight">
+              Assistant Grille-Pain
+            </h1>
+            <p className="text-[11px] text-on-surface-variant">
+              Connecté en tant que <span className="font-semibold text-forest-deep">{formatAssociateLabel(activeMemberObj)}</span>
+              {!loadingState && activeCcaBalance !== null && (
+                <span className="ml-2 px-2 py-0.5 rounded-full bg-emerald-50 text-emerald-800 border border-emerald-200 font-mono font-bold text-[10.5px]">
+                  CCA {formatCurrency(activeCcaBalance)}
+                </span>
+              )}
+            </p>
           </div>
         </div>
-      </section>
 
-      {/* Bannière d'erreur Fail-Fast */}
+        {messages.length > 0 && (
+          <button
+            type="button"
+            onClick={() => {
+              setMessages([]);
+              setAttachment(null);
+              setErrorBanner(null);
+              setLastFailedPrompt(null);
+            }}
+            className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-full bg-white hover:bg-sage-soft text-slate-600 hover:text-forest-deep border border-border-subtle text-xs font-semibold transition-colors cursor-pointer"
+          >
+            <span className="material-symbols-outlined text-[16px]">add_comment</span>
+            <span>Nouvelle discussion</span>
+          </button>
+        )}
+      </header>
+
+      {/* Bannière d'erreur Fail-Fast avec bouton Réessayer */}
       {errorBanner && (
         <div
           id="toaster-error-banner"
           role="alert"
-          className="mb-4 px-4 py-3 rounded-2xl bg-rose-50 border border-rose-300 text-rose-950 text-xs font-semibold flex items-center justify-between gap-3"
+          className="mb-3 px-4 py-3 rounded-2xl bg-rose-50 border border-rose-300 text-rose-950 text-xs font-semibold flex items-center justify-between gap-3 flex-wrap"
         >
           <div className="flex items-center gap-2">
             <span className="material-symbols-outlined text-rose-600 text-[20px]">error</span>
             <span>{errorBanner}</span>
           </div>
-          <button
-            type="button"
-            onClick={() => setErrorBanner(null)}
-            className="text-rose-700 hover:text-rose-950 cursor-pointer"
-          >
-            <span className="material-symbols-outlined text-[18px]">close</span>
-          </button>
+          <div className="flex items-center gap-2">
+            {lastFailedPrompt && !isSending && (
+              <button
+                type="button"
+                onClick={() => sendMessagePayload({ textOverride: lastFailedPrompt, clearComposerText: false })}
+                className="px-3 py-1 rounded-full bg-rose-700 hover:bg-rose-800 text-white text-[11px] font-bold cursor-pointer"
+              >
+                Réessayer
+              </button>
+            )}
+            <button
+              type="button"
+              onClick={() => setErrorBanner(null)}
+              className="text-rose-700 hover:text-rose-950 cursor-pointer"
+            >
+              <span className="material-symbols-outlined text-[18px]">close</span>
+            </button>
+          </div>
         </div>
       )}
 
-      {/* ===================================================================== */}
-      {/* 2. ZONE DE CONVERSATION, COMPOSANTS PARTAGÉS & CARTES D'ACTION        */}
-      {/* ===================================================================== */}
-      <div className="flex-1 bg-surface-container-lowest rounded-3xl border border-border-subtle shadow-sm flex flex-col overflow-hidden min-h-[500px]">
+      {/* ZONE DE CONVERSATION, COMPOSANTS PARTAGÉS & CARTES D'ACTION */}
+      <div className="flex-1 bg-surface-container-lowest rounded-3xl border border-border-subtle shadow-sm flex flex-col overflow-hidden min-h-[540px]">
         <div className="flex-1 overflow-y-auto p-4 sm:p-6 space-y-5">
           {messages.length === 0 ? (
-            <div className="h-full min-h-[340px] flex flex-col items-center justify-center text-center max-w-xl mx-auto px-4 py-8">
+            <div className="h-full min-h-[360px] flex flex-col items-center justify-center text-center max-w-xl mx-auto px-4 py-8">
               <div className="w-14 h-14 rounded-full bg-sage-soft text-primary flex items-center justify-center mb-3.5 shadow-2xs">
                 <span className="material-symbols-outlined text-[28px]">chat_bubble</span>
               </div>
               <h2 className="font-headline-sm text-base sm:text-lg font-bold text-forest-deep">
-                Bonjour {formatAssociatePrenom(activeMemberObj)}, que souhaitez-vous consulter ou préparer au Domaine ?
+                Bonjour {formatAssociatePrenom(activeMemberObj)}, comment puis-je vous aider aujourd'hui ?
               </h2>
               <p className="text-xs sm:text-sm text-on-surface-variant mt-1.5 leading-relaxed">
-                Posez une question en langage naturel, dictez à la voix ou joignez un justificatif. L’assistant peut afficher directement le calendrier, la jauge fioul, les sondages ou préparer une carte de validation sécurisée.
+                Consultez le Vademecum, la trésorerie, le classement participatif, la piscine, la cuve à fioul ou préparez en un clic une réservation, une tâche ou un scrutin familial.
               </p>
             </div>
           ) : (
@@ -948,12 +1116,45 @@ export default function ToasterPage({ currentUser }) {
                 : null;
               const showBubble = Boolean(msg.content || msg.attachment);
 
+              // Contrôle capacité chambres en direct sur les cartes stay (Ann. 4)
+              const isStayCard = card?.action_type === 'stay' && card?.payload?.operation !== 'cancel';
+              const stayMaxRooms = isStayCard ? getMaxRoomsForBuilding(card.payload?.building) : 5;
+              const stayCurrentRooms = isStayCard ? Number(card.payload?.chambers_used || 1) : 1;
+              const stayRoomOverflow = isStayCard && stayCurrentRooms > stayMaxRooms;
+              const stayAvailableRooms = isStayCard ? getRoomsListForBuilding(card.payload?.building) : [];
+              const staySelectedRooms = isStayCard && Array.isArray(card.payload?.selected_rooms) ? card.payload.selected_rooms : [];
+
+              // Mode éditeur dédié pour création/ouverture de scrutin (Ann. 1 & 2)
+              const isPollSetupCard =
+                card?.action_type === 'vote' &&
+                (card?.payload?.operation === 'create' || card?.payload?.operation === 'open');
+              const pollOptions = isPollSetupCard && Array.isArray(card.payload?.options) ? card.payload.options : [];
+              const pollEmptyOptions = isPollSetupCard && pollOptions.filter((o) => String(o || '').trim()).length === 0;
+
+              const isVademecumCard = card?.action_type === 'vademecum';
+
+              // Exclure des petites puces vertes les champs qui disposent de leur propre bloc dédié
+              const chipFields = card
+                ? card.deduced_fields.filter((f) => {
+                    if (isPollSetupCard && (f.key === 'options' || f.key === 'description')) return false;
+                    if (isStayCard && f.key === 'chambers_used') return false;
+                    if (isVademecumCard && f.key === 'content') return false;
+                    return true;
+                  })
+                : [];
+
+              const confirmDisabled =
+                !card ||
+                card.missing_fields.length > 0 ||
+                card.executing ||
+                stayRoomOverflow ||
+                pollEmptyOptions;
+
               return (
                 <div
                   key={msg.id}
                   className={`flex flex-col ${isUser ? 'items-end' : 'items-start'}`}
                 >
-                  {/* Accordéon pliable automatique : Raisonnement & Appels d'outils (zéro nom de modèle) */}
                   {!isUser && (
                     <ToasterActivityAccordion
                       thoughts={msg.thoughts}
@@ -962,7 +1163,6 @@ export default function ToasterPage({ currentUser }) {
                     />
                   )}
 
-                  {/* Bulle de texte avec rendu Markdown complet */}
                   {showBubble && (
                     <div
                       className={`max-w-2xl rounded-2xl px-4 py-3 text-sm leading-relaxed shadow-2xs ${
@@ -981,26 +1181,25 @@ export default function ToasterPage({ currentUser }) {
                     </div>
                   )}
 
-                  {/* Composants interactifs du site partagés directement dans la conversation */}
                   {!isUser && msg.uiComponents && msg.uiComponents.length > 0 && (
                     <ToasterComponentRenderer
                       components={msg.uiComponents}
                       activeMemberName={formatAssociateLabel(activeMemberObj)}
                       onOpenSandboxModal={(mType, prefill = {}) =>
-                        setSandboxModalState({ type: mType, prefill })
+                        setActionModalState({ type: mType, prefill })
                       }
-                      onCastSandboxVote={handleDirectSandboxVote}
-                      onCompleteSandboxTask={handleDirectSandboxTaskComplete}
+                      onCastSandboxVote={handleDirectVote}
+                      onCompleteSandboxTask={handleDirectTaskComplete}
                     />
                   )}
 
-                  {/* Carte d'Action Hybride 🟢 Vert / 🔴 Rouge */}
+                  {/* Carte d'Action Hybride */}
                   {card && (
                     <div
                       data-testid="toaster-action-card"
-                      className="mt-3 w-full max-w-2xl rounded-2xl bg-white dark:bg-slate-900 border-2 border-primary/30 shadow-md overflow-hidden animate-in fade-in duration-200"
+                      className="mt-3 w-full max-w-2xl rounded-2xl bg-white dark:bg-slate-900 border-2 border-primary/30 shadow-md overflow-visible animate-in fade-in duration-200"
                     >
-                      <div className="px-4 py-3 bg-sage-soft/50 border-b border-border-subtle flex items-center justify-between gap-2 flex-wrap">
+                      <div className="px-4 py-3 bg-sage-soft/50 border-b border-border-subtle rounded-t-2xl flex items-center justify-between gap-2 flex-wrap">
                         <div className="flex items-center gap-2">
                           <span className="material-symbols-outlined text-primary text-[20px]">
                             {typeMeta?.icon || 'bolt'}
@@ -1015,17 +1214,14 @@ export default function ToasterPage({ currentUser }) {
                       </div>
 
                       <div className="p-4 space-y-4">
-                        <div className="space-y-2">
-                          <div className="flex items-center justify-between">
-                            <span className="text-[11px] font-bold uppercase tracking-wider text-emerald-800 dark:text-emerald-300">
-                              🟢 Champs déduits (cliquez sur une puce pour modifier)
+                        {/* Puces éditables des champs déduits */}
+                        {chipFields.length > 0 && (
+                          <div className="space-y-2">
+                            <span className="text-[11px] font-bold uppercase tracking-wider text-emerald-800 dark:text-emerald-300 block">
+                              🟢 Paramètres (cliquez pour modifier)
                             </span>
-                          </div>
-                          {card.deduced_fields.length === 0 ? (
-                            <p className="text-xs text-slate-400 italic">Aucun paramètre déduit pour le moment.</p>
-                          ) : (
                             <div className="flex flex-wrap gap-2">
-                              {card.deduced_fields.map((field) => {
+                              {chipFields.map((field) => {
                                 const isEditingThis =
                                   editingField &&
                                   editingField.msgId === msg.id &&
@@ -1095,9 +1291,217 @@ export default function ToasterPage({ currentUser }) {
                                 );
                               })}
                             </div>
-                          )}
-                        </div>
+                          </div>
+                        )}
 
+                        {/* Ann. 4 : Contrôle chambres borné + sélection optionnelle par nom pour les séjours */}
+                        {isStayCard && (
+                          <div className="p-3.5 rounded-2xl bg-amber-50/60 border border-amber-200 space-y-3">
+                            <div className="flex items-center justify-between gap-2 flex-wrap">
+                              <div>
+                                <span className="text-xs font-bold text-amber-950 block">
+                                  🛏️ Chambres occupées ({card.payload?.building || 'Presbytère'} — max {stayMaxRooms})
+                                </span>
+                                <span className="text-[11px] text-amber-900/80">
+                                  Presbytère : 5 ch. • Rosings : 2 ch. • Tout le domaine : 7 ch.
+                                </span>
+                              </div>
+                              <div className="inline-flex items-center gap-1.5 bg-white px-2 py-1 rounded-full border border-amber-300">
+                                <button
+                                  type="button"
+                                  disabled={card.executed || stayCurrentRooms <= 1}
+                                  onClick={() => handleSetStayChambers(msg.id, stayCurrentRooms - 1)}
+                                  className="w-6 h-6 rounded-full bg-amber-100 hover:bg-amber-200 text-amber-950 font-bold text-sm flex items-center justify-center cursor-pointer disabled:opacity-40"
+                                >
+                                  −
+                                </button>
+                                <span className={`min-w-[44px] text-center text-xs font-black ${stayRoomOverflow ? 'text-rose-700' : 'text-forest-deep'}`}>
+                                  {stayCurrentRooms} / {stayMaxRooms}
+                                </span>
+                                <button
+                                  type="button"
+                                  disabled={card.executed || stayCurrentRooms >= stayMaxRooms}
+                                  onClick={() => handleSetStayChambers(msg.id, stayCurrentRooms + 1)}
+                                  className="w-6 h-6 rounded-full bg-amber-100 hover:bg-amber-200 text-amber-950 font-bold text-sm flex items-center justify-center cursor-pointer disabled:opacity-40"
+                                >
+                                  +
+                                </button>
+                              </div>
+                            </div>
+
+                            {stayRoomOverflow && (
+                              <div className="p-2.5 rounded-xl bg-rose-50 border border-rose-300 text-rose-900 text-xs flex items-center justify-between gap-2 flex-wrap">
+                                <span className="font-semibold">
+                                  ⚠️ {stayCurrentRooms} chambres demandées, mais {card.payload?.building || 'Presbytère'} ne compte que {stayMaxRooms} chambres maximum.
+                                </span>
+                                {!card.executed && (
+                                  <button
+                                    type="button"
+                                    onClick={() => handleSetStayChambers(msg.id, stayMaxRooms)}
+                                    className="px-2.5 py-1 rounded-full bg-rose-700 text-white text-[11px] font-bold cursor-pointer"
+                                  >
+                                    Ajuster à {stayMaxRooms} ch.
+                                  </button>
+                                )}
+                              </div>
+                            )}
+
+                            <div className="space-y-1.5">
+                              <span className="text-[11px] font-bold text-slate-700 block">
+                                Choisir des chambres précises (optionnel) :
+                              </span>
+                              <div className="flex flex-wrap gap-1.5">
+                                {stayAvailableRooms.map((room) => {
+                                  const selected = staySelectedRooms.includes(room.name);
+                                  return (
+                                    <button
+                                      key={room.name}
+                                      type="button"
+                                      disabled={card.executed}
+                                      onClick={() => handleToggleStayRoom(msg.id, room.name)}
+                                      className={`px-2.5 py-1 rounded-full border text-[11px] font-semibold transition-all cursor-pointer ${
+                                        selected
+                                          ? 'bg-emerald-700 text-white border-emerald-700 shadow-2xs'
+                                          : 'bg-white text-slate-700 border-slate-200 hover:border-emerald-400'
+                                      }`}
+                                    >
+                                      {selected ? '✓ ' : ''}{room.shortLabel}
+                                    </button>
+                                  );
+                                })}
+                              </div>
+                            </div>
+                          </div>
+                        )}
+
+                        {/* Ann. 1 & 2 : Description du scrutin + Liste d'options ligne par ligne + Calendrier */}
+                        {isPollSetupCard && (
+                          <div className="space-y-3.5">
+                            <div className="space-y-1.5">
+                              <label className="text-[11px] font-bold uppercase tracking-wider text-purple-900 block">
+                                📝 Texte / description du scrutin
+                              </label>
+                              <textarea
+                                rows={2}
+                                disabled={card.executed}
+                                value={card.payload?.description || ''}
+                                onChange={(e) =>
+                                  updateCardInMessage(msg.id, (c) => ({
+                                    ...c,
+                                    payload: { ...(c.payload || {}), description: e.target.value },
+                                  }))
+                                }
+                                placeholder="Expliquez brièvement l'objet du scrutin aux associés..."
+                                className="w-full p-2.5 rounded-xl bg-purple-50/40 border border-purple-200 text-xs text-slate-800 focus:outline-none focus:border-purple-500"
+                              />
+                            </div>
+
+                            <div className="space-y-2">
+                              <div className="flex items-center justify-between gap-2">
+                                <span className="text-[11px] font-bold uppercase tracking-wider text-purple-900">
+                                  🗳️ Options proposées ({pollOptions.length})
+                                </span>
+                                {!card.executed && (
+                                  <button
+                                    type="button"
+                                    onClick={() => handleAddPollOption(msg.id, '')}
+                                    className="inline-flex items-center gap-1 px-2.5 py-1 rounded-full bg-purple-50 hover:bg-purple-100 text-purple-900 border border-purple-200 text-[11px] font-bold cursor-pointer"
+                                  >
+                                    <span className="material-symbols-outlined text-[14px]">add</span>
+                                    <span>Ajouter une option</span>
+                                  </button>
+                                )}
+                              </div>
+
+                              <div className="space-y-2">
+                                {pollOptions.map((optText, optIdx) => {
+                                  const pickerOpen =
+                                    openDatePickerTarget &&
+                                    openDatePickerTarget.msgId === msg.id &&
+                                    openDatePickerTarget.optIdx === optIdx;
+                                  return (
+                                    <div key={optIdx} className="space-y-1">
+                                      <div className="flex items-center gap-1.5">
+                                        <span className="w-5 text-[11px] font-mono font-bold text-slate-400 text-right shrink-0">
+                                          {optIdx + 1}.
+                                        </span>
+                                        <input
+                                          type="text"
+                                          disabled={card.executed}
+                                          value={optText}
+                                          onChange={(e) => handleUpdatePollOption(msg.id, optIdx, e.target.value)}
+                                          placeholder="Ex : Sam. 10 – Dim. 11 avril 2027"
+                                          className="flex-1 h-9 px-3 rounded-xl bg-white border border-slate-200 focus:border-purple-500 text-xs font-medium text-slate-900 focus:outline-none"
+                                        />
+                                        {!card.executed && (
+                                          <>
+                                            <button
+                                              type="button"
+                                              onClick={() =>
+                                                setOpenDatePickerTarget(
+                                                  pickerOpen ? null : { msgId: msg.id, optIdx }
+                                                )
+                                              }
+                                              title="Choisir une date ou un week-end dans le calendrier"
+                                              className={`w-9 h-9 rounded-xl border flex items-center justify-center shrink-0 transition-colors cursor-pointer ${
+                                                pickerOpen
+                                                  ? 'bg-purple-700 text-white border-purple-700'
+                                                  : 'bg-purple-50 hover:bg-purple-100 text-purple-800 border-purple-200'
+                                              }`}
+                                            >
+                                              <span className="material-symbols-outlined text-[17px]">calendar_month</span>
+                                            </button>
+                                            <button
+                                              type="button"
+                                              onClick={() => handleDeletePollOption(msg.id, optIdx)}
+                                              title="Supprimer cette option"
+                                              className="w-9 h-9 rounded-xl bg-rose-50 hover:bg-rose-100 text-rose-700 border border-rose-200 flex items-center justify-center shrink-0 cursor-pointer"
+                                            >
+                                              <span className="material-symbols-outlined text-[17px]">delete</span>
+                                            </button>
+                                          </>
+                                        )}
+                                      </div>
+                                      {pickerOpen && !card.executed && (
+                                        <div className="pl-6">
+                                          <MiniFrenchDatePicker
+                                            onPickDateLabel={(formatted) =>
+                                              handleUpdatePollOption(msg.id, optIdx, formatted)
+                                            }
+                                            onClose={() => setOpenDatePickerTarget(null)}
+                                          />
+                                        </div>
+                                      )}
+                                    </div>
+                                  );
+                                })}
+                              </div>
+                            </div>
+                          </div>
+                        )}
+
+                        {/* Ann. 10 : Contenu éditable pour les fiches Vademecum */}
+                        {isVademecumCard && (
+                          <div className="space-y-1.5">
+                            <label className="text-[11px] font-bold uppercase tracking-wider text-emerald-900 block">
+                              📖 Contenu pratique de la fiche Vademecum
+                            </label>
+                            <textarea
+                              rows={3}
+                              disabled={card.executed}
+                              value={card.payload?.content || ''}
+                              onChange={(e) =>
+                                updateCardInMessage(msg.id, (c) => ({
+                                  ...c,
+                                  payload: { ...(c.payload || {}), content: e.target.value },
+                                }))
+                              }
+                              className="w-full p-2.5 rounded-xl bg-emerald-50/40 border border-emerald-200 text-xs text-slate-800 focus:outline-none focus:border-emerald-500"
+                            />
+                          </div>
+                        )}
+
+                        {/* Champs 🔴 manquants */}
                         {card.missing_fields.length > 0 && (
                           <div className="space-y-2.5 p-3.5 rounded-2xl bg-rose-50/90 border-2 border-rose-300">
                             <span className="text-[11px] font-bold uppercase tracking-wider text-rose-900 block">
@@ -1185,50 +1589,28 @@ export default function ToasterPage({ currentUser }) {
                         )}
 
                         {card.executed && card.executionResult ? (
-                          <div className="p-3.5 rounded-2xl bg-emerald-50 border-2 border-emerald-400 text-emerald-950 space-y-2">
+                          <div className="p-3.5 rounded-2xl bg-emerald-50 border-2 border-emerald-400 text-emerald-950">
                             <div className="flex items-center gap-2 font-bold text-xs sm:text-sm text-emerald-900">
                               <span className="material-symbols-outlined text-emerald-600 text-[20px]">verified</span>
                               <span>{card.executionResult.message}</span>
                             </div>
-                            {card.executionResult.logs && card.executionResult.logs.length > 0 && (
-                              <div className="pt-2 border-t border-emerald-200 space-y-1.5">
-                                <span className="text-[11px] font-bold uppercase tracking-wider text-emerald-800 block">
-                                  Traces interceptées dans le journal d’audit :
-                                </span>
-                                {card.executionResult.logs.map((log, lIdx) => (
-                                  <div
-                                    key={log.id || lIdx}
-                                    className="text-xs bg-white/90 px-3 py-1.5 rounded-xl border border-emerald-200 flex items-center justify-between gap-2"
-                                  >
-                                    <span className="font-semibold text-slate-800">
-                                      [{log.category}] {log.title}
-                                    </span>
-                                    <button
-                                      type="button"
-                                      onClick={() => setIsAuditDrawerOpen(true)}
-                                      className="text-[11px] font-bold text-primary underline cursor-pointer shrink-0"
-                                    >
-                                      Voir l’audit
-                                    </button>
-                                  </div>
-                                ))}
-                              </div>
-                            )}
                           </div>
                         ) : (
                           <div className="pt-2 border-t border-border-subtle flex items-center justify-between gap-3 flex-wrap">
                             <span className="text-xs text-on-surface-variant">
-                              {card.missing_fields.length > 0
-                                ? `Veuillez répondre aux ${card.missing_fields.length} question(s) en 🔴 Rouge pour déverrouiller l'exécution.`
-                                : 'Tous les paramètres sont au 🟢 Vert : prêt à être exécuté en bac à sable.'}
+                              {stayRoomOverflow
+                                ? `Ajustez le nombre de chambres (max ${stayMaxRooms}) pour confirmer.`
+                                : card.missing_fields.length > 0
+                                ? `Répondez aux ${card.missing_fields.length} précision(s) requise(s) ci-dessus.`
+                                : 'Vérifiez les paramètres puis confirmez pour appliquer sur le portail.'}
                             </span>
 
                             <button
                               type="button"
-                              disabled={card.missing_fields.length > 0 || card.executing}
+                              disabled={confirmDisabled}
                               onClick={() => handleExecuteActionCard(msg.id)}
                               className={`px-5 py-2.5 rounded-full text-xs sm:text-sm font-bold flex items-center gap-2 transition-all shadow-sm ${
-                                card.missing_fields.length > 0 || card.executing
+                                confirmDisabled
                                   ? 'bg-slate-200 text-slate-500 cursor-not-allowed'
                                   : 'bg-emerald-700 hover:bg-emerald-800 text-white cursor-pointer'
                               }`}
@@ -1237,9 +1619,7 @@ export default function ToasterPage({ currentUser }) {
                                 {card.executing ? 'progress_activity' : 'check_circle'}
                               </span>
                               <span>
-                                {card.executing
-                                  ? 'Exécution en cours...'
-                                  : "Confirmer et exécuter l'action"}
+                                {card.executing ? 'Application en cours...' : 'Confirmer et appliquer'}
                               </span>
                             </button>
                           </div>
@@ -1255,14 +1635,11 @@ export default function ToasterPage({ currentUser }) {
           <div ref={chatEndRef} />
         </div>
 
-        {/* =================================================================== */}
-        {/* 3. BARRE DE SAISIE MODERNE ULTRA-LÉGÈRE, ARRONDI FLUIDE & VOIX      */}
-        {/* =================================================================== */}
+        {/* BARRE DE SAISIE MODERNE & VOIX */}
         <form
           onSubmit={handleSendMessage}
           className="p-3 sm:p-4 bg-white/95 dark:bg-slate-950/90 backdrop-blur-md border-t border-slate-100 dark:border-slate-800 flex flex-col gap-2"
         >
-          {/* Puce légère de pièce jointe sélectionnée */}
           {attachment && (
             <div className="inline-flex items-center justify-between gap-2 px-3.5 py-1.5 rounded-full bg-emerald-50/90 border border-emerald-200 text-emerald-950 text-xs font-semibold self-start animate-in fade-in duration-150">
               <div className="flex items-center gap-1.5">
@@ -1283,7 +1660,6 @@ export default function ToasterPage({ currentUser }) {
             </div>
           )}
 
-          {/* Pilule arrondie minimaliste */}
           <div
             className={`flex items-center gap-2 p-1.5 rounded-full border transition-all duration-300 ${
               isListening
@@ -1291,7 +1667,6 @@ export default function ToasterPage({ currentUser }) {
                 : 'bg-slate-50/90 hover:bg-slate-50 focus-within:bg-white border-slate-200/90 focus-within:border-primary/45 focus-within:shadow-[0_6px_24px_-6px_rgba(6,78,59,0.14)]'
             }`}
           >
-            {/* Bouton "+" minimaliste & circulaire (Annotation 3) */}
             <input
               ref={fileInputRef}
               type="file"
@@ -1310,7 +1685,6 @@ export default function ToasterPage({ currentUser }) {
               <span className="material-symbols-outlined text-[21px] leading-none">add</span>
             </button>
 
-            {/* Zone centrale : champ épuré ou onde d'écoute vocale fluide */}
             {isListening ? (
               <div className="flex-1 flex items-center justify-between px-3 py-1.5 min-w-0">
                 <div className="flex items-center gap-2.5 min-w-0">
@@ -1345,7 +1719,6 @@ export default function ToasterPage({ currentUser }) {
               />
             )}
 
-            {/* Bouton Voix rond avec animation fluide d'ondes concentriques (Annotation 2) */}
             {speechSupported && (
               <button
                 id="btn-toaster-voice"
@@ -1359,7 +1732,7 @@ export default function ToasterPage({ currentUser }) {
                 }`}
                 title={
                   isListening
-                    ? "Terminer et envoyer directement le message vocal"
+                    ? 'Terminer et envoyer directement le message vocal'
                     : "Parler à l'assistant (envoi direct à la fin)"
                 }
                 aria-label={isListening ? 'Terminer et envoyer le message vocal' : 'Message vocal'}
@@ -1376,7 +1749,6 @@ export default function ToasterPage({ currentUser }) {
               </button>
             )}
 
-            {/* Bouton d'envoi rond minimaliste */}
             <button
               id="btn-toaster-send"
               type="submit"
@@ -1393,104 +1765,12 @@ export default function ToasterPage({ currentUser }) {
         </form>
       </div>
 
-      {/* Modale de formulaire bac à sable ouverte depuis un composant partagé */}
-      <ToasterSandboxFormModal
-        modalState={sandboxModalState}
-        onClose={() => setSandboxModalState(null)}
-        onSubmitSandboxAction={executeDirectSandboxAction}
+      <ToasterActionFormModal
+        modalState={actionModalState}
+        onClose={() => setActionModalState(null)}
+        onSubmitSandboxAction={executeDirectPortalAction}
         members={membersOptions}
       />
-
-      {/* ===================================================================== */}
-      {/* 4. TIROIR LATÉRAL : ACTIONS MATÉRIELLES & E-MAILS INTERCEPTÉS         */}
-      {/* ===================================================================== */}
-      {isAuditDrawerOpen && (
-        <div className="fixed inset-0 z-50 bg-slate-900/40 backdrop-blur-xs flex justify-end animate-in fade-in duration-150">
-          <div className="w-full max-w-lg bg-white dark:bg-slate-900 h-full shadow-2xl border-l border-border-subtle flex flex-col">
-            <div className="p-4 sm:p-5 border-b border-border-subtle flex items-center justify-between gap-3 bg-amber-50/60">
-              <div className="flex items-center gap-2">
-                <span className="material-symbols-outlined text-amber-700 text-[22px]">security</span>
-                <div>
-                  <h2 className="font-headline-sm text-sm sm:text-base font-bold text-slate-900">
-                    Actions matérielles &amp; e-mails interceptés
-                  </h2>
-                  <p className="text-[11px] text-slate-600">
-                    Coupe-circuit actif : aucune requête réseau n’est envoyée à ViCare, Klereo ou SMTP.
-                  </p>
-                </div>
-              </div>
-              <button
-                type="button"
-                onClick={() => setIsAuditDrawerOpen(false)}
-                className="w-8 h-8 rounded-full hover:bg-slate-200/70 flex items-center justify-center text-slate-600 cursor-pointer"
-              >
-                <span className="material-symbols-outlined text-[20px]">close</span>
-              </button>
-            </div>
-
-            <div className="flex-1 overflow-y-auto p-4 space-y-3">
-              {auditLogs.length === 0 ? (
-                <div className="py-12 text-center text-xs text-slate-500 space-y-2">
-                  <span className="material-symbols-outlined text-[32px] text-slate-400 block">
-                    verified_user
-                  </span>
-                  <p className="font-semibold text-slate-700">Aucune action interceptée pour le moment.</p>
-                  <p>
-                    Exécutez une carte d’action dans le chat pour observer ici les appels ViCare, Klereo, e-mails et mutations SQLite interceptés par le bac à sable.
-                  </p>
-                </div>
-              ) : (
-                auditLogs.map((log, idx) => {
-                  const meta = AUDIT_CATEGORY_META[log.category] || {
-                    icon: 'info',
-                    label: log.category || 'Trace',
-                    badgeClass: 'bg-slate-100 text-slate-800 border-slate-300',
-                  };
-                  let parsedPayload = log.payload_json || log.payload || log.details;
-                  if (typeof parsedPayload === 'string') {
-                    try {
-                      parsedPayload = JSON.parse(parsedPayload);
-                    } catch (_) {}
-                  }
-
-                  return (
-                    <div
-                      key={log.id || idx}
-                      className="p-3.5 rounded-2xl bg-canvas-slate border border-border-subtle space-y-2 shadow-2xs"
-                    >
-                      <div className="flex items-center justify-between gap-2 flex-wrap">
-                        <span className={`inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full text-[11px] font-bold border ${meta.badgeClass}`}>
-                          <span className="material-symbols-outlined text-[14px]">{meta.icon}</span>
-                          <span>{meta.label}</span>
-                        </span>
-                        {log.created_at && (
-                          <span className="text-[11px] text-slate-500 font-mono">
-                            {new Date(log.created_at).toLocaleTimeString('fr-FR', {
-                              hour: '2-digit',
-                              minute: '2-digit',
-                              second: '2-digit',
-                            })}
-                          </span>
-                        )}
-                      </div>
-
-                      <div className="text-xs font-bold text-slate-900">{sanitizeFamilyLabel(log.title)}</div>
-
-                      {parsedPayload && (
-                        <pre className="text-[11px] font-mono bg-white p-2.5 rounded-xl border border-slate-200 overflow-x-auto text-slate-700 whitespace-pre-wrap">
-                          {typeof parsedPayload === 'object'
-                            ? JSON.stringify(parsedPayload, null, 2)
-                            : String(parsedPayload)}
-                        </pre>
-                      )}
-                    </div>
-                  );
-                })
-              )}
-            </div>
-          </div>
-        </div>
-      )}
     </div>
   );
 }

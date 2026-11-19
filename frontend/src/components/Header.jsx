@@ -272,7 +272,7 @@ export default function Header({
                     className="w-full px-4 py-2.5 text-left text-xs font-bold text-primary hover:bg-sage-soft flex items-center gap-2 transition-colors cursor-pointer"
                   >
                     <span className="material-symbols-outlined text-[18px]">smart_toy</span>
-                    Assistant Grille-Pain (Test)
+                    Assistant Grille-Pain
                   </button>
                 </div>
 
