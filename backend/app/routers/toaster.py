@@ -18,11 +18,20 @@ from ..models import Member
 from ..security import decode_access_token
 from ..services.toaster_service import (
     DOMAIN_ROOMS,
+    STATUTORY_ASSOCIATE_NAMES,
+    TASK_COMPLEXITIES,
+    TASK_PRIORITIES,
+    TASK_SUBJECTS,
     VADEMECUM_CATEGORIES,
+    VOTE_PRIORITIES,
     execute_toaster_action,
     execute_toaster_read_tool,
     get_toaster_state,
+    is_summer_date,
+    is_winter_date,
+    normalize_time_hhmm,
     parse_selected_rooms_list,
+    parse_str_list,
     resolve_building_limits,
     resolve_member,
 )
@@ -138,7 +147,7 @@ TOASTER_FUNCTION_DECLARATIONS: List[Dict[str, Any]] = [
                         "{'month': 11, 'year': 2026} pour stays_calendar ; "
                         "{'initial_tab': 'annual'|'temperatures'|'daily'} pour fuel_and_heating_graph ; "
                         "{'project_id': 40} ou {'search_query': 'ménage'} pour poll_status_card ; "
-                        "{'assigned_to': 'Joséphine', 'status_filter': 'EN_COURS'} pour tasks_overview_card ; "
+                        "{'assigned_to': 'Joséphine', 'status_filter': 'REVIEW_NEEDED'|'PROPOSED'|'PENDING_VALIDATION'|'EN_COURS'|'ACTIVE'|'ALL', 'task_id': 87, 'task_ids': [87]} pour tasks_overview_card ; "
                         "{'document_id': 177} pour document_viewer_card ; "
                         "{'period': 'all'|'1_year'|'3_months'} pour leaderboard_card ; "
                         "{'title': '...', 'subtitle': '...', 'chart_type': 'bar'|'horizontal_bar'|'line'|'pie', 'unit': '€', 'labels': [...], 'series': [{'name': '...', 'color': '#059669', 'values': [...]}]} pour custom_chart_card ; "
@@ -255,7 +264,9 @@ TOASTER_FUNCTION_DECLARATIONS: List[Dict[str, Any]] = [
         "name": "propose_stay_action",
         "description": (
             "Propose de créer, modifier ou annuler une réservation de séjour au Domaine d'Hellenvilliers. "
-            "ATTENTION CAPACITÉ : Presbytère = 5 chambres max, Rosings = 2 chambres max, tout le domaine = 7 chambres max."
+            "ATTENTION CAPACITÉ : Presbytère = 5 chambres max, Rosings = 2 chambres max, tout le domaine = 7 chambres max. "
+            "Différencie toujours Eau Chaude Sanitaire (activate_dhw), Chauffage Presbytère (activate_heating) et Piscine (activate_pool), "
+            "ainsi que les membres internes SCI (selected_members) et invités extérieurs (external_guests)."
         ),
         "parameters": {
             "type": "OBJECT",
@@ -265,8 +276,18 @@ TOASTER_FUNCTION_DECLARATIONS: List[Dict[str, Any]] = [
                 "building": {"type": "STRING", "description": "'Presbytère', 'Rosings' ou 'Presbytère & Rosings'. Laisser vide si non précisé."},
                 "start_date": {"type": "STRING", "description": "Date d'arrivée YYYY-MM-DD."},
                 "end_date": {"type": "STRING", "description": "Date de départ YYYY-MM-DD."},
-                "arrival_time": {"type": "STRING", "description": "Heure d'arrivée HH:MM."},
-                "departure_time": {"type": "STRING", "description": "Heure de départ HH:MM."},
+                "arrival_time": {"type": "STRING", "description": "Heure d'arrivée HH:MM (défaut 15:00)."},
+                "departure_time": {"type": "STRING", "description": "Heure de départ HH:MM (défaut 11:00)."},
+                "selected_members": {
+                    "type": "ARRAY",
+                    "items": {"type": "STRING"},
+                    "description": "Associés internes de la SCI présents (ex: ['Henri Jamet', 'Eugénie Jamet']).",
+                },
+                "external_guests": {
+                    "type": "ARRAY",
+                    "items": {"type": "STRING"},
+                    "description": "Prénoms/noms d'invités extérieurs à la SCI (amis, conjoints, proches).",
+                },
                 "guest_count": {"type": "INTEGER", "description": "Nombre total de personnes."},
                 "chambers_used": {"type": "INTEGER", "description": "Nombre de chambres demandées (max 5 Presbytère, 2 Rosings, 7 Domaine)."},
                 "selected_rooms": {
@@ -274,9 +295,11 @@ TOASTER_FUNCTION_DECLARATIONS: List[Dict[str, Any]] = [
                     "items": {"type": "STRING"},
                     "description": "Liste optionnelle des noms de chambres souhaitées (ex: ['Suite', 'La Mezzanine']).",
                 },
-                "activate_heating": {"type": "BOOLEAN", "description": "True pour chauffer à 20 °C, False pour hors-gel. Omettre si non précisé."},
-                "heating_explicitly_stated": {"type": "BOOLEAN", "description": "True UNIQUEMENT si l'utilisateur a mentionné le chauffage."},
-                "notes": {"type": "STRING", "description": "Notes ou précisions."},
+                "activate_dhw": {"type": "BOOLEAN", "description": "True pour activer l'Eau Chaude Sanitaire (Ballon 250L à 52 °C)."},
+                "activate_heating": {"type": "BOOLEAN", "description": "True pour activer le chauffage Presbytère (20 °C, active automatiquement l'ECS). False pour hors-gel."},
+                "activate_pool": {"type": "BOOLEAN", "description": "True pour préchauffer la piscine à 27 °C (été uniquement)."},
+                "cohabitation_type": {"type": "STRING", "description": "'total', 'other_building' ou 'exclusive'."},
+                "notes": {"type": "STRING", "description": "Intitulé ou précisions facultatives sur le séjour."},
                 "assistant_message": {"type": "STRING", "description": "Réponse fluide en français naturel."},
             },
             "required": ["operation", "assistant_message"],
@@ -321,19 +344,32 @@ TOASTER_FUNCTION_DECLARATIONS: List[Dict[str, Any]] = [
     },
     {
         "name": "propose_task_action",
-        "description": "Propose de cocher une tâche existante comme TERMINEE, d'en créer une nouvelle ou de l'attribuer.",
+        "description": (
+            "Propose de créer une nouvelle tâche (toujours en statut PROPOSED, sans responsable pré-choisi car l'attribution "
+            "a lieu lors de la validation par les coordinateurs), de soumettre une tâche existante pour validation ('complete'), "
+            "ou de modifier l'attribution d'une tâche existante ('assign', réservé aux coordinateurs)."
+        ),
         "parameters": {
             "type": "OBJECT",
             "properties": {
-                "operation": {"type": "STRING", "description": "'complete', 'create' ou 'assign'."},
-                "task_id": {"type": "INTEGER", "description": "ID exact de la tâche existante."},
-                "title": {"type": "STRING", "description": "Titre de la tâche."},
-                "description": {"type": "STRING", "description": "Description concrète et chaleureuse."},
-                "subject": {"type": "STRING", "description": "'Presbytère', 'Rosings', 'Piscine', 'Jardin & Espaces Verts', 'SCI & Administratif'."},
-                "priority": {"type": "STRING", "description": "'Critique', 'Haute', 'Normale' ou 'Planifié'."},
-                "assigned_to": {"type": "STRING", "description": "Prénom ou nom du membre responsable."},
-                "charge_points": {"type": "INTEGER", "description": "Points (1, 2, 3, 5 ou 8)."},
-                "status": {"type": "STRING", "description": "'TERMINEE', 'PROPOSED' ou 'A_FAIRE'."},
+                "operation": {"type": "STRING", "description": "'create', 'complete' ou 'assign'."},
+                "task_id": {"type": "INTEGER", "description": "ID exact de la tâche existante (pour 'complete' ou 'assign')."},
+                "title": {"type": "STRING", "description": "Titre clair et actionnable de la tâche."},
+                "description": {"type": "STRING", "description": "Description concrète, utile et chaleureuse pour la famille."},
+                "subject": {"type": "STRING", "description": f"Lieu / Sujet parmi : {', '.join(TASK_SUBJECTS)}."},
+                "complexity": {"type": "STRING", "description": f"Charge parmi : {', '.join(TASK_COMPLEXITIES)} (défaut 'Modérée')."},
+                "priority": {"type": "STRING", "description": f"Priorité parmi : {', '.join(TASK_PRIORITIES)} (défaut 'Normale')."},
+                "budget": {"type": "NUMBER", "description": "Prix estimé / Devis en € (optionnel, 0 si aucun)."},
+                "deadline": {"type": "STRING", "description": "Date d'échéance YYYY-MM-DD (optionnel)."},
+                "is_recurring": {"type": "BOOLEAN", "description": "True si tâche périodique récurrente."},
+                "recurrence_interval": {"type": "INTEGER", "description": "Intervalle de récurrence (ex: 1, 2, 6)."},
+                "recurrence_unit": {"type": "STRING", "description": "'jours', 'semaines', 'mois' ou 'sejours'."},
+                "checklist": {
+                    "type": "ARRAY",
+                    "items": {"type": "STRING"},
+                    "description": "Sous-tâches / étapes concrètes de la checklist (optionnel).",
+                },
+                "assigned_to": {"type": "STRING", "description": "UNIQUEMENT pour operation='assign' : nom de l'associé responsable."},
                 "assistant_message": {"type": "STRING", "description": "Réponse fluide en français naturel."},
             },
             "required": ["operation", "title", "assistant_message"],
@@ -342,8 +378,9 @@ TOASTER_FUNCTION_DECLARATIONS: List[Dict[str, Any]] = [
     {
         "name": "propose_poll_or_vote_action",
         "description": (
-            "Propose de voter sur un scrutin existant ('vote'), d'ouvrir un scrutin préparé ('open') ou de créer "
-            "un nouveau scrutin ('create') avec son titre, son texte/description explicatif et sa liste d'options. "
+            "Propose de voter sur un scrutin ouvert ('vote'), de valider/ouvrir un scrutin proposé ('open', coordinateur uniquement) "
+            "ou de proposer un nouveau scrutin ('create', créé en statut PROPOSED comme sur le portail avec catégorie/lieu, budget estimé, "
+            "priorité, description, toggle choix multiples et liste d'options). "
             "IMPORTANT : n'appelle PAS poll_status_card dans le même tour que cet outil pour le même scrutin."
         ),
         "parameters": {
@@ -352,15 +389,17 @@ TOASTER_FUNCTION_DECLARATIONS: List[Dict[str, Any]] = [
                 "operation": {"type": "STRING", "description": "'vote', 'create' ou 'open'."},
                 "project_id": {"type": "INTEGER", "description": "ID du scrutin existant (pour 'vote' ou 'open')."},
                 "title": {"type": "STRING", "description": "Titre du scrutin."},
+                "category": {"type": "STRING", "description": f"Lieu / Catégorie parmi : {', '.join(TASK_SUBJECTS)} (défaut 'Presbytère')."},
+                "priority": {"type": "STRING", "description": f"Priorité parmi : {', '.join(VOTE_PRIORITIES)} (défaut 'Normale')."},
                 "description": {"type": "STRING", "description": "Texte explicatif / contexte complet du scrutin présenté aux associés."},
                 "vote": {"type": "STRING", "description": "Choix de vote si operation='vote'."},
                 "comment": {"type": "STRING", "description": "Commentaire optionnel."},
-                "estimated_cost": {"type": "NUMBER", "description": "Budget estimé en € si projet chiffré."},
-                "allow_multiple_choices": {"type": "BOOLEAN", "description": "True si les associés peuvent cocher plusieurs dates/options."},
+                "estimated_cost": {"type": "NUMBER", "description": "Budget estimé en € TTC si projet chiffré."},
+                "allow_multiple_choices": {"type": "BOOLEAN", "description": "True si les associés peuvent cocher plusieurs réponses."},
                 "options": {
                     "type": "ARRAY",
                     "items": {"type": "STRING"},
-                    "description": "Liste des options proposées au vote (ex: ['Samedi 10 avril 2027', 'Samedi 17 avril 2027']).",
+                    "description": "Liste des options proposées au vote (au moins 2 options ; ex: ['Approuver le projet', 'Rejeter le projet'] ou liste de dates).",
                 },
                 "assistant_message": {"type": "STRING", "description": "Réponse fluide en français naturel."},
             },
@@ -418,7 +457,7 @@ Enrichis tes réponses avec les composants interactifs natifs :
 - `fuel_and_heating_graph` : graphe interactif cuve à fioul / températures Viessmann (`initial_tab`: `'annual'` | `'temperatures'` | `'daily'`).
 - `pool_status_widget` : carte télémétrie en direct de la piscine Klereo (Wi-Fi, radio K-Link / alertes `radioPB`, filtration, PAC, sondes).
 - `poll_status_card` : état visuel d'un scrutin existant (NE L'APPELLE JAMAIS dans le même tour qu'un `propose_poll_or_vote_action` portant sur le même scrutin pour éviter un double affichage !).
-- `tasks_overview_card` : cartes visuelles des tâches filtrées.
+- `tasks_overview_card` : cartes visuelles interactives des tâches (cliquer sur une tâche ouvre la fenêtre complète de consultation, édition, attribution équitable et validation/invalidation). **RÈGLE IMPÉRATIVE** : dès que tu mentionnes une ou plusieurs tâches à consulter, à faire, ou à valider/arbitrer (statut `PROPOSED` ou `PENDING_VALIDATION`), tu DOIS **systématiquement** appeler `display_ui_component('tasks_overview_card', props={'task_ids': [...]})` ou `status_filter='REVIEW_NEEDED'` pour donner immédiatement à l'utilisateur l'outil interactif de consultation et validation/invalidation ! Ne mentionne JAMAIS en texte brut qu'une tâche est à valider sans afficher sa carte `tasks_overview_card` !
 - `treasury_overview_card` : carte financière Swan, IBAN & soldes CCA des 7 associés.
 - `leaderboard_card` : classement participatif & équité officiel des 7 associés (tâches réalisées + créations validées vs jours de séjour). À afficher dès qu'on demande le classement, l'équité ou le leaderboard !
 - `custom_chart_card` : graphique SVG sur mesure (`bar`, `horizontal_bar`, `line`, `pie`) que tu peux composer librement à partir de n'importe quelles données chiffrées réelles de la SCI (dépenses, solde Swan, nuitées par associé, points de tâches, etc.).
@@ -426,10 +465,12 @@ Enrichis tes réponses avec les composants interactifs natifs :
 - `document_viewer_card` : aperçu et téléchargement PDF officiel.
 - `action_modal_buttons` : boutons d'ouverture de formulaires (`'stay'`, `'task'`, `'poll'`, `'document'`, `'vademecum'`).
 
-VALIDATION EXPLICITE DES ACTIONS RÉELLES :
+COHÉRENCE STRICTE DES CYCLES DE VIE & VALIDATION EXPLICITE DES ACTIONS RÉELLES :
 - Tu opères directement sur le vrai portail de la SCI (base PostgreSQL, chauffage ViCare, piscine Klereo).
-- Pour toute action de création ou modification (réserver/annuler un séjour, régler le chauffage ou la piscine, enregistrer une facture, créer/cocher une tâche, créer/ouvrir/voter sur un scrutin, créer/modifier une fiche Vademecum), appelle TOUJOURS l'outil `propose_*` correspondant afin de présenter une carte récapitulative modifiable que l'associé devra confirmer en un clic.
-- Sur `propose_poll_or_vote_action` en création (`operation='create'`) ou ouverture (`operation='open'`), renseigne TOUJOURS le champ `description` (texte clair du scrutin) ainsi que la liste `options`.
+- **Séjours** : renseigne toujours date ET heure (`arrival_time`/`departure_time`), participants internes (`selected_members`) et invités extérieurs (`external_guests`), et différencie Eau Chaude Sanitaire (`activate_dhw`, 52 °C), Chauffage Presbytère (`activate_heating`, 20 °C, qui inclut l'ECS) et Piscine (`activate_pool`, 27 °C).
+- **Tâches (cycle de vie officiel)** : toute nouvelle tâche est créée en statut `PROPOSED` SANS responsable pré-assigné (c'est lors de la validation par les coordinateurs Henri ou Joséphine que le responsable est choisi). Ne propose JAMAIS de champ statut ni responsable lors d'une création de tâche !
+- **Scrutins / Votes (cycle de vie officiel)** : toute nouvelle proposition de scrutin est créée en statut `PROPOSED` (en attente de validation/ouverture par un coordinateur) avec un lieu/catégorie canonique, une description claire, une priorité, un budget estimé éventuel, le mode choix unique/multiple et au moins 2 options.
+- Pour toute action de création ou modification, appelle TOUJOURS l'outil `propose_*` correspondant afin de présenter une carte récapitulative modifiable que l'associé devra confirmer en un clic.
 - Si la passerelle ViCare du Presbytère est hors ligne au moment où l'utilisateur demande d'allumer le chauffage, prépare tout de même la carte `propose_heating_or_pool_action` si souhaité mais préviens clairement dans ta réponse que la passerelle Vitoconnect est actuellement hors ligne."""
 
 
@@ -511,7 +552,7 @@ def _build_system_prompt(state: Dict[str, Any], attachment_name: Optional[str] =
 
     dynamic_context = f"""
 DATE DU JOUR : {datetime.utcnow().strftime('%Y-%m-%d')}
-ASSOCIÉ CONNECTÉ : {member_name} (id={member.get('id')}, prénom={member_prenom}, cotisation={member.get('monthly_contribution')} €/mois, référence virement={member.get('payment_reference')})
+ASSOCIÉ CONNECTÉ : {member_name} (id={member.get('id')}, prénom={member_prenom}, coordinateur={'Oui' if member.get('is_coordinator') else 'Non'}, cotisation={member.get('monthly_contribution')} €/mois, référence virement={member.get('payment_reference')})
 
 TRÉSORERIE BANCAIRE SWAN & SOLDES CCA DES 7 ASSOCIÉS :
 - Compte SCI Swan : solde {float(swan.get('balance') or 0.0):.2f} € | IBAN {swan.get('iban')} | {docs_count} documents officiels | {vad_count} fiches Vademecum
@@ -555,19 +596,24 @@ def _build_action_card(
         building_raw = str(args.get("building") or "").strip()
         start_date = _normalize_date_2026(args.get("start_date"))
         end_date = _normalize_date_2026(args.get("end_date"))
-        arrival_time = str(args.get("arrival_time") or "15:00")
-        departure_time = str(args.get("departure_time") or "11:00")
-        guest_count = max(1, int(args.get("guest_count") or 1))
+        arrival_time = normalize_time_hhmm(args.get("arrival_time"), fallback="15:00")
+        departure_time = normalize_time_hhmm(args.get("departure_time"), fallback="11:00")
+
+        selected_members = [_sanitize_family_titles(x) for x in parse_str_list(args.get("selected_members"))]
+        if not selected_members:
+            selected_members = [member_name]
+        external_guests = parse_str_list(args.get("external_guests"))
+        raw_guest_count = int(args.get("guest_count") or 0)
+        guest_count = max(len(selected_members) + len(external_guests), raw_guest_count, 1)
+
         selected_rooms = parse_selected_rooms_list(args.get("selected_rooms"))
         raw_chambers = int(args.get("chambers_used") or max(1, len(selected_rooms) or ((guest_count + 1) // 2)))
-        heating_explicit = bool(args.get("heating_explicitly_stated", False))
-        activate_heating = args.get("activate_heating")
 
         if building_raw:
-            norm_building, max_rooms, avail_rooms = resolve_building_limits(building_raw)
+            norm_building, max_rooms, _avail_rooms = resolve_building_limits(building_raw)
             deduced.append({"key": "building", "label": "Bâtiment", "value": norm_building, "raw_value": norm_building})
         else:
-            norm_building, max_rooms, avail_rooms = "Presbytère", 5, DOMAIN_ROOMS["Presbytère"]
+            norm_building, max_rooms, _avail_rooms = "Presbytère", 5, DOMAIN_ROOMS["Presbytère"]
             missing.append(
                 {
                     "key": "building",
@@ -581,9 +627,7 @@ def _build_action_card(
                 }
             )
 
-        if start_date:
-            deduced.append({"key": "start_date", "label": "Date d'arrivée", "value": start_date})
-        else:
+        if not start_date:
             missing.append(
                 {
                     "key": "start_date",
@@ -596,14 +640,7 @@ def _build_action_card(
                 }
             )
 
-        if end_date:
-            deduced.append({"key": "end_date", "label": "Date de départ", "value": end_date})
-        elif start_date:
-            deduced.append({"key": "end_date", "label": "Date de départ", "value": start_date})
-
-        deduced.append({"key": "guest_count", "label": "Nombre de personnes", "value": guest_count, "raw_value": guest_count})
-
-        # Contrôle strict capacité chambres (Ann. 4)
+        # Contrôle strict capacité chambres
         chambers_overflow = raw_chambers > max_rooms
         if chambers_overflow:
             missing.append(
@@ -624,45 +661,37 @@ def _build_action_card(
             chambers_used = raw_chambers
         else:
             chambers_used = max(1, min(max_rooms, raw_chambers))
-            deduced.append({"key": "chambers_used", "label": "Chambres occupées", "value": chambers_used, "raw_value": chambers_used})
 
-        is_presb_or_unknown = (not building_raw) or ("presbyt" in norm_building.lower())
-        if operation != "cancel" and is_presb_or_unknown:
-            if heating_explicit and activate_heating is not None:
-                deduced.append(
-                    {
-                        "key": "activate_heating",
-                        "label": "Chauffage Presbytère (20 °C)",
-                        "value": "Oui (20 °C)" if bool(activate_heating) else "Non (hors-gel)",
-                        "raw_value": bool(activate_heating),
-                    }
-                )
-            else:
-                missing.append(
-                    {
-                        "key": "activate_heating",
-                        "label": "Chauffage fioul Presbytère (20 °C)",
-                        "question": "Souhaitez-vous activer le chauffage fioul du Presbytère à 20 °C pour votre arrivée ?",
-                        "options": [
-                            {"label": "🔥 Oui, chauffer à 20 °C", "value": True},
-                            {"label": "❄️ Non, laisser en hors-gel", "value": False},
-                        ],
-                    }
-                )
+        eff_start = start_date or datetime.utcnow().strftime("%Y-%m-%d")
+        is_presb = "presbyt" in norm_building.lower()
+        raw_heat = args.get("activate_heating")
+        activate_heating = bool(raw_heat) if raw_heat is not None else (is_presb and is_winter_date(eff_start))
+        raw_dhw = args.get("activate_dhw")
+        activate_dhw = True if activate_heating else (bool(raw_dhw) if raw_dhw is not None else is_presb)
+        raw_pool = args.get("activate_pool")
+        activate_pool = bool(raw_pool) if raw_pool is not None else is_summer_date(eff_start)
+        cohabitation_type = str(args.get("cohabitation_type") or "total").strip().lower()
+        if cohabitation_type not in ("total", "other_building", "exclusive"):
+            cohabitation_type = "total"
 
         payload = {
             "operation": operation,
             "reservation_id": args.get("reservation_id"),
             "building": norm_building,
             "max_chambers": max_rooms,
-            "start_date": start_date or "2026-11-20",
-            "end_date": end_date or start_date or "2026-11-22",
+            "start_date": start_date or eff_start,
+            "end_date": end_date or start_date or eff_start,
             "arrival_time": arrival_time,
             "departure_time": departure_time,
+            "selected_members": selected_members,
+            "external_guests": external_guests,
             "guest_count": guest_count,
             "chambers_used": chambers_used,
             "selected_rooms": selected_rooms,
-            "activate_heating": bool(activate_heating) if activate_heating is not None else True,
+            "activate_dhw": activate_dhw,
+            "activate_heating": activate_heating,
+            "activate_pool": activate_pool,
+            "cohabitation_type": cohabitation_type,
             "target_temperature": 20.0,
             "notes": args.get("notes") or "",
         }
@@ -806,21 +835,72 @@ def _build_action_card(
         }
 
     if func_name == "propose_task_action":
-        operation = str(args.get("operation") or "complete").lower()
+        operation = str(args.get("operation") or "create").lower()
         task_id = args.get("task_id")
         title = str(args.get("title") or "").strip()
         subject = str(args.get("subject") or "Presbytère").strip()
+        if subject not in TASK_SUBJECTS:
+            subject = next((s for s in TASK_SUBJECTS if subject.lower() in s.lower() or s.lower() in subject.lower()), "Presbytère")
+        complexity = str(args.get("complexity") or "Modérée").strip()
+        if complexity not in TASK_COMPLEXITIES:
+            complexity = "Modérée"
         priority = str(args.get("priority") or "Normale").strip()
+        if priority not in TASK_PRIORITIES:
+            priority = "Normale"
+        budget_val = float(args.get("budget") or 0.0) if args.get("budget") not in (None, "") else 0.0
+        deadline_val = _normalize_date_2026(args.get("deadline")) or ""
+        is_recurring = bool(args.get("is_recurring", False))
+        recurrence_interval = max(1, int(args.get("recurrence_interval") or 1))
+        recurrence_unit = str(args.get("recurrence_unit") or "semaines")
+        raw_cl = args.get("checklist")
+        checklist_arr = []
+        if isinstance(raw_cl, list):
+            for it in raw_cl:
+                txt = it.get("text") if isinstance(it, dict) else str(it)
+                if txt and str(txt).strip():
+                    checklist_arr.append({"text": str(txt).strip(), "done": False})
         assigned_to = _sanitize_family_titles(str(args.get("assigned_to") or "").strip())
-        status_val = "TERMINEE" if operation == "complete" else str(args.get("status") or "PROPOSED")
+
+        if operation == "create":
+            # Annotations 7 & 8 : Zéro champ Statut ni Responsable sur création — formulaire miroir de TaskDetailModal !
+            payload = {
+                "operation": "create",
+                "title": title,
+                "description": str(args.get("description") or "").strip(),
+                "subject": subject,
+                "complexity": complexity,
+                "priority": priority,
+                "budget": budget_val,
+                "deadline": deadline_val,
+                "is_recurring": is_recurring,
+                "recurrence_interval": recurrence_interval,
+                "recurrence_unit": recurrence_unit,
+                "checklist": checklist_arr,
+            }
+            return {
+                "action_type": "task",
+                "title": f"Proposer une nouvelle tâche : « {title} »",
+                "deduced_fields": [],
+                "missing_fields": missing,
+                "ready_to_execute": bool(title),
+                "payload": payload,
+            }
 
         if task_id:
             deduced.append({"key": "task_id", "label": "ID Tâche", "value": int(task_id), "raw_value": int(task_id)})
         deduced.append({"key": "title", "label": "Tâche", "value": title})
-        deduced.append({"key": "subject", "label": "Lieu / Bâtiment", "value": subject})
-        deduced.append({"key": "status", "label": "Statut", "value": status_val})
-        if assigned_to:
-            deduced.append({"key": "assigned_to", "label": "Responsable", "value": assigned_to})
+        if operation == "assign":
+            if not assigned_to:
+                missing.append(
+                    {
+                        "key": "assigned_to",
+                        "label": "Responsable",
+                        "question": "À quel associé souhaitez-vous attribuer cette tâche ?",
+                        "options": [{"label": name, "value": name} for name in STATUTORY_ASSOCIATE_NAMES if "Frédéric" not in name],
+                    }
+                )
+            else:
+                deduced.append({"key": "assigned_to", "label": "Responsable", "value": assigned_to, "raw_value": assigned_to})
 
         payload = {
             "operation": operation,
@@ -830,12 +910,15 @@ def _build_action_card(
             "subject": subject,
             "priority": priority,
             "assigned_to": assigned_to,
-            "charge_points": int(args.get("charge_points") or 3),
-            "status": status_val,
         }
+        card_title = (
+            f"Attribution de tâche : « {title} »"
+            if operation == "assign"
+            else f"Soumettre la réalisation : « {title} »"
+        )
         return {
             "action_type": "task",
-            "title": f"Validation de tâche : « {title} »" if operation == "complete" else f"Nouvelle tâche : « {title} »",
+            "title": card_title,
             "deduced_fields": deduced,
             "missing_fields": missing,
             "ready_to_execute": len(missing) == 0,
@@ -847,6 +930,13 @@ def _build_action_card(
         project_id = args.get("project_id")
         title = str(args.get("title") or "Scrutin").strip()
         description = str(args.get("description") or "").strip()
+        category = str(args.get("category") or "Presbytère").strip()
+        if category not in TASK_SUBJECTS:
+            category = next((s for s in TASK_SUBJECTS if category.lower() in s.lower() or s.lower() in category.lower()), "Presbytère")
+        priority = str(args.get("priority") or "Normale").strip()
+        if priority not in VOTE_PRIORITIES:
+            priority = "Normale"
+        estimated_cost = float(args.get("estimated_cost") or 0.0) if args.get("estimated_cost") not in (None, "") else 0.0
         vote_val = str(args.get("vote") or "").strip()
         comment = str(args.get("comment") or "").strip()
         raw_options = args.get("options")
@@ -855,7 +945,7 @@ def _build_action_card(
         elif isinstance(raw_options, str) and raw_options.strip():
             options = [o.strip() for o in raw_options.replace("\n", ",").split(",") if o.strip()]
         else:
-            options = ["POUR", "CONTRE", "ABSTENTION"]
+            options = ["Approuver le projet", "Rejeter le projet"]
 
         # Si on ouvre un scrutin existant, pré-remplir sa description/options depuis state si omises
         if project_id:
@@ -865,55 +955,46 @@ def _build_action_card(
                         description = str(p["description"])
                     if not raw_options and p.get("options"):
                         options = [str(o) for o in p["options"]]
+                    if p.get("category") in TASK_SUBJECTS:
+                        category = p["category"]
                     break
 
-        if project_id:
-            deduced.append({"key": "project_id", "label": "Scrutin #", "value": int(project_id), "raw_value": int(project_id)})
-        deduced.append({"key": "title", "label": "Titre du scrutin", "value": title})
-
         if operation == "vote":
+            if project_id:
+                deduced.append({"key": "project_id", "label": "Scrutin #", "value": int(project_id), "raw_value": int(project_id)})
+            deduced.append({"key": "title", "label": "Titre du scrutin", "value": title})
             if vote_val:
                 deduced.append({"key": "vote", "label": "Votre vote", "value": vote_val})
             else:
-                poll_opts = options
                 missing.append(
                     {
                         "key": "vote",
                         "label": "Votre choix de vote",
                         "question": f"Quel est votre vote sur « {title} » ?",
-                        "options": [{"label": str(o), "value": str(o)} for o in poll_opts],
+                        "options": [{"label": str(o), "value": str(o)} for o in options],
                     }
                 )
             if comment:
                 deduced.append({"key": "comment", "label": "Commentaire", "value": comment})
-        else:
-            allow_multi = bool(args.get("allow_multiple_choices", len(options) > 3))
-            deduced.append(
-                {
-                    "key": "allow_multiple_choices",
-                    "label": "Choix multiples",
-                    "value": "Oui" if allow_multi else "Choix unique",
-                    "raw_value": allow_multi,
-                }
-            )
-            if args.get("estimated_cost"):
-                deduced.append({"key": "estimated_cost", "label": "Budget estimé (€)", "value": float(args["estimated_cost"]), "raw_value": float(args["estimated_cost"])})
 
+        allow_multi = bool(args.get("allow_multiple_choices", len(options) > 3))
         payload = {
             "operation": operation,
             "project_id": int(project_id) if project_id is not None else None,
             "title": title,
-            "description": description or f"Vote familial concernant : {title}.",
+            "category": category,
+            "priority": priority,
+            "description": description or f"Consultation familiale concernant : {title}.",
             "vote": vote_val or "POUR",
             "comment": comment,
-            "estimated_cost": float(args.get("estimated_cost") or 0.0),
-            "allow_multiple_choices": bool(args.get("allow_multiple_choices", len(options) > 3)),
+            "estimated_cost": estimated_cost,
+            "allow_multiple_choices": allow_multi,
             "options": options,
         }
         card_title = (
             f"Vote sur « {title} »"
             if operation == "vote"
-            else (f"Ouverture du scrutin « {title} »" if operation == "open" else f"Nouveau scrutin : « {title} »")
+            else (f"Valider & ouvrir le scrutin « {title} »" if operation == "open" else f"Proposer un scrutin : « {title} »")
         )
         return {
             "action_type": "vote",
@@ -1367,6 +1448,40 @@ def _stream_toaster_orchestration(
     if not reply_text and ui_components_out:
         reply_text = "Voici les informations demandées ci-dessous."
         yield {"type": "text_delta", "delta": reply_text}
+
+    # Filet de sécurité serveur (Annotation 9) : si la réponse mentionne des tâches à valider / arbitrer
+    # ou cite des IDs de tâches (#87, etc.) sans avoir affiché de tasks_overview_card ni action_card task,
+    # injecter automatiquement le composant interactif permettant d'ouvrir le modal de consultation & validation !
+    has_tasks_card = any(c.get("component_id") == "tasks_overview_card" for c in ui_components_out)
+    has_task_action = bool(action_card and action_card.get("action_type") == "task")
+    if reply_text and not has_tasks_card and not has_task_action:
+        reply_low = reply_text.lower()
+        mentions_task_review = any(
+            kw in reply_low
+            for kw in ("à valider", "a valider", "en attente de validation", "arbitrer", "proposition", "proposed", "tâche #", "tache #")
+        )
+        if mentions_task_review:
+            state_tasks = state.get("tasks") or []
+            known_task_ids = {int(t["id"]) for t in state_tasks if t.get("id") is not None}
+            cited_ids = [int(m) for m in re.findall(r"#(\d+)", reply_text) if int(m) in known_task_ids]
+            review_ids = [
+                int(t["id"])
+                for t in state_tasks
+                if str(t.get("status") or "").upper() in ("PROPOSED", "PROPOSEE", "PENDING_VALIDATION", "EN_ATTENTE_VALIDATION")
+            ]
+            target_ids = list(dict.fromkeys(cited_ids + review_ids))
+            if target_ids:
+                auto_res = execute_toaster_read_tool(
+                    prod_db=db,
+                    member_id=member_id,
+                    tool_name="display_ui_component",
+                    args={"component_id": "tasks_overview_card", "props": {"task_ids": target_ids, "title": "Tâches à consulter & arbitrer"}},
+                )
+                if isinstance(auto_res, dict) and "_ui_component" in auto_res:
+                    auto_comp = auto_res.pop("_ui_component")
+                    if auto_comp.get("tasks"):
+                        ui_components_out.append(auto_comp)
+                        yield {"type": "ui_component", "component": auto_comp}
 
     if not reply_text:
         raise HTTPException(

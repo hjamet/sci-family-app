@@ -33,6 +33,7 @@ from .call_for_funds_service import reconcile_open_calls_for_member
 from .treasury_service import add_ledger_entry, get_member_treasury_summary
 from .workload_balancer import (
     calculate_workload_distribution,
+    get_task_charge_points,
     is_exempt_member,
     is_member_assigned_to_task,
     is_member_creator_of_task,
@@ -72,6 +73,83 @@ VADEMECUM_CATEGORIES: List[str] = [
     "Bâtiments & Réseaux Techniques",
     "Sécurité & Urgences",
 ]
+
+TASK_SUBJECTS: List[str] = [
+    "Presbytère",
+    "Rosings",
+    "Piscine",
+    "Jardin & Espaces Verts",
+    "Petites cabanes",
+    "Hangar à meuble",
+    "SCI & Administratif",
+]
+
+TASK_COMPLEXITIES: List[str] = ["Négligeable", "Faible", "Modérée", "Élevée", "Très élevée"]
+TASK_PRIORITIES: List[str] = ["Planifié", "Normale", "Haute", "Critique"]
+VOTE_PRIORITIES: List[str] = ["Basse", "Normale", "Haute", "Urgente"]
+STATUTORY_ASSOCIATE_NAMES: List[str] = [
+    "Frédéric Jamet",
+    "Élisabeth Jamet",
+    "Henri Jamet",
+    "Joséphine Jamet",
+    "Hortense Jamet",
+    "Marguerite Jamet",
+    "Eugénie Jamet",
+]
+
+
+def is_winter_date(date_str: Optional[str]) -> bool:
+    if not date_str:
+        return True
+    try:
+        m = int(str(date_str).split("-")[1])
+        return m in (9, 10, 11, 12, 1, 2, 3, 4, 5)
+    except (IndexError, ValueError):
+        return True
+
+
+def is_summer_date(date_str: Optional[str]) -> bool:
+    if not date_str:
+        return False
+    try:
+        m = int(str(date_str).split("-")[1])
+        return m in (6, 7, 8)
+    except (IndexError, ValueError):
+        return False
+
+
+def parse_str_list(raw_val: Any) -> List[str]:
+    if not raw_val:
+        return []
+    if isinstance(raw_val, list):
+        return [str(x).strip() for x in raw_val if str(x).strip()]
+    s = str(raw_val).strip()
+    if not s:
+        return []
+    if s.startswith("["):
+        try:
+            parsed = json.loads(s)
+            if isinstance(parsed, list):
+                return [str(x).strip() for x in parsed if str(x).strip()]
+        except ValueError:
+            pass
+    return [part.strip() for part in s.split(",") if part.strip()]
+
+
+def normalize_time_hhmm(raw_val: Any, fallback: str = "15:00") -> str:
+    if not raw_val:
+        return fallback
+    s = str(raw_val).strip().lower().replace("h", ":")
+    if ":" in s:
+        parts = s.split(":")
+        if len(parts) >= 2 and parts[0].isdigit() and parts[1][:2].isdigit():
+            h = max(0, min(23, int(parts[0])))
+            m = max(0, min(59, int(parts[1][:2])))
+            return f"{h:02d}:{m:02d}"
+    elif s.isdigit():
+        h = max(0, min(23, int(s)))
+        return f"{h:02d}:00"
+    return fallback
 
 COMPLETED_TASK_STATUSES = {
     "TERMINE",
@@ -741,9 +819,20 @@ def execute_toaster_action(
         if end_date < start_date:
             raise ValueError(f"La date de départ ({end_date}) ne peut pas précéder l'arrivée ({start_date}).")
 
-        arrival_time = str(merged_payload.get("arrival_time") or "15:00")
-        departure_time = str(merged_payload.get("departure_time") or "11:00")
-        guest_count = max(1, int(merged_payload.get("guest_count") or 1))
+        arrival_time = normalize_time_hhmm(merged_payload.get("arrival_time"), fallback="15:00")
+        departure_time = normalize_time_hhmm(merged_payload.get("departure_time"), fallback="11:00")
+        if operation not in ("cancel", "delete", "annuler") and start_date == end_date and departure_time <= arrival_time:
+            raise ValueError(
+                f"Pour un séjour sur une seule journée, l'heure de départ ({departure_time}) doit être postérieure à l'heure d'arrivée ({arrival_time})."
+            )
+
+        selected_members = [sanitize_display_user_name(x) for x in parse_str_list(merged_payload.get("selected_members"))]
+        external_guests = parse_str_list(merged_payload.get("external_guests"))
+        if not selected_members and not external_guests:
+            selected_members = [member_display]
+        computed_occupants = len(selected_members) + len(external_guests)
+        guest_count = max(computed_occupants, int(merged_payload.get("guest_count") or 1)) if computed_occupants > 0 else max(1, int(merged_payload.get("guest_count") or 1))
+
         selected_rooms = parse_selected_rooms_list(merged_payload.get("selected_rooms") or merged_payload.get("rooms"))
         raw_chambers = int(merged_payload.get("chambers_used") or merged_payload.get("rooms_count") or max(1, len(selected_rooms)))
 
@@ -756,8 +845,20 @@ def execute_toaster_action(
         rooms_str = json.dumps(selected_rooms, ensure_ascii=False) if selected_rooms else ""
         activate_heating = _to_bool(
             merged_payload.get("activate_heating", merged_payload.get("wants_heating")),
+            default=(is_presb and is_winter_date(start_date)),
+        )
+        # Invariant BookingModal : activer le chauffage Presbytère active obligatoirement l'Eau Chaude Sanitaire (52 °C)
+        activate_dhw = True if activate_heating else _to_bool(
+            merged_payload.get("activate_dhw", merged_payload.get("dhw_heating")),
             default=is_presb,
         )
+        activate_pool = _to_bool(
+            merged_payload.get("activate_pool", merged_payload.get("pool_heating")),
+            default=is_summer_date(start_date),
+        )
+        cohabitation_type = str(merged_payload.get("cohabitation_type") or "total").strip().lower()
+        if cohabitation_type not in ("total", "other_building", "exclusive"):
+            cohabitation_type = "total"
         target_temp = float(merged_payload.get("target_temperature") or 20.0)
 
         if operation in ("cancel", "delete", "annuler"):
@@ -797,13 +898,30 @@ def execute_toaster_action(
                 year_val = datetime.utcnow().year
                 week_val = 1
 
-            domotique_tag = (
-                f"[Domotique: Chauffage Presbytère Confort {target_temp:.0f}°C • Eau Chaude Sanitaire Active]"
-                if (is_presb and activate_heating)
-                else "[Domotique: Chauffage Presbytère Hors-Gel • Eau Chaude Sanitaire Coupée]"
-            )
+            # Format strictement identique à BookingModal.jsx pour parité totale avec le portail et le cron thermique
+            domotique_tags: List[str] = []
+            if activate_dhw or activate_heating:
+                domotique_tags.append("Eau Chaude Sanitaire 52°C")
+            else:
+                domotique_tags.append("Eau Chaude Sanitaire Coupée")
+            if activate_heating:
+                domotique_tags.append(f"Chauffage Presbytère {target_temp:.0f}°C")
+            elif is_presb:
+                domotique_tags.append("Chauffage Presbytère Coupé")
+            if activate_pool:
+                domotique_tags.append("Préchauffage Piscine 27°C")
+
+            notes_parts: List[str] = []
             user_notes = str(merged_payload.get("notes") or "").strip()
-            full_notes = f"{user_notes} {domotique_tag}".strip()
+            if user_notes:
+                notes_parts.append(user_notes)
+            if selected_members:
+                notes_parts.append(f"[Membres: {', '.join(selected_members)}]")
+            if external_guests:
+                notes_parts.append(f"[Invités: {', '.join(external_guests)}]")
+            if domotique_tags:
+                notes_parts.append(f"[Domotique: {' • '.join(domotique_tags)}]")
+            full_notes = " • ".join(notes_parts)
 
             new_stay = Reservation(
                 property_id=prop_id,
@@ -820,6 +938,8 @@ def execute_toaster_action(
                 chambers_used=chambers_used,
                 selected_rooms=rooms_str,
                 rooms_count=chambers_used,
+                cohabitation_type=cohabitation_type,
+                accepts_extra_family=(cohabitation_type != "exclusive"),
                 notes=full_notes,
                 created_at=datetime.utcnow(),
             )
@@ -829,21 +949,17 @@ def execute_toaster_action(
                 Log(
                     action="TOASTER_STAY_CREATE",
                     user_name=member_display,
-                    details=f"Séjour #{new_stay.id} créé : {prop_name} ({start_date} -> {end_date}, {guest_count} pers., {chambers_used} ch.)",
+                    details=f"Séjour #{new_stay.id} créé : {prop_name} ({start_date} {arrival_time} -> {end_date} {departure_time}, {guest_count} pers., {chambers_used} ch.)",
                 )
             )
             prod_db.commit()
             prod_db.refresh(new_stay)
 
             rooms_note = f" ({', '.join(selected_rooms)})" if selected_rooms else ""
-            heating_suffix = (
-                f" Le chauffage du Presbytère est programmé en confort ({target_temp:.0f} °C) pour votre arrivée."
-                if (is_presb and activate_heating)
-                else " Le chauffage reste en hors-gel."
-            )
+            domo_summary = ", ".join(domotique_tags)
             confirmation_msg = (
-                f"Séjour #{new_stay.id} enregistré au {prop_name} du {start_date} au {end_date} "
-                f"pour {member_display} ({guest_count} pers., {chambers_used} ch.{rooms_note}).{heating_suffix}"
+                f"Séjour #{new_stay.id} enregistré au {prop_name} du {start_date} ({arrival_time}) au {end_date} ({departure_time}) "
+                f"pour {guest_count} occupant(s) ({chambers_used} ch.{rooms_note}). Domotique : {domo_summary}."
             )
 
     elif norm_type in ("heating", "propose_heating_or_pool_action", "pool", "thermal", "chauffage"):
@@ -1044,82 +1160,131 @@ def execute_toaster_action(
         target_task = None
         if task_id:
             target_task = prod_db.query(Task).filter(Task.id == int(task_id)).first()
-        if not target_task and title_val and operation in ("complete", "close", "check", "assign", "update", "terminee"):
+        if not target_task and title_val and operation in ("complete", "close", "check", "assign", "update", "terminee", "approve", "reject"):
             target_task = prod_db.query(Task).filter(Task.title.ilike(f"%{title_val}%")).first()
 
-        if operation in ("complete", "close", "check", "terminee", "termine") or (
-            target_task and str(merged_payload.get("status", "")).upper() in ("TERMINE", "TERMINEE")
-        ):
+        if operation in ("complete", "close", "check", "terminee", "termine"):
             if not target_task:
                 raise ValueError("Tâche introuvable pour clôture.")
-            new_status = str(merged_payload.get("status") or "TERMINEE").upper()
+            cur_st = normalize_status(target_task.status)
+            if cur_st == "PROPOSED":
+                raise ValueError(
+                    "Cette tâche est encore en attente d'approbation par un coordinateur (PROPOSED). "
+                    "Ouvrez sa fiche pour l'examiner, choisir le responsable et l'approuver ou la rejeter."
+                )
+            # Cycle de vie cohérent avec TaskDetailModal.jsx :
+            # - Un associé soumet en PENDING_VALIDATION (arbitrage coordinateur)
+            # - Un coordinateur qui valide une tâche déjà PENDING_VALIDATION la clôture en DONE
+            if member.is_coordinator and cur_st in ("PENDING_VALIDATION", "EN_ATTENTE_VALIDATION"):
+                new_status = "DONE"
+                target_task.last_completed_at = datetime.utcnow()
+                msg_action = "confirmée et clôturée (archivable)"
+            else:
+                new_status = "PENDING_VALIDATION"
+                msg_action = "soumise à validation coordinateur (À valider)"
             target_task.status = new_status
-            target_task.last_completed_at = datetime.utcnow()
             target_task.completion_notes = str(
-                merged_payload.get("completion_notes") or f"Validée par {member_display} via l'assistant Grille-Pain"
+                merged_payload.get("completion_notes") or f"Soumise par {member_display} via l'assistant Grille-Pain"
             )
             target_task.updated_at = datetime.utcnow()
             prod_db.commit()
-            confirmation_msg = f"La tâche #{target_task.id} « {target_task.title} » a été marquée comme {new_status}."
-        else:
+            confirmation_msg = f"La tâche #{target_task.id} « {target_task.title} » a été {msg_action}."
+        elif operation == "assign":
+            if not target_task:
+                raise ValueError("Tâche introuvable pour attribution.")
+            if not member.is_coordinator:
+                raise ValueError("Seul un coordinateur (Henri ou Joséphine) peut modifier l'attribution d'une tâche.")
             assignee_name = str(merged_payload.get("assigned_to") or merged_payload.get("assignee") or "").strip()
-            assignee_obj = None
-            if assignee_name:
-                assignee_obj = (
-                    prod_db.query(Member)
-                    .filter(
-                        or_(
-                            Member.prenom.ilike(f"%{assignee_name}%"),
-                            Member.name.ilike(f"%{assignee_name}%"),
-                        )
+            if not assignee_name:
+                raise ValueError("Veuillez sélectionner un associé responsable.")
+            assignee_obj = (
+                prod_db.query(Member)
+                .filter(
+                    or_(
+                        Member.prenom.ilike(f"%{assignee_name}%"),
+                        Member.name.ilike(f"%{assignee_name}%"),
                     )
-                    .first()
                 )
-            if target_task and operation == "assign":
-                final_assignee = format_member_display_name(assignee_obj) if assignee_obj else (assignee_name or member_display)
-                target_task.assignee_id = assignee_obj.id if assignee_obj else member.id
-                target_task.assigned_members = json.dumps([final_assignee], ensure_ascii=False)
-                target_task.updated_at = datetime.utcnow()
-                prod_db.commit()
-                confirmation_msg = f"La tâche #{target_task.id} « {target_task.title} » a été attribuée à {final_assignee}."
-            else:
-                if not title_val:
-                    raise ValueError("Le titre de la tâche à créer est requis.")
-                subject_val = str(merged_payload.get("subject") or merged_payload.get("building") or "Presbytère")
-                priority_val = str(merged_payload.get("priority") or "Normale")
-                charge_pts = int(merged_payload.get("charge_points") or 3)
-                explicit_status = str(merged_payload.get("status") or "").strip().upper()
-                task_status = explicit_status if (member.is_coordinator and explicit_status in ("A_FAIRE", "EN_COURS", "PROPOSED")) else "PROPOSED"
+                .first()
+            )
+            final_assignee = format_member_display_name(assignee_obj) if assignee_obj else assignee_name
+            target_task.assignee_id = assignee_obj.id if assignee_obj else None
+            target_task.assigned_members = json.dumps([final_assignee], ensure_ascii=False)
+            target_task.updated_at = datetime.utcnow()
+            prod_db.commit()
+            confirmation_msg = f"La tâche #{target_task.id} « {target_task.title} » a été attribuée à {final_assignee}."
+        else:
+            # Cycle de vie officiel (Annotation 7 & 8 — parité totale avec TaskDetailModal.jsx) :
+            # Toute nouvelle tâche créée est TOUJOURS en statut PROPOSED et sans responsable pré-attribué ;
+            # l'attribution se fait par les coordinateurs au moment de la validation !
+            if not title_val:
+                raise ValueError("Le titre de la tâche à créer est requis.")
+            subject_val = str(merged_payload.get("subject") or merged_payload.get("building") or "Presbytère").strip()
+            if subject_val not in TASK_SUBJECTS:
+                low_s = _norm_text(subject_val)
+                subject_val = next((s for s in TASK_SUBJECTS if low_s in _norm_text(s) or _norm_text(s) in low_s), "Presbytère")
+            complexity_val = str(merged_payload.get("complexity") or "Modérée").strip()
+            if complexity_val not in TASK_COMPLEXITIES:
+                complexity_val = "Modérée"
+            charge_pts = get_task_charge_points(complexity_val)
+            priority_val = str(merged_payload.get("priority") or "Normale").strip()
+            if priority_val not in TASK_PRIORITIES:
+                priority_val = "Normale"
+            budget_raw = merged_payload.get("budget")
+            try:
+                budget_val = max(0.0, float(str(budget_raw).replace(",", "."))) if budget_raw not in (None, "") else 0.0
+            except (ValueError, TypeError):
+                budget_val = 0.0
+            deadline_raw = str(merged_payload.get("deadline") or "").strip()[:10] or None
+            is_recurring_val = _to_bool(merged_payload.get("is_recurring"), default=False)
+            rec_interval = max(1, int(merged_payload.get("recurrence_interval") or 1)) if is_recurring_val else 1
+            rec_unit = str(merged_payload.get("recurrence_unit") or "semaines").strip()
+            if rec_unit not in ("jours", "semaines", "mois", "sejours"):
+                rec_unit = "semaines"
+            raw_checklist = merged_payload.get("checklist")
+            checklist_items: List[Dict[str, Any]] = []
+            if isinstance(raw_checklist, list):
+                for item in raw_checklist:
+                    if isinstance(item, dict) and str(item.get("text") or "").strip():
+                        checklist_items.append({"text": str(item["text"]).strip(), "done": bool(item.get("done", False))})
+                    elif isinstance(item, str) and item.strip():
+                        checklist_items.append({"text": item.strip(), "done": False})
 
-                last_t = prod_db.query(Task).order_by(Task.id.desc()).first()
-                next_num = (last_t.id + 100) if (last_t and last_t.id) else 101
+            last_t = prod_db.query(Task).order_by(Task.id.desc()).first()
+            next_num = (last_t.id + 100) if (last_t and last_t.id) else 101
+            candidate_ref = f"T-2026-{next_num:03d}"
+            while prod_db.query(Task).filter(Task.ref == candidate_ref).first():
+                next_num += 1
                 candidate_ref = f"T-2026-{next_num:03d}"
-                while prod_db.query(Task).filter(Task.ref == candidate_ref).first():
-                    next_num += 1
-                    candidate_ref = f"T-2026-{next_num:03d}"
 
-                assigned_list = [format_member_display_name(assignee_obj)] if assignee_obj else ([assignee_name] if assignee_name else [])
-                new_task = Task(
-                    ref=candidate_ref,
-                    title=title_val,
-                    description=str(merged_payload.get("description") or title_val),
-                    subject=subject_val,
-                    category=str(merged_payload.get("category") or subject_val),
-                    priority=priority_val,
-                    status=task_status,
-                    charge_points=charge_pts,
-                    assignee_id=assignee_obj.id if assignee_obj else None,
-                    assigned_members=json.dumps(assigned_list, ensure_ascii=False),
-                    deadline=merged_payload.get("deadline"),
-                    created_by=member_display,
-                    created_at=datetime.utcnow(),
-                )
-                prod_db.add(new_task)
-                prod_db.commit()
-                prod_db.refresh(new_task)
-                confirmation_msg = (
-                    f"Tâche #{new_task.id} ({new_task.ref}) « {new_task.title} » créée sur {subject_val} (statut : {new_task.status})."
-                )
+            new_task = Task(
+                ref=candidate_ref,
+                title=title_val,
+                description=str(merged_payload.get("description") or title_val).strip(),
+                subject=subject_val,
+                category=subject_val,
+                complexity=complexity_val,
+                charge_points=charge_pts,
+                priority=priority_val,
+                budget=budget_val,
+                status="PROPOSED",
+                assignee_id=None,
+                assigned_members=json.dumps([], ensure_ascii=False),
+                deadline=deadline_raw,
+                is_recurring=is_recurring_val,
+                recurrence_interval=rec_interval,
+                recurrence_unit=rec_unit,
+                checklist=json.dumps(checklist_items, ensure_ascii=False),
+                created_by=member_display,
+                created_at=datetime.utcnow(),
+            )
+            prod_db.add(new_task)
+            prod_db.commit()
+            prod_db.refresh(new_task)
+            confirmation_msg = (
+                f"Proposition de tâche #{new_task.id} ({new_task.ref}) « {new_task.title} » enregistrée sur {subject_val} "
+                f"(en attente de validation et d'attribution par les coordinateurs)."
+            )
 
     elif norm_type in ("vote", "propose_poll_or_vote_action", "poll", "scrutin", "project"):
         operation = str(
@@ -1130,32 +1295,47 @@ def execute_toaster_action(
         if operation == "create":
             title_val = str(merged_payload.get("title") or "Nouveau scrutin familial").strip()
             desc_val = str(merged_payload.get("description") or title_val).strip()
-            options_val = merged_payload.get("options") or ["POUR", "CONTRE", "ABSTENTION"]
+            cat_val = str(merged_payload.get("category") or merged_payload.get("subject") or "Presbytère").strip()
+            if cat_val not in TASK_SUBJECTS:
+                low_c = _norm_text(cat_val)
+                cat_val = next((s for s in TASK_SUBJECTS if low_c in _norm_text(s) or _norm_text(s) in low_c), "Presbytère")
+            prio_val = str(merged_payload.get("priority") or "Normale").strip()
+            if prio_val not in VOTE_PRIORITIES:
+                prio_val = "Normale"
+            options_val = merged_payload.get("options") or ["Approuver le projet", "Rejeter le projet"]
             if isinstance(options_val, str):
                 options_val = [o.strip() for o in options_val.replace("\n", ",").split(",") if o.strip()]
             options_val = [str(o).strip() for o in options_val if str(o).strip()]
-            if not options_val:
-                options_val = ["POUR", "CONTRE", "ABSTENTION"]
+            if len(options_val) < 2:
+                options_val = ["Approuver le projet", "Rejeter le projet"]
+            prop_id = 1 if "rosing" in _norm_text(cat_val) else 2
 
+            # Cycle de vie officiel (Annotation 8 — parité totale avec VoteRoofModal.jsx) :
+            # Toute nouvelle proposition de scrutin démarre en statut PROPOSED (validation coordinateur avant ouverture).
             new_proj = Project(
-                property_id=2,
+                property_id=prop_id,
                 title=title_val,
                 description=desc_val,
-                estimated_cost=float(merged_payload.get("estimated_cost") or 0.0),
-                category=str(merged_payload.get("category") or "🗳️ Scrutin Familial"),
-                priority=str(merged_payload.get("priority") or "MOYENNE"),
-                status="EN_VOTE",
+                estimated_cost=max(0.0, float(merged_payload.get("estimated_cost") or 0.0)),
+                category=cat_val,
+                priority=prio_val,
+                status="PROPOSED",
                 submitted_by=member_display,
                 options=json.dumps(options_val, ensure_ascii=False),
-                allow_multiple_choices=bool(merged_payload.get("allow_multiple_choices", len(options_val) > 3)),
+                allow_multiple_choices=_to_bool(merged_payload.get("allow_multiple_choices"), default=(len(options_val) > 3)),
                 created_at=datetime.utcnow(),
             )
             prod_db.add(new_proj)
             prod_db.commit()
             prod_db.refresh(new_proj)
-            confirmation_msg = f"Scrutin #{new_proj.id} « {new_proj.title} » ouvert au vote sur le portail."
+            confirmation_msg = (
+                f"Initiative de scrutin #{new_proj.id} « {new_proj.title} » proposée ({cat_val}) — "
+                f"en attente de validation par un coordinateur avant ouverture au vote."
+            )
 
         elif operation == "open":
+            if not member.is_coordinator:
+                raise ValueError("Seul un coordinateur (Henri ou Joséphine) peut valider et ouvrir un scrutin au vote.")
             project_id = merged_payload.get("project_id") or merged_payload.get("id")
             target_proj = prod_db.query(Project).filter(Project.id == int(project_id)).first() if project_id else None
             if not target_proj:
@@ -1171,7 +1351,7 @@ def execute_toaster_action(
                 target_proj.options = json.dumps([str(o).strip() for o in opts if str(o).strip()], ensure_ascii=False)
             target_proj.status = "EN_VOTE"
             prod_db.commit()
-            confirmation_msg = f"Le scrutin #{target_proj.id} « {target_proj.title} » est désormais ouvert au vote."
+            confirmation_msg = f"Le scrutin #{target_proj.id} « {target_proj.title} » est désormais validé et ouvert au vote."
 
         else:
             project_id = merged_payload.get("project_id") or merged_payload.get("vote_id") or merged_payload.get("id")
@@ -1189,6 +1369,11 @@ def execute_toaster_action(
                 target_proj = prod_db.query(Project).filter(Project.title.ilike(f"%{proj_title}%")).first()
             if not target_proj:
                 raise ValueError("Aucun scrutin correspondant trouvé pour enregistrer ce vote.")
+            st_upper = str(target_proj.status or "").upper()
+            if st_upper in ("PROPOSED", "PENDING_CREATION", "SOUMIS", "SOUMISE", "PROPOSE", "PROPOSEE"):
+                raise ValueError("Ce scrutin est encore en attente de validation par un coordinateur : les votes ne sont pas encore ouverts.")
+            if st_upper in ("ARCHIVE", "ARCHIVEE", "ARCHIVED", "CLOSED", "ANNULE", "ANNULEE"):
+                raise ValueError("Ce scrutin est archivé et clos : aucun vote supplémentaire n'est possible.")
 
             existing_vote = (
                 prod_db.query(ProjectVote)
@@ -1958,7 +2143,7 @@ def execute_toaster_read_tool(
                     if search_q not in hay:
                         continue
                 elif proj_id is None and not search_q:
-                    if (p.status or "").upper() not in ("EN_VOTE", "PROPOSED", "SOUMIS"):
+                    if (p.status or "").upper() not in ("EN_VOTE", "OPEN", "PROPOSED", "SOUMIS", "PENDING_VALIDATION"):
                         continue
                 votes = prod_db.query(ProjectVote).filter(ProjectVote.project_id == p.id).all()
                 opts = []
@@ -1970,14 +2155,17 @@ def execute_toaster_read_tool(
                 matched_polls.append(
                     {
                         "id": p.id,
+                        "property_id": p.property_id,
                         "title": p.title,
                         "description": p.description,
                         "category": p.category,
+                        "priority": p.priority,
                         "status": p.status,
                         "estimated_cost": float(p.estimated_cost or 0.0),
                         "submitted_by": sanitize_display_user_name(p.submitted_by),
                         "allow_multiple_choices": bool(p.allow_multiple_choices),
                         "options": opts if isinstance(opts, list) else [],
+                        "created_at": str(p.created_at) if p.created_at else None,
                         "votes": [
                             {"id": v.id, "user_name": sanitize_display_user_name(v.user_name), "vote": v.vote, "comment": v.comment}
                             for v in votes
@@ -1994,19 +2182,25 @@ def execute_toaster_read_tool(
 
         if comp_id in ("tasks_overview_card", "tasks", "taches"):
             t_id = props.get("task_id")
+            raw_t_ids = props.get("task_ids")
+            t_ids_set = {int(x) for x in raw_t_ids if str(x).isdigit()} if isinstance(raw_t_ids, list) else set()
             assigned_q = _norm_text(props.get("assigned_to"))
             status_q = str(props.get("status_filter") or "ACTIVE").strip().upper()
             q = prod_db.query(Task).order_by(Task.id.desc())
             if t_id is not None:
                 q = q.filter(Task.id == int(t_id))
+            elif t_ids_set:
+                q = q.filter(Task.id.in_(list(t_ids_set)))
             rows = q.all()
             cards = []
             for t in rows:
-                if t_id is None and status_q not in ("ALL", "TOUS", ""):
+                if t_id is None and not t_ids_set and status_q not in ("ALL", "TOUS", ""):
                     st_up = (t.status or "").upper()
-                    if status_q == "ACTIVE" and st_up in ("TERMINEE", "TERMINE", "ARCHIVEE"):
+                    if status_q == "ACTIVE" and st_up in ("TERMINEE", "TERMINE", "DONE", "ARCHIVEE", "REJECTED"):
                         continue
-                    elif status_q != "ACTIVE" and st_up != status_q:
+                    elif status_q == "REVIEW_NEEDED" and st_up not in ("PROPOSED", "PROPOSEE", "PENDING_VALIDATION", "EN_ATTENTE_VALIDATION"):
+                        continue
+                    elif status_q not in ("ACTIVE", "REVIEW_NEEDED") and st_up != status_q:
                         continue
                 assigned_raw = t.assigned_members or "[]"
                 try:
@@ -2014,7 +2208,7 @@ def execute_toaster_read_tool(
                 except ValueError:
                     assigned_arr = [str(assigned_raw)]
                 assigned_clean = [sanitize_display_user_name(str(x)) for x in (assigned_arr if isinstance(assigned_arr, list) else [assigned_arr])]
-                if assigned_q and not any(assigned_q in _norm_text(a) for a in assigned_clean):
+                if assigned_q and t_id is None and not t_ids_set and not any(assigned_q in _norm_text(a) for a in assigned_clean):
                     continue
                 linked_docs = (
                     prod_db.query(AdminDocument)
@@ -2022,6 +2216,10 @@ def execute_toaster_read_tool(
                     .filter(AdminDocument.task_id == t.id)
                     .all()
                 )
+                try:
+                    checklist_parsed = json.loads(t.checklist) if isinstance(t.checklist, str) and t.checklist.strip() else []
+                except ValueError:
+                    checklist_parsed = []
                 cards.append(
                     {
                         "id": t.id,
@@ -2029,19 +2227,31 @@ def execute_toaster_read_tool(
                         "title": t.title,
                         "description": t.description,
                         "subject": t.subject,
+                        "category": t.category or t.subject,
                         "priority": t.priority,
+                        "complexity": t.complexity or "Modérée",
                         "status": t.status,
-                        "charge_points": t.charge_points or 3,
+                        "charge_points": t.charge_points or get_task_charge_points(t.complexity or "Modérée"),
+                        "budget": float(t.budget or 0.0),
+                        "deadline": t.deadline,
+                        "is_recurring": bool(t.is_recurring),
+                        "recurrence_interval": int(t.recurrence_interval or 1),
+                        "recurrence_unit": t.recurrence_unit or "semaines",
+                        "auto_assign_by_workload": bool(t.auto_assign_by_workload),
+                        "assignee_id": t.assignee_id,
                         "assigned_members": assigned_clean,
+                        "created_by": sanitize_display_user_name(t.created_by),
+                        "checklist": checklist_parsed if isinstance(checklist_parsed, list) else [],
+                        "completion_notes": t.completion_notes,
                         "documents": [
-                            {"id": d.id, "title": d.title or d.file_name, "url": f"/api/documents/{d.id}/download"}
+                            {"id": d.id, "title": d.title or d.file_name, "name": d.title or d.file_name, "filename": d.file_name, "url": f"/api/documents/{d.id}/download", "file_url": f"/api/documents/{d.id}/download"}
                             for d in linked_docs
                         ],
                     }
                 )
             ui_payload = {
                 "component_id": "tasks_overview_card",
-                "filter_label": props.get("assigned_to") or status_q,
+                "filter_label": props.get("title") or props.get("assigned_to") or status_q,
                 "tasks": cards[:12],
             }
             return {"status": "rendered_in_chat", "component_id": "tasks_overview_card", "tasks_rendered_count": len(cards[:12]), "_ui_component": ui_payload}

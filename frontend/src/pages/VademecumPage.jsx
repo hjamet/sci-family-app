@@ -583,12 +583,12 @@ export function FuelInteractiveGraph({ fuelHistory, heatingStatus, onRefreshFuel
     ?? (points.length > 0 ? points[points.length - 1].liters : null);
 
   return (
-    <div className="mt-4 p-4 sm:p-5 bg-white dark:bg-slate-900 rounded-2xl border border-border-subtle shadow-xs flex flex-col gap-4">
-      {/* En-tête avec onglets */}
-      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 border-b border-border-subtle pb-3">
-        <div className="flex items-center gap-2">
-          <span className="material-symbols-outlined text-amber-600 text-[22px]">monitoring</span>
-          <div>
+    <div className="mt-4 p-4 sm:p-5 bg-white dark:bg-slate-900 rounded-2xl border border-border-subtle shadow-xs flex flex-col gap-4 overflow-hidden">
+      {/* En-tête avec onglets (Annotation 3 : empilage responsive anti-débordement) */}
+      <div className="flex flex-col gap-3 border-b border-border-subtle pb-3">
+        <div className="flex items-center gap-2 min-w-0">
+          <span className="material-symbols-outlined text-amber-600 text-[22px] shrink-0">monitoring</span>
+          <div className="min-w-0">
             <h4 className="font-headline-sm text-sm sm:text-base font-bold text-forest-deep dark:text-emerald-100">
               Télémétrie Fioul Cuve &amp; Brûleur Viessmann
             </h4>
@@ -598,40 +598,40 @@ export function FuelInteractiveGraph({ fuelHistory, heatingStatus, onRefreshFuel
           </div>
         </div>
 
-        {/* Boutons d'onglets */}
-        <div className="inline-flex p-1 rounded-xl bg-slate-100 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 text-xs font-semibold shrink-0">
+        {/* Boutons d'onglets : grille responsive pleine largeur, zéro débordement */}
+        <div className="grid grid-cols-1 sm:grid-cols-3 gap-1 w-full p-1 rounded-xl bg-slate-100 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 text-xs font-semibold">
           <button
             type="button"
             onClick={() => setActiveTab('temperatures')}
-            className={`px-3 py-1.5 rounded-lg transition-all cursor-pointer ${
+            className={`px-2.5 py-1.5 rounded-lg transition-all cursor-pointer text-center leading-snug ${
               activeTab === 'temperatures'
                 ? 'bg-white dark:bg-slate-900 text-forest-deep dark:text-emerald-300 font-bold shadow-xs'
                 : 'text-slate-600 dark:text-slate-400 hover:text-slate-900'
             }`}
           >
-            Températures &amp; Impact Chauffage
+            Températures &amp; Chauffage
           </button>
           <button
             type="button"
             onClick={() => setActiveTab('annual')}
-            className={`px-3 py-1.5 rounded-lg transition-all cursor-pointer ${
+            className={`px-2.5 py-1.5 rounded-lg transition-all cursor-pointer text-center leading-snug ${
               activeTab === 'annual'
                 ? 'bg-white dark:bg-slate-900 text-forest-deep dark:text-emerald-300 font-bold shadow-xs'
                 : 'text-slate-600 dark:text-slate-400 hover:text-slate-900'
             }`}
           >
-            Historique Annuel Cuve &amp; Livraisons
+            Historique Cuve &amp; Livraisons
           </button>
           <button
             type="button"
             onClick={() => setActiveTab('daily')}
-            className={`px-3 py-1.5 rounded-lg transition-all cursor-pointer ${
+            className={`px-2.5 py-1.5 rounded-lg transition-all cursor-pointer text-center leading-snug ${
               activeTab === 'daily'
                 ? 'bg-white dark:bg-slate-900 text-forest-deep dark:text-emerald-300 font-bold shadow-xs'
                 : 'text-slate-600 dark:text-slate-400 hover:text-slate-900'
             }`}
           >
-            Suivi Quotidien Allumages Brûleur (0,293 L/all.)
+            Allumages Brûleur (0,293 L/all.)
           </button>
         </div>
       </div>

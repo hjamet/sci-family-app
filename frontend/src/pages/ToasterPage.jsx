@@ -6,7 +6,14 @@ import {
   ToasterActionFormModal,
   getMaxRoomsForBuilding,
   getRoomsListForBuilding,
+  TASK_SUBJECTS,
+  TASK_COMPLEXITIES,
+  TASK_PRIORITIES,
+  VOTE_PRIORITIES,
+  STATUTORY_ASSOCIATES_LIST,
 } from '../components/ToasterSharedComponents';
+import TaskDetailModal from '../components/TaskDetailModal';
+import VoteRoofModal from '../components/VoteRoofModal';
 
 const STATUTORY_MEMBERS_FALLBACK = [
   { id: 1, prenom: 'Henri', nom: 'Henri Jamet', displayLabel: 'Henri Jamet' },
@@ -56,11 +63,157 @@ function formatAssociatePrenom(member) {
   return full.split(' ')[0] || 'Associé';
 }
 
-function formatCurrency(val) {
-  if (val === null || val === undefined || isNaN(Number(val))) return '— €';
-  const num = Number(val);
-  const sign = num > 0 ? '+' : '';
-  return `${sign}${num.toLocaleString('fr-FR', { minimumFractionDigits: 2, maximumFractionDigits: 2 })} €`;
+function formatFrDateShort(ymd) {
+  if (!ymd || !/^\d{4}-\d{2}-\d{2}$/.test(String(ymd))) return String(ymd || '—');
+  const [y, m, d] = String(ymd).split('-').map(Number);
+  const dt = new Date(y, m - 1, d);
+  if (isNaN(dt.getTime())) return String(ymd);
+  return `${DAYS_SHORT_FR[dt.getDay()]} ${String(d).padStart(2, '0')}/${String(m).padStart(2, '0')}/${y}`;
+}
+
+function StayDateTimePickerPopover({
+  label,
+  dateValue,
+  timeValue,
+  minDate = null,
+  timePresets = ['10:00', '14:00', '15:00', '18:00', '20:00'],
+  onChangeDate,
+  onChangeTime,
+  onClose,
+}) {
+  const initialParts = /^\d{4}-\d{2}-\d{2}$/.test(String(dateValue || ''))
+    ? String(dateValue).split('-').map(Number)
+    : null;
+  const now = new Date();
+  const [year, setYear] = useState(initialParts ? initialParts[0] : now.getFullYear());
+  const [month, setMonth] = useState(initialParts ? initialParts[1] - 1 : now.getMonth());
+
+  const firstDay = new Date(year, month, 1);
+  const startOffset = (firstDay.getDay() + 6) % 7;
+  const daysInMonth = new Date(year, month + 1, 0).getDate();
+  const cells = [];
+  for (let i = 0; i < startOffset; i += 1) cells.push(null);
+  for (let d = 1; d <= daysInMonth; d += 1) {
+    const iso = `${year}-${String(month + 1).padStart(2, '0')}-${String(d).padStart(2, '0')}`;
+    cells.push({ day: d, iso, weekday: new Date(year, month, d).getDay() });
+  }
+
+  const prevMonth = () => {
+    if (month === 0) {
+      setMonth(11);
+      setYear((y) => y - 1);
+    } else setMonth((m) => m - 1);
+  };
+  const nextMonth = () => {
+    if (month === 11) {
+      setMonth(0);
+      setYear((y) => y + 1);
+    } else setMonth((m) => m + 1);
+  };
+
+  return (
+    <div className="mt-2 p-3.5 rounded-2xl bg-white border-2 border-emerald-300 shadow-lg w-full max-w-sm space-y-3 z-30">
+      <div className="flex items-center justify-between gap-2 pb-2 border-b border-slate-100">
+        <span className="text-xs font-bold text-forest-deep">{label}</span>
+        <button
+          type="button"
+          onClick={onClose}
+          className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full bg-emerald-700 text-white text-[11px] font-bold cursor-pointer"
+        >
+          <span>OK</span>
+        </button>
+      </div>
+
+      {/* Mini-calendrier français */}
+      <div className="space-y-1.5">
+        <div className="flex items-center justify-between">
+          <button
+            type="button"
+            onClick={prevMonth}
+            className="w-7 h-7 rounded-full hover:bg-slate-100 flex items-center justify-center text-slate-600 cursor-pointer"
+          >
+            <span className="material-symbols-outlined text-[16px]">chevron_left</span>
+          </button>
+          <span className="text-xs font-bold text-forest-deep capitalize">
+            {MONTHS_FR[month]} {year}
+          </span>
+          <button
+            type="button"
+            onClick={nextMonth}
+            className="w-7 h-7 rounded-full hover:bg-slate-100 flex items-center justify-center text-slate-600 cursor-pointer"
+          >
+            <span className="material-symbols-outlined text-[16px]">chevron_right</span>
+          </button>
+        </div>
+
+        <div className="grid grid-cols-7 gap-0.5 text-center text-[10px] font-bold text-slate-400">
+          {CAL_HEADERS_FR.map((h, i) => (
+            <div key={i}>{h}</div>
+          ))}
+        </div>
+
+        <div className="grid grid-cols-7 gap-0.5">
+          {cells.map((cell, idx) => {
+            if (!cell) return <div key={`e-${idx}`} className="h-7" />;
+            const isSelected = cell.iso === dateValue;
+            const isDisabled = Boolean(minDate && cell.iso < minDate);
+            const isWeekend = cell.weekday === 0 || cell.weekday === 6;
+            return (
+              <button
+                key={cell.iso}
+                type="button"
+                disabled={isDisabled}
+                onClick={() => onChangeDate(cell.iso)}
+                className={`h-7 rounded-lg text-[11px] font-semibold transition-colors ${
+                  isDisabled
+                    ? 'text-slate-300 cursor-not-allowed'
+                    : isSelected
+                    ? 'bg-emerald-700 text-white font-bold shadow-2xs cursor-pointer'
+                    : isWeekend
+                    ? 'bg-emerald-50/70 text-emerald-950 hover:bg-emerald-600 hover:text-white cursor-pointer'
+                    : 'text-slate-700 hover:bg-emerald-100 hover:text-emerald-950 cursor-pointer'
+                }`}
+              >
+                {cell.day}
+              </button>
+            );
+          })}
+        </div>
+      </div>
+
+      {/* Sélecteur d'heure + raccourcis */}
+      <div className="pt-2 border-t border-slate-100 space-y-2">
+        <div className="flex items-center justify-between gap-2">
+          <span className="text-[11px] font-bold text-slate-700 flex items-center gap-1">
+            <span className="material-symbols-outlined text-[15px] text-primary">schedule</span>
+            Heure :
+          </span>
+          <input
+            type="time"
+            value={timeValue || '15:00'}
+            onChange={(e) => onChangeTime(e.target.value)}
+            className="h-8 px-2.5 rounded-xl border border-emerald-300 bg-emerald-50/40 text-xs font-bold text-forest-deep focus:outline-none focus:border-emerald-600"
+          />
+        </div>
+        <div className="flex flex-wrap gap-1">
+          {timePresets.map((preset) => (
+            <button
+              key={preset}
+              type="button"
+              onClick={() => onChangeTime(preset)}
+              className={`px-2 py-0.5 rounded-full text-[10.5px] font-bold border cursor-pointer transition-colors ${
+                timeValue === preset
+                  ? 'bg-emerald-700 text-white border-emerald-700'
+                  : 'bg-slate-50 hover:bg-emerald-50 text-slate-700 border-slate-200'
+              }`}
+            >
+              {preset}
+            </button>
+          ))}
+        </div>
+      </div>
+    </div>
+  );
 }
 
 function getAuthHeaders() {
@@ -241,6 +394,9 @@ export default function ToasterPage({ currentUser }) {
 
   // Modale de formulaire ouverte depuis un composant partagé
   const [actionModalState, setActionModalState] = useState(null);
+  // Modales réelles de consultation / arbitrage (Annotations 2, 8, 9)
+  const [inspectingTask, setInspectingTask] = useState(null);
+  const [inspectingPoll, setInspectingPoll] = useState(null);
 
   // Pièce jointe multimodale (Photo / PDF)
   const [attachment, setAttachment] = useState(null);
@@ -253,10 +409,13 @@ export default function ToasterPage({ currentUser }) {
   const voiceAbortedRef = useRef(false);
   const sendVoiceTriggerRef = useRef(null);
 
-  // Édition inline d'un champ déduit 🟢 / saisie libre 🔴 / calendrier options vote
+  // Édition inline d'un champ déduit 🟢 / saisie libre 🔴 / popovers calendrier & heure / saisies invités & checklist
   const [editingField, setEditingField] = useState(null);
   const [customMissingInputs, setCustomMissingInputs] = useState({});
   const [openDatePickerTarget, setOpenDatePickerTarget] = useState(null); // { msgId, optIdx }
+  const [openStayPicker, setOpenStayPicker] = useState(null); // { msgId, which: 'start' | 'end' }
+  const [stayExternalInputs, setStayExternalInputs] = useState({});
+  const [taskChecklistInputs, setTaskChecklistInputs] = useState({});
 
   const chatEndRef = useRef(null);
   const messagesRef = useRef(messages);
@@ -350,20 +509,21 @@ export default function ToasterPage({ currentUser }) {
     );
   }, [membersOptions, selectedMemberId, portalState]);
 
-  const activeCcaBalance = useMemo(() => {
-    if (!portalState) return null;
-    const candidates = [
-      portalState.active_member?.cca_balance,
-      portalState.treasury?.balance,
-      portalState.member_summary?.treasury?.balance,
-    ];
-    for (const c of candidates) {
-      if (c !== undefined && c !== null && !isNaN(Number(c))) {
-        return Number(c);
-      }
-    }
-    return 0;
-  }, [portalState]);
+  const isCoordinator = useMemo(() => {
+    const labelLower = formatAssociateLabel(activeMemberObj).toLowerCase();
+    return Boolean(
+      activeMemberObj?.is_coordinator === true ||
+        activeMemberObj?.is_coordinator === 1 ||
+        labelLower.includes('henri') ||
+        labelLower.includes('joséphine') ||
+        labelLower.includes('josephine')
+    );
+  }, [activeMemberObj]);
+
+  const associateChoices = useMemo(() => {
+    const names = membersOptions.map((m) => m.displayLabel || m.name).filter(Boolean);
+    return names.length >= 5 ? names : STATUTORY_ASSOCIATES_LIST;
+  }, [membersOptions]);
 
   const handleFileSelect = (e) => {
     const file = e.target.files?.[0];
@@ -386,71 +546,115 @@ export default function ToasterPage({ currentUser }) {
     e.target.value = '';
   };
 
-  const normalizeActionCard = useCallback((rawCard) => {
-    if (!rawCard || typeof rawCard !== 'object') return null;
-    const deduced = Array.isArray(rawCard.deduced_fields)
-      ? rawCard.deduced_fields.map((f) => ({
-          key: f.key || f.name || f.label,
-          label: f.label || f.key || 'Champ',
-          value: f.value !== undefined && f.value !== null ? String(f.value) : '',
-          raw_value: f.raw_value !== undefined ? f.raw_value : f.value,
-        }))
-      : [];
+  const normalizeActionCard = useCallback(
+    (rawCard) => {
+      if (!rawCard || typeof rawCard !== 'object') return null;
+      const deduced = Array.isArray(rawCard.deduced_fields)
+        ? rawCard.deduced_fields.map((f) => ({
+            key: f.key || f.name || f.label,
+            label: f.label || f.key || 'Champ',
+            value: f.value !== undefined && f.value !== null ? String(f.value) : '',
+            raw_value: f.raw_value !== undefined ? f.raw_value : f.value,
+          }))
+        : [];
 
-    const missing = Array.isArray(rawCard.missing_fields)
-      ? rawCard.missing_fields.map((f) => ({
-          key: f.key || f.name || f.label,
-          label: f.label || f.key || 'Précision requise',
-          question: f.question || f.label || `Veuillez préciser : ${f.key}`,
-          options: Array.isArray(f.options)
-            ? f.options.map((opt) =>
-                typeof opt === 'object' && opt !== null
-                  ? { label: String(opt.label ?? opt.value ?? ''), value: opt.value !== undefined ? opt.value : opt.label }
-                  : { label: String(opt), value: opt }
-              )
-            : [],
-        }))
-      : [];
+      const missing = Array.isArray(rawCard.missing_fields)
+        ? rawCard.missing_fields.map((f) => ({
+            key: f.key || f.name || f.label,
+            label: f.label || f.key || 'Précision requise',
+            question: f.question || f.label || `Veuillez préciser : ${f.key}`,
+            options: Array.isArray(f.options)
+              ? f.options.map((opt) =>
+                  typeof opt === 'object' && opt !== null
+                    ? { label: String(opt.label ?? opt.value ?? ''), value: opt.value !== undefined ? opt.value : opt.label }
+                    : { label: String(opt), value: opt }
+                )
+              : [],
+          }))
+        : [];
 
-    const basePayload = rawCard.payload && typeof rawCard.payload === 'object' ? { ...rawCard.payload } : {};
-    deduced.forEach((d) => {
-      if (d.key && basePayload[d.key] === undefined) {
-        basePayload[d.key] = d.raw_value !== undefined ? d.raw_value : d.value;
+      const basePayload = rawCard.payload && typeof rawCard.payload === 'object' ? { ...rawCard.payload } : {};
+      deduced.forEach((d) => {
+        if (d.key && basePayload[d.key] === undefined) {
+          basePayload[d.key] = d.raw_value !== undefined ? d.raw_value : d.value;
+        }
+      });
+
+      if (rawCard.action_type === 'vote' || rawCard.action_type === 'poll') {
+        if (!Array.isArray(basePayload.options)) {
+          const rawOpts = basePayload.options;
+          basePayload.options =
+            typeof rawOpts === 'string' && rawOpts.trim()
+              ? rawOpts.split(/[,\n]/).map((s) => s.trim()).filter(Boolean)
+              : ['Approuver le projet', 'Rejeter le projet'];
+        }
+        if (!basePayload.category) basePayload.category = 'Presbytère';
+        if (!basePayload.priority) basePayload.priority = 'Normale';
+        if (basePayload.estimated_cost === undefined) basePayload.estimated_cost = 0;
+        if (basePayload.allow_multiple_choices === undefined) {
+          basePayload.allow_multiple_choices = basePayload.options.length > 3;
+        }
       }
-    });
 
-    if (rawCard.action_type === 'vote' || rawCard.action_type === 'poll') {
-      if (!Array.isArray(basePayload.options)) {
-        const rawOpts = basePayload.options;
-        basePayload.options =
-          typeof rawOpts === 'string' && rawOpts.trim()
-            ? rawOpts.split(/[,\n]/).map((s) => s.trim()).filter(Boolean)
-            : ['POUR', 'CONTRE', 'ABSTENTION'];
+      if (rawCard.action_type === 'stay') {
+        if (!Array.isArray(basePayload.selected_rooms)) {
+          const sr = basePayload.selected_rooms;
+          basePayload.selected_rooms =
+            typeof sr === 'string' && sr.trim()
+              ? sr.split(',').map((s) => s.trim()).filter(Boolean)
+              : [];
+        }
+        if (!Array.isArray(basePayload.selected_members)) {
+          const sm = basePayload.selected_members;
+          basePayload.selected_members =
+            typeof sm === 'string' && sm.trim()
+              ? sm.split(',').map((s) => sanitizeFamilyLabel(s.trim())).filter(Boolean)
+              : [formatAssociateLabel(activeMemberObj)];
+        }
+        if (!Array.isArray(basePayload.external_guests)) {
+          const eg = basePayload.external_guests;
+          basePayload.external_guests =
+            typeof eg === 'string' && eg.trim()
+              ? eg.split(',').map((s) => s.trim()).filter(Boolean)
+              : [];
+        }
+        if (!basePayload.arrival_time) basePayload.arrival_time = '15:00';
+        if (!basePayload.departure_time) basePayload.departure_time = '11:00';
+        if (basePayload.activate_heating === undefined) basePayload.activate_heating = false;
+        if (basePayload.activate_dhw === undefined) {
+          basePayload.activate_dhw = Boolean(
+            basePayload.activate_heating || String(basePayload.building || '').toLowerCase().includes('presbyt')
+          );
+        } else if (basePayload.activate_heating) {
+          basePayload.activate_dhw = true;
+        }
+        if (basePayload.activate_pool === undefined) basePayload.activate_pool = false;
       }
-    }
-    if (rawCard.action_type === 'stay') {
-      if (!Array.isArray(basePayload.selected_rooms)) {
-        const sr = basePayload.selected_rooms;
-        basePayload.selected_rooms =
-          typeof sr === 'string' && sr.trim()
-            ? sr.split(',').map((s) => s.trim()).filter(Boolean)
-            : [];
-      }
-    }
 
-    return {
-      action_type: rawCard.action_type || 'action',
-      title: sanitizeFamilyLabel(rawCard.title || 'Proposition d’action'),
-      deduced_fields: deduced,
-      missing_fields: missing,
-      ready_to_execute: missing.length === 0 ? true : Boolean(rawCard.ready_to_execute && missing.length === 0),
-      payload: basePayload,
-      executed: false,
-      executing: false,
-      executionResult: null,
-      executionError: null,
-    };
-  }, []);
+      if (rawCard.action_type === 'task') {
+        if (!Array.isArray(basePayload.checklist)) {
+          basePayload.checklist = [];
+        }
+        if (!basePayload.subject) basePayload.subject = 'Presbytère';
+        if (!basePayload.complexity) basePayload.complexity = 'Modérée';
+        if (!basePayload.priority) basePayload.priority = 'Normale';
+      }
+
+      return {
+        action_type: rawCard.action_type || 'action',
+        title: sanitizeFamilyLabel(rawCard.title || 'Proposition d’action'),
+        deduced_fields: deduced,
+        missing_fields: missing,
+        ready_to_execute: missing.length === 0 ? true : Boolean(rawCard.ready_to_execute && missing.length === 0),
+        payload: basePayload,
+        executed: false,
+        executing: false,
+        executionResult: null,
+        executionError: null,
+      };
+    },
+    [activeMemberObj]
+  );
 
   const sendMessagePayload = useCallback(
     async ({ textOverride = null, clearComposerText = true } = {}) => {
@@ -765,15 +969,109 @@ export default function ToasterPage({ currentUser }) {
     [executeDirectPortalAction]
   );
 
-  const handleDirectTaskComplete = useCallback(
-    async (task) => {
-      await executeDirectPortalAction('task', {
-        operation: 'complete',
-        task_id: task.id,
-        title: task.title,
-      });
+  // Synchroniser les widgets du fil après consultation/arbitrage dans TaskDetailModal ou VoteRoofModal
+  const handleModalTaskUpdated = useCallback(
+    (updatedTask) => {
+      if (updatedTask && updatedTask.id) {
+        setMessages((prev) =>
+          prev.map((m) => {
+            if (!Array.isArray(m.uiComponents) || m.uiComponents.length === 0) return m;
+            return {
+              ...m,
+              uiComponents: m.uiComponents.map((comp) => {
+                if (comp.component_id !== 'tasks_overview_card' || !Array.isArray(comp.tasks)) return comp;
+                return {
+                  ...comp,
+                  tasks: comp.tasks.map((t) =>
+                    Number(t.id) === Number(updatedTask.id) ? { ...t, ...updatedTask } : t
+                  ),
+                };
+              }),
+            };
+          })
+        );
+        setInspectingTask((prev) => (prev && Number(prev.id) === Number(updatedTask.id) ? { ...prev, ...updatedTask } : prev));
+      }
+      loadPortalState(selectedMemberId);
     },
-    [executeDirectPortalAction]
+    [loadPortalState, selectedMemberId]
+  );
+
+  const handleModalTaskDeleted = useCallback(
+    (deletedId) => {
+      if (deletedId) {
+        setMessages((prev) =>
+          prev.map((m) => {
+            if (!Array.isArray(m.uiComponents) || m.uiComponents.length === 0) return m;
+            return {
+              ...m,
+              uiComponents: m.uiComponents.map((comp) => {
+                if (comp.component_id !== 'tasks_overview_card' || !Array.isArray(comp.tasks)) return comp;
+                return {
+                  ...comp,
+                  tasks: comp.tasks.filter((t) => Number(t.id) !== Number(deletedId)),
+                };
+              }),
+            };
+          })
+        );
+      }
+      setInspectingTask(null);
+      loadPortalState(selectedMemberId);
+    },
+    [loadPortalState, selectedMemberId]
+  );
+
+  const handleModalPollUpdated = useCallback(
+    (updatedPoll) => {
+      if (updatedPoll && updatedPoll.id) {
+        setMessages((prev) =>
+          prev.map((m) => {
+            if (!Array.isArray(m.uiComponents) || m.uiComponents.length === 0) return m;
+            return {
+              ...m,
+              uiComponents: m.uiComponents.map((comp) => {
+                if (comp.component_id !== 'poll_status_card' || !Array.isArray(comp.polls)) return comp;
+                return {
+                  ...comp,
+                  polls: comp.polls.map((p) =>
+                    Number(p.id) === Number(updatedPoll.id) ? { ...p, ...updatedPoll } : p
+                  ),
+                };
+              }),
+            };
+          })
+        );
+        setInspectingPoll((prev) => (prev && Number(prev.id) === Number(updatedPoll.id) ? { ...prev, ...updatedPoll } : prev));
+      }
+      loadPortalState(selectedMemberId);
+    },
+    [loadPortalState, selectedMemberId]
+  );
+
+  const handleModalPollDeleted = useCallback(
+    (deletedId) => {
+      if (deletedId) {
+        setMessages((prev) =>
+          prev.map((m) => {
+            if (!Array.isArray(m.uiComponents) || m.uiComponents.length === 0) return m;
+            return {
+              ...m,
+              uiComponents: m.uiComponents.map((comp) => {
+                if (comp.component_id !== 'poll_status_card' || !Array.isArray(comp.polls)) return comp;
+                return {
+                  ...comp,
+                  polls: comp.polls.filter((p) => Number(p.id) !== Number(deletedId)),
+                };
+              }),
+            };
+          })
+        );
+      }
+      setInspectingPoll(null);
+      loadPortalState(selectedMemberId);
+    },
+    [loadPortalState, selectedMemberId]
   );
 
   // Helper générique pour muter une carte d'action
@@ -781,6 +1079,109 @@ export default function ToasterPage({ currentUser }) {
     setMessages((prev) =>
       prev.map((m) => (m.id === msgId && m.action_card ? { ...m, action_card: cardUpdater(m.action_card) } : m))
     );
+  };
+
+  // Helpers dédiés Ann. 4, 5, 6 (Dates+heures, Participants internes/externes, ECS vs Chauffage vs Piscine)
+  const handleUpdateStayDateTime = (msgId, which, { date, time }) => {
+    updateCardInMessage(msgId, (card) => {
+      const p = { ...(card.payload || {}) };
+      if (which === 'start') {
+        if (date) {
+          p.start_date = date;
+          if (p.end_date && date > p.end_date) p.end_date = date;
+        }
+        if (time) p.arrival_time = time;
+      } else {
+        if (date) p.end_date = date;
+        if (time) p.departure_time = time;
+      }
+      const remainingMissing = card.missing_fields.filter(
+        (f) => !(which === 'start' && f.key === 'start_date')
+      );
+      return {
+        ...card,
+        missing_fields: remainingMissing,
+        ready_to_execute: remainingMissing.length === 0,
+        payload: p,
+      };
+    });
+  };
+
+  const handleToggleStayMember = (msgId, memberName) => {
+    updateCardInMessage(msgId, (card) => {
+      const prev = Array.isArray(card.payload?.selected_members) ? card.payload.selected_members : [];
+      const next = prev.includes(memberName)
+        ? prev.filter((m) => m !== memberName)
+        : [...prev, memberName];
+      const extCount = Array.isArray(card.payload?.external_guests) ? card.payload.external_guests.length : 0;
+      const nextTotal = Math.max(1, next.length + extCount);
+      return {
+        ...card,
+        payload: { ...(card.payload || {}), selected_members: next, guest_count: nextTotal },
+      };
+    });
+  };
+
+  const handleAddStayExternalGuest = (msgId) => {
+    const raw = String(stayExternalInputs[msgId] || '').trim();
+    if (!raw) return;
+    updateCardInMessage(msgId, (card) => {
+      const prevExt = Array.isArray(card.payload?.external_guests) ? card.payload.external_guests : [];
+      const nextExt = prevExt.includes(raw) ? prevExt : [...prevExt, raw];
+      const memCount = Array.isArray(card.payload?.selected_members) ? card.payload.selected_members.length : 0;
+      const nextTotal = Math.max(1, memCount + nextExt.length);
+      return {
+        ...card,
+        payload: { ...(card.payload || {}), external_guests: nextExt, guest_count: nextTotal },
+      };
+    });
+    setStayExternalInputs((prev) => ({ ...prev, [msgId]: '' }));
+  };
+
+  const handleRemoveStayExternalGuest = (msgId, idxToRemove) => {
+    updateCardInMessage(msgId, (card) => {
+      const prevExt = Array.isArray(card.payload?.external_guests) ? card.payload.external_guests : [];
+      const nextExt = prevExt.filter((_, i) => i !== idxToRemove);
+      const memCount = Array.isArray(card.payload?.selected_members) ? card.payload.selected_members.length : 0;
+      const nextTotal = Math.max(1, memCount + nextExt.length);
+      return {
+        ...card,
+        payload: { ...(card.payload || {}), external_guests: nextExt, guest_count: nextTotal },
+      };
+    });
+  };
+
+  const handleToggleStayEnergy = (msgId, field, checked) => {
+    updateCardInMessage(msgId, (card) => {
+      const p = { ...(card.payload || {}), [field]: checked };
+      if (field === 'activate_heating' && checked) {
+        p.activate_dhw = true;
+      }
+      return { ...card, payload: p };
+    });
+  };
+
+  const handleAddTaskChecklistItem = (msgId) => {
+    const raw = String(taskChecklistInputs[msgId] || '').trim();
+    if (!raw) return;
+    updateCardInMessage(msgId, (card) => {
+      const prev = Array.isArray(card.payload?.checklist) ? card.payload.checklist : [];
+      return {
+        ...card,
+        payload: { ...(card.payload || {}), checklist: [...prev, { text: raw, done: false }] },
+      };
+    });
+    setTaskChecklistInputs((prev) => ({ ...prev, [msgId]: '' }));
+  };
+
+  const handleRemoveTaskChecklistItem = (msgId, idxToRemove) => {
+    updateCardInMessage(msgId, (card) => {
+      const prev = Array.isArray(card.payload?.checklist) ? card.payload.checklist : [];
+      return {
+        ...card,
+        payload: { ...(card.payload || {}), checklist: prev.filter((_, i) => i !== idxToRemove) },
+      };
+    });
   };
 
   const handleResolveMissingField = (msgId, missingField, chosenOption) => {
@@ -1018,25 +1419,15 @@ export default function ToasterPage({ currentUser }) {
         </div>
       )}
 
-      {/* En-tête épuré de l'interface finale (zéro bannière bac à sable) */}
+      {/* En-tête épuré de l'interface finale (Ann. 1 : sans sous-titre Connecté/CCA) */}
       <header className="flex flex-wrap items-center justify-between gap-3 px-1 pb-3">
         <div className="flex items-center gap-2.5">
           <span className="w-9 h-9 rounded-full bg-sage-soft text-primary flex items-center justify-center shadow-2xs">
             <span className="material-symbols-outlined text-[21px]">smart_toy</span>
           </span>
-          <div>
-            <h1 className="font-headline-sm text-base sm:text-lg font-bold text-forest-deep leading-tight">
-              Assistant Grille-Pain
-            </h1>
-            <p className="text-[11px] text-on-surface-variant">
-              Connecté en tant que <span className="font-semibold text-forest-deep">{formatAssociateLabel(activeMemberObj)}</span>
-              {!loadingState && activeCcaBalance !== null && (
-                <span className="ml-2 px-2 py-0.5 rounded-full bg-emerald-50 text-emerald-800 border border-emerald-200 font-mono font-bold text-[10.5px]">
-                  CCA {formatCurrency(activeCcaBalance)}
-                </span>
-              )}
-            </p>
-          </div>
+          <h1 className="font-headline-sm text-base sm:text-lg font-bold text-forest-deep leading-tight">
+            Assistant Grille-Pain
+          </h1>
         </div>
 
         {messages.length > 0 && (
@@ -1116,31 +1507,64 @@ export default function ToasterPage({ currentUser }) {
                 : null;
               const showBubble = Boolean(msg.content || msg.attachment);
 
-              // Contrôle capacité chambres en direct sur les cartes stay (Ann. 4)
+              // Séjours (Annotations 4, 5, 6)
               const isStayCard = card?.action_type === 'stay' && card?.payload?.operation !== 'cancel';
               const stayMaxRooms = isStayCard ? getMaxRoomsForBuilding(card.payload?.building) : 5;
               const stayCurrentRooms = isStayCard ? Number(card.payload?.chambers_used || 1) : 1;
               const stayRoomOverflow = isStayCard && stayCurrentRooms > stayMaxRooms;
               const stayAvailableRooms = isStayCard ? getRoomsListForBuilding(card.payload?.building) : [];
               const staySelectedRooms = isStayCard && Array.isArray(card.payload?.selected_rooms) ? card.payload.selected_rooms : [];
+              const staySelectedMembers = isStayCard && Array.isArray(card.payload?.selected_members) ? card.payload.selected_members : [];
+              const stayExternalGuests = isStayCard && Array.isArray(card.payload?.external_guests) ? card.payload.external_guests : [];
+              const stayTotalOccupants = isStayCard
+                ? Math.max(1, staySelectedMembers.length + stayExternalGuests.length, Number(card.payload?.guest_count || 1))
+                : 1;
+              const stayStartPickerOpen = Boolean(
+                openStayPicker && openStayPicker.msgId === msg.id && openStayPicker.which === 'start'
+              );
+              const stayEndPickerOpen = Boolean(
+                openStayPicker && openStayPicker.msgId === msg.id && openStayPicker.which === 'end'
+              );
 
-              // Mode éditeur dédié pour création/ouverture de scrutin (Ann. 1 & 2)
+              // Création de tâche — miroir strict TaskDetailModal (Annotations 7 & 8)
+              const isTaskCreateCard = card?.action_type === 'task' && card?.payload?.operation === 'create';
+              const taskCreateMissingTitle = isTaskCreateCard && !String(card.payload?.title || '').trim();
+              const taskChecklistItems = isTaskCreateCard && Array.isArray(card.payload?.checklist) ? card.payload.checklist : [];
+
+              // Création / Ouverture de scrutin — miroir strict VoteRoofModal (Annotation 8)
               const isPollSetupCard =
                 card?.action_type === 'vote' &&
                 (card?.payload?.operation === 'create' || card?.payload?.operation === 'open');
               const pollOptions = isPollSetupCard && Array.isArray(card.payload?.options) ? card.payload.options : [];
-              const pollEmptyOptions = isPollSetupCard && pollOptions.filter((o) => String(o || '').trim()).length === 0;
+              const pollValidOptionsCount = pollOptions.filter((o) => String(o || '').trim()).length;
+              const pollEmptyOptions = isPollSetupCard && pollValidOptionsCount < 2;
+              const pollMissingTitle = isPollSetupCard && !String(card.payload?.title || '').trim();
 
               const isVademecumCard = card?.action_type === 'vademecum';
 
-              // Exclure des petites puces vertes les champs qui disposent de leur propre bloc dédié
+              // Exclure des puces vertes génériques les champs qui disposent d'un éditeur structuré dédié
+              const STAY_DEDICATED_KEYS = new Set([
+                'start_date',
+                'end_date',
+                'arrival_time',
+                'departure_time',
+                'guest_count',
+                'selected_members',
+                'external_guests',
+                'chambers_used',
+                'activate_dhw',
+                'activate_heating',
+                'activate_pool',
+                'target_temperature',
+              ]);
               const chipFields = card
-                ? card.deduced_fields.filter((f) => {
-                    if (isPollSetupCard && (f.key === 'options' || f.key === 'description')) return false;
-                    if (isStayCard && f.key === 'chambers_used') return false;
-                    if (isVademecumCard && f.key === 'content') return false;
-                    return true;
-                  })
+                ? isTaskCreateCard || isPollSetupCard
+                  ? []
+                  : card.deduced_fields.filter((f) => {
+                      if (isStayCard && STAY_DEDICATED_KEYS.has(f.key)) return false;
+                      if (isVademecumCard && f.key === 'content') return false;
+                      return true;
+                    })
                 : [];
 
               const confirmDisabled =
@@ -1148,7 +1572,9 @@ export default function ToasterPage({ currentUser }) {
                 card.missing_fields.length > 0 ||
                 card.executing ||
                 stayRoomOverflow ||
-                pollEmptyOptions;
+                taskCreateMissingTitle ||
+                pollEmptyOptions ||
+                pollMissingTitle;
 
               return (
                 <div
@@ -1185,11 +1611,13 @@ export default function ToasterPage({ currentUser }) {
                     <ToasterComponentRenderer
                       components={msg.uiComponents}
                       activeMemberName={formatAssociateLabel(activeMemberObj)}
+                      isCoordinator={isCoordinator}
                       onOpenSandboxModal={(mType, prefill = {}) =>
                         setActionModalState({ type: mType, prefill })
                       }
                       onCastSandboxVote={handleDirectVote}
-                      onCompleteSandboxTask={handleDirectTaskComplete}
+                      onInspectTask={(taskObj) => setInspectingTask(taskObj)}
+                      onInspectPoll={(pollObj) => setInspectingPoll(pollObj)}
                     />
                   )}
 
@@ -1214,7 +1642,7 @@ export default function ToasterPage({ currentUser }) {
                       </div>
 
                       <div className="p-4 space-y-4">
-                        {/* Puces éditables des champs déduits */}
+                        {/* Puces éditables des champs déduits (avec <select> natif pour assigned_to & building) */}
                         {chipFields.length > 0 && (
                           <div className="space-y-2">
                             <span className="text-[11px] font-bold uppercase tracking-wider text-emerald-800 dark:text-emerald-300 block">
@@ -1228,29 +1656,63 @@ export default function ToasterPage({ currentUser }) {
                                   editingField.fieldKey === field.key;
 
                                 if (isEditingThis) {
+                                  const isSelectAssignee = field.key === 'assigned_to';
+                                  const isSelectBuilding = field.key === 'building' && card.action_type === 'stay';
                                   return (
                                     <div
                                       key={field.key}
                                       className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full bg-emerald-50 border-2 border-emerald-500 text-xs"
                                     >
                                       <span className="font-bold text-emerald-900">🟢 {field.label} :</span>
-                                      <input
-                                        type="text"
-                                        autoFocus
-                                        value={editingField.tempValue}
-                                        onChange={(e) =>
-                                          setEditingField((prev) => ({ ...prev, tempValue: e.target.value }))
-                                        }
-                                        onKeyDown={(e) => {
-                                          if (e.key === 'Enter') {
-                                            e.preventDefault();
-                                            handleSaveEditedDeducedField(msg.id, field.key, editingField.tempValue);
-                                          } else if (e.key === 'Escape') {
-                                            setEditingField(null);
+                                      {isSelectAssignee ? (
+                                        <select
+                                          autoFocus
+                                          value={editingField.tempValue}
+                                          onChange={(e) =>
+                                            handleSaveEditedDeducedField(msg.id, field.key, e.target.value)
                                           }
-                                        }}
-                                        className="px-2 py-0.5 bg-white border border-emerald-300 rounded-full text-xs font-semibold text-slate-900 focus:outline-none w-36"
-                                      />
+                                          className="px-2 py-0.5 bg-white border border-emerald-300 rounded-full text-xs font-semibold text-slate-900 focus:outline-none"
+                                        >
+                                          {associateChoices
+                                            .filter((n) => !n.toLowerCase().includes('frédéric'))
+                                            .map((name) => (
+                                              <option key={name} value={name}>
+                                                {name}
+                                              </option>
+                                            ))}
+                                        </select>
+                                      ) : isSelectBuilding ? (
+                                        <select
+                                          autoFocus
+                                          value={editingField.tempValue}
+                                          onChange={(e) =>
+                                            handleSaveEditedDeducedField(msg.id, field.key, e.target.value)
+                                          }
+                                          className="px-2 py-0.5 bg-white border border-emerald-300 rounded-full text-xs font-semibold text-slate-900 focus:outline-none"
+                                        >
+                                          <option value="Presbytère">Presbytère (5 ch.)</option>
+                                          <option value="Rosings">Rosings (2 ch.)</option>
+                                          <option value="Presbytère & Rosings">Presbytère &amp; Rosings (7 ch.)</option>
+                                        </select>
+                                      ) : (
+                                        <input
+                                          type="text"
+                                          autoFocus
+                                          value={editingField.tempValue}
+                                          onChange={(e) =>
+                                            setEditingField((prev) => ({ ...prev, tempValue: e.target.value }))
+                                          }
+                                          onKeyDown={(e) => {
+                                            if (e.key === 'Enter') {
+                                              e.preventDefault();
+                                              handleSaveEditedDeducedField(msg.id, field.key, editingField.tempValue);
+                                            } else if (e.key === 'Escape') {
+                                              setEditingField(null);
+                                            }
+                                          }}
+                                          className="px-2 py-0.5 bg-white border border-emerald-300 rounded-full text-xs font-semibold text-slate-900 focus:outline-none w-36"
+                                        />
+                                      )}
                                       <button
                                         type="button"
                                         onClick={() =>
@@ -1294,89 +1756,735 @@ export default function ToasterPage({ currentUser }) {
                           </div>
                         )}
 
-                        {/* Ann. 4 : Contrôle chambres borné + sélection optionnelle par nom pour les séjours */}
+                        {/* SÉJOURS — Ann. 4 (Calendrier + Heure), Ann. 5 (Participants internes/externes), Chambres, Ann. 6 (ECS vs Chauffage vs Piscine) */}
                         {isStayCard && (
-                          <div className="p-3.5 rounded-2xl bg-amber-50/60 border border-amber-200 space-y-3">
-                            <div className="flex items-center justify-between gap-2 flex-wrap">
-                              <div>
-                                <span className="text-xs font-bold text-amber-950 block">
-                                  🛏️ Chambres occupées ({card.payload?.building || 'Presbytère'} — max {stayMaxRooms})
+                          <div className="space-y-3">
+                            {/* Bloc 1 : Dates & Heures avec Popover Calendrier + Heure (Ann. 4) */}
+                            <div className="p-3.5 rounded-2xl bg-emerald-50/45 border border-emerald-200 space-y-2.5">
+                              <span className="text-xs font-bold text-forest-deep flex items-center gap-1.5">
+                                <span className="material-symbols-outlined text-[17px] text-primary">calendar_clock</span>
+                                <span>Dates &amp; heures du séjour (cliquez pour ouvrir le calendrier et l’heure)</span>
+                              </span>
+                              <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+                                <button
+                                  type="button"
+                                  disabled={card.executed}
+                                  onClick={() =>
+                                    setOpenStayPicker(
+                                      stayStartPickerOpen ? null : { msgId: msg.id, which: 'start' }
+                                    )
+                                  }
+                                  className={`flex items-center justify-between gap-2 px-3 py-2 rounded-xl border text-left transition-all cursor-pointer ${
+                                    stayStartPickerOpen
+                                      ? 'bg-emerald-700 text-white border-emerald-700 shadow-xs'
+                                      : 'bg-white hover:bg-emerald-50 text-emerald-950 border-emerald-300'
+                                  }`}
+                                >
+                                  <div className="min-w-0">
+                                    <span
+                                      className={`block text-[10px] font-bold uppercase tracking-wider ${
+                                        stayStartPickerOpen ? 'text-emerald-100' : 'text-emerald-700'
+                                      }`}
+                                    >
+                                      Arrivée
+                                    </span>
+                                    <span className="text-xs font-bold block truncate">
+                                      {formatFrDateShort(card.payload?.start_date)} à {card.payload?.arrival_time || '15:00'}
+                                    </span>
+                                  </div>
+                                  <span className="material-symbols-outlined text-[17px] shrink-0">edit_calendar</span>
+                                </button>
+
+                                <button
+                                  type="button"
+                                  disabled={card.executed}
+                                  onClick={() =>
+                                    setOpenStayPicker(
+                                      stayEndPickerOpen ? null : { msgId: msg.id, which: 'end' }
+                                    )
+                                  }
+                                  className={`flex items-center justify-between gap-2 px-3 py-2 rounded-xl border text-left transition-all cursor-pointer ${
+                                    stayEndPickerOpen
+                                      ? 'bg-emerald-700 text-white border-emerald-700 shadow-xs'
+                                      : 'bg-white hover:bg-emerald-50 text-emerald-950 border-emerald-300'
+                                  }`}
+                                >
+                                  <div className="min-w-0">
+                                    <span
+                                      className={`block text-[10px] font-bold uppercase tracking-wider ${
+                                        stayEndPickerOpen ? 'text-emerald-100' : 'text-emerald-700'
+                                      }`}
+                                    >
+                                      Départ
+                                    </span>
+                                    <span className="text-xs font-bold block truncate">
+                                      {formatFrDateShort(card.payload?.end_date)} à {card.payload?.departure_time || '11:00'}
+                                    </span>
+                                  </div>
+                                  <span className="material-symbols-outlined text-[17px] shrink-0">edit_calendar</span>
+                                </button>
+                              </div>
+
+                              {stayStartPickerOpen && !card.executed && (
+                                <StayDateTimePickerPopover
+                                  label="Date et heure d’arrivée au domaine"
+                                  dateValue={card.payload?.start_date}
+                                  timeValue={card.payload?.arrival_time || '15:00'}
+                                  timePresets={['10:00', '14:00', '15:00', '18:00', '20:00']}
+                                  onChangeDate={(d) => handleUpdateStayDateTime(msg.id, 'start', { date: d })}
+                                  onChangeTime={(t) => handleUpdateStayDateTime(msg.id, 'start', { time: t })}
+                                  onClose={() => setOpenStayPicker(null)}
+                                />
+                              )}
+
+                              {stayEndPickerOpen && !card.executed && (
+                                <StayDateTimePickerPopover
+                                  label="Date et heure de départ du domaine"
+                                  dateValue={card.payload?.end_date}
+                                  timeValue={card.payload?.departure_time || '11:00'}
+                                  minDate={card.payload?.start_date}
+                                  timePresets={['10:00', '11:00', '14:00', '17:00', '18:00']}
+                                  onChangeDate={(d) => handleUpdateStayDateTime(msg.id, 'end', { date: d })}
+                                  onChangeTime={(t) => handleUpdateStayDateTime(msg.id, 'end', { time: t })}
+                                  onClose={() => setOpenStayPicker(null)}
+                                />
+                              )}
+                            </div>
+
+                            {/* Bloc 2 : Composition du groupe — Internes SCI + Invités extérieurs (Ann. 5) */}
+                            <div className="p-3.5 rounded-2xl bg-slate-50/90 border border-slate-200 space-y-2.5">
+                              <div className="flex items-center justify-between gap-2 flex-wrap">
+                                <span className="text-xs font-bold text-forest-deep flex items-center gap-1.5">
+                                  <span className="material-symbols-outlined text-[17px] text-primary">group</span>
+                                  <span>Participants internes SCI &amp; invités extérieurs</span>
                                 </span>
-                                <span className="text-[11px] text-amber-900/80">
-                                  Presbytère : 5 ch. • Rosings : 2 ch. • Tout le domaine : 7 ch.
+                                <span className="px-2.5 py-0.5 rounded-full bg-emerald-50 text-emerald-900 border border-emerald-200 text-[11px] font-bold">
+                                  {stayTotalOccupants} occupant{stayTotalOccupants > 1 ? 's' : ''}
                                 </span>
                               </div>
-                              <div className="inline-flex items-center gap-1.5 bg-white px-2 py-1 rounded-full border border-amber-300">
-                                <button
-                                  type="button"
-                                  disabled={card.executed || stayCurrentRooms <= 1}
-                                  onClick={() => handleSetStayChambers(msg.id, stayCurrentRooms - 1)}
-                                  className="w-6 h-6 rounded-full bg-amber-100 hover:bg-amber-200 text-amber-950 font-bold text-sm flex items-center justify-center cursor-pointer disabled:opacity-40"
-                                >
-                                  −
-                                </button>
-                                <span className={`min-w-[44px] text-center text-xs font-black ${stayRoomOverflow ? 'text-rose-700' : 'text-forest-deep'}`}>
-                                  {stayCurrentRooms} / {stayMaxRooms}
+
+                              <div className="space-y-1.5">
+                                <span className="text-[11px] font-bold text-slate-600 block">
+                                  Associés de la SCI présents ({staySelectedMembers.length}) :
                                 </span>
-                                <button
-                                  type="button"
-                                  disabled={card.executed || stayCurrentRooms >= stayMaxRooms}
-                                  onClick={() => handleSetStayChambers(msg.id, stayCurrentRooms + 1)}
-                                  className="w-6 h-6 rounded-full bg-amber-100 hover:bg-amber-200 text-amber-950 font-bold text-sm flex items-center justify-center cursor-pointer disabled:opacity-40"
-                                >
-                                  +
-                                </button>
+                                <div className="flex flex-wrap gap-1.5">
+                                  {associateChoices.map((assocName) => {
+                                    const selected = staySelectedMembers.includes(assocName);
+                                    return (
+                                      <button
+                                        key={assocName}
+                                        type="button"
+                                        disabled={card.executed}
+                                        onClick={() => handleToggleStayMember(msg.id, assocName)}
+                                        className={`px-2.5 py-1 rounded-full border text-[11px] font-semibold transition-all cursor-pointer ${
+                                          selected
+                                            ? 'bg-emerald-700 text-white border-emerald-700 shadow-2xs'
+                                            : 'bg-white text-slate-700 border-slate-200 hover:border-emerald-400'
+                                        }`}
+                                      >
+                                        {selected ? '✓ ' : ''}{assocName.split(' ')[0]}
+                                      </button>
+                                    );
+                                  })}
+                                </div>
+                              </div>
+
+                              <div className="space-y-1.5 pt-1">
+                                <span className="text-[11px] font-bold text-slate-600 block">
+                                  Invités extérieurs à la SCI ({stayExternalGuests.length}) :
+                                </span>
+                                {!card.executed && (
+                                  <div className="flex items-center gap-1.5">
+                                    <input
+                                      type="text"
+                                      value={stayExternalInputs[msg.id] || ''}
+                                      onChange={(e) =>
+                                        setStayExternalInputs((prev) => ({ ...prev, [msg.id]: e.target.value }))
+                                      }
+                                      onKeyDown={(e) => {
+                                        if (e.key === 'Enter') {
+                                          e.preventDefault();
+                                          handleAddStayExternalGuest(msg.id);
+                                        }
+                                      }}
+                                      placeholder="Prénom ou nom d’un invité extérieur…"
+                                      className="flex-1 h-8 px-3 rounded-xl bg-white border border-slate-200 text-xs focus:outline-none focus:border-primary"
+                                    />
+                                    <button
+                                      type="button"
+                                      onClick={() => handleAddStayExternalGuest(msg.id)}
+                                      className="h-8 px-3 rounded-xl bg-emerald-50 hover:bg-emerald-100 text-emerald-900 border border-emerald-200 text-xs font-bold cursor-pointer shrink-0"
+                                    >
+                                      + Ajouter
+                                    </button>
+                                  </div>
+                                )}
+                                {stayExternalGuests.length > 0 && (
+                                  <div className="flex flex-wrap gap-1.5 pt-0.5">
+                                    {stayExternalGuests.map((guest, gIdx) => (
+                                      <span
+                                        key={`${guest}-${gIdx}`}
+                                        className="inline-flex items-center gap-1 px-2.5 py-1 rounded-full bg-white border border-slate-200 text-[11px] font-semibold text-slate-800"
+                                      >
+                                        <span className="material-symbols-outlined text-[13px] text-primary">person</span>
+                                        <span>{guest}</span>
+                                        {!card.executed && (
+                                          <button
+                                            type="button"
+                                            onClick={() => handleRemoveStayExternalGuest(msg.id, gIdx)}
+                                            className="text-slate-400 hover:text-rose-600 ml-0.5 cursor-pointer"
+                                            title={`Retirer ${guest}`}
+                                          >
+                                            ×
+                                          </button>
+                                        )}
+                                      </span>
+                                    ))}
+                                  </div>
+                                )}
                               </div>
                             </div>
 
-                            {stayRoomOverflow && (
-                              <div className="p-2.5 rounded-xl bg-rose-50 border border-rose-300 text-rose-900 text-xs flex items-center justify-between gap-2 flex-wrap">
-                                <span className="font-semibold">
-                                  ⚠️ {stayCurrentRooms} chambres demandées, mais {card.payload?.building || 'Presbytère'} ne compte que {stayMaxRooms} chambres maximum.
-                                </span>
-                                {!card.executed && (
+                            {/* Bloc 3 : Chambres bornées + sélection optionnelle par nom */}
+                            <div className="p-3.5 rounded-2xl bg-amber-50/60 border border-amber-200 space-y-3">
+                              <div className="flex items-center justify-between gap-2 flex-wrap">
+                                <div>
+                                  <span className="text-xs font-bold text-amber-950 block">
+                                    🛏️ Chambres occupées ({card.payload?.building || 'Presbytère'} — max {stayMaxRooms})
+                                  </span>
+                                  <span className="text-[11px] text-amber-900/80">
+                                    Presbytère : 5 ch. • Rosings : 2 ch. • Tout le domaine : 7 ch.
+                                  </span>
+                                </div>
+                                <div className="inline-flex items-center gap-1.5 bg-white px-2 py-1 rounded-full border border-amber-300">
                                   <button
                                     type="button"
-                                    onClick={() => handleSetStayChambers(msg.id, stayMaxRooms)}
-                                    className="px-2.5 py-1 rounded-full bg-rose-700 text-white text-[11px] font-bold cursor-pointer"
+                                    disabled={card.executed || stayCurrentRooms <= 1}
+                                    onClick={() => handleSetStayChambers(msg.id, stayCurrentRooms - 1)}
+                                    className="w-6 h-6 rounded-full bg-amber-100 hover:bg-amber-200 text-amber-950 font-bold text-sm flex items-center justify-center cursor-pointer disabled:opacity-40"
                                   >
-                                    Ajuster à {stayMaxRooms} ch.
+                                    −
                                   </button>
-                                )}
+                                  <span className={`min-w-[44px] text-center text-xs font-black ${stayRoomOverflow ? 'text-rose-700' : 'text-forest-deep'}`}>
+                                    {stayCurrentRooms} / {stayMaxRooms}
+                                  </span>
+                                  <button
+                                    type="button"
+                                    disabled={card.executed || stayCurrentRooms >= stayMaxRooms}
+                                    onClick={() => handleSetStayChambers(msg.id, stayCurrentRooms + 1)}
+                                    className="w-6 h-6 rounded-full bg-amber-100 hover:bg-amber-200 text-amber-950 font-bold text-sm flex items-center justify-center cursor-pointer disabled:opacity-40"
+                                  >
+                                    +
+                                  </button>
+                                </div>
                               </div>
-                            )}
 
-                            <div className="space-y-1.5">
-                              <span className="text-[11px] font-bold text-slate-700 block">
-                                Choisir des chambres précises (optionnel) :
-                              </span>
-                              <div className="flex flex-wrap gap-1.5">
-                                {stayAvailableRooms.map((room) => {
-                                  const selected = staySelectedRooms.includes(room.name);
-                                  return (
+                              {stayRoomOverflow && (
+                                <div className="p-2.5 rounded-xl bg-rose-50 border border-rose-300 text-rose-900 text-xs flex items-center justify-between gap-2 flex-wrap">
+                                  <span className="font-semibold">
+                                    ⚠️ {stayCurrentRooms} chambres demandées, mais {card.payload?.building || 'Presbytère'} ne compte que {stayMaxRooms} chambres maximum.
+                                  </span>
+                                  {!card.executed && (
                                     <button
-                                      key={room.name}
                                       type="button"
-                                      disabled={card.executed}
-                                      onClick={() => handleToggleStayRoom(msg.id, room.name)}
-                                      className={`px-2.5 py-1 rounded-full border text-[11px] font-semibold transition-all cursor-pointer ${
-                                        selected
-                                          ? 'bg-emerald-700 text-white border-emerald-700 shadow-2xs'
-                                          : 'bg-white text-slate-700 border-slate-200 hover:border-emerald-400'
-                                      }`}
+                                      onClick={() => handleSetStayChambers(msg.id, stayMaxRooms)}
+                                      className="px-2.5 py-1 rounded-full bg-rose-700 text-white text-[11px] font-bold cursor-pointer"
                                     >
-                                      {selected ? '✓ ' : ''}{room.shortLabel}
+                                      Ajuster à {stayMaxRooms} ch.
                                     </button>
-                                  );
-                                })}
+                                  )}
+                                </div>
+                              )}
+
+                              <div className="space-y-1.5">
+                                <span className="text-[11px] font-bold text-slate-700 block">
+                                  Choisir des chambres précises (optionnel) :
+                                </span>
+                                <div className="flex flex-wrap gap-1.5">
+                                  {stayAvailableRooms.map((room) => {
+                                    const selected = staySelectedRooms.includes(room.name);
+                                    return (
+                                      <button
+                                        key={room.name}
+                                        type="button"
+                                        disabled={card.executed}
+                                        onClick={() => handleToggleStayRoom(msg.id, room.name)}
+                                        className={`px-2.5 py-1 rounded-full border text-[11px] font-semibold transition-all cursor-pointer ${
+                                          selected
+                                            ? 'bg-emerald-700 text-white border-emerald-700 shadow-2xs'
+                                            : 'bg-white text-slate-700 border-slate-200 hover:border-emerald-400'
+                                        }`}
+                                      >
+                                        {selected ? '✓ ' : ''}{room.shortLabel}
+                                      </button>
+                                    );
+                                  })}
+                                </div>
+                              </div>
+                            </div>
+
+                            {/* Bloc 4 : Énergie & Confort Thermique — Eau Chaude vs Chauffage vs Piscine (Ann. 6) */}
+                            <div className="p-3.5 rounded-2xl bg-teal-50/50 border border-teal-200 space-y-2.5">
+                              <span className="text-xs font-bold text-forest-deep flex items-center gap-1.5">
+                                <span className="material-symbols-outlined text-[17px] text-teal-700">thermostat</span>
+                                <span>Énergie &amp; confort thermique (Eau chaude vs Chauffage)</span>
+                              </span>
+
+                              <div className="grid grid-cols-1 gap-2 text-xs">
+                                <label
+                                  className={`flex items-start gap-2.5 p-2.5 rounded-xl border transition-colors ${
+                                    card.executed || card.payload?.activate_heating
+                                      ? 'cursor-default'
+                                      : 'cursor-pointer'
+                                  } ${
+                                    card.payload?.activate_heating || card.payload?.activate_dhw
+                                      ? 'bg-white border-teal-300'
+                                      : 'bg-white/60 border-slate-200'
+                                  }`}
+                                >
+                                  <input
+                                    type="checkbox"
+                                    disabled={card.executed || Boolean(card.payload?.activate_heating)}
+                                    checked={Boolean(card.payload?.activate_heating || card.payload?.activate_dhw)}
+                                    onChange={(e) => handleToggleStayEnergy(msg.id, 'activate_dhw', e.target.checked)}
+                                    className="mt-0.5 w-4 h-4 rounded accent-primary"
+                                  />
+                                  <div className="min-w-0 flex-1">
+                                    <div className="flex items-center justify-between gap-2 flex-wrap">
+                                      <span className="font-bold text-slate-900">
+                                        🚿 Eau Chaude Sanitaire — Presbytère (52 °C)
+                                      </span>
+                                      <span className="text-[10.5px] font-semibold px-2 py-0.5 rounded-full bg-teal-50 text-teal-800 border border-teal-200">
+                                        {card.payload?.activate_heating
+                                          ? 'Inclus avec chauffage'
+                                          : card.payload?.activate_dhw
+                                          ? 'Activée (52 °C)'
+                                          : 'Éteinte'}
+                                      </span>
+                                    </div>
+                                    <span className="text-[11px] text-slate-500 block mt-0.5">
+                                      Chauffe uniquement le ballon d’eau chaude (douches/cuisine) sans allumer les radiateurs.
+                                    </span>
+                                  </div>
+                                </label>
+
+                                <label
+                                  className={`flex items-start gap-2.5 p-2.5 rounded-xl border transition-colors ${
+                                    card.executed ? 'cursor-default' : 'cursor-pointer'
+                                  } ${
+                                    card.payload?.activate_heating
+                                      ? 'bg-white border-amber-300'
+                                      : 'bg-white/60 border-slate-200'
+                                  }`}
+                                >
+                                  <input
+                                    type="checkbox"
+                                    disabled={card.executed}
+                                    checked={Boolean(card.payload?.activate_heating)}
+                                    onChange={(e) => handleToggleStayEnergy(msg.id, 'activate_heating', e.target.checked)}
+                                    className="mt-0.5 w-4 h-4 rounded accent-primary"
+                                  />
+                                  <div className="min-w-0 flex-1">
+                                    <div className="flex items-center justify-between gap-2 flex-wrap">
+                                      <span className="font-bold text-slate-900">
+                                        🔥 Chauffage Radiateurs — Presbytère (20 °C jour / 6 °C nuit)
+                                      </span>
+                                      <span
+                                        className={`text-[10.5px] font-semibold px-2 py-0.5 rounded-full border ${
+                                          card.payload?.activate_heating
+                                            ? 'bg-amber-50 text-amber-900 border-amber-300'
+                                            : 'bg-slate-100 text-slate-600 border-slate-200'
+                                        }`}
+                                      >
+                                        {card.payload?.activate_heating ? 'Chauffage + ECS actifs' : 'Hors-gel / Veille'}
+                                      </span>
+                                    </div>
+                                    <span className="text-[11px] text-slate-500 block mt-0.5">
+                                      Anticipation automatique ViCare avant l’heure d’arrivée (inclut l’eau chaude 52 °C).
+                                    </span>
+                                  </div>
+                                </label>
+
+                                <label
+                                  className={`flex items-start gap-2.5 p-2.5 rounded-xl border transition-colors ${
+                                    card.executed ? 'cursor-default' : 'cursor-pointer'
+                                  } ${
+                                    card.payload?.activate_pool
+                                      ? 'bg-white border-sky-300'
+                                      : 'bg-white/60 border-slate-200'
+                                  }`}
+                                >
+                                  <input
+                                    type="checkbox"
+                                    disabled={card.executed}
+                                    checked={Boolean(card.payload?.activate_pool)}
+                                    onChange={(e) => handleToggleStayEnergy(msg.id, 'activate_pool', e.target.checked)}
+                                    className="mt-0.5 w-4 h-4 rounded accent-primary"
+                                  />
+                                  <div className="min-w-0 flex-1">
+                                    <div className="flex items-center justify-between gap-2 flex-wrap">
+                                      <span className="font-bold text-slate-900">
+                                        🏊 Préchauffage Piscine — Rosings (27 °C)
+                                      </span>
+                                      <span
+                                        className={`text-[10.5px] font-semibold px-2 py-0.5 rounded-full border ${
+                                          card.payload?.activate_pool
+                                            ? 'bg-sky-50 text-sky-900 border-sky-300'
+                                            : 'bg-slate-100 text-slate-600 border-slate-200'
+                                        }`}
+                                      >
+                                        {card.payload?.activate_pool ? 'Programmé (27 °C)' : 'Éteinte'}
+                                      </span>
+                                    </div>
+                                  </div>
+                                </label>
                               </div>
                             </div>
                           </div>
                         )}
 
-                        {/* Ann. 1 & 2 : Description du scrutin + Liste d'options ligne par ligne + Calendrier */}
+                        {/* TÂCHES (CRÉATION) — Ann. 7 & 8 : Miroir strict TaskDetailModal (ZÉRO Statut, ZÉRO Responsable) */}
+                        {isTaskCreateCard && (
+                          <div className="space-y-3 text-xs">
+                            <div className="p-2.5 rounded-xl bg-amber-50 border border-amber-200 text-amber-950 text-[11.5px] flex items-start gap-2">
+                              <span className="material-symbols-outlined text-[16px] text-amber-700 shrink-0 mt-0.5">info</span>
+                              <span>
+                                Statut initial automatique : <strong>Proposition à arbitrer</strong>. L’attribution du responsable se fait ensuite par les coordinateurs lors de la validation.
+                              </span>
+                            </div>
+
+                            <div className="space-y-1">
+                              <label className="text-[11px] font-bold uppercase tracking-wider text-sky-900 block">
+                                Titre de la tâche *
+                              </label>
+                              <input
+                                type="text"
+                                disabled={card.executed}
+                                value={card.payload?.title || ''}
+                                onChange={(e) =>
+                                  updateCardInMessage(msg.id, (c) => ({
+                                    ...c,
+                                    payload: { ...(c.payload || {}), title: e.target.value },
+                                  }))
+                                }
+                                placeholder="Ex : Vérifier le goutte-à-goutte du jardin"
+                                className="w-full h-9 px-3 rounded-xl bg-white border border-slate-200 focus:border-primary text-xs font-semibold text-slate-900 focus:outline-none"
+                              />
+                            </div>
+
+                            <div className="grid grid-cols-1 sm:grid-cols-3 gap-2">
+                              <div className="space-y-1">
+                                <label className="text-[11px] font-bold text-slate-600 block">Emplacement</label>
+                                <select
+                                  disabled={card.executed}
+                                  value={card.payload?.subject || 'Presbytère'}
+                                  onChange={(e) =>
+                                    updateCardInMessage(msg.id, (c) => ({
+                                      ...c,
+                                      payload: { ...(c.payload || {}), subject: e.target.value },
+                                    }))
+                                  }
+                                  className="w-full h-9 px-2.5 rounded-xl bg-white border border-slate-200 text-xs font-medium text-slate-900"
+                                >
+                                  {TASK_SUBJECTS.map((s) => (
+                                    <option key={s} value={s}>{s}</option>
+                                  ))}
+                                </select>
+                              </div>
+                              <div className="space-y-1">
+                                <label className="text-[11px] font-bold text-slate-600 block">Charge estimée</label>
+                                <select
+                                  disabled={card.executed}
+                                  value={card.payload?.complexity || 'Modérée'}
+                                  onChange={(e) =>
+                                    updateCardInMessage(msg.id, (c) => ({
+                                      ...c,
+                                      payload: { ...(c.payload || {}), complexity: e.target.value },
+                                    }))
+                                  }
+                                  className="w-full h-9 px-2.5 rounded-xl bg-white border border-slate-200 text-xs font-medium text-slate-900"
+                                >
+                                  {TASK_COMPLEXITIES.map((cx) => (
+                                    <option key={cx} value={cx}>{cx}</option>
+                                  ))}
+                                </select>
+                              </div>
+                              <div className="space-y-1">
+                                <label className="text-[11px] font-bold text-slate-600 block">Priorité</label>
+                                <select
+                                  disabled={card.executed}
+                                  value={card.payload?.priority || 'Normale'}
+                                  onChange={(e) =>
+                                    updateCardInMessage(msg.id, (c) => ({
+                                      ...c,
+                                      payload: { ...(c.payload || {}), priority: e.target.value },
+                                    }))
+                                  }
+                                  className="w-full h-9 px-2.5 rounded-xl bg-white border border-slate-200 text-xs font-medium text-slate-900"
+                                >
+                                  {TASK_PRIORITIES.map((pr) => (
+                                    <option key={pr} value={pr}>{pr}</option>
+                                  ))}
+                                </select>
+                              </div>
+                            </div>
+
+                            <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+                              <div className="space-y-1">
+                                <label className="text-[11px] font-bold text-slate-600 block">
+                                  Devis / Budget estimé (€)
+                                </label>
+                                <input
+                                  type="number"
+                                  min="0"
+                                  step="1"
+                                  disabled={card.executed}
+                                  value={card.payload?.budget || ''}
+                                  onChange={(e) =>
+                                    updateCardInMessage(msg.id, (c) => ({
+                                      ...c,
+                                      payload: { ...(c.payload || {}), budget: e.target.value ? Number(e.target.value) : 0 },
+                                    }))
+                                  }
+                                  placeholder="0 € (si aucun coût)"
+                                  className="w-full h-9 px-3 rounded-xl bg-white border border-slate-200 text-xs text-slate-900"
+                                />
+                              </div>
+                              <div className="space-y-1">
+                                <label className="text-[11px] font-bold text-slate-600 block">Échéance souhaitée</label>
+                                <input
+                                  type="date"
+                                  disabled={card.executed}
+                                  value={card.payload?.deadline || ''}
+                                  onChange={(e) =>
+                                    updateCardInMessage(msg.id, (c) => ({
+                                      ...c,
+                                      payload: { ...(c.payload || {}), deadline: e.target.value },
+                                    }))
+                                  }
+                                  className="w-full h-9 px-3 rounded-xl bg-white border border-slate-200 text-xs text-slate-900"
+                                />
+                              </div>
+                            </div>
+
+                            <div className="flex items-center gap-3 flex-wrap">
+                              <label className="inline-flex items-center gap-1.5 font-semibold text-slate-700 cursor-pointer">
+                                <input
+                                  type="checkbox"
+                                  disabled={card.executed}
+                                  checked={Boolean(card.payload?.is_recurring)}
+                                  onChange={(e) =>
+                                    updateCardInMessage(msg.id, (c) => ({
+                                      ...c,
+                                      payload: { ...(c.payload || {}), is_recurring: e.target.checked },
+                                    }))
+                                  }
+                                  className="accent-primary"
+                                />
+                                <span>Tâche récurrente</span>
+                              </label>
+                              {card.payload?.is_recurring && (
+                                <div className="flex items-center gap-1.5">
+                                  <span className="text-slate-600">Tous les</span>
+                                  <input
+                                    type="number"
+                                    min="1"
+                                    max="365"
+                                    disabled={card.executed}
+                                    value={card.payload?.recurrence_interval || 1}
+                                    onChange={(e) =>
+                                      updateCardInMessage(msg.id, (c) => ({
+                                        ...c,
+                                        payload: { ...(c.payload || {}), recurrence_interval: Number(e.target.value) || 1 },
+                                      }))
+                                    }
+                                    className="w-14 h-8 px-2 rounded-lg border border-slate-200 bg-white"
+                                  />
+                                  <select
+                                    disabled={card.executed}
+                                    value={card.payload?.recurrence_unit || 'semaines'}
+                                    onChange={(e) =>
+                                      updateCardInMessage(msg.id, (c) => ({
+                                        ...c,
+                                        payload: { ...(c.payload || {}), recurrence_unit: e.target.value },
+                                      }))
+                                    }
+                                    className="h-8 px-2 rounded-lg border border-slate-200 bg-white"
+                                  >
+                                    <option value="jours">jours</option>
+                                    <option value="semaines">semaines</option>
+                                    <option value="mois">mois</option>
+                                    <option value="ans">ans</option>
+                                  </select>
+                                </div>
+                              )}
+                            </div>
+
+                            <div className="space-y-1">
+                              <label className="text-[11px] font-bold text-slate-600 block">
+                                Consignes / Description
+                              </label>
+                              <textarea
+                                rows={2}
+                                disabled={card.executed}
+                                value={card.payload?.description || ''}
+                                onChange={(e) =>
+                                  updateCardInMessage(msg.id, (c) => ({
+                                    ...c,
+                                    payload: { ...(c.payload || {}), description: e.target.value },
+                                  }))
+                                }
+                                placeholder="Détails concrets pour la réalisation..."
+                                className="w-full p-2.5 rounded-xl bg-sky-50/35 border border-sky-200 text-xs text-slate-800 focus:outline-none focus:border-primary"
+                              />
+                            </div>
+
+                            <div className="space-y-1.5">
+                              <label className="text-[11px] font-bold text-slate-600 block">
+                                Sous-tâches / Checklist ({taskChecklistItems.length})
+                              </label>
+                              {!card.executed && (
+                                <div className="flex gap-1.5">
+                                  <input
+                                    type="text"
+                                    value={taskChecklistInputs[msg.id] || ''}
+                                    onChange={(e) =>
+                                      setTaskChecklistInputs((prev) => ({ ...prev, [msg.id]: e.target.value }))
+                                    }
+                                    onKeyDown={(e) => {
+                                      if (e.key === 'Enter') {
+                                        e.preventDefault();
+                                        handleAddTaskChecklistItem(msg.id);
+                                      }
+                                    }}
+                                    placeholder="Ajouter une étape à la checklist…"
+                                    className="flex-1 h-8 px-3 rounded-xl bg-white border border-slate-200 text-xs focus:outline-none focus:border-primary"
+                                  />
+                                  <button
+                                    type="button"
+                                    onClick={() => handleAddTaskChecklistItem(msg.id)}
+                                    className="h-8 px-3 rounded-xl bg-sky-50 hover:bg-sky-100 text-sky-900 border border-sky-200 text-xs font-bold cursor-pointer"
+                                  >
+                                    + Étape
+                                  </button>
+                                </div>
+                              )}
+                              {taskChecklistItems.length > 0 && (
+                                <div className="space-y-1">
+                                  {taskChecklistItems.map((it, idx) => (
+                                    <div
+                                      key={idx}
+                                      className="flex items-center justify-between gap-2 px-2.5 py-1.5 rounded-xl bg-slate-50 border border-slate-200 text-xs"
+                                    >
+                                      <span className="text-slate-800">• {typeof it === 'string' ? it : it.text}</span>
+                                      {!card.executed && (
+                                        <button
+                                          type="button"
+                                          onClick={() => handleRemoveTaskChecklistItem(msg.id, idx)}
+                                          className="text-slate-400 hover:text-rose-600 cursor-pointer"
+                                        >
+                                          ×
+                                        </button>
+                                      )}
+                                    </div>
+                                  ))}
+                                </div>
+                              )}
+                            </div>
+                          </div>
+                        )}
+
+                        {/* SCRUTINS (CRÉATION / OUVERTURE) — Ann. 8 : Miroir strict VoteRoofModal */}
                         {isPollSetupCard && (
-                          <div className="space-y-3.5">
+                          <div className="space-y-3.5 text-xs">
+                            {card.payload?.operation === 'create' && (
+                              <div className="p-2.5 rounded-xl bg-purple-50 border border-purple-200 text-purple-950 text-[11.5px] flex items-start gap-2">
+                                <span className="material-symbols-outlined text-[16px] text-purple-700 shrink-0 mt-0.5">info</span>
+                                <span>
+                                  Statut initial automatique : <strong>Proposition à arbitrer</strong> avant ouverture du scrutin par un coordinateur.
+                                </span>
+                              </div>
+                            )}
+
+                            <div className="space-y-1">
+                              <label className="text-[11px] font-bold uppercase tracking-wider text-purple-900 block">
+                                Titre du scrutin *
+                              </label>
+                              <input
+                                type="text"
+                                disabled={card.executed}
+                                value={card.payload?.title || ''}
+                                onChange={(e) =>
+                                  updateCardInMessage(msg.id, (c) => ({
+                                    ...c,
+                                    payload: { ...(c.payload || {}), title: e.target.value },
+                                  }))
+                                }
+                                placeholder="Ex : Couleur des volets du Presbytère"
+                                className="w-full h-9 px-3 rounded-xl bg-white border border-purple-200 focus:border-purple-500 text-xs font-semibold text-slate-900 focus:outline-none"
+                              />
+                            </div>
+
+                            <div className="grid grid-cols-1 sm:grid-cols-3 gap-2">
+                              <div className="space-y-1">
+                                <label className="text-[11px] font-bold text-slate-600 block">Lieu / Catégorie</label>
+                                <select
+                                  disabled={card.executed}
+                                  value={card.payload?.category || 'Presbytère'}
+                                  onChange={(e) =>
+                                    updateCardInMessage(msg.id, (c) => ({
+                                      ...c,
+                                      payload: { ...(c.payload || {}), category: e.target.value },
+                                    }))
+                                  }
+                                  className="w-full h-9 px-2.5 rounded-xl bg-white border border-slate-200 text-xs font-medium text-slate-900"
+                                >
+                                  {TASK_SUBJECTS.map((s) => (
+                                    <option key={s} value={s}>{s}</option>
+                                  ))}
+                                </select>
+                              </div>
+                              <div className="space-y-1">
+                                <label className="text-[11px] font-bold text-slate-600 block">Priorité</label>
+                                <select
+                                  disabled={card.executed}
+                                  value={card.payload?.priority || 'Normale'}
+                                  onChange={(e) =>
+                                    updateCardInMessage(msg.id, (c) => ({
+                                      ...c,
+                                      payload: { ...(c.payload || {}), priority: e.target.value },
+                                    }))
+                                  }
+                                  className="w-full h-9 px-2.5 rounded-xl bg-white border border-slate-200 text-xs font-medium text-slate-900"
+                                >
+                                  {VOTE_PRIORITIES.map((pr) => (
+                                    <option key={pr} value={pr}>{pr}</option>
+                                  ))}
+                                </select>
+                              </div>
+                              <div className="space-y-1">
+                                <label className="text-[11px] font-bold text-slate-600 block">Budget estimé (€)</label>
+                                <input
+                                  type="number"
+                                  min="0"
+                                  step="1"
+                                  disabled={card.executed}
+                                  value={card.payload?.estimated_cost || ''}
+                                  onChange={(e) =>
+                                    updateCardInMessage(msg.id, (c) => ({
+                                      ...c,
+                                      payload: {
+                                        ...(c.payload || {}),
+                                        estimated_cost: e.target.value ? Number(e.target.value) : 0,
+                                      },
+                                    }))
+                                  }
+                                  placeholder="0 €"
+                                  className="w-full h-9 px-3 rounded-xl bg-white border border-slate-200 text-xs text-slate-900"
+                                />
+                              </div>
+                            </div>
+
                             <div className="space-y-1.5">
                               <label className="text-[11px] font-bold uppercase tracking-wider text-purple-900 block">
                                 📝 Texte / description du scrutin
@@ -1396,10 +2504,26 @@ export default function ToasterPage({ currentUser }) {
                               />
                             </div>
 
+                            <label className="inline-flex items-center gap-2 font-semibold text-slate-700 cursor-pointer">
+                              <input
+                                type="checkbox"
+                                disabled={card.executed}
+                                checked={Boolean(card.payload?.allow_multiple_choices)}
+                                onChange={(e) =>
+                                  updateCardInMessage(msg.id, (c) => ({
+                                    ...c,
+                                    payload: { ...(c.payload || {}), allow_multiple_choices: e.target.checked },
+                                  }))
+                                }
+                                className="accent-purple-700"
+                              />
+                              <span>Autoriser plusieurs réponses par associé</span>
+                            </label>
+
                             <div className="space-y-2">
                               <div className="flex items-center justify-between gap-2">
                                 <span className="text-[11px] font-bold uppercase tracking-wider text-purple-900">
-                                  🗳️ Options proposées ({pollOptions.length})
+                                  🗳️ Options proposées ({pollOptions.length} — min. 2)
                                 </span>
                                 {!card.executed && (
                                   <button
@@ -1600,6 +2724,12 @@ export default function ToasterPage({ currentUser }) {
                             <span className="text-xs text-on-surface-variant">
                               {stayRoomOverflow
                                 ? `Ajustez le nombre de chambres (max ${stayMaxRooms}) pour confirmer.`
+                                : taskCreateMissingTitle
+                                ? 'Saisissez un titre pour proposer cette tâche.'
+                                : pollMissingTitle
+                                ? 'Saisissez un titre pour ce scrutin.'
+                                : pollEmptyOptions
+                                ? 'Indiquez au moins 2 options de vote non vides.'
                                 : card.missing_fields.length > 0
                                 ? `Répondez aux ${card.missing_fields.length} précision(s) requise(s) ci-dessus.`
                                 : 'Vérifiez les paramètres puis confirmez pour appliquer sur le portail.'}
@@ -1770,7 +2900,40 @@ export default function ToasterPage({ currentUser }) {
         onClose={() => setActionModalState(null)}
         onSubmitSandboxAction={executeDirectPortalAction}
         members={membersOptions}
+        activeMemberName={formatAssociateLabel(activeMemberObj)}
       />
+
+      {inspectingTask && (
+        <TaskDetailModal
+          isOpen={Boolean(inspectingTask)}
+          task={inspectingTask}
+          onClose={() => setInspectingTask(null)}
+          currentUser={{
+            ...(typeof currentUser === 'object' && currentUser ? currentUser : {}),
+            ...(activeMemberObj || {}),
+            name: formatAssociateLabel(activeMemberObj),
+            is_coordinator: isCoordinator,
+          }}
+          onTaskUpdated={handleModalTaskUpdated}
+          onTaskDeleted={handleModalTaskDeleted}
+        />
+      )}
+
+      {inspectingPoll && (
+        <VoteRoofModal
+          isOpen={Boolean(inspectingPoll)}
+          project={inspectingPoll}
+          onClose={() => setInspectingPoll(null)}
+          currentUser={{
+            ...(typeof currentUser === 'object' && currentUser ? currentUser : {}),
+            ...(activeMemberObj || {}),
+            name: formatAssociateLabel(activeMemberObj),
+            is_coordinator: isCoordinator,
+          }}
+          onVoteSubmit={handleModalPollUpdated}
+          onVoteDeleted={handleModalPollDeleted}
+        />
+      )}
     </div>
   );
 }

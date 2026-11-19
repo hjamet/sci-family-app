@@ -1049,31 +1049,90 @@ function SharedVademecumWidget({ data, onOpenSandboxModal }) {
   );
 }
 
-function SharedPollsWidget({ data, activeMemberName, onCastSandboxVote, onOpenSandboxModal }) {
+function SharedPollsWidget({
+  data,
+  activeMemberName,
+  isCoordinator = false,
+  onCastSandboxVote,
+  onOpenSandboxModal,
+  onInspectPoll,
+}) {
   const polls = Array.isArray(data?.polls) ? data.polls : [];
   return (
     <div className="mt-2.5 w-full max-w-2xl space-y-3">
-      {polls.map((poll) => (
-        <div key={poll.id} className="rounded-2xl bg-white border border-border-subtle p-4 shadow-sm space-y-3">
-          <div className="flex items-start justify-between gap-2">
-            <div>
-              <span className="text-[10px] font-bold uppercase tracking-wider px-2 py-0.5 rounded-full bg-purple-50 text-purple-800 border border-purple-200">
-                Scrutin #{poll.id} • {poll.status === 'PROPOSED' ? 'Prêt à ouvrir' : 'Vote ouvert'}
-              </span>
-              <h4 className="text-sm font-bold text-forest-deep mt-1.5">{poll.title}</h4>
-              {poll.description && (
-                <p className="text-xs text-slate-600 mt-0.5 line-clamp-2">{poll.description}</p>
-              )}
+      {polls.map((poll) => {
+        const statusUpper = String(poll.status || '').toUpperCase();
+        const isProposed = statusUpper === 'PROPOSED';
+        const isClosed = statusUpper === 'ARCHIVED' || statusUpper === 'CLOSED';
+        return (
+          <div
+            key={poll.id}
+            className="rounded-2xl bg-white border border-border-subtle hover:border-purple-300 p-4 shadow-sm space-y-3 transition-colors"
+          >
+            <div className="flex items-start justify-between gap-2 flex-wrap">
+              <button
+                type="button"
+                onClick={() => onInspectPoll?.(poll)}
+                className="text-left flex-1 min-w-0 cursor-pointer group"
+              >
+                <div className="flex items-center gap-1.5 flex-wrap">
+                  <span
+                    className={`text-[10px] font-bold uppercase tracking-wider px-2 py-0.5 rounded-full border ${
+                      isProposed
+                        ? 'bg-amber-50 text-amber-900 border-amber-200'
+                        : isClosed
+                        ? 'bg-slate-100 text-slate-600 border-slate-200'
+                        : 'bg-purple-50 text-purple-800 border-purple-200'
+                    }`}
+                  >
+                    Scrutin #{poll.id} •{' '}
+                    {isProposed ? 'Proposition à arbitrer' : isClosed ? 'Clôturé' : 'Vote ouvert'}
+                  </span>
+                  {poll.category && (
+                    <span className="text-[10px] font-semibold px-2 py-0.5 rounded-full bg-slate-100 text-slate-600">
+                      {poll.category}
+                    </span>
+                  )}
+                </div>
+                <h4 className="text-sm font-bold text-forest-deep group-hover:text-purple-800 mt-1.5 transition-colors">
+                  {poll.title}
+                </h4>
+                {poll.description && (
+                  <p className="text-xs text-slate-600 mt-0.5 line-clamp-2">{poll.description}</p>
+                )}
+              </button>
+              <button
+                type="button"
+                onClick={() => onInspectPoll?.(poll)}
+                className={`inline-flex items-center gap-1 px-3 py-1.5 rounded-full border text-[11px] font-bold transition-colors cursor-pointer shrink-0 ${
+                  isProposed && isCoordinator
+                    ? 'bg-amber-50 hover:bg-amber-600 text-amber-900 hover:text-white border-amber-300'
+                    : 'bg-purple-50 hover:bg-purple-700 text-purple-900 hover:text-white border-purple-200'
+                }`}
+              >
+                <span className="material-symbols-outlined text-[14px]">
+                  {isProposed && isCoordinator ? 'gavel' : 'open_in_new'}
+                </span>
+                <span>{isProposed && isCoordinator ? 'Examiner & Ouvrir' : 'Consulter'}</span>
+              </button>
             </div>
+            {isProposed ? (
+              <div className="px-3 py-2 rounded-xl bg-amber-50/70 border border-amber-200 text-xs text-amber-950 flex items-center justify-between gap-2">
+                <span>
+                  Ce scrutin est en attente de validation par un coordinateur avant l’ouverture du vote familial.
+                </span>
+              </div>
+            ) : (
+              <WhatsAppPollView
+                project={poll}
+                currentUser={activeMemberName}
+                compact={true}
+                onCastVote={(choice) => onCastSandboxVote?.(poll, choice)}
+              />
+            )}
           </div>
-          <WhatsAppPollView
-            project={poll}
-            currentUser={activeMemberName}
-            compact={true}
-            onCastVote={(choice) => onCastSandboxVote?.(poll, choice)}
-          />
-        </div>
-      ))}
+        );
+      })}
       <div className="flex justify-end">
         <button
           type="button"
@@ -1081,20 +1140,61 @@ function SharedPollsWidget({ data, activeMemberName, onCastSandboxVote, onOpenSa
           className="inline-flex items-center gap-1.5 px-3.5 py-1.5 rounded-full bg-white hover:bg-purple-50 text-purple-900 border border-purple-200 text-xs font-semibold shadow-2xs cursor-pointer"
         >
           <span className="material-symbols-outlined text-[15px]">add</span>
-          <span>Créer un nouveau vote</span>
+          <span>Proposer un scrutin</span>
         </button>
       </div>
     </div>
   );
 }
 
-function SharedTasksWidget({ data, onCompleteSandboxTask, onOpenSandboxModal }) {
+function getTaskStatusBadge(statusRaw) {
+  const s = String(statusRaw || '').toUpperCase();
+  if (s === 'PROPOSED') {
+    return {
+      label: 'Proposition à arbitrer',
+      cls: 'bg-amber-100 text-amber-950 border-amber-300',
+      actionLabel: 'Consulter & Arbitrer',
+      actionCls: 'bg-amber-600 hover:bg-amber-700 text-white border-amber-700',
+      actionIcon: 'gavel',
+      isDone: false,
+    };
+  }
+  if (s === 'PENDING_VALIDATION') {
+    return {
+      label: 'Réalisation à valider',
+      cls: 'bg-emerald-100 text-emerald-950 border-emerald-300',
+      actionLabel: 'Examiner & Valider',
+      actionCls: 'bg-emerald-700 hover:bg-emerald-800 text-white border-emerald-800',
+      actionIcon: 'verified',
+      isDone: false,
+    };
+  }
+  if (s === 'DONE' || s.includes('TERMIN')) {
+    return {
+      label: 'Terminée',
+      cls: 'bg-slate-100 text-slate-600 border-slate-200',
+      actionLabel: 'Consulter',
+      actionCls: 'bg-white hover:bg-slate-100 text-slate-700 border-slate-200',
+      actionIcon: 'visibility',
+      isDone: true,
+    };
+  }
+  return {
+    label: s === 'IN_PROGRESS' || s === 'EN_COURS' ? 'En cours' : 'À faire',
+    cls: 'bg-sky-50 text-sky-900 border-sky-200',
+    actionLabel: 'Consulter',
+    actionCls: 'bg-white hover:bg-emerald-50 text-forest-deep border-border-subtle hover:border-primary/40',
+    actionIcon: 'open_in_new',
+    isDone: false,
+  };
+}
+
+function SharedTasksWidget({ data, isCoordinator = false, onInspectTask, onOpenSandboxModal }) {
   const tasks = Array.isArray(data?.tasks) ? data.tasks : [];
-  const [expandedId, setExpandedId] = useState(null);
 
   return (
     <div className="mt-2.5 w-full max-w-2xl rounded-2xl bg-white border border-border-subtle p-4 shadow-sm space-y-2.5">
-      <div className="flex items-center justify-between pb-2 border-b border-border-subtle">
+      <div className="flex items-center justify-between pb-2 border-b border-border-subtle gap-2 flex-wrap">
         <div className="flex items-center gap-2">
           <span className="material-symbols-outlined text-primary text-[18px]">task_alt</span>
           <h4 className="text-sm font-bold text-forest-deep">
@@ -1116,46 +1216,92 @@ function SharedTasksWidget({ data, onCompleteSandboxTask, onOpenSandboxModal }) 
       ) : (
         <div className="space-y-2">
           {tasks.map((t) => {
-            const isDone = String(t.status || '').toUpperCase().includes('TERMIN');
-            const isExpanded = expandedId === t.id;
+            const meta = getTaskStatusBadge(t.status);
+            const assignedList = Array.isArray(t.assigned_members) ? t.assigned_members.filter(Boolean) : [];
+            const needsReview =
+              String(t.status || '').toUpperCase() === 'PROPOSED' ||
+              String(t.status || '').toUpperCase() === 'PENDING_VALIDATION';
+            const ctaLabel = needsReview && !isCoordinator ? 'Consulter' : meta.actionLabel;
+            const ctaCls =
+              needsReview && !isCoordinator
+                ? 'bg-white hover:bg-emerald-50 text-forest-deep border-border-subtle'
+                : meta.actionCls;
+            const ctaIcon = needsReview && !isCoordinator ? 'open_in_new' : meta.actionIcon;
+
             return (
               <div
                 key={t.id}
-                className="p-3 rounded-xl bg-canvas-slate border border-border-subtle space-y-2 transition-all"
+                role="button"
+                tabIndex={0}
+                onClick={() => onInspectTask?.(t)}
+                onKeyDown={(e) => {
+                  if (e.key === 'Enter' || e.key === ' ') {
+                    e.preventDefault();
+                    onInspectTask?.(t);
+                  }
+                }}
+                className={`group p-3 rounded-xl border transition-all cursor-pointer space-y-2 ${
+                  needsReview
+                    ? 'bg-amber-50/45 border-amber-200 hover:border-amber-400 hover:shadow-xs'
+                    : 'bg-canvas-slate border-border-subtle hover:border-primary/50 hover:bg-emerald-50/25 hover:shadow-xs'
+                }`}
               >
-                <div className="flex items-start justify-between gap-2">
-                  <button
-                    type="button"
-                    onClick={() => setExpandedId(isExpanded ? null : t.id)}
-                    className="text-left flex-1 min-w-0 cursor-pointer"
-                  >
+                <div className="flex items-start justify-between gap-2.5">
+                  <div className="text-left flex-1 min-w-0">
                     <div className="flex items-center gap-1.5 flex-wrap">
                       <span className="text-[10px] font-mono font-bold text-slate-500">#{t.id}</span>
-                      <span className={`text-xs font-bold ${isDone ? 'line-through text-slate-400' : 'text-slate-900'}`}>
-                        {t.title}
+                      <span
+                        className={`px-2 py-0.5 rounded-full border text-[10px] font-bold ${meta.cls}`}
+                      >
+                        {meta.label}
                       </span>
+                      {t.priority && t.priority !== 'Normale' && (
+                        <span className="px-1.5 py-0.5 rounded-full bg-slate-100 text-slate-700 text-[10px] font-semibold">
+                          {t.priority}
+                        </span>
+                      )}
                     </div>
-                    <div className="text-[11px] text-slate-500 mt-0.5">
-                      {t.subject} • {t.charge_points} pts • {(t.assigned_members || []).join(', ') || 'Non assignée'}
-                    </div>
-                  </button>
-                  {!isDone && (
-                    <button
-                      type="button"
-                      onClick={() => onCompleteSandboxTask?.(t)}
-                      className="px-2.5 py-1 rounded-full bg-emerald-50 hover:bg-emerald-600 text-emerald-800 hover:text-white border border-emerald-200 text-[11px] font-bold transition-colors cursor-pointer shrink-0"
-                      title="Marquer comme terminée"
+                    <div
+                      className={`text-xs sm:text-[13px] font-bold mt-1 group-hover:text-primary transition-colors ${
+                        meta.isDone ? 'line-through text-slate-400' : 'text-slate-900'
+                      }`}
                     >
-                      ✓ Valider
-                    </button>
-                  )}
-                </div>
-
-                {isExpanded && t.description && (
-                  <div className="pt-2 border-t border-slate-200/70 text-xs text-slate-700 whitespace-pre-wrap">
-                    {t.description}
+                      {t.title}
+                    </div>
+                    <div className="text-[11px] text-slate-500 mt-0.5 flex items-center gap-1.5 flex-wrap">
+                      <span>{t.subject || 'Presbytère'}</span>
+                      <span>•</span>
+                      <span>{t.complexity || 'Modérée'} ({t.charge_points ?? 3} pts)</span>
+                      <span>•</span>
+                      <span>
+                        {assignedList.length > 0 ? assignedList.join(', ') : 'Non assignée'}
+                      </span>
+                      {t.deadline && (
+                        <>
+                          <span>•</span>
+                          <span>Éch. {String(t.deadline).slice(0, 10)}</span>
+                        </>
+                      )}
+                    </div>
+                    {t.description && (
+                      <p className="text-[11.5px] text-slate-600 mt-1 line-clamp-2 leading-snug">
+                        {t.description}
+                      </p>
+                    )}
                   </div>
-                )}
+
+                  <button
+                    type="button"
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      onInspectTask?.(t);
+                    }}
+                    className={`inline-flex items-center gap-1 px-3 py-1.5 rounded-full border text-[11px] font-bold transition-colors cursor-pointer shrink-0 ${ctaCls}`}
+                  >
+                    <span className="material-symbols-outlined text-[14px]">{ctaIcon}</span>
+                    <span>{ctaLabel}</span>
+                  </button>
+                </div>
 
                 {Array.isArray(t.documents) && t.documents.length > 0 && (
                   <div className="flex flex-wrap gap-1.5 pt-1">
@@ -1165,6 +1311,7 @@ function SharedTasksWidget({ data, onCompleteSandboxTask, onOpenSandboxModal }) 
                         href={d.url}
                         target="_blank"
                         rel="noopener noreferrer"
+                        onClick={(e) => e.stopPropagation()}
                         className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full bg-white border border-slate-200 text-[10.5px] font-medium text-primary hover:border-primary"
                       >
                         <span className="material-symbols-outlined text-[13px]">picture_as_pdf</span>
@@ -1313,9 +1460,11 @@ function SharedActionButtons({ data, onOpenSandboxModal }) {
 export function ToasterComponentRenderer({
   components = [],
   activeMemberName = 'Henri Jamet',
+  isCoordinator = false,
   onOpenSandboxModal,
   onCastSandboxVote,
-  onCompleteSandboxTask,
+  onInspectTask,
+  onInspectPoll,
 }) {
   const [viewerDoc, setViewerDoc] = useState(null);
 
@@ -1350,8 +1499,10 @@ export function ToasterComponentRenderer({
                 key={idx}
                 data={comp}
                 activeMemberName={activeMemberName}
+                isCoordinator={isCoordinator}
                 onCastSandboxVote={onCastSandboxVote}
                 onOpenSandboxModal={onOpenSandboxModal}
+                onInspectPoll={onInspectPoll}
               />
             );
           }
@@ -1360,7 +1511,8 @@ export function ToasterComponentRenderer({
               <SharedTasksWidget
                 key={idx}
                 data={comp}
-                onCompleteSandboxTask={onCompleteSandboxTask}
+                isCoordinator={isCoordinator}
+                onInspectTask={onInspectTask}
                 onOpenSandboxModal={onOpenSandboxModal}
               />
             );
@@ -1402,8 +1554,34 @@ export function ToasterComponentRenderer({
 }
 
 // ============================================================================
-// 4. MODALE INTERACTIVE DE FORMULAIRE (Séjour, Tâche, Vote, Document, Vademecum)
+// 4. CONSTANTES CANONIQUES & MODALE INTERACTIVE DE FORMULAIRE
 // ============================================================================
+export const TASK_SUBJECTS = [
+  'Presbytère',
+  'Rosings',
+  'Piscine',
+  'Jardin & Espaces Verts',
+  'Petites cabanes',
+  'Hangar à meuble',
+  'SCI & Administratif',
+];
+
+export const TASK_COMPLEXITIES = ['Négligeable', 'Faible', 'Modérée', 'Élevée', 'Très élevée'];
+
+export const TASK_PRIORITIES = ['Planifié', 'Basse', 'Normale', 'Haute', 'Critique'];
+
+export const VOTE_PRIORITIES = ['Basse', 'Normale', 'Haute', 'Urgente'];
+
+export const STATUTORY_ASSOCIATES_LIST = [
+  'Henri Jamet',
+  'Élisabeth Jamet',
+  'Frédéric Jamet',
+  'Marguerite Jamet',
+  'Hortense Jamet',
+  'Joséphine Jamet',
+  'Eugénie Jamet',
+];
+
 export const DOMAIN_ROOMS_CATALOG = {
   Presbytère: [
     { name: 'Suite', shortLabel: 'Suite (Frédéric & Élisabeth)' },
@@ -1445,35 +1623,62 @@ const VADEMECUM_CATS = [
   'Sécurité & Urgences',
 ];
 
-export function ToasterSandboxFormModal({ modalState, onClose, onSubmitSandboxAction, members = [] }) {
+export function ToasterSandboxFormModal({
+  modalState,
+  onClose,
+  onSubmitSandboxAction,
+  members = [],
+  activeMemberName = 'Henri Jamet',
+}) {
   const isOpen = Boolean(modalState?.type);
   const type = modalState?.type || 'stay';
   const prefill = modalState?.prefill || {};
 
+  // Séjour (miroir BookingModal.jsx : dates + heures + participants internes/externes + ECS/Chauffage/Piscine)
   const [building, setBuilding] = useState('Presbytère');
-  const [startDate, setStartDate] = useState('2026-11-20');
-  const [endDate, setEndDate] = useState('2026-11-22');
-  const [guestCount, setGuestCount] = useState(2);
+  const [startDate, setStartDate] = useState(() => new Date().toISOString().slice(0, 10));
+  const [endDate, setEndDate] = useState(() => new Date(Date.now() + 2 * 86400000).toISOString().slice(0, 10));
+  const [arrivalTime, setArrivalTime] = useState('15:00');
+  const [departureTime, setDepartureTime] = useState('11:00');
+  const [selectedMembers, setSelectedMembers] = useState([activeMemberName]);
+  const [externalGuests, setExternalGuests] = useState([]);
+  const [externalGuestInput, setExternalGuestInput] = useState('');
   const [chambersUsed, setChambersUsed] = useState(1);
   const [selectedRooms, setSelectedRooms] = useState([]);
+  const [activateDhw, setActivateDhw] = useState(true);
   const [activateHeating, setActivateHeating] = useState(true);
+  const [activatePool, setActivatePool] = useState(false);
 
+  // Tâche (miroir TaskDetailModal.jsx en mode création : ZÉRO statut, ZÉRO responsable)
   const [taskTitle, setTaskTitle] = useState('');
   const [taskSubject, setTaskSubject] = useState('Presbytère');
-  const [taskAssignee, setTaskAssignee] = useState('Henri Jamet');
-  const [taskPoints, setTaskPoints] = useState(3);
+  const [taskComplexity, setTaskComplexity] = useState('Modérée');
+  const [taskPriority, setTaskPriority] = useState('Normale');
+  const [taskBudget, setTaskBudget] = useState('');
+  const [taskDeadline, setTaskDeadline] = useState('');
+  const [taskIsRecurring, setTaskIsRecurring] = useState(false);
+  const [taskRecInterval, setTaskRecInterval] = useState(1);
+  const [taskRecUnit, setTaskRecUnit] = useState('semaines');
   const [taskDesc, setTaskDesc] = useState('');
+  const [taskChecklist, setTaskChecklist] = useState([]);
+  const [taskChecklistInput, setTaskChecklistInput] = useState('');
 
+  // Scrutin / Vote (miroir VoteRoofModal.jsx : catégorie, priorité, budget, choix multiples, options, statut PROPOSED)
   const [pollTitle, setPollTitle] = useState('');
+  const [pollCategory, setPollCategory] = useState('Presbytère');
+  const [pollPriority, setPollPriority] = useState('Normale');
+  const [pollBudget, setPollBudget] = useState('');
   const [pollDesc, setPollDesc] = useState('');
-  const [pollOptionsText, setPollOptionsText] = useState('Samedi 10 avril 2027\nSamedi 17 avril 2027\nSamedi 24 avril 2027');
-  const [pollMulti, setPollMulti] = useState(true);
+  const [pollOptionsText, setPollOptionsText] = useState('Approuver le projet\nRejeter le projet');
+  const [pollMulti, setPollMulti] = useState(false);
 
+  // Facture / Dépense
   const [invSupplier, setInvSupplier] = useState('');
   const [invTitle, setInvTitle] = useState('');
   const [invAmount, setInvAmount] = useState('');
   const [invAdvanced, setInvAdvanced] = useState(true);
 
+  // Vademecum
   const [vadBuilding, setVadBuilding] = useState('Presbytère');
   const [vadCategory, setVadCategory] = useState('Arrivée & Clés');
   const [vadTitle, setVadTitle] = useState('');
@@ -1485,6 +1690,12 @@ export function ToasterSandboxFormModal({ modalState, onClose, onSubmitSandboxAc
 
   const maxRooms = getMaxRoomsForBuilding(building);
   const availableRooms = getRoomsListForBuilding(building);
+  const associateChoices = useMemo(() => {
+    const names = (Array.isArray(members) ? members : [])
+      .map((m) => m.displayLabel || m.name || m.nom)
+      .filter(Boolean);
+    return names.length >= 5 ? names : STATUTORY_ASSOCIATES_LIST;
+  }, [members]);
 
   useEffect(() => {
     if (!isOpen) return;
@@ -1494,17 +1705,32 @@ export function ToasterSandboxFormModal({ modalState, onClose, onSubmitSandboxAc
     }
     if (prefill.start_date) setStartDate(prefill.start_date);
     if (prefill.end_date) setEndDate(prefill.end_date);
+    if (prefill.arrival_time) setArrivalTime(prefill.arrival_time);
+    if (prefill.departure_time) setDepartureTime(prefill.departure_time);
+    setSelectedMembers(
+      Array.isArray(prefill.selected_members) && prefill.selected_members.length > 0
+        ? prefill.selected_members
+        : [activeMemberName]
+    );
+    setExternalGuests(Array.isArray(prefill.external_guests) ? prefill.external_guests : []);
     if (prefill.title) {
       setTaskTitle(prefill.title);
       setPollTitle(prefill.title);
       setInvTitle(prefill.title);
       setVadTitle(prefill.title);
     }
-    if (prefill.description) setPollDesc(prefill.description);
+    if (prefill.description) {
+      setTaskDesc(prefill.description);
+      setPollDesc(prefill.description);
+    }
+    if (prefill.subject && TASK_SUBJECTS.includes(prefill.subject)) setTaskSubject(prefill.subject);
     if (prefill.content) setVadContent(prefill.content);
-    if (prefill.category) setVadCategory(prefill.category);
+    if (prefill.category) {
+      setVadCategory(prefill.category);
+      if (TASK_SUBJECTS.includes(prefill.category)) setPollCategory(prefill.category);
+    }
     if (prefill.code_to_copy) setVadCode(prefill.code_to_copy);
-  }, [isOpen, prefill]);
+  }, [isOpen, prefill, activeMemberName]);
 
   useEffect(() => {
     setChambersUsed((prev) => Math.max(1, Math.min(maxRooms, Number(prev) || 1)));
@@ -1515,8 +1741,8 @@ export function ToasterSandboxFormModal({ modalState, onClose, onSubmitSandboxAc
 
   const titles = {
     stay: { icon: 'calendar_month', label: 'Nouvelle réservation de séjour' },
-    task: { icon: 'add_task', label: 'Créer une tâche opérationnelle' },
-    poll: { icon: 'how_to_vote', label: 'Créer un scrutin / sondage' },
+    task: { icon: 'add_task', label: 'Proposer une nouvelle tâche' },
+    poll: { icon: 'how_to_vote', label: 'Proposer un scrutin / sondage' },
     document: { icon: 'receipt_long', label: 'Enregistrer une facture / dépense' },
     vademecum: { icon: 'menu_book', label: 'Ajouter une fiche au Vademecum' },
   };
@@ -1532,20 +1758,49 @@ export function ToasterSandboxFormModal({ modalState, onClose, onSubmitSandboxAc
     });
   };
 
+  const toggleMemberChip = (memberName) => {
+    setSelectedMembers((prev) =>
+      prev.includes(memberName) ? prev.filter((m) => m !== memberName) : [...prev, memberName]
+    );
+  };
+
+  const addExternalGuest = () => {
+    const clean = externalGuestInput.trim();
+    if (!clean) return;
+    setExternalGuests((prev) => (prev.includes(clean) ? prev : [...prev, clean]));
+    setExternalGuestInput('');
+  };
+
+  const addChecklistItem = () => {
+    const clean = taskChecklistInput.trim();
+    if (!clean) return;
+    setTaskChecklist((prev) => [...prev, { text: clean, done: false }]);
+    setTaskChecklistInput('');
+  };
+
+  const totalOccupants = Math.max(1, selectedMembers.length + externalGuests.length);
+
   const handleSubmit = async (e) => {
     e.preventDefault();
     setSubmitting(true);
     try {
       if (type === 'stay') {
+        const effDhw = activateHeating ? true : activateDhw;
         await onSubmitSandboxAction('stay', {
           operation: 'create',
           building,
           start_date: startDate,
           end_date: endDate,
-          guest_count: Number(guestCount) || 1,
+          arrival_time: arrivalTime || '15:00',
+          departure_time: departureTime || '11:00',
+          selected_members: selectedMembers,
+          external_guests: externalGuests,
+          guest_count: totalOccupants,
           chambers_used: Math.max(1, Math.min(maxRooms, Number(chambersUsed) || 1)),
           selected_rooms: selectedRooms,
+          activate_dhw: effDhw,
           activate_heating: activateHeating,
+          activate_pool: activatePool,
         });
       } else if (type === 'task') {
         await onSubmitSandboxAction('task', {
@@ -1553,8 +1808,14 @@ export function ToasterSandboxFormModal({ modalState, onClose, onSubmitSandboxAc
           title: taskTitle.trim(),
           description: taskDesc.trim() || taskTitle.trim(),
           subject: taskSubject,
-          assigned_to: taskAssignee,
-          charge_points: Number(taskPoints) || 3,
+          complexity: taskComplexity,
+          priority: taskPriority,
+          budget: taskBudget ? parseFloat(taskBudget) : 0,
+          deadline: taskDeadline || '',
+          is_recurring: taskIsRecurring,
+          recurrence_interval: Number(taskRecInterval) || 1,
+          recurrence_unit: taskRecUnit,
+          checklist: taskChecklist,
         });
       } else if (type === 'poll') {
         const opts = pollOptionsText
@@ -1564,8 +1825,11 @@ export function ToasterSandboxFormModal({ modalState, onClose, onSubmitSandboxAc
         await onSubmitSandboxAction('vote', {
           operation: 'create',
           title: pollTitle.trim(),
+          category: pollCategory,
+          priority: pollPriority,
+          estimated_cost: pollBudget ? parseFloat(pollBudget) : 0,
           description: pollDesc.trim() || pollTitle.trim(),
-          options: opts.length > 0 ? opts : ['POUR', 'CONTRE', 'ABSTENTION'],
+          options: opts.length >= 2 ? opts : ['Approuver le projet', 'Rejeter le projet'],
           allow_multiple_choices: pollMulti,
         });
       } else if (type === 'document') {
@@ -1595,7 +1859,7 @@ export function ToasterSandboxFormModal({ modalState, onClose, onSubmitSandboxAc
 
   return (
     <div className="fixed inset-0 z-50 bg-slate-900/45 backdrop-blur-xs flex items-center justify-center p-4 animate-in fade-in duration-150">
-      <div className="w-full max-w-md rounded-3xl bg-white dark:bg-slate-900 border border-border-subtle shadow-2xl overflow-hidden max-h-[90vh] flex flex-col">
+      <div className="w-full max-w-lg rounded-3xl bg-white dark:bg-slate-900 border border-border-subtle shadow-2xl overflow-hidden max-h-[92vh] flex flex-col">
         <div className="px-5 py-4 bg-canvas-slate border-b border-border-subtle flex items-center justify-between shrink-0">
           <div className="flex items-center gap-2">
             <span className="material-symbols-outlined text-primary text-[20px]">{header.icon}</span>
@@ -1634,40 +1898,122 @@ export function ToasterSandboxFormModal({ modalState, onClose, onSubmitSandboxAc
                   ))}
                 </div>
               </div>
-              <div className="grid grid-cols-2 gap-2.5">
-                <div>
-                  <label className="font-bold text-slate-700 block mb-1">Arrivée</label>
-                  <input
-                    type="date"
-                    value={startDate}
-                    onChange={(e) => setStartDate(e.target.value)}
-                    className="w-full h-10 px-3 rounded-xl border border-slate-200"
-                    required
-                  />
+
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5">
+                <div className="p-2.5 rounded-xl bg-slate-50 border border-slate-200 space-y-1.5">
+                  <label className="font-bold text-slate-700 block">Arrivée (date &amp; heure)</label>
+                  <div className="grid grid-cols-5 gap-1.5">
+                    <input
+                      type="date"
+                      value={startDate}
+                      onChange={(e) => {
+                        setStartDate(e.target.value);
+                        if (endDate && e.target.value > endDate) setEndDate(e.target.value);
+                      }}
+                      className="col-span-3 h-9 px-2 rounded-lg border border-slate-200 bg-white"
+                      required
+                    />
+                    <input
+                      type="time"
+                      value={arrivalTime}
+                      onChange={(e) => setArrivalTime(e.target.value)}
+                      className="col-span-2 h-9 px-2 rounded-lg border border-slate-200 bg-white"
+                      required
+                    />
+                  </div>
                 </div>
-                <div>
-                  <label className="font-bold text-slate-700 block mb-1">Départ</label>
-                  <input
-                    type="date"
-                    value={endDate}
-                    onChange={(e) => setEndDate(e.target.value)}
-                    className="w-full h-10 px-3 rounded-xl border border-slate-200"
-                    required
-                  />
+                <div className="p-2.5 rounded-xl bg-slate-50 border border-slate-200 space-y-1.5">
+                  <label className="font-bold text-slate-700 block">Départ (date &amp; heure)</label>
+                  <div className="grid grid-cols-5 gap-1.5">
+                    <input
+                      type="date"
+                      value={endDate}
+                      min={startDate}
+                      onChange={(e) => setEndDate(e.target.value)}
+                      className="col-span-3 h-9 px-2 rounded-lg border border-slate-200 bg-white"
+                      required
+                    />
+                    <input
+                      type="time"
+                      value={departureTime}
+                      onChange={(e) => setDepartureTime(e.target.value)}
+                      className="col-span-2 h-9 px-2 rounded-lg border border-slate-200 bg-white"
+                      required
+                    />
+                  </div>
                 </div>
               </div>
-              <div className="grid grid-cols-2 gap-2.5">
-                <div>
-                  <label className="font-bold text-slate-700 block mb-1">Occupants</label>
-                  <input
-                    type="number"
-                    min="1"
-                    max="20"
-                    value={guestCount}
-                    onChange={(e) => setGuestCount(e.target.value)}
-                    className="w-full h-10 px-3 rounded-xl border border-slate-200"
-                  />
+
+              <div className="p-3 rounded-xl bg-slate-50 border border-slate-200 space-y-2.5">
+                <div className="flex items-center justify-between">
+                  <span className="font-bold text-slate-700">Participants ({totalOccupants} pers.)</span>
+                  <span className="text-[11px] text-slate-500">
+                    {selectedMembers.length} associé(s) • {externalGuests.length} invité(s) ext.
+                  </span>
                 </div>
+                <div className="flex flex-wrap gap-1.5">
+                  {associateChoices.map((name) => {
+                    const checked = selectedMembers.includes(name);
+                    return (
+                      <button
+                        key={name}
+                        type="button"
+                        onClick={() => toggleMemberChip(name)}
+                        className={`px-2.5 py-1 rounded-full border text-[11px] font-semibold cursor-pointer ${
+                          checked
+                            ? 'bg-emerald-700 text-white border-emerald-700'
+                            : 'bg-white text-slate-700 border-slate-200 hover:border-emerald-400'
+                        }`}
+                      >
+                        {checked ? '✓ ' : ''}{name.split(' ')[0]}
+                      </button>
+                    );
+                  })}
+                </div>
+                <div className="flex gap-1.5">
+                  <input
+                    type="text"
+                    value={externalGuestInput}
+                    onChange={(e) => setExternalGuestInput(e.target.value)}
+                    onKeyDown={(e) => {
+                      if (e.key === 'Enter') {
+                        e.preventDefault();
+                        addExternalGuest();
+                      }
+                    }}
+                    placeholder="Ajouter un invité extérieur (ex : Paul)..."
+                    className="flex-1 h-8 px-2.5 rounded-lg border border-slate-200 bg-white text-xs"
+                  />
+                  <button
+                    type="button"
+                    onClick={addExternalGuest}
+                    className="px-3 h-8 rounded-lg bg-emerald-50 hover:bg-emerald-100 text-emerald-900 border border-emerald-200 font-bold cursor-pointer"
+                  >
+                    + Invité
+                  </button>
+                </div>
+                {externalGuests.length > 0 && (
+                  <div className="flex flex-wrap gap-1.5">
+                    {externalGuests.map((g, i) => (
+                      <span
+                        key={`${g}-${i}`}
+                        className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full bg-white border border-slate-200 text-[11px] font-medium"
+                      >
+                        <span>{g}</span>
+                        <button
+                          type="button"
+                          onClick={() => setExternalGuests((prev) => prev.filter((_, idx) => idx !== i))}
+                          className="text-slate-400 hover:text-rose-600 cursor-pointer"
+                        >
+                          ×
+                        </button>
+                      </span>
+                    ))}
+                  </div>
+                )}
+              </div>
+
+              <div className="grid grid-cols-2 gap-2.5">
                 <div>
                   <label className="font-bold text-slate-700 block mb-1">Chambres (max {maxRooms})</label>
                   <input
@@ -1676,10 +2022,16 @@ export function ToasterSandboxFormModal({ modalState, onClose, onSubmitSandboxAc
                     max={maxRooms}
                     value={chambersUsed}
                     onChange={(e) => setChambersUsed(Math.max(1, Math.min(maxRooms, Number(e.target.value) || 1)))}
-                    className="w-full h-10 px-3 rounded-xl border border-slate-200"
+                    className="w-full h-9 px-3 rounded-xl border border-slate-200"
                   />
                 </div>
+                <div className="flex items-end">
+                  <span className="text-[11px] text-slate-500 pb-2">
+                    Presbytère : 5 ch. • Rosings : 2 ch.
+                  </span>
+                </div>
               </div>
+
               <div>
                 <label className="font-bold text-slate-700 block mb-1.5">Chambres précises (optionnel)</label>
                 <div className="flex flex-wrap gap-1.5">
@@ -1702,70 +2054,172 @@ export function ToasterSandboxFormModal({ modalState, onClose, onSubmitSandboxAc
                   })}
                 </div>
               </div>
-              <label className="flex items-center gap-2 pt-1 cursor-pointer font-semibold text-slate-700">
-                <input
-                  type="checkbox"
-                  checked={activateHeating}
-                  onChange={(e) => setActivateHeating(e.target.checked)}
-                  className="rounded text-primary"
-                />
-                <span>Activer le chauffage Presbytère (20 °C)</span>
-              </label>
+
+              <div className="p-3 rounded-xl bg-amber-50/60 border border-amber-200 space-y-2">
+                <span className="font-bold text-amber-950 block">Énergie &amp; Confort Thermique</span>
+                <label className="flex items-start gap-2 cursor-pointer text-slate-800">
+                  <input
+                    type="checkbox"
+                    checked={activateHeating ? true : activateDhw}
+                    disabled={activateHeating}
+                    onChange={(e) => setActivateDhw(e.target.checked)}
+                    className="mt-0.5 rounded accent-primary"
+                  />
+                  <span>
+                    <strong className="font-semibold">Eau Chaude Sanitaire — Presbytère (52 °C)</strong>
+                    {activateHeating && (
+                      <span className="block text-[10.5px] text-amber-800">
+                        Inclus automatiquement lorsque le chauffage est activé.
+                      </span>
+                    )}
+                  </span>
+                </label>
+                <label className="flex items-start gap-2 cursor-pointer text-slate-800">
+                  <input
+                    type="checkbox"
+                    checked={activateHeating}
+                    onChange={(e) => {
+                      const next = e.target.checked;
+                      setActivateHeating(next);
+                      if (next) setActivateDhw(true);
+                    }}
+                    className="mt-0.5 rounded accent-primary"
+                  />
+                  <span>
+                    <strong className="font-semibold">Chauffage Radiateurs — Presbytère (20 °C)</strong>
+                    <span className="block text-[10.5px] text-slate-500">
+                      Anticipation automatique selon l’heure d’arrivée.
+                    </span>
+                  </span>
+                </label>
+                <label className="flex items-start gap-2 cursor-pointer text-slate-800">
+                  <input
+                    type="checkbox"
+                    checked={activatePool}
+                    onChange={(e) => setActivatePool(e.target.checked)}
+                    className="mt-0.5 rounded accent-primary"
+                  />
+                  <span>
+                    <strong className="font-semibold">Préchauffage Piscine — Rosings (27 °C)</strong>
+                  </span>
+                </label>
+              </div>
             </>
           )}
 
           {type === 'task' && (
             <>
+              <div className="p-2.5 rounded-xl bg-amber-50 border border-amber-200 text-amber-950 text-[11px] flex items-start gap-1.5">
+                <span className="material-symbols-outlined text-[15px] text-amber-700 shrink-0 mt-0.5">info</span>
+                <span>
+                  Cette tâche sera enregistrée comme <strong>proposition à arbitrer</strong>. Les coordinateurs la valideront et attribueront le responsable.
+                </span>
+              </div>
               <div>
                 <label className="font-bold text-slate-700 block mb-1">Titre de la tâche *</label>
                 <input
                   type="text"
                   required
-                  placeholder="Ex : Vérifier les paniers skimmers"
+                  placeholder="Ex : Vérifier le goutte-à-goutte du jardin"
                   value={taskTitle}
                   onChange={(e) => setTaskTitle(e.target.value)}
-                  className="w-full h-10 px-3 rounded-xl border border-slate-200"
+                  className="w-full h-9 px-3 rounded-xl border border-slate-200"
                 />
               </div>
-              <div className="grid grid-cols-2 gap-2.5">
+              <div className="grid grid-cols-3 gap-2">
                 <div>
-                  <label className="font-bold text-slate-700 block mb-1">Lieu</label>
+                  <label className="font-bold text-slate-700 block mb-1">Emplacement</label>
                   <select
                     value={taskSubject}
                     onChange={(e) => setTaskSubject(e.target.value)}
-                    className="w-full h-10 px-3 rounded-xl border border-slate-200 bg-white"
+                    className="w-full h-9 px-2 rounded-xl border border-slate-200 bg-white"
                   >
-                    <option>Presbytère</option>
-                    <option>Rosings</option>
-                    <option>Piscine</option>
-                    <option>Jardin &amp; Espaces Verts</option>
-                    <option>SCI &amp; Administratif</option>
-                  </select>
-                </div>
-                <div>
-                  <label className="font-bold text-slate-700 block mb-1">Attribuer à</label>
-                  <select
-                    value={taskAssignee}
-                    onChange={(e) => setTaskAssignee(e.target.value)}
-                    className="w-full h-10 px-3 rounded-xl border border-slate-200 bg-white"
-                  >
-                    {(members.length > 0
-                      ? members
-                      : [
-                          { name: 'Henri Jamet' },
-                          { name: 'Marguerite Jamet' },
-                          { name: 'Hortense Jamet' },
-                          { name: 'Joséphine Jamet' },
-                          { name: 'Eugénie Jamet' },
-                          { name: 'Élisabeth Jamet' },
-                        ]
-                    ).map((m, i) => (
-                      <option key={i} value={m.name || m.nom}>
-                        {m.name || m.nom}
-                      </option>
+                    {TASK_SUBJECTS.map((s) => (
+                      <option key={s} value={s}>{s}</option>
                     ))}
                   </select>
                 </div>
+                <div>
+                  <label className="font-bold text-slate-700 block mb-1">Charge</label>
+                  <select
+                    value={taskComplexity}
+                    onChange={(e) => setTaskComplexity(e.target.value)}
+                    className="w-full h-9 px-2 rounded-xl border border-slate-200 bg-white"
+                  >
+                    {TASK_COMPLEXITIES.map((c) => (
+                      <option key={c} value={c}>{c}</option>
+                    ))}
+                  </select>
+                </div>
+                <div>
+                  <label className="font-bold text-slate-700 block mb-1">Priorité</label>
+                  <select
+                    value={taskPriority}
+                    onChange={(e) => setTaskPriority(e.target.value)}
+                    className="w-full h-9 px-2 rounded-xl border border-slate-200 bg-white"
+                  >
+                    {TASK_PRIORITIES.map((p) => (
+                      <option key={p} value={p}>{p}</option>
+                    ))}
+                  </select>
+                </div>
+              </div>
+              <div className="grid grid-cols-2 gap-2">
+                <div>
+                  <label className="font-bold text-slate-700 block mb-1">Devis / Budget estimé (€)</label>
+                  <input
+                    type="number"
+                    min="0"
+                    step="1"
+                    placeholder="0"
+                    value={taskBudget}
+                    onChange={(e) => setTaskBudget(e.target.value)}
+                    className="w-full h-9 px-3 rounded-xl border border-slate-200"
+                  />
+                </div>
+                <div>
+                  <label className="font-bold text-slate-700 block mb-1">Échéance souhaitée</label>
+                  <input
+                    type="date"
+                    value={taskDeadline}
+                    onChange={(e) => setTaskDeadline(e.target.value)}
+                    className="w-full h-9 px-3 rounded-xl border border-slate-200"
+                  />
+                </div>
+              </div>
+              <div className="flex items-center gap-3 flex-wrap">
+                <label className="flex items-center gap-1.5 font-semibold text-slate-700 cursor-pointer">
+                  <input
+                    type="checkbox"
+                    checked={taskIsRecurring}
+                    onChange={(e) => setTaskIsRecurring(e.target.checked)}
+                    className="accent-primary"
+                  />
+                  <span>Tâche récurrente</span>
+                </label>
+                {taskIsRecurring && (
+                  <div className="flex items-center gap-1.5">
+                    <span>Tous les</span>
+                    <input
+                      type="number"
+                      min="1"
+                      max="365"
+                      value={taskRecInterval}
+                      onChange={(e) => setTaskRecInterval(e.target.value)}
+                      className="w-14 h-8 px-2 rounded-lg border border-slate-200"
+                    />
+                    <select
+                      value={taskRecUnit}
+                      onChange={(e) => setTaskRecUnit(e.target.value)}
+                      className="h-8 px-2 rounded-lg border border-slate-200 bg-white"
+                    >
+                      <option value="jours">jours</option>
+                      <option value="semaines">semaines</option>
+                      <option value="mois">mois</option>
+                      <option value="ans">ans</option>
+                    </select>
+                  </div>
+                )}
               </div>
               <div>
                 <label className="font-bold text-slate-700 block mb-1">Consignes concrètes</label>
@@ -1777,21 +2231,106 @@ export function ToasterSandboxFormModal({ modalState, onClose, onSubmitSandboxAc
                   className="w-full p-2.5 rounded-xl border border-slate-200"
                 />
               </div>
+              <div className="space-y-1.5">
+                <label className="font-bold text-slate-700 block">Sous-tâches / Checklist (optionnel)</label>
+                <div className="flex gap-1.5">
+                  <input
+                    type="text"
+                    value={taskChecklistInput}
+                    onChange={(e) => setTaskChecklistInput(e.target.value)}
+                    onKeyDown={(e) => {
+                      if (e.key === 'Enter') {
+                        e.preventDefault();
+                        addChecklistItem();
+                      }
+                    }}
+                    placeholder="Ajouter une étape..."
+                    className="flex-1 h-8 px-2.5 rounded-lg border border-slate-200"
+                  />
+                  <button
+                    type="button"
+                    onClick={addChecklistItem}
+                    className="px-3 h-8 rounded-lg bg-slate-100 hover:bg-slate-200 text-slate-800 font-bold cursor-pointer"
+                  >
+                    +
+                  </button>
+                </div>
+                {taskChecklist.length > 0 && (
+                  <ul className="space-y-1">
+                    {taskChecklist.map((item, idx) => (
+                      <li key={idx} className="flex items-center justify-between gap-2 px-2.5 py-1 rounded-lg bg-slate-50 border border-slate-200">
+                        <span>• {item.text}</span>
+                        <button
+                          type="button"
+                          onClick={() => setTaskChecklist((prev) => prev.filter((_, i) => i !== idx))}
+                          className="text-slate-400 hover:text-rose-600 cursor-pointer"
+                        >
+                          ×
+                        </button>
+                      </li>
+                    ))}
+                  </ul>
+                )}
+              </div>
             </>
           )}
 
           {type === 'poll' && (
             <>
+              <div className="p-2.5 rounded-xl bg-purple-50 border border-purple-200 text-purple-950 text-[11px] flex items-start gap-1.5">
+                <span className="material-symbols-outlined text-[15px] text-purple-700 shrink-0 mt-0.5">info</span>
+                <span>
+                  Le scrutin est créé en <strong>proposition à valider</strong> avant son ouverture au vote familial par les coordinateurs.
+                </span>
+              </div>
               <div>
                 <label className="font-bold text-slate-700 block mb-1">Titre du scrutin *</label>
                 <input
                   type="text"
                   required
-                  placeholder="Ex : Dates du ménage de printemps 2027"
+                  placeholder="Ex : Couleur des volets du Presbytère"
                   value={pollTitle}
                   onChange={(e) => setPollTitle(e.target.value)}
-                  className="w-full h-10 px-3 rounded-xl border border-slate-200"
+                  className="w-full h-9 px-3 rounded-xl border border-slate-200"
                 />
+              </div>
+              <div className="grid grid-cols-3 gap-2">
+                <div>
+                  <label className="font-bold text-slate-700 block mb-1">Lieu / Catégorie</label>
+                  <select
+                    value={pollCategory}
+                    onChange={(e) => setPollCategory(e.target.value)}
+                    className="w-full h-9 px-2 rounded-xl border border-slate-200 bg-white"
+                  >
+                    {TASK_SUBJECTS.map((s) => (
+                      <option key={s} value={s}>{s}</option>
+                    ))}
+                  </select>
+                </div>
+                <div>
+                  <label className="font-bold text-slate-700 block mb-1">Priorité</label>
+                  <select
+                    value={pollPriority}
+                    onChange={(e) => setPollPriority(e.target.value)}
+                    className="w-full h-9 px-2 rounded-xl border border-slate-200 bg-white"
+                  >
+                    {VOTE_PRIORITIES.map((p) => (
+                      <option key={p} value={p}>{p}</option>
+                    ))}
+                  </select>
+                </div>
+                <div>
+                  <label className="font-bold text-slate-700 block mb-1">Budget (€)</label>
+                  <input
+                    type="number"
+                    min="0"
+                    step="1"
+                    placeholder="0"
+                    value={pollBudget}
+                    onChange={(e) => setPollBudget(e.target.value)}
+                    className="w-full h-9 px-2.5 rounded-xl border border-slate-200"
+                  />
+                </div>
               </div>
               <div>
                 <label className="font-bold text-slate-700 block mb-1">Texte explicatif du scrutin</label>
@@ -1804,7 +2343,7 @@ export function ToasterSandboxFormModal({ modalState, onClose, onSubmitSandboxAc
                 />
               </div>
               <div>
-                <label className="font-bold text-slate-700 block mb-1">Options (une par ligne)</label>
+                <label className="font-bold text-slate-700 block mb-1">Options (une par ligne, min. 2)</label>
                 <textarea
                   rows={3}
                   value={pollOptionsText}
@@ -1817,8 +2356,9 @@ export function ToasterSandboxFormModal({ modalState, onClose, onSubmitSandboxAc
                   type="checkbox"
                   checked={pollMulti}
                   onChange={(e) => setPollMulti(e.target.checked)}
+                  className="accent-primary"
                 />
-                <span>Autoriser plusieurs choix par associé</span>
+                <span>Autoriser plusieurs réponses par associé</span>
               </label>
             </>
           )}
