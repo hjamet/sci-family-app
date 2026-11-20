@@ -21,11 +21,44 @@ import EmailPreviewModal from './components/EmailPreviewModal';
 import WelcomeOnboardingModal from './components/WelcomeOnboardingModal';
 import { fetchProperties, fetchProjects, fetchTaskById, castProjectVote, getCachedData, fetchCurrentOnboarding } from './api';
 import GlobalErrorAlert from './components/GlobalErrorAlert';
+import MaintenanceScreen from './components/MaintenanceScreen';
+
+// Mode maintenance temporaire (remettre à false une fois les tests e-mails & améliorations terminés)
+const MAINTENANCE_MODE = true;
+const MAINTENANCE_BYPASS_KEY = 'sci_maintenance_bypass';
 
 export default function App() {
   const { isAuthenticated, currentUser, logout, login } = useAuth();
   const navigate = useNavigate();
   const location = useLocation();
+
+  const [maintenanceBypass, setMaintenanceBypass] = useState(() => {
+    if (!MAINTENANCE_MODE || typeof window === 'undefined') return false;
+    try {
+      const params = new URLSearchParams(window.location.search);
+      if (params.get('maintenance_bypass') === 'henri') {
+        localStorage.setItem(MAINTENANCE_BYPASS_KEY, '1');
+        return true;
+      }
+      return localStorage.getItem(MAINTENANCE_BYPASS_KEY) === '1';
+    } catch {
+      return false;
+    }
+  });
+
+  const handleEnableMaintenanceBypass = useCallback(() => {
+    try {
+      localStorage.setItem(MAINTENANCE_BYPASS_KEY, '1');
+    } catch (_) {}
+    setMaintenanceBypass(true);
+  }, []);
+
+  const handleDisableMaintenanceBypass = useCallback(() => {
+    try {
+      localStorage.removeItem(MAINTENANCE_BYPASS_KEY);
+    } catch (_) {}
+    setMaintenanceBypass(false);
+  }, []);
 
   const [properties, setProperties] = useState(() => getCachedData('properties') || []);
   const [isBookingOpen, setIsBookingOpen] = useState(false);
@@ -230,6 +263,11 @@ export default function App() {
     navigate(targetAfterLogin, { replace: true });
   };
 
+  // Mode maintenance : bloque les accès famille tant que le bypass coordinateur (Henri) n'est pas activé
+  if (MAINTENANCE_MODE && !maintenanceBypass) {
+    return <MaintenanceScreen onEnableBypass={handleEnableMaintenanceBypass} />;
+  }
+
   // Login Route handling
   if (!isAuthenticated) {
     if (location.pathname && location.pathname !== '/' && location.pathname !== '/login') {
@@ -261,6 +299,19 @@ export default function App() {
       } bg-canvas-slate text-on-surface flex flex-col font-sans selection:bg-emerald-100 selection:text-emerald-900 transition-colors duration-200`}
     >
       <GlobalErrorAlert />
+
+      {MAINTENANCE_MODE && maintenanceBypass && (
+        <div className="bg-amber-500 text-slate-950 text-xs font-semibold px-3 py-1.5 flex items-center justify-center gap-3 flex-wrap shadow-xs z-50">
+          <span>Mode maintenance actif — site masqué pour la famille · e-mails redirigés vers hellenvillierssci@gmail.com</span>
+          <button
+            type="button"
+            onClick={handleDisableMaintenanceBypass}
+            className="underline hover:no-underline text-slate-900 font-bold cursor-pointer"
+          >
+            Voir l&apos;écran maintenance
+          </button>
+        </div>
+      )}
       
       {/* Persistent Stitch Header */}
       <Header

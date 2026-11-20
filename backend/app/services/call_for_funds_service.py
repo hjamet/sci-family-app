@@ -1095,6 +1095,9 @@ def send_call_for_funds_notification(
         FALLBACK_FROM_EMAIL,
         APP_BASE_URL,
         RESEND_API_KEY,
+        MAINTENANCE_EMAIL_REDIRECT_ONLY,
+        MAINTENANCE_EMAIL_REDIRECT_TO,
+        is_henri_test_address,
         httpx,
     )
 
@@ -1303,10 +1306,17 @@ def send_call_for_funds_notification(
     if not api_key:
         raise RuntimeError("RESEND_API_KEY manquante pour l'envoi réel de l'appel de fonds.")
 
+    effective_to = to_email
+    effective_subject = subject
+    if MAINTENANCE_EMAIL_REDIRECT_ONLY and not is_henri_test_address(to_email):
+        effective_to = MAINTENANCE_EMAIL_REDIRECT_TO
+        if not effective_subject.startswith("[TEST"):
+            effective_subject = f"[TEST -> {to_email}] {effective_subject}"
+
     payload: Dict[str, Any] = {
         "from": DEFAULT_FROM_EMAIL,
-        "to": [to_email],
-        "subject": subject,
+        "to": [effective_to],
+        "subject": effective_subject,
         "html": html_body,
     }
     if pdf_bytes:

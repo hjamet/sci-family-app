@@ -38,6 +38,25 @@ SANDBOX_FROM_EMAIL = "SCI Familiale Hellenvilliers <onboarding@resend.dev>"
 # DISABLE_ALL_EMAILS sert uniquement de coupe-circuit d'urgence si explicitement activé ('true').
 DISABLE_ALL_EMAILS: bool = False
 
+# ==============================================================================
+# MODE MAINTENANCE & REDIRECTION TEST VERS HENRI (PROTECTION FAMILIALE)
+# ==============================================================================
+# Quand MAINTENANCE_EMAIL_REDIRECT_ONLY est True :
+# - Seules hellenvillierssci@gmail.com et ses alias Gmail (+prenom) sont expédiées via Resend.
+# - Toute autre adresse (sœurs, parents, externe) est automatiquement redirigée vers
+#   hellenvillierssci@gmail.com avec indication du destinataire prévu dans l'objet.
+# - Zéro e-mail ne peut atteindre la famille pendant la maintenance.
+MAINTENANCE_EMAIL_REDIRECT_ONLY: bool = os.getenv("MAINTENANCE_EMAIL_REDIRECT_ONLY", "true").strip().lower() in ("true", "1", "yes")
+MAINTENANCE_EMAIL_REDIRECT_TO: str = "hellenvillierssci@gmail.com"
+
+
+def is_henri_test_address(addr: str) -> bool:
+    """Retourne True uniquement pour hellenvillierssci@gmail.com et ses alias Gmail (+...)."""
+    clean = (addr or "").strip().lower()
+    if clean == "hellenvillierssci@gmail.com":
+        return True
+    return clean.startswith("hellenvillierssci+") and clean.endswith("@gmail.com")
+
 def is_email_disabled() -> bool:
     """
     Coupe-circuit d'urgence global :
@@ -136,21 +155,29 @@ def check_firewall(to_email: Union[str, List[str]]) -> Optional[dict]:
     """
     Vérification pare-feu hermétique avant tout envoi ou rendu HTML :
     1. Si le coupe-circuit global est actif, bloque immédiatement 100% des envois.
-    2. Sinon, intercepte immédiatement tout destinataire non autorisé sans appel réseau Resend.
+    2. En mode maintenance (MAINTENANCE_EMAIL_REDIRECT_ONLY), autorise le passage vers
+       send_email qui redirige 100% des destinataires vers hellenvillierssci@gmail.com.
+    3. Sinon, intercepte immédiatement tout destinataire non autorisé sans appel réseau Resend.
     """
     if is_email_disabled():
         return get_circuit_breaker_response()
 
+    if MAINTENANCE_EMAIL_REDIRECT_ONLY:
+        return None
+
     allowed_whitelist = {r.strip().lower() for r in ALLOWED_RECIPIENTS}
     if isinstance(to_email, str):
         clean = to_email.strip().lower()
-        if clean not in allowed_whitelist:
+        if clean not in allowed_whitelist and not is_henri_test_address(clean):
             log_msg = f"[FIREWALL] Envoi vers {to_email} bloqué (non autorisé par le pare-feu SCI)"
             logger.warning(log_msg)
             print(log_msg)
             return {"status": "blocked_by_whitelist", "id": "local_mock_blocked"}
     elif isinstance(to_email, (list, tuple, set)):
-        has_allowed = any(str(r).strip().lower() in allowed_whitelist for r in to_email)
+        has_allowed = any(
+            str(r).strip().lower() in allowed_whitelist or is_henri_test_address(str(r))
+            for r in to_email
+        )
         if not has_allowed:
             for r in to_email:
                 log_msg = f"[FIREWALL] Envoi vers {r} bloqué (non autorisé par le pare-feu SCI)"
@@ -268,22 +295,35 @@ def send_email(
         return get_circuit_breaker_response()
 
     # 1. VERROU HERMÉTIQUE & PARE-FEU STRICT DE PROTECTION FAMILIALE
-    allowed_whitelist = {r.strip().lower() for r in ALLOWED_RECIPIENTS}
+    if isinstance(to_email, (list, tuple, set)):
+        incoming_recipients = [str(r).strip() for r in to_email if str(r).strip()]
+    else:
+        incoming_recipients = [str(to_email).strip()] if str(to_email).strip() else []
 
-    if isinstance(to_email, str):
-        clean_email = to_email.strip().lower()
-        if clean_email not in allowed_whitelist:
-            log_msg = f"[FIREWALL] Envoi vers {to_email} bloqué (non autorisé par le pare-feu SCI)"
-            logger.warning(log_msg)
-            print(log_msg)
-            return {"status": "blocked_by_whitelist", "id": "local_mock_blocked"}
-        raw_recipients = [to_email.strip()]
-    elif isinstance(to_email, (list, tuple, set)):
+    if MAINTENANCE_EMAIL_REDIRECT_ONLY:
+        redirected_from = []
+        safe_recipients = []
+        for r in incoming_recipients:
+            if is_henri_test_address(r):
+                safe_recipients.append(r)
+            else:
+                redirected_from.append(r)
+                if MAINTENANCE_EMAIL_REDIRECT_TO not in safe_recipients:
+                    safe_recipients.append(MAINTENANCE_EMAIL_REDIRECT_TO)
+        if redirected_from:
+            logger.info(
+                f"[MAINTENANCE EMAIL REDIRECT] Destinataires {redirected_from} redirigés vers {MAINTENANCE_EMAIL_REDIRECT_TO}"
+            )
+            if not subject.startswith("[TEST"):
+                subject = f"[TEST -> {', '.join(redirected_from)}] {subject}"
+        raw_recipients = safe_recipients
+        allowed_whitelist = {r.lower() for r in raw_recipients}
+    else:
+        allowed_whitelist = {r.strip().lower() for r in ALLOWED_RECIPIENTS}
         allowed = []
-        for r in to_email:
-            r_str = str(r).strip()
-            if r_str.lower() in allowed_whitelist:
-                allowed.append(r_str)
+        for r in incoming_recipients:
+            if r.lower() in allowed_whitelist or is_henri_test_address(r):
+                allowed.append(r)
             else:
                 log_msg = f"[FIREWALL] Envoi vers {r} bloqué (non autorisé par le pare-feu SCI)"
                 logger.warning(log_msg)
@@ -291,14 +331,6 @@ def send_email(
         if not allowed:
             return {"status": "blocked_by_whitelist", "id": "local_mock_blocked"}
         raw_recipients = allowed
-    else:
-        clean_email = str(to_email).strip().lower()
-        if clean_email not in allowed_whitelist:
-            log_msg = f"[FIREWALL] Envoi vers {to_email} bloqué (non autorisé par le pare-feu SCI)"
-            logger.warning(log_msg)
-            print(log_msg)
-            return {"status": "blocked_by_whitelist", "id": "local_mock_blocked"}
-        raw_recipients = [str(to_email).strip()]
 
     # 2. MODE TEST HERMÉTIQUE (AUCUN EMAIL PHYSIQUE RESEND SORTANT)
     # Si EMAIL_TEST_MODE est actif (par défaut en dev/test), AUCUN appel réseau n'est effectué.

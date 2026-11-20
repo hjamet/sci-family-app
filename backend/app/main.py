@@ -11749,6 +11749,10 @@ async def cron_banking_sync(request: Request, db: Session = Depends(get_db)):
 async def cron_calls_for_funds(request: Request, db: Session = Depends(get_db)):
     """Cron mensuel Vercel (1er du mois à 08:00 UTC) : génération idempotente des avis et envoi réel automatique."""
     verify_cron_auth(request)
+    from .services.email_service import MAINTENANCE_EMAIL_REDIRECT_ONLY
+    if MAINTENANCE_EMAIL_REDIRECT_ONLY:
+        logger.info("[CRON CALLS-FOR-FUNDS] Ignoré car MAINTENANCE_EMAIL_REDIRECT_ONLY est actif.")
+        return {"status": "skipped_maintenance", "message": "Mode maintenance actif : cron appels de fonds suspendu."}
     now = datetime.utcnow()
     bank_active = is_bank_account_active(db)
     members = db.query(Member).order_by(Member.id.asc()).all()
