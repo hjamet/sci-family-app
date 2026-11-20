@@ -16,6 +16,7 @@ import BookingModal from './components/BookingModal';
 import VoteRoofModal from './components/VoteRoofModal';
 import TaskDetailModal from './components/TaskDetailModal';
 import BugReportButton from './components/BugReportButton';
+import PwaInstallBanner from './components/PwaInstallBanner';
 import EmailPreviewModal from './components/EmailPreviewModal';
 import WelcomeOnboardingModal from './components/WelcomeOnboardingModal';
 import { fetchProperties, fetchProjects, fetchTaskById, castProjectVote, getCachedData, fetchCurrentOnboarding } from './api';
@@ -38,8 +39,6 @@ export default function App() {
 
   const [isTaskModalOpen, setIsTaskModalOpen] = useState(false);
   const [activeTask, setActiveTask] = useState(null);
-  const [isBugReportMode, setIsBugReportMode] = useState(false);
-  const [tempUploadedDocIds, setTempUploadedDocIds] = useState([]);
 
   // Onboarding & Patch Notes évolutifs
   const [isOnboardingOpen, setIsOnboardingOpen] = useState(false);
@@ -75,8 +74,6 @@ export default function App() {
   };
 
   const handleOpenTaskModal = async (taskId, taskData) => {
-    setIsBugReportMode(false);
-    setTempUploadedDocIds([]);
     if (taskData && taskData.title) {
       setActiveTask(taskData);
       setIsTaskModalOpen(true);
@@ -99,23 +96,17 @@ export default function App() {
     navigate('/taches');
   };
 
-  const handleOpenBugReport = ({ task: bugTask, tempUploadedDocIds: docIds }) => {
-    setActiveTask(bugTask);
-    setIsBugReportMode(true);
-    setTempUploadedDocIds(docIds || []);
-    setIsTaskModalOpen(true);
-  };
-
-  // Sync active tab with current location pathname
+  // Sync active tab with current location pathname (Mr. Collins est désormais la page par défaut la plus à gauche)
   const getActiveTabFromPath = (path) => {
+    if (path === '/' || path === '/grille-pain' || path === '/mr-collins') return 'mr-collins';
+    if (path === '/tableau-de-bord' || path === '/dashboard') return 'home';
     if (path === '/reservations' || path === '/calendrier') return 'calendrier';
     if (path === '/tasks' || path === '/taches' || path === '/votes' || path === '/projets') return 'tasks';
     if (path === '/admin') return 'admin';
     if (path === '/vademecum' || path === '/sejour' || path === '/energie' || path === '/chauffage') return 'sejour';
     if (path === '/parametres' || path === '/settings') return 'parametres';
     if (path === '/statistiques' || path === '/stats') return 'statistiques';
-    if (path === '/grille-pain') return 'grille-pain';
-    return 'home';
+    return 'mr-collins';
   };
 
   const activeTab = getActiveTabFromPath(location.pathname);
@@ -190,7 +181,13 @@ export default function App() {
 
   const handleTabChange = (tabId) => {
     const routeMap = {
-      home: '/',
+      'mr-collins': '/',
+      'grille-pain': '/',
+      toaster: '/',
+      assistant: '/',
+      home: '/tableau-de-bord',
+      dashboard: '/tableau-de-bord',
+      'tableau-de-bord': '/tableau-de-bord',
       reservations: '/calendrier',
       calendrier: '/calendrier',
       tasks: '/taches',
@@ -206,9 +203,6 @@ export default function App() {
       settings: '/parametres',
       statistiques: '/statistiques',
       stats: '/statistiques',
-      'grille-pain': '/grille-pain',
-      toaster: '/grille-pain',
-      assistant: '/grille-pain',
     };
     const targetPath = routeMap[tabId] || (typeof tabId === 'string' && tabId.startsWith('/') ? tabId : '/');
     navigate(targetPath);
@@ -246,6 +240,7 @@ export default function App() {
     return (
       <>
         <GlobalErrorAlert />
+        <PwaInstallBanner />
         <Routes>
           <Route path="/login" element={<LoginPage onLoginSuccess={handleLoginSuccess} />} />
           <Route path="*" element={<Navigate to="/login" replace />} />
@@ -254,8 +249,17 @@ export default function App() {
     );
   }
 
+  const isGrillePainRoute =
+    location.pathname === '/' ||
+    location.pathname === '/grille-pain' ||
+    location.pathname === '/mr-collins';
+
   return (
-    <div className="min-h-screen bg-canvas-slate text-on-surface flex flex-col font-sans selection:bg-emerald-100 selection:text-emerald-900 transition-colors duration-200">
+    <div
+      className={`${
+        isGrillePainRoute ? 'h-[100dvh] overflow-hidden' : 'min-h-screen'
+      } bg-canvas-slate text-on-surface flex flex-col font-sans selection:bg-emerald-100 selection:text-emerald-900 transition-colors duration-200`}
+    >
       <GlobalErrorAlert />
       
       {/* Persistent Stitch Header */}
@@ -272,11 +276,43 @@ export default function App() {
         onOpenOnboardingModal={handleOpenOnboarding}
       />
 
-      {/* Main Container */}
-      <main className="flex-1 max-w-[1360px] w-full mx-auto px-gutter pt-6">
+      {/* Main Container (Annotation 4 : hauteur fixe viewport sur /grille-pain afin que seul le chat scrolle et l'input reste ancré en bas) */}
+      <main
+        className={
+          isGrillePainRoute
+            ? 'flex-1 min-h-0 max-w-[1360px] w-full mx-auto px-gutter pt-3 pb-3 flex flex-col overflow-hidden'
+            : 'flex-1 max-w-[1360px] w-full mx-auto px-gutter pt-6'
+        }
+      >
         <Routes>
           <Route
             path="/"
+            element={
+              <ToasterPage
+                currentUser={currentUser}
+              />
+            }
+          />
+          <Route
+            path="/mr-collins"
+            element={
+              <ToasterPage
+                currentUser={currentUser}
+              />
+            }
+          />
+          <Route
+            path="/tableau-de-bord"
+            element={
+              <DashboardPage
+                currentUser={currentUser}
+                setActiveTab={handleTabChange}
+                onOpenBooking={() => setIsBookingOpen(true)}
+              />
+            }
+          />
+          <Route
+            path="/dashboard"
             element={
               <DashboardPage
                 currentUser={currentUser}
@@ -403,31 +439,27 @@ export default function App() {
         }}
       />
 
-      {/* Global Task Detail Modal (Ouverture directe par-dessus la page active depuis les notifications ou le Bug Reporter) */}
+      {/* Global Task Detail Modal (Ouverture directe par-dessus la page active depuis les notifications) */}
       {isTaskModalOpen && (
         <TaskDetailModal
           isOpen={isTaskModalOpen}
           task={activeTask}
-          isEditing={isBugReportMode}
-          initialMode={isBugReportMode ? 'edit' : 'view'}
-          isBugReport={isBugReportMode}
-          tempUploadedDocIds={tempUploadedDocIds}
+          isEditing={false}
+          initialMode="view"
           onClose={() => {
             setIsTaskModalOpen(false);
             setActiveTask(null);
-            setIsBugReportMode(false);
-            setTempUploadedDocIds([]);
           }}
           currentUser={currentUser}
           onTaskUpdated={() => {}}
         />
       )}
 
-      {/* Bouton Bug Reporter permanent */}
-      <BugReportButton
-        currentUser={currentUser}
-        onOpenBugReport={handleOpenBugReport}
-      />
+      {/* Notification d'installation PWA Chrome/Edge (Android, PC, Mac) & iOS Safari */}
+      <PwaInstallBanner />
+
+      {/* Bouton Bug Reporter ultra-rapide permanent */}
+      <BugReportButton currentUser={currentUser} />
 
       {/* Modale d'aperçu du rendu HTML de l'e-mail */}
       <EmailPreviewModal

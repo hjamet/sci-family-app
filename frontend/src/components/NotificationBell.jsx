@@ -564,9 +564,9 @@ function getNotificationEmail(notif, currentUser) {
         )}
       </button>
 
-      {/* Popover Déroulant des Notifications */}
+      {/* Popover Déroulant des Notifications (fixe pleine largeur avec marge sur mobile pour ne jamais dépasser l'écran) */}
       {isOpen && (
-        <div className="absolute right-0 top-full mt-2 w-88 sm:w-96 bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-2xl shadow-2xl z-50 p-3 animate-in fade-in zoom-in-95 duration-150">
+        <div className="fixed inset-x-3 top-[4.75rem] sm:absolute sm:inset-x-auto sm:right-0 sm:top-full sm:mt-2 sm:w-96 bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-2xl shadow-2xl z-50 p-3 animate-in fade-in zoom-in-95 duration-150">
           {/* En-tête */}
           <div className="flex items-center justify-between pb-2 mb-2 border-b border-slate-100 dark:border-slate-800">
             <div className="flex items-center gap-1.5">

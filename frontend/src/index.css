@@ -82,6 +82,12 @@
   }
 }
 
+/* Portrait Mr. Collins à bords doucement floutés et fondus */
+.mr-collins-portrait-mask {
+  -webkit-mask-image: radial-gradient(ellipse 68% 68% at 50% 48%, rgba(0, 0, 0, 1) 46%, rgba(0, 0, 0, 0.72) 66%, rgba(0, 0, 0, 0) 96%);
+  mask-image: radial-gradient(ellipse 68% 68% at 50% 48%, rgba(0, 0, 0, 1) 46%, rgba(0, 0, 0, 0.72) 66%, rgba(0, 0, 0, 0) 96%);
+}
+
 /* Custom Chat Scrollbar for Task Discussion */
 .custom-chat-scrollbar {
   scrollbar-width: thin;

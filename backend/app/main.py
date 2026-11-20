@@ -4868,9 +4868,18 @@ def create_task(
             is_coord = True
 
     # Règle formelle Henri (Annotation 3 & 4) : À la création, le statut par défaut obligatoire est STRICTEMENT 'PROPOSED' (En attente de validation).
-    # La tâche ne doit pas être pré-assignée au créateur ; seul un coordinateur peut spécifier un statut actif explicite.
+    # Exception explicite (Annotation 5, 20/11/2026) : un signalement de bug (`is_bug_report=True`) est
+    # directement attribué à Henri en statut EN_COURS (avec capture + logs attachés, zéro étape manuelle).
+    is_bug_report = bool(payload.get("is_bug_report", False))
     explicit_status = payload.get("status")
-    if is_coord and explicit_status:
+    if is_bug_report:
+        henri_member = db.query(Member).filter(func.lower(Member.prenom) == "henri").first()
+        assignee_id = henri_member.id if henri_member else 1
+        assigned_members = ["Henri Jamet"]
+        task_status = "EN_COURS"
+        is_recurring = False
+        auto_assign_by_workload = False
+    elif is_coord and explicit_status:
         task_status = explicit_status
     else:
         task_status = "PROPOSED"

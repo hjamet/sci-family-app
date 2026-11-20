@@ -40,7 +40,8 @@ function HouseHLogo({ className = "w-10 h-10" }) {
 }
 
 const NAV_ITEMS = [
-  { id: 'home', label: 'Tableau de bord', path: '/', icon: 'dashboard' },
+  { id: 'mr-collins', label: 'Mr. Collins', path: '/', icon: 'auto_awesome' },
+  { id: 'home', label: 'Tableau de bord', path: '/tableau-de-bord', icon: 'dashboard' },
   { id: 'sejour', label: 'Séjour', path: '/sejour', icon: 'cottage' },
   { id: 'calendrier', label: 'Calendrier', path: '/calendrier', icon: 'calendar_month' },
   { id: 'taches', label: 'Tâches et Votes', path: '/taches', icon: 'checklist' },
@@ -63,8 +64,35 @@ export default function Header({
   const [isMobileMenuOpen, setIsMobileMenuOpen] = useState(false);
   const [isNotifOpen, setIsNotifOpen] = useState(false);
   const [unreadCount, setUnreadCount] = useState(0);
+  const [canInstallPwa, setCanInstallPwa] = useState(() =>
+    typeof window !== 'undefined' && Boolean(window.__sciDeferredInstallPrompt)
+  );
   const dropdownRef = useRef(null);
   const mobileMenuRef = useRef(null);
+
+  useEffect(() => {
+    const syncPwa = () => setCanInstallPwa(Boolean(window.__sciDeferredInstallPrompt));
+    window.addEventListener('sci-pwa-install-available', syncPwa);
+    window.addEventListener('sci-pwa-installed', syncPwa);
+    return () => {
+      window.removeEventListener('sci-pwa-install-available', syncPwa);
+      window.removeEventListener('sci-pwa-installed', syncPwa);
+    };
+  }, []);
+
+  const handleInstallPwaFromMenu = async () => {
+    setIsUserMenuOpen(false);
+    const promptEvt = window.__sciDeferredInstallPrompt;
+    if (!promptEvt) return;
+    try {
+      await promptEvt.prompt();
+      const choice = await promptEvt.userChoice;
+      if (choice?.outcome === 'accepted') {
+        window.__sciDeferredInstallPrompt = null;
+        setCanInstallPwa(false);
+      }
+    } catch (_) {}
+  };
 
   const displayName = typeof currentUser === 'object'
     ? (currentUser?.prenom ? `${currentUser.prenom} ${currentUser.nom || 'Jamet'}` : 'Henri Jamet')
@@ -109,7 +137,13 @@ export default function Header({
 
   const isItemActive = (item) => {
     if (activeTab === item.id) return true;
-    if (item.id === 'home' && (activeTab === 'home' || activeTab === '')) return true;
+    if (
+      item.id === 'mr-collins' &&
+      (activeTab === 'mr-collins' || activeTab === 'grille-pain' || activeTab === 'toaster' || activeTab === 'assistant' || activeTab === '')
+    ) {
+      return true;
+    }
+    if (item.id === 'home' && (activeTab === 'home' || activeTab === 'dashboard' || activeTab === 'tableau-de-bord')) return true;
     if (item.id === 'sejour' && (activeTab === 'sejour' || activeTab === 'vademecum')) return true;
     if (item.id === 'calendrier' && (activeTab === 'calendrier' || activeTab === 'reservations')) return true;
     if (item.id === 'taches' && (activeTab === 'taches' || activeTab === 'tasks')) return true;
@@ -147,7 +181,7 @@ export default function Header({
                 key={item.id}
                 type="button"
                 onClick={() => handleTabClick(item)}
-                className={`px-4 py-2 rounded-full font-label-md text-label-md transition-all cursor-pointer ${
+                className={`px-3.5 py-2 rounded-full font-label-md text-label-md whitespace-nowrap transition-all cursor-pointer ${
                   isActive
                     ? 'bg-sage-soft text-primary font-bold shadow-xs'
                     : 'text-on-surface-variant hover:text-on-surface'
@@ -245,36 +279,18 @@ export default function Header({
                   <p className="font-bold text-sm text-emerald-950 truncate">{displayName}</p>
                 </div>
 
-                {/* Mobile nav links inside dropdown fallback */}
-                <div className="lg:hidden border-b border-slate-100 py-1">
-                  {NAV_ITEMS.map((item) => (
+                {canInstallPwa && (
+                  <div className="border-b border-slate-100 py-1">
                     <button
-                      key={item.id}
                       type="button"
-                      onClick={() => handleTabClick(item)}
-                      className="w-full px-4 py-2 text-left text-xs font-semibold text-on-surface hover:bg-sage-soft flex items-center gap-2 cursor-pointer"
+                      onClick={handleInstallPwaFromMenu}
+                      className="w-full px-4 py-2.5 text-left text-xs font-bold text-emerald-800 hover:bg-sage-soft flex items-center gap-2 transition-colors cursor-pointer"
                     >
-                      <span className="material-symbols-outlined text-[16px] text-primary">
-                        {item.icon}
-                      </span>
-                      {item.label}
+                      <span className="material-symbols-outlined text-[18px]">install_mobile</span>
+                      Installer l’application
                     </button>
-                  ))}
-                </div>
-
-                <div className="border-b border-slate-100 py-1">
-                  <button
-                    type="button"
-                    onClick={() => {
-                      setIsUserMenuOpen(false);
-                      if (onNavigate) onNavigate('/grille-pain', 'grille-pain');
-                    }}
-                    className="w-full px-4 py-2.5 text-left text-xs font-bold text-primary hover:bg-sage-soft flex items-center gap-2 transition-colors cursor-pointer"
-                  >
-                    <span className="material-symbols-outlined text-[18px]">smart_toy</span>
-                    Assistant Grille-Pain
-                  </button>
-                </div>
+                  </div>
+                )}
 
                 <div className="pt-1">
                   <button

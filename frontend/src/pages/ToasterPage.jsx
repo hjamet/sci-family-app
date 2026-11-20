@@ -7,6 +7,8 @@ import {
   getMaxRoomsForBuilding,
   getRoomsListForBuilding,
   TASK_SUBJECTS,
+  TASK_COMPLEXITIES,
+  TASK_PRIORITIES,
   VOTE_PRIORITIES,
   STATUTORY_ASSOCIATES_LIST,
 } from '../components/ToasterSharedComponents';
@@ -367,6 +369,7 @@ const ACTION_TYPE_META = {
   invoice: { icon: 'receipt_long', badge: 'Facture & Dépense', color: 'bg-rose-100 text-rose-900 border-rose-300' },
   document: { icon: 'upload_file', badge: 'Document & Archive', color: 'bg-indigo-100 text-indigo-900 border-indigo-300' },
   task: { icon: 'task_alt', badge: 'Tâche & Chantier', color: 'bg-sky-100 text-sky-900 border-sky-300' },
+  comment: { icon: 'forum', badge: 'Message & Fil', color: 'bg-teal-100 text-teal-900 border-teal-300' },
   vote: { icon: 'how_to_vote', badge: 'Scrutin & Vote', color: 'bg-purple-100 text-purple-900 border-purple-300' },
   poll: { icon: 'how_to_vote', badge: 'Scrutin & Vote', color: 'bg-purple-100 text-purple-900 border-purple-300' },
   vademecum: { icon: 'menu_book', badge: 'Vademecum', color: 'bg-emerald-100 text-emerald-900 border-emerald-300' },
@@ -433,8 +436,16 @@ export default function ToasterPage({ currentUser }) {
 
   // Fil de conversation & streaming SSE
   const [messages, setMessages] = useState([]);
+  const [isWelcomeExiting, setIsWelcomeExiting] = useState(false);
   const [inputText, setInputText] = useState('');
   const [isSending, setIsSending] = useState(false);
+  const chatInputRef = useRef(null);
+
+  // Lecture audio TTS à la demande (gemini-3.8-flash-lite-tts, auto sur message vocal uniquement)
+  const [ttsState, setTtsState] = useState({ msgId: null, status: 'idle' }); // 'idle' | 'loading' | 'playing' | 'paused'
+  const ttsAudioRef = useRef(null);
+  const ttsCacheRef = useRef({});
+  const ttsActiveMsgRef = useRef(null);
 
   // Modale de formulaire ouverte depuis un composant partagé
   const [actionModalState, setActionModalState] = useState(null);
@@ -479,6 +490,136 @@ export default function ToasterPage({ currentUser }) {
     if (typeof window === 'undefined') return false;
     return Boolean(window.SpeechRecognition || window.webkitSpeechRecognition);
   }, []);
+
+  // Annotation 1 (Batch 1) : Redimensionnement automatique du textarea jusqu'à 7 lignes max
+  useEffect(() => {
+    const el = chatInputRef.current;
+    if (!el) return;
+    el.style.height = 'auto';
+    const computed = typeof window !== 'undefined' ? window.getComputedStyle(el) : null;
+    const lineHeight = parseFloat(computed?.lineHeight || '22') || 22;
+    const padTop = parseFloat(computed?.paddingTop || '10') || 10;
+    const padBottom = parseFloat(computed?.paddingBottom || '10') || 10;
+    const maxHeight = Math.round(lineHeight * 7 + padTop + padBottom);
+    const nextHeight = Math.min(el.scrollHeight, maxHeight);
+    el.style.height = `${Math.max(40, nextHeight)}px`;
+    el.style.overflowY = el.scrollHeight > maxHeight ? 'auto' : 'hidden';
+  }, [inputText, isListening]);
+
+  // Contrôleur TTS intelligent (cache local par message -> zéro appel redondant en pause/reprise/relecture)
+  const stopTtsPlayback = useCallback(() => {
+    const audio = ttsAudioRef.current;
+    if (audio) {
+      try {
+        audio.pause();
+        audio.currentTime = 0;
+      } catch (_) {}
+    }
+    ttsActiveMsgRef.current = null;
+    setTtsState({ msgId: null, status: 'idle' });
+  }, []);
+
+  useEffect(() => {
+    return () => {
+      stopTtsPlayback();
+      Object.values(ttsCacheRef.current || {}).forEach((url) => {
+        try {
+          URL.revokeObjectURL(url);
+        } catch (_) {}
+      });
+      ttsCacheRef.current = {};
+    };
+  }, [stopTtsPlayback]);
+
+  const playTtsForMessage = useCallback(
+    async (msgId, rawText, { forceRestart = false } = {}) => {
+      const text = String(rawText || '').trim();
+      if (!msgId || !text) return;
+
+      // Pause / Reprise instantanée sans rappel API si c'est le message actif
+      if (!forceRestart && ttsActiveMsgRef.current === msgId && ttsAudioRef.current) {
+        const audio = ttsAudioRef.current;
+        if (!audio.paused && !audio.ended) {
+          audio.pause();
+          setTtsState({ msgId, status: 'paused' });
+          return;
+        }
+        if (audio.paused && !audio.ended && audio.currentTime > 0) {
+          try {
+            await audio.play();
+            setTtsState({ msgId, status: 'playing' });
+            return;
+          } catch (_) {}
+        }
+      }
+
+      // Arrêter une éventuelle autre lecture en cours
+      if (ttsAudioRef.current) {
+        try {
+          ttsAudioRef.current.pause();
+        } catch (_) {}
+      }
+      ttsActiveMsgRef.current = msgId;
+
+      let objectUrl = ttsCacheRef.current[msgId] || null;
+      if (!objectUrl) {
+        setTtsState({ msgId, status: 'loading' });
+        try {
+          const res = await fetch('/api/toaster/tts', {
+            method: 'POST',
+            headers: getAuthHeaders(),
+            body: JSON.stringify({ text, voice_name: 'Charon' }),
+          });
+          if (!res.ok) {
+            let detail = `Erreur TTS HTTP ${res.status}`;
+            try {
+              const errJson = await res.json();
+              detail = errJson.detail || detail;
+            } catch (_) {}
+            throw new Error(detail);
+          }
+          const blob = await res.blob();
+          objectUrl = URL.createObjectURL(blob);
+          ttsCacheRef.current[msgId] = objectUrl;
+        } catch (err) {
+          console.error('Erreur TTS gemini-3.8-flash-lite-tts:', err);
+          if (ttsActiveMsgRef.current === msgId) {
+            ttsActiveMsgRef.current = null;
+            setTtsState({ msgId: null, status: 'idle' });
+          }
+          showToast(`Lecture vocale indisponible : ${err.message}`);
+          return;
+        }
+      }
+
+      // Si l'utilisateur a annulé / changé de message pendant le chargement
+      if (ttsActiveMsgRef.current !== msgId) return;
+
+      const audio = new Audio(objectUrl);
+      ttsAudioRef.current = audio;
+      audio.onended = () => {
+        if (ttsActiveMsgRef.current === msgId) {
+          ttsActiveMsgRef.current = null;
+          setTtsState({ msgId: null, status: 'idle' });
+        }
+      };
+      audio.onerror = () => {
+        if (ttsActiveMsgRef.current === msgId) {
+          ttsActiveMsgRef.current = null;
+          setTtsState({ msgId: null, status: 'idle' });
+        }
+      };
+
+      try {
+        await audio.play();
+        setTtsState({ msgId, status: 'playing' });
+      } catch (playErr) {
+        console.warn('Lecture audio bloquée par le navigateur:', playErr);
+        setTtsState({ msgId, status: 'paused' });
+      }
+    },
+    [showToast]
+  );
 
   const loadPortalState = useCallback(
     async (memberId = selectedMemberId) => {
@@ -780,12 +921,18 @@ export default function ToasterPage({ currentUser }) {
   );
 
   const sendMessagePayload = useCallback(
-    async ({ textOverride = null, clearComposerText = true } = {}) => {
+    async ({ textOverride = null, clearComposerText = true, fromVoice = false } = {}) => {
       const rawText = textOverride !== null ? String(textOverride) : inputText;
       const trimmed = rawText.trim();
       const currentAttachment = textOverride !== null ? null : attachment;
 
       if ((!trimmed && !currentAttachment) || isSending) return;
+
+      // Animation élégante de sortie du portrait Mr. Collins au tout premier message envoyé
+      if (messagesRef.current.length === 0) {
+        setIsWelcomeExiting(true);
+        setTimeout(() => setIsWelcomeExiting(false), 320);
+      }
 
       const nowTs = Date.now();
       const userMsg = {
@@ -908,6 +1055,10 @@ export default function ToasterPage({ currentUser }) {
             if (ev.state) {
               setPortalState(ev.state);
             }
+            // TTS automatique UNIQUEMENT lorsque le message a été envoyé via l'input vocal (Annotation 2)
+            if (fromVoice && finalReply && finalReply.trim()) {
+              playTtsForMessage(assistantId, finalReply, { forceRestart: true });
+            }
           }
         }
       };
@@ -973,7 +1124,7 @@ export default function ToasterPage({ currentUser }) {
         setIsSending(false);
       }
     },
-    [inputText, attachment, isSending, selectedMemberId, normalizeActionCard]
+    [inputText, attachment, isSending, selectedMemberId, normalizeActionCard, playTtsForMessage]
   );
 
   useEffect(() => {
@@ -1032,7 +1183,7 @@ export default function ToasterPage({ currentUser }) {
       const finalSpoken = voiceTranscriptRef.current.trim();
       voiceTranscriptRef.current = '';
       if (!voiceAbortedRef.current && finalSpoken && sendVoiceTriggerRef.current) {
-        sendVoiceTriggerRef.current({ textOverride: finalSpoken, clearComposerText: false });
+        sendVoiceTriggerRef.current({ textOverride: finalSpoken, clearComposerText: false, fromVoice: true });
       }
     };
 
@@ -1631,7 +1782,7 @@ export default function ToasterPage({ currentUser }) {
   };
 
   return (
-    <div className="relative flex flex-col w-full max-w-5xl mx-auto pb-4 min-h-[calc(100vh-92px)]">
+    <div className="relative flex flex-col w-full max-w-5xl mx-auto flex-1 min-h-0 h-full overflow-hidden">
       {/* Notification Toast */}
       {toastMessage && (
         <div className="fixed bottom-6 right-6 z-50 bg-forest-deep text-white px-5 py-3 rounded-full shadow-xl flex items-center gap-3 border border-emerald-500/30 animate-in fade-in duration-200">
@@ -1647,13 +1798,15 @@ export default function ToasterPage({ currentUser }) {
         </div>
       )}
 
-      {/* Annotation 1 : En-tête Assistant Grille-Pain supprimé pour gagner de l'espace (seul le bouton Nouvelle discussion apparaît en cours de fil) */}
-      {messages.length > 0 && (
-        <div className="flex items-center justify-end px-1 pb-2">
+      {/* Bouton compact Nouvelle discussion uniquement en cours de conversation */}
+      {messages.length > 0 && !isWelcomeExiting && (
+        <div className="shrink-0 flex items-center justify-end px-1 pb-2">
           <button
             type="button"
             onClick={() => {
+              stopTtsPlayback();
               setMessages([]);
+              setIsWelcomeExiting(false);
               setAttachment(null);
               setErrorBanner(null);
               setLastFailedPrompt(null);
@@ -1671,7 +1824,7 @@ export default function ToasterPage({ currentUser }) {
         <div
           id="toaster-error-banner"
           role="alert"
-          className="mb-3 px-4 py-3 rounded-2xl bg-rose-50 border border-rose-300 text-rose-950 text-xs font-semibold flex items-center justify-between gap-3 flex-wrap"
+          className="shrink-0 mb-2 px-4 py-2.5 rounded-2xl bg-rose-50 border border-rose-300 text-rose-950 text-xs font-semibold flex items-center justify-between gap-3 flex-wrap"
         >
           <div className="flex items-center gap-2">
             <span className="material-symbols-outlined text-rose-600 text-[20px]">error</span>
@@ -1698,12 +1851,12 @@ export default function ToasterPage({ currentUser }) {
         </div>
       )}
 
-      {/* ZONE DE CONVERSATION, COMPOSANTS PARTAGÉS & CARTES D'ACTION */}
+      {/* ZONE DE CONVERSATION À HAUTEUR FIXE (seul l'historique défile, l'input reste toujours ancré en bas) */}
       <div
         onDragOver={handleChatDragOver}
         onDragLeave={handleChatDragLeave}
         onDrop={handleChatDrop}
-        className={`relative flex-1 bg-surface-container-lowest rounded-3xl border shadow-sm flex flex-col overflow-hidden min-h-[480px] transition-colors ${
+        className={`relative flex-1 min-h-0 bg-surface-container-lowest rounded-3xl border shadow-sm flex flex-col overflow-hidden transition-colors ${
           isDraggingOverChat ? 'border-primary ring-4 ring-primary/15 bg-emerald-50/30' : 'border-border-subtle'
         }`}
       >
@@ -1716,21 +1869,109 @@ export default function ToasterPage({ currentUser }) {
           </div>
         )}
 
-        <div ref={chatScrollRef} className="flex-1 overflow-y-auto p-4 sm:p-6 space-y-5">
-          {messages.length === 0 ? (
-            <div className="h-full min-h-[340px] flex flex-col items-center justify-center text-center max-w-2xl mx-auto px-3 py-5">
-              <div className="w-12 h-12 rounded-full bg-sage-soft text-primary flex items-center justify-center mb-3 shadow-2xs">
-                <span className="material-symbols-outlined text-[24px]">chat_bubble</span>
-              </div>
+        <div ref={chatScrollRef} className="flex-1 min-h-0 overflow-y-auto overscroll-contain p-4 sm:p-6 space-y-5">
+          {messages.length === 0 || isWelcomeExiting ? (
+            <div
+              id="mr-collins-welcome"
+              className={`min-h-full flex flex-col items-center justify-center text-center max-w-4xl mx-auto px-2 py-3 transition-all duration-300 ease-out ${
+                isWelcomeExiting
+                  ? 'opacity-0 scale-90 -translate-y-4 blur-[3px] pointer-events-none'
+                  : 'opacity-100 scale-100 translate-y-0'
+              }`}
+            >
               <h2 className="font-headline-sm text-base sm:text-lg font-bold text-forest-deep">
                 Bonjour {formatAssociatePrenom(activeMemberObj)}, comment puis-je vous aider aujourd'hui ?
               </h2>
-              <p className="text-xs sm:text-sm text-on-surface-variant mt-1.5 leading-relaxed max-w-xl">
+              <p className="text-xs sm:text-sm text-on-surface-variant mt-1 leading-relaxed max-w-xl">
                 Consultez le Vademecum, la trésorerie, le classement participatif, la piscine, la cuve à fioul ou préparez en un clic une réservation, une tâche ou un scrutin familial. Tout est possible. Dingue, non ?!
               </p>
 
-              {/* Annotation 7 : Gros bouton central rouge pulsant dès qu'il y a >= 1 action à faire */}
-              <div className="mt-5 w-full flex justify-center">
+              {/* Annotation 3 (Batch 2) : Portrait centré de Mr. Collins à bords floutés entouré des 4 questions d'exemple */}
+              <div
+                id="toaster-example-questions"
+                className="grid grid-cols-1 md:grid-cols-[1fr_auto_1fr] items-center gap-3 sm:gap-4 w-full max-w-3xl mt-4"
+              >
+                {/* 2 exemples à gauche */}
+                <div className="flex flex-col gap-2.5 order-2 md:order-1">
+                  {EXAMPLE_QUESTIONS.slice(0, 2).map((q) => (
+                    <button
+                      key={q.id}
+                      type="button"
+                      disabled={isSending}
+                      onClick={() =>
+                        sendMessagePayload({
+                          textOverride: q.prompt,
+                          clearComposerText: false,
+                        })
+                      }
+                      className="group flex items-start gap-3 px-3.5 py-2.5 rounded-2xl bg-white hover:bg-sage-soft/55 border border-border-subtle hover:border-primary/40 shadow-2xs transition-all cursor-pointer disabled:opacity-45 text-left"
+                    >
+                      <span className="w-8 h-8 rounded-xl bg-sage-soft/80 group-hover:bg-primary/15 text-primary flex items-center justify-center shrink-0 mt-0.5 transition-colors">
+                        <span className="material-symbols-outlined text-[18px]">{q.icon}</span>
+                      </span>
+                      <div className="min-w-0 flex-1 text-left">
+                        <span className="block text-xs font-bold text-forest-deep group-hover:text-primary transition-colors truncate">
+                          {q.title}
+                        </span>
+                        <span className="block text-[11px] text-on-surface-variant truncate mt-0.5">
+                          {q.subtitle}
+                        </span>
+                      </div>
+                    </button>
+                  ))}
+                </div>
+
+                {/* Portrait central Mr. Collins à bords doucement floutés */}
+                <div className="relative flex flex-col items-center justify-center order-1 md:order-2 my-1">
+                  <div
+                    className="pointer-events-none absolute inset-1 rounded-full bg-emerald-200/35 blur-2xl"
+                    aria-hidden="true"
+                  />
+                  <div className="relative w-36 h-32 sm:w-44 sm:h-40 flex items-center justify-center select-none">
+                    <img
+                      src="/images/mr-collins.jpg"
+                      alt="Mr. Collins — Domaine d'Hellenvilliers"
+                      className="w-full h-full object-cover object-center mr-collins-portrait-mask"
+                    />
+                  </div>
+                  <span className="text-[11px] font-headline-sm font-bold tracking-wide text-forest-deep/75 -mt-1">
+                    Mr. Collins
+                  </span>
+                </div>
+
+                {/* 2 exemples à droite */}
+                <div className="flex flex-col gap-2.5 order-3">
+                  {EXAMPLE_QUESTIONS.slice(2, 4).map((q) => (
+                    <button
+                      key={q.id}
+                      type="button"
+                      disabled={isSending}
+                      onClick={() =>
+                        sendMessagePayload({
+                          textOverride: q.prompt,
+                          clearComposerText: false,
+                        })
+                      }
+                      className="group flex items-start gap-3 px-3.5 py-2.5 rounded-2xl bg-white hover:bg-sage-soft/55 border border-border-subtle hover:border-primary/40 shadow-2xs transition-all cursor-pointer disabled:opacity-45 text-left"
+                    >
+                      <span className="w-8 h-8 rounded-xl bg-sage-soft/80 group-hover:bg-primary/15 text-primary flex items-center justify-center shrink-0 mt-0.5 transition-colors">
+                        <span className="material-symbols-outlined text-[18px]">{q.icon}</span>
+                      </span>
+                      <div className="min-w-0 flex-1 text-left">
+                        <span className="block text-xs font-bold text-forest-deep group-hover:text-primary transition-colors truncate">
+                          {q.title}
+                        </span>
+                        <span className="block text-[11px] text-on-surface-variant truncate mt-0.5">
+                          {q.subtitle}
+                        </span>
+                      </div>
+                    </button>
+                  ))}
+                </div>
+              </div>
+
+              {/* Gros bouton central rouge pulsant dès qu'il y a >= 1 action à faire */}
+              <div className="mt-4 w-full flex justify-center">
                 <button
                   id="btn-toaster-pending-actions"
                   type="button"
@@ -1741,7 +1982,7 @@ export default function ToasterPage({ currentUser }) {
                       clearComposerText: false,
                     })
                   }
-                  className={`group relative inline-flex flex-col sm:flex-row items-center justify-center gap-2 sm:gap-3 px-6 py-3.5 rounded-2xl text-sm font-bold transition-all cursor-pointer disabled:opacity-50 max-w-xl w-full sm:w-auto ${
+                  className={`group relative inline-flex flex-col sm:flex-row items-center justify-center gap-2 sm:gap-3 px-6 py-3 rounded-2xl text-sm font-bold transition-all cursor-pointer disabled:opacity-50 max-w-xl w-full sm:w-auto ${
                     hasPendingActions
                       ? 'bg-rose-600 hover:bg-rose-700 text-white border border-rose-400/70 animate-pulse-urgent'
                       : loadingState && !portalState
@@ -1781,39 +2022,6 @@ export default function ToasterPage({ currentUser }) {
                   )}
                 </button>
               </div>
-
-              {/* Annotation 7 : 4 boutons de questions d'exemple */}
-              <div
-                id="toaster-example-questions"
-                className="grid grid-cols-1 sm:grid-cols-2 gap-2.5 w-full max-w-2xl mt-5 text-left"
-              >
-                {EXAMPLE_QUESTIONS.map((q) => (
-                  <button
-                    key={q.id}
-                    type="button"
-                    disabled={isSending}
-                    onClick={() =>
-                      sendMessagePayload({
-                        textOverride: q.prompt,
-                        clearComposerText: false,
-                      })
-                    }
-                    className="group flex items-start gap-3 px-3.5 py-2.5 rounded-2xl bg-white hover:bg-sage-soft/55 border border-border-subtle hover:border-primary/40 shadow-2xs transition-all cursor-pointer disabled:opacity-45"
-                  >
-                    <span className="w-8 h-8 rounded-xl bg-sage-soft/80 group-hover:bg-primary/15 text-primary flex items-center justify-center shrink-0 mt-0.5 transition-colors">
-                      <span className="material-symbols-outlined text-[18px]">{q.icon}</span>
-                    </span>
-                    <div className="min-w-0 flex-1">
-                      <span className="block text-xs font-bold text-forest-deep group-hover:text-primary transition-colors truncate">
-                        {q.title}
-                      </span>
-                      <span className="block text-[11px] text-on-surface-variant truncate mt-0.5">
-                        {q.subtitle}
-                      </span>
-                    </div>
-                  </button>
-                ))}
-              </div>
             </div>
           ) : (
             messages.map((msg) => {
@@ -1827,6 +2035,10 @@ export default function ToasterPage({ currentUser }) {
                   }
                 : null;
               const showBubble = Boolean(msg.content || msg.attachment);
+              const showTtsControl = !isUser && !msg.isStreaming && Boolean(String(msg.content || '').trim());
+              const isThisTtsLoading = ttsState.msgId === msg.id && ttsState.status === 'loading';
+              const isThisTtsPlaying = ttsState.msgId === msg.id && ttsState.status === 'playing';
+              const isThisTtsPaused = ttsState.msgId === msg.id && ttsState.status === 'paused';
 
               // Séjours (Annotations 4, 5, 6)
               const isStayCard = card?.action_type === 'stay' && card?.payload?.operation !== 'cancel';
@@ -1847,9 +2059,19 @@ export default function ToasterPage({ currentUser }) {
                 openStayPicker && openStayPicker.msgId === msg.id && openStayPicker.which === 'end'
               );
 
-              // Création de tâche — Annotations 5 & 6 : Titre + Description uniquement (tout le reste géré par les coordinateurs)
+              // Création de tâche — Titre + Description uniquement (tout le reste géré par les coordinateurs)
               const isTaskCreateCard = card?.action_type === 'task' && card?.payload?.operation === 'create';
               const taskCreateMissingTitle = isTaskCreateCard && !String(card.payload?.title || '').trim();
+
+              // Modification de tâche existante (Batch 1, Annotation 3)
+              const isTaskUpdateCard = card?.action_type === 'task' && card?.payload?.operation === 'update';
+              const taskUpdateMissingId = isTaskUpdateCard && !card.payload?.task_id;
+              const taskUpdateMissingTitle = isTaskUpdateCard && !String(card.payload?.title || '').trim();
+
+              // Publication d'un commentaire sur une tâche ou un scrutin (Batch 1, Annotation 3)
+              const isCommentCard = card?.action_type === 'comment';
+              const commentMissingTarget = isCommentCard && !card.payload?.target_id;
+              const commentMissingContent = isCommentCard && !String(card.payload?.content || '').trim();
 
               // Création / Ouverture de scrutin — miroir strict VoteRoofModal
               const isPollSetupCard =
@@ -1887,7 +2109,7 @@ export default function ToasterPage({ currentUser }) {
                 'target_temperature',
               ]);
               const chipFields = card
-                ? isTaskCreateCard || isPollSetupCard || isDocumentCard
+                ? isTaskCreateCard || isTaskUpdateCard || isCommentCard || isPollSetupCard || isDocumentCard
                   ? []
                   : card.deduced_fields.filter((f) => {
                       if (isStayCard && STAY_DEDICATED_KEYS.has(f.key)) return false;
@@ -1902,6 +2124,10 @@ export default function ToasterPage({ currentUser }) {
                 card.executing ||
                 stayRoomOverflow ||
                 taskCreateMissingTitle ||
+                taskUpdateMissingId ||
+                taskUpdateMissingTitle ||
+                commentMissingTarget ||
+                commentMissingContent ||
                 pollEmptyOptions ||
                 pollMissingTitle ||
                 docMissingFile ||
@@ -1912,7 +2138,7 @@ export default function ToasterPage({ currentUser }) {
               return (
                 <div
                   key={msg.id}
-                  className={`flex flex-col ${isUser ? 'items-end' : 'items-start'}`}
+                  className={`flex flex-col animate-in fade-in duration-200 ${isUser ? 'items-end' : 'items-start'}`}
                 >
                   {!isUser && (
                     <ToasterActivityAccordion
@@ -1924,10 +2150,12 @@ export default function ToasterPage({ currentUser }) {
 
                   {showBubble && (
                     <div
-                      className={`max-w-2xl rounded-2xl px-4 py-3 text-sm leading-relaxed shadow-2xs ${
+                      className={`relative max-w-2xl rounded-2xl px-4 py-3 text-sm leading-relaxed shadow-2xs ${
                         isUser
                           ? 'bg-primary text-white rounded-br-xs'
-                          : 'bg-canvas-slate text-on-surface border border-border-subtle rounded-bl-xs'
+                          : `bg-canvas-slate text-on-surface border border-border-subtle rounded-bl-xs ${
+                              showTtsControl ? 'pb-9' : ''
+                            }`
                       }`}
                     >
                       {msg.attachment && (
@@ -1937,6 +2165,66 @@ export default function ToasterPage({ currentUser }) {
                         </div>
                       )}
                       <ToasterMarkdown content={msg.content} isUser={isUser} />
+
+                      {/* Bouton rond élégant de lecture vocale TTS en bas à droite (gemini-3.8-flash-lite-tts) */}
+                      {showTtsControl && (
+                        <div className="absolute bottom-2 right-2.5 inline-flex items-center gap-1">
+                          {(isThisTtsPlaying || isThisTtsPaused) && (
+                            <button
+                              type="button"
+                              onClick={stopTtsPlayback}
+                              title="Arrêter la lecture"
+                              aria-label="Arrêter la lecture"
+                              className="w-7 h-7 rounded-full bg-white hover:bg-rose-50 text-slate-500 hover:text-rose-600 border border-slate-200/90 inline-flex items-center justify-center transition-colors shadow-2xs cursor-pointer"
+                            >
+                              <span className="material-symbols-outlined text-[15px] leading-none">stop</span>
+                            </button>
+                          )}
+                          <button
+                            type="button"
+                            data-testid="btn-message-tts"
+                            disabled={isThisTtsLoading}
+                            onClick={() => playTtsForMessage(msg.id, msg.content)}
+                            title={
+                              isThisTtsLoading
+                                ? 'Génération audio en cours…'
+                                : isThisTtsPlaying
+                                ? 'Mettre la lecture en pause'
+                                : isThisTtsPaused
+                                ? 'Reprendre la lecture'
+                                : 'Écouter la réponse de Mr. Collins'
+                            }
+                            aria-label={
+                              isThisTtsPlaying
+                                ? 'Mettre la lecture en pause'
+                                : isThisTtsPaused
+                                ? 'Reprendre la lecture'
+                                : 'Écouter la réponse'
+                            }
+                            className={`w-7 h-7 rounded-full border inline-flex items-center justify-center transition-all shadow-2xs cursor-pointer disabled:cursor-wait ${
+                              isThisTtsPlaying
+                                ? 'bg-primary text-white border-primary ring-2 ring-emerald-500/20'
+                                : isThisTtsPaused
+                                ? 'bg-emerald-50 text-primary border-emerald-300 hover:bg-emerald-100'
+                                : 'bg-white/90 hover:bg-emerald-50 text-slate-500 hover:text-primary border-slate-200/90 hover:border-emerald-300'
+                            }`}
+                          >
+                            <span
+                              className={`material-symbols-outlined text-[16px] leading-none ${
+                                isThisTtsLoading ? 'animate-spin' : ''
+                              }`}
+                            >
+                              {isThisTtsLoading
+                                ? 'progress_activity'
+                                : isThisTtsPlaying
+                                ? 'pause'
+                                : isThisTtsPaused
+                                ? 'play_arrow'
+                                : 'volume_up'}
+                            </span>
+                          </button>
+                        </div>
+                      )}
                     </div>
                   )}
 
@@ -1944,6 +2232,7 @@ export default function ToasterPage({ currentUser }) {
                     <ToasterComponentRenderer
                       components={msg.uiComponents}
                       activeMemberName={formatAssociateLabel(activeMemberObj)}
+                      activeMemberId={activeMemberObj?.id}
                       isCoordinator={isCoordinator}
                       onOpenSandboxModal={(mType, prefill = {}) =>
                         setActionModalState({ type: mType, prefill })
@@ -1951,6 +2240,7 @@ export default function ToasterPage({ currentUser }) {
                       onCastSandboxVote={handleDirectVote}
                       onInspectTask={(taskObj) => setInspectingTask(taskObj)}
                       onInspectPoll={(pollObj) => setInspectingPoll(pollObj)}
+                      onCommentPosted={() => loadPortalState(selectedMemberId)}
                     />
                   )}
 
@@ -2551,6 +2841,200 @@ export default function ToasterPage({ currentUser }) {
                                 </span>
                               </label>
                             )}
+                          </div>
+                        )}
+
+                        {/* TÂCHES (MODIFICATION EXISTANTE) — Annotation 3 : modifiable avec validation utilisateur */}
+                        {isTaskUpdateCard && (
+                          <div className="space-y-3 text-xs">
+                            <div className="p-2.5 rounded-xl bg-sky-50 border border-sky-200 text-sky-950 text-[11.5px] flex items-center justify-between gap-2 flex-wrap">
+                              <span className="inline-flex items-center gap-1.5 font-semibold">
+                                <span className="material-symbols-outlined text-[16px] text-sky-700">edit</span>
+                                <span>
+                                  {card.payload?.task_id
+                                    ? `Modification de la tâche #${card.payload.task_id}`
+                                    : 'Sélectionnez la tâche à modifier'}
+                                </span>
+                              </span>
+                            </div>
+
+                            {!card.payload?.task_id && (
+                              <div className="space-y-1">
+                                <label className="text-[11px] font-bold text-sky-900 block">Tâche cible *</label>
+                                <select
+                                  disabled={card.executed}
+                                  value={card.payload?.task_id || ''}
+                                  onChange={(e) => {
+                                    const tid = e.target.value ? Number(e.target.value) : null;
+                                    const found = (portalState?.tasks || []).find((t) => Number(t.id) === tid);
+                                    updateCardInMessage(msg.id, (c) => ({
+                                      ...c,
+                                      payload: {
+                                        ...(c.payload || {}),
+                                        task_id: tid,
+                                        title: c.payload?.title || found?.title || '',
+                                        description: c.payload?.description || found?.description || '',
+                                      },
+                                    }));
+                                  }}
+                                  className="w-full h-9 px-2.5 rounded-xl bg-white border border-sky-200 text-xs font-medium text-slate-900"
+                                >
+                                  <option value="">— Choisir une tâche —</option>
+                                  {(portalState?.tasks || []).map((t) => (
+                                    <option key={t.id} value={t.id}>
+                                      #{t.id} — {t.title}
+                                    </option>
+                                  ))}
+                                </select>
+                              </div>
+                            )}
+
+                            <div className="space-y-1">
+                              <label className="text-[11px] font-bold uppercase tracking-wider text-sky-900 block">
+                                Nouveau titre *
+                              </label>
+                              <input
+                                type="text"
+                                disabled={card.executed}
+                                value={card.payload?.title || ''}
+                                onChange={(e) =>
+                                  updateCardInMessage(msg.id, (c) => ({
+                                    ...c,
+                                    payload: { ...(c.payload || {}), title: e.target.value },
+                                  }))
+                                }
+                                className="w-full h-9 px-3 rounded-xl bg-white border border-slate-200 focus:border-primary text-xs font-semibold text-slate-900 focus:outline-none"
+                              />
+                            </div>
+
+                            <div className="space-y-1">
+                              <label className="text-[11px] font-bold text-slate-600 block">Description</label>
+                              <textarea
+                                rows={4}
+                                disabled={card.executed}
+                                value={card.payload?.description || ''}
+                                onChange={(e) =>
+                                  updateCardInMessage(msg.id, (c) => ({
+                                    ...c,
+                                    payload: { ...(c.payload || {}), description: e.target.value },
+                                  }))
+                                }
+                                className="w-full p-2.5 rounded-xl bg-sky-50/35 border border-sky-200 text-xs text-slate-800 focus:outline-none focus:border-primary"
+                              />
+                            </div>
+
+                            {isCoordinator && (
+                              <div className="grid grid-cols-1 sm:grid-cols-3 gap-2 pt-1">
+                                <div className="space-y-1">
+                                  <label className="text-[11px] font-bold text-slate-600 block">Emplacement</label>
+                                  <select
+                                    disabled={card.executed}
+                                    value={card.payload?.subject || 'Presbytère'}
+                                    onChange={(e) =>
+                                      updateCardInMessage(msg.id, (c) => ({
+                                        ...c,
+                                        payload: { ...(c.payload || {}), subject: e.target.value },
+                                      }))
+                                    }
+                                    className="w-full h-9 px-2 rounded-xl bg-white border border-slate-200 text-xs text-slate-900"
+                                  >
+                                    {TASK_SUBJECTS.map((s) => (
+                                      <option key={s} value={s}>{s}</option>
+                                    ))}
+                                  </select>
+                                </div>
+                                <div className="space-y-1">
+                                  <label className="text-[11px] font-bold text-slate-600 block">Charge</label>
+                                  <select
+                                    disabled={card.executed}
+                                    value={card.payload?.complexity || 'Modérée'}
+                                    onChange={(e) =>
+                                      updateCardInMessage(msg.id, (c) => ({
+                                        ...c,
+                                        payload: { ...(c.payload || {}), complexity: e.target.value },
+                                      }))
+                                    }
+                                    className="w-full h-9 px-2 rounded-xl bg-white border border-slate-200 text-xs text-slate-900"
+                                  >
+                                    {TASK_COMPLEXITIES.map((cx) => (
+                                      <option key={cx} value={cx}>{cx}</option>
+                                    ))}
+                                  </select>
+                                </div>
+                                <div className="space-y-1">
+                                  <label className="text-[11px] font-bold text-slate-600 block">Priorité</label>
+                                  <select
+                                    disabled={card.executed}
+                                    value={card.payload?.priority || 'Normale'}
+                                    onChange={(e) =>
+                                      updateCardInMessage(msg.id, (c) => ({
+                                        ...c,
+                                        payload: { ...(c.payload || {}), priority: e.target.value },
+                                      }))
+                                    }
+                                    className="w-full h-9 px-2 rounded-xl bg-white border border-slate-200 text-xs text-slate-900"
+                                  >
+                                    {TASK_PRIORITIES.map((pr) => (
+                                      <option key={pr} value={pr}>{pr}</option>
+                                    ))}
+                                  </select>
+                                </div>
+                              </div>
+                            )}
+                          </div>
+                        )}
+
+                        {/* PUBLICATION D'UN MESSAGE / COMMENTAIRE — Annotation 3 */}
+                        {isCommentCard && (
+                          <div className="space-y-3 text-xs">
+                            <div className="space-y-1">
+                              <label className="text-[11px] font-bold text-teal-900 block">
+                                Fil cible ({card.payload?.target_type === 'vote' ? 'Scrutin' : 'Tâche'}) *
+                              </label>
+                              <select
+                                disabled={card.executed}
+                                value={card.payload?.target_id || ''}
+                                onChange={(e) =>
+                                  updateCardInMessage(msg.id, (c) => ({
+                                    ...c,
+                                    payload: {
+                                      ...(c.payload || {}),
+                                      target_id: e.target.value ? Number(e.target.value) : null,
+                                    },
+                                  }))
+                                }
+                                className="w-full h-9 px-2.5 rounded-xl bg-white border border-teal-200 text-xs font-medium text-slate-900"
+                              >
+                                <option value="">— Sélectionner —</option>
+                                {(card.payload?.target_type === 'vote'
+                                  ? portalState?.open_votes || []
+                                  : portalState?.tasks || []
+                                ).map((item) => (
+                                  <option key={item.id} value={item.id}>
+                                    #{item.id} — {item.title}
+                                  </option>
+                                ))}
+                              </select>
+                            </div>
+
+                            <div className="space-y-1">
+                              <label className="text-[11px] font-bold uppercase tracking-wider text-teal-900 block">
+                                Message à publier * (mentions @Prénom supportées)
+                              </label>
+                              <textarea
+                                rows={3}
+                                disabled={card.executed}
+                                value={card.payload?.content || ''}
+                                onChange={(e) =>
+                                  updateCardInMessage(msg.id, (c) => ({
+                                    ...c,
+                                    payload: { ...(c.payload || {}), content: e.target.value },
+                                  }))
+                                }
+                                placeholder="Saisissez le message à publier dans le fil de discussion..."
+                                className="w-full p-2.5 rounded-xl bg-teal-50/35 border border-teal-200 text-xs text-slate-800 focus:outline-none focus:border-teal-500"
+                              />
+                            </div>
                           </div>
                         )}
 
@@ -3167,6 +3651,14 @@ export default function ToasterPage({ currentUser }) {
                                 ? `Ajustez le nombre de chambres (max ${stayMaxRooms}) pour confirmer.`
                                 : taskCreateMissingTitle
                                 ? 'Saisissez un titre pour proposer cette tâche.'
+                                : taskUpdateMissingId
+                                ? 'Sélectionnez la tâche existante à modifier.'
+                                : taskUpdateMissingTitle
+                                ? 'Saisissez un titre non vide pour cette tâche.'
+                                : commentMissingTarget
+                                ? 'Sélectionnez la tâche ou le scrutin cible.'
+                                : commentMissingContent
+                                ? 'Saisissez le message à publier dans le fil.'
                                 : pollMissingTitle
                                 ? 'Saisissez un titre pour ce scrutin.'
                                 : pollEmptyOptions
@@ -3212,10 +3704,10 @@ export default function ToasterPage({ currentUser }) {
           )}
         </div>
 
-        {/* BARRE DE SAISIE MODERNE & VOIX */}
+        {/* BARRE DE SAISIE MODERNE & VOIX (Annotation 4 : shrink-0 ancrée en bas ; Annotation 1 : textarea auto-extensible jusqu'à 7 lignes) */}
         <form
           onSubmit={handleSendMessage}
-          className="p-3 sm:p-4 bg-white/95 dark:bg-slate-950/90 backdrop-blur-md border-t border-slate-100 dark:border-slate-800 flex flex-col gap-2"
+          className="shrink-0 p-2.5 sm:p-3.5 bg-white/95 dark:bg-slate-950/90 backdrop-blur-md border-t border-slate-100 dark:border-slate-800 flex flex-col gap-2"
         >
           {attachment && (
             <div className="inline-flex items-center justify-between gap-2 px-3.5 py-1.5 rounded-full bg-emerald-50/90 border border-emerald-200 text-emerald-950 text-xs font-semibold self-start animate-in fade-in duration-150">
@@ -3238,7 +3730,7 @@ export default function ToasterPage({ currentUser }) {
           )}
 
           <div
-            className={`flex items-center gap-2 p-1.5 rounded-full border transition-all duration-300 ${
+            className={`flex items-end gap-2 p-1.5 rounded-[26px] border transition-all duration-300 ${
               isListening
                 ? 'bg-emerald-50/60 border-emerald-400/80 shadow-[0_0_0_4px_rgba(16,185,129,0.10)]'
                 : 'bg-slate-50/90 hover:bg-slate-50 focus-within:bg-white border-slate-200/90 focus-within:border-primary/45 focus-within:shadow-[0_6px_24px_-6px_rgba(6,78,59,0.14)]'
@@ -3272,7 +3764,7 @@ export default function ToasterPage({ currentUser }) {
             </label>
 
             {isListening ? (
-              <div className="flex-1 flex items-center justify-between px-3 py-1.5 min-w-0">
+              <div className="flex-1 flex items-center justify-between px-3 py-2 min-w-0">
                 <div className="flex items-center gap-2.5 min-w-0">
                   <div className="flex items-center gap-1 h-5 shrink-0" aria-hidden="true">
                     <span className="w-1 h-2.5 rounded-full bg-emerald-500 animate-pulse" />
@@ -3295,11 +3787,18 @@ export default function ToasterPage({ currentUser }) {
                 </button>
               </div>
             ) : (
-              <input
+              <textarea
                 id="toaster-chat-input"
-                type="text"
+                ref={chatInputRef}
+                rows={1}
                 value={inputText}
                 onChange={(e) => setInputText(e.target.value)}
+                onKeyDown={(e) => {
+                  if (e.key === 'Enter' && !e.shiftKey) {
+                    e.preventDefault();
+                    handleSendMessage();
+                  }
+                }}
                 onPaste={(e) => {
                   const pastedFile = e.clipboardData?.files?.[0];
                   if (pastedFile) {
@@ -3307,8 +3806,8 @@ export default function ToasterPage({ currentUser }) {
                     attachLocalFile(pastedFile);
                   }
                 }}
-                placeholder="Posez une question, collez un document ou décrivez une action au domaine…"
-                className="flex-1 h-10 px-2.5 bg-transparent text-sm text-slate-800 dark:text-slate-100 placeholder:text-slate-400 focus:outline-none min-w-0"
+                placeholder="Écrivez à Mr. Collins, collez un document ou décrivez une action au domaine…"
+                className="flex-1 min-h-[40px] max-h-[176px] py-2.5 px-2.5 bg-transparent text-sm leading-[22px] text-slate-800 dark:text-slate-100 placeholder:text-slate-400 focus:outline-none min-w-0 resize-none"
               />
             )}
 

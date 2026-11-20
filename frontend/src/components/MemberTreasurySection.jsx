@@ -143,7 +143,6 @@ export default function MemberTreasurySection({
 
   const balance = myTreasury?.balance ?? 0;
   const coveredMonths = myTreasury?.covered_months ?? 0;
-  const paymentRef = myTreasury?.payment_reference || `HLV-${(currentUser?.prenom || 'MEMBRE').toUpperCase()}`;
   const isBankActive = myTreasury?.is_bank_active ?? true;
   const iban = myTreasury?.iban || "FR76 1732 8844 0071 5921 5570 591";
   const bic = myTreasury?.bic || "SWNBFR22";
@@ -259,8 +258,10 @@ export default function MemberTreasurySection({
                   {iban}
                 </span>
                 <span className="font-semibold text-slate-600 dark:text-slate-400">• BIC : {bic}</span>
-                <span className="font-semibold text-emerald-800 dark:text-emerald-300">• Réf : {paymentRef}</span>
               </div>
+              <p className="text-[11px] text-emerald-800/90 dark:text-emerald-300/90 mt-1">
+                Aucune référence requise : votre virement depuis votre compte personnel est détecté automatiquement à votre nom.
+              </p>
             </div>
           </div>
 
@@ -272,15 +273,6 @@ export default function MemberTreasurySection({
             >
               {copiedKey === 'iban' ? <Check className="w-3.5 h-3.5 text-emerald-600" /> : <Copy className="w-3.5 h-3.5" />}
               <span>{copiedKey === 'iban' ? 'Copié !' : "Copier l'IBAN Swan"}</span>
-            </button>
-            <button
-              type="button"
-              onClick={() => copyToClipboard(paymentRef, 'ref')}
-              className="inline-flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg bg-white dark:bg-slate-900 hover:bg-emerald-100 dark:hover:bg-slate-800 text-slate-700 dark:text-slate-200 border border-slate-300 dark:border-slate-700 font-semibold shadow-2xs transition-all cursor-pointer text-xs"
-              title="Copier la référence de virement"
-            >
-              {copiedKey === 'ref' ? <Check className="w-3.5 h-3.5 text-emerald-600" /> : <Copy className="w-3.5 h-3.5" />}
-              <span>{copiedKey === 'ref' ? 'Réf copiée' : 'Réf virement'}</span>
             </button>
             <button
               type="button"
@@ -352,7 +344,9 @@ export default function MemberTreasurySection({
               <div className="text-xs space-y-1 text-slate-700 dark:text-slate-300 font-mono bg-emerald-50/60 dark:bg-emerald-950/40 p-2.5 rounded-lg border border-emerald-200/60">
                 <div className="font-bold text-forest-deep dark:text-emerald-200">{iban}</div>
                 <div className="text-[11px] text-slate-500">BIC : {bic} • SCI HELLENVILLIERS</div>
-                <div className="text-[11px] text-emerald-700 dark:text-emerald-300 font-semibold">Référence : {paymentRef}</div>
+                <div className="text-[11px] font-sans text-emerald-700 dark:text-emerald-300 font-medium">
+                  Aucune référence requise (détection automatique à votre nom)
+                </div>
               </div>
             </div>
           </div>

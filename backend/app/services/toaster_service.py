@@ -984,12 +984,11 @@ def compute_member_pending_actions(
                 {
                     "type": "call_for_funds",
                     "id": c.id,
-                    "reference": c.reference,
                     "period_label": c.period_label,
                     "amount_due": round(amt, 2),
                     "status": c.status,
-                    "payment_reference": c.payment_reference or t_sum.get("payment_reference"),
                     "iban": t_sum.get("iban") or "FR76 1732 8844 0071 5921 5570 591",
+                    "note": "Aucune référence requise : virement détecté automatiquement à votre nom depuis votre compte personnel.",
                 }
             )
     if not pending_fees and cca_balance < -0.01:
@@ -997,12 +996,11 @@ def compute_member_pending_actions(
             {
                 "type": "cca_deficit",
                 "id": None,
-                "reference": t_sum.get("payment_reference") or f"HLV-{member_prenom.upper()}",
                 "period_label": "Solde CCA débiteur",
                 "amount_due": round(abs(cca_balance), 2),
                 "status": "A_REGULARISER",
-                "payment_reference": t_sum.get("payment_reference") or f"HLV-{member_prenom.upper()}",
                 "iban": t_sum.get("iban") or "FR76 1732 8844 0071 5921 5570 591",
+                "note": "Aucune référence requise : virement détecté automatiquement à votre nom depuis votre compte personnel.",
             }
         )
 
@@ -1048,16 +1046,13 @@ def get_toaster_state(prod_db: Session, member_id: Optional[int] = None) -> Dict
             "is_coordinator": bool(m.is_coordinator),
             "avatar_color": m.avatar_color,
             "monthly_contribution": float(m.monthly_contribution or 50.0),
-            "payment_reference": (
-                "HLV-ELISABETH"
-                if format_member_prenom(m) == "Élisabeth"
-                else (m.payment_reference or f"HLV-{format_member_prenom(m).upper()}")
-            ),
         }
         for m in members
     ]
 
     treasury_summary = get_member_treasury_summary(prod_db, active_member) if active_member else {}
+    if isinstance(treasury_summary, dict):
+        treasury_summary.pop("payment_reference", None)
     if active_member:
         calls_q = (
             prod_db.query(CallForFunds)
@@ -1074,7 +1069,6 @@ def get_toaster_state(prod_db: Session, member_id: Optional[int] = None) -> Dict
         treasury_summary["calls_for_funds"] = [
             {
                 "id": c.id,
-                "reference": c.reference,
                 "period_label": c.period_label,
                 "year": c.year,
                 "month": c.month,
@@ -1084,7 +1078,6 @@ def get_toaster_state(prod_db: Session, member_id: Optional[int] = None) -> Dict
                 "net_amount": float(c.net_amount or 0.0),
                 "amount_due": float(c.amount_due if c.amount_due is not None else (c.net_amount or 0.0)),
                 "status": c.status,
-                "payment_reference": c.payment_reference,
             }
             for c in calls_q
         ]
@@ -1265,11 +1258,6 @@ def get_toaster_state(prod_db: Session, member_id: Optional[int] = None) -> Dict
             "email": active_member.email,
             "role": active_member.role,
             "is_coordinator": bool(active_member.is_coordinator),
-            "payment_reference": (
-                "HLV-ELISABETH"
-                if format_member_prenom(active_member) == "Élisabeth"
-                else (active_member.payment_reference or f"HLV-{format_member_prenom(active_member).upper()}")
-            ),
             "monthly_contribution": float(active_member.monthly_contribution or 50.0),
             "cca_balance": float(treasury_summary.get("balance") or 0.0),
         }
@@ -1818,6 +1806,55 @@ def execute_toaster_action(
             target_task.updated_at = datetime.utcnow()
             prod_db.commit()
             confirmation_msg = f"La tâche #{target_task.id} « {target_task.title} » a été attribuée à {final_assignee}."
+        elif operation == "update":
+            if not target_task:
+                raise ValueError("Tâche introuvable pour modification.")
+            updated_fields: List[str] = []
+            if title_val and title_val != (target_task.title or "").strip():
+                target_task.title = title_val
+                updated_fields.append("titre")
+            if merged_payload.get("description") is not None:
+                desc_val = str(merged_payload.get("description") or "").strip()
+                if desc_val != (target_task.description or "").strip():
+                    target_task.description = desc_val
+                    updated_fields.append("description")
+            if member.is_coordinator:
+                if merged_payload.get("subject"):
+                    subj_v = str(merged_payload.get("subject")).strip()
+                    if subj_v in TASK_SUBJECTS and subj_v != target_task.subject:
+                        target_task.subject = subj_v
+                        target_task.category = subj_v
+                        updated_fields.append("emplacement")
+                if merged_payload.get("priority"):
+                    prio_v = str(merged_payload.get("priority")).strip()
+                    if prio_v in TASK_PRIORITIES and prio_v != target_task.priority:
+                        target_task.priority = prio_v
+                        updated_fields.append("priorité")
+                if merged_payload.get("complexity"):
+                    comp_v = str(merged_payload.get("complexity")).strip()
+                    if comp_v in TASK_COMPLEXITIES and comp_v != target_task.complexity:
+                        target_task.complexity = comp_v
+                        target_task.charge_points = get_task_charge_points(comp_v)
+                        updated_fields.append("charge")
+                if merged_payload.get("budget") not in (None, ""):
+                    try:
+                        b_val = max(0.0, float(str(merged_payload.get("budget")).replace(",", ".")))
+                        if b_val != float(target_task.budget or 0.0):
+                            target_task.budget = b_val
+                            updated_fields.append("budget")
+                    except (ValueError, TypeError):
+                        pass
+                if merged_payload.get("deadline") is not None:
+                    dl_v = str(merged_payload.get("deadline") or "").strip()[:10] or None
+                    if dl_v != target_task.deadline:
+                        target_task.deadline = dl_v
+                        updated_fields.append("échéance")
+            target_task.updated_at = datetime.utcnow()
+            prod_db.commit()
+            prod_db.refresh(target_task)
+            extra_return["task_id"] = target_task.id
+            fields_label = f" ({', '.join(updated_fields)})" if updated_fields else ""
+            confirmation_msg = f"La tâche #{target_task.id} « {target_task.title} » a été mise à jour{fields_label}."
         else:
             # Cycle de vie officiel (Annotation 7 & 8 — parité totale avec TaskDetailModal.jsx) :
             # Toute nouvelle tâche créée est TOUJOURS en statut PROPOSED et sans responsable pré-attribué ;
@@ -2072,6 +2109,85 @@ def execute_toaster_action(
             prod_db.commit()
             prod_db.refresh(new_item)
             confirmation_msg = f"Fiche Vademecum #{new_item.id} « {new_item.title} » ajoutée dans « {new_item.category} »."
+
+    elif norm_type in ("comment", "propose_comment_action", "message", "discussion"):
+        target_type = str(merged_payload.get("target_type") or "task").strip().lower()
+        target_id_raw = merged_payload.get("target_id") or merged_payload.get("task_id") or merged_payload.get("project_id")
+        content_val = str(merged_payload.get("content") or merged_payload.get("message") or "").strip()
+        if not target_id_raw or not str(target_id_raw).isdigit():
+            raise ValueError("Identifiant de la tâche ou du scrutin cible requis pour publier le message.")
+        if not content_val:
+            raise ValueError("Le contenu du message ne peut pas être vide.")
+        tid = int(target_id_raw)
+        all_members = prod_db.query(Member).all()
+
+        if target_type in ("vote", "poll", "project", "scrutin"):
+            target_proj = prod_db.query(Project).filter(Project.id == tid).first()
+            if not target_proj:
+                raise ValueError(f"Scrutin #{tid} introuvable.")
+            new_c = ProjectComment(
+                project_id=target_proj.id,
+                author_name=member_display,
+                content=content_val,
+                created_at=datetime.utcnow(),
+            )
+            prod_db.add(new_c)
+            prod_db.flush()
+            for m_other in all_members:
+                if m_other.id == member.id:
+                    continue
+                if _comment_mentions_member(content_val, m_other):
+                    prod_db.add(
+                        Notification(
+                            member_id=m_other.id,
+                            title=f"{member_display} vous a mentionné sur « {target_proj.title} »",
+                            description=content_val[:220],
+                            type="mention",
+                            link_path=f"/taches?project_id={target_proj.id}",
+                            link_id=str(target_proj.id),
+                            is_read=False,
+                            created_at=datetime.utcnow(),
+                        )
+                    )
+            prod_db.commit()
+            extra_return["comment_id"] = new_c.id
+            extra_return["project_id"] = target_proj.id
+            confirmation_msg = f"Message publié dans le fil du scrutin #{target_proj.id} « {target_proj.title} »."
+        else:
+            target_task = prod_db.query(Task).filter(Task.id == tid).first()
+            if not target_task:
+                raise ValueError(f"Tâche #{tid} introuvable.")
+            new_c = TaskComment(
+                task_id=target_task.id,
+                author_id=member.id,
+                author_name=member_display,
+                author_role=member.role or "Membre Associé",
+                content=content_val,
+                reactions="{}",
+                created_at=datetime.utcnow(),
+            )
+            prod_db.add(new_c)
+            prod_db.flush()
+            for m_other in all_members:
+                if m_other.id == member.id:
+                    continue
+                if _comment_mentions_member(content_val, m_other):
+                    prod_db.add(
+                        Notification(
+                            member_id=m_other.id,
+                            title=f"{member_display} vous a mentionné sur « {target_task.title} »",
+                            description=content_val[:220],
+                            type="mention",
+                            link_path=f"/taches?task_id={target_task.id}",
+                            link_id=str(target_task.id),
+                            is_read=False,
+                            created_at=datetime.utcnow(),
+                        )
+                    )
+            prod_db.commit()
+            extra_return["comment_id"] = new_c.id
+            extra_return["task_id"] = target_task.id
+            confirmation_msg = f"Message publié dans le fil de la tâche #{target_task.id} « {target_task.title} »."
     else:
         raise ValueError(f"Type d'action non supporté : {action_type}")
 
@@ -2089,6 +2205,97 @@ def execute_toaster_action(
     }
 
 
+def _build_discussion_thread_payload(
+    prod_db: Session,
+    target_type: str,
+    target_id: Optional[int],
+) -> Dict[str, Any]:
+    """Charge un fil de discussion (tâche ou scrutin) pour affichage interactif inline dans Grille-Pain."""
+    norm_tt = str(target_type or "task").strip().lower()
+    if target_id is None or not str(target_id).isdigit():
+        return {"error": "target_id numérique requis pour afficher le fil de discussion."}
+    tid = int(target_id)
+
+    if norm_tt in ("vote", "poll", "project", "scrutin"):
+        proj = prod_db.query(Project).filter(Project.id == tid).first()
+        if not proj:
+            return {"error": f"Scrutin #{tid} introuvable."}
+        comments_q = (
+            prod_db.query(ProjectComment)
+            .filter(ProjectComment.project_id == proj.id)
+            .order_by(ProjectComment.created_at.asc(), ProjectComment.id.asc())
+            .all()
+        )
+        comments_list = [
+            {
+                "id": c.id,
+                "author_name": sanitize_display_user_name(c.author_name),
+                "author_role": "Associé",
+                "content": c.content,
+                "created_at": c.created_at.isoformat() + "Z" if c.created_at else None,
+            }
+            for c in comments_q
+        ]
+        ui_payload = {
+            "component_id": "discussion_thread_card",
+            "target_type": "vote",
+            "target_id": proj.id,
+            "target_ref": f"V-{proj.id}",
+            "target_title": proj.title,
+            "target_status": proj.status,
+            "comments": comments_list,
+        }
+        return {
+            "status": "rendered_in_chat",
+            "component_id": "discussion_thread_card",
+            "target_type": "vote",
+            "target_id": proj.id,
+            "target_title": proj.title,
+            "comments_count": len(comments_list),
+            "recent_comments": comments_list[-6:],
+            "_ui_component": ui_payload,
+        }
+
+    task = prod_db.query(Task).filter(Task.id == tid).first()
+    if not task:
+        return {"error": f"Tâche #{tid} introuvable."}
+    comments_q = (
+        prod_db.query(TaskComment)
+        .filter(TaskComment.task_id == task.id)
+        .order_by(TaskComment.created_at.asc(), TaskComment.id.asc())
+        .all()
+    )
+    comments_list = [
+        {
+            "id": c.id,
+            "author_name": sanitize_display_user_name(c.author_name),
+            "author_role": c.author_role or "Associé",
+            "content": c.content,
+            "created_at": c.created_at.isoformat() + "Z" if c.created_at else None,
+        }
+        for c in comments_q
+    ]
+    ui_payload = {
+        "component_id": "discussion_thread_card",
+        "target_type": "task",
+        "target_id": task.id,
+        "target_ref": task.ref or f"T-{task.id}",
+        "target_title": task.title,
+        "target_status": task.status,
+        "comments": comments_list,
+    }
+    return {
+        "status": "rendered_in_chat",
+        "component_id": "discussion_thread_card",
+        "target_type": "task",
+        "target_id": task.id,
+        "target_title": task.title,
+        "comments_count": len(comments_list),
+        "recent_comments": comments_list[-6:],
+        "_ui_component": ui_payload,
+    }
+
+
 def execute_toaster_read_tool(
     prod_db: Session,
     member_id: Optional[int],
@@ -2101,6 +2308,11 @@ def execute_toaster_read_tool(
     from .drive_service import drive_jail_service
 
     args = dict(args or {})
+
+    if tool_name == "show_discussion_thread":
+        tt = args.get("target_type") or ("vote" if args.get("project_id") else "task")
+        tid = args.get("target_id") or args.get("task_id") or args.get("project_id")
+        return _build_discussion_thread_payload(prod_db, tt, tid)
 
     if tool_name == "read_my_pending_actions":
         target_member = resolve_member(prod_db, member_id=member_id)
@@ -2151,13 +2363,11 @@ def execute_toaster_read_tool(
                     "name": format_member_display_name(m),
                     "prenom": format_member_prenom(m),
                     "monthly_contribution": float(m.monthly_contribution or 0.0),
-                    "payment_reference": m.payment_reference,
                     "cca_balance": float(msum.get("balance") or 0.0),
                     "covered_months": int(msum.get("covered_months") or 0),
                     "recent_entries": msum.get("recent_entries") or [],
                     "calls_for_funds": [
                         {
-                            "reference": c.reference,
                             "period": c.period_label,
                             "amount_due": float(c.amount_due if c.amount_due is not None else (c.net_amount or 0.0)),
                             "status": c.status,
@@ -2935,6 +3145,11 @@ def execute_toaster_read_tool(
                         break
             ui_payload = {"component_id": "document_viewer_card", "documents": docs_out}
             return {"status": "rendered_in_chat", "component_id": "document_viewer_card", "documents_rendered_count": len(docs_out), "_ui_component": ui_payload}
+
+        if comp_id in ("discussion_thread_card", "discussion", "chat_thread", "thread"):
+            tt = props.get("target_type") or ("vote" if props.get("project_id") else "task")
+            tid = props.get("target_id") or props.get("task_id") or props.get("project_id")
+            return _build_discussion_thread_payload(prod_db, tt, tid)
 
         if comp_id in ("action_modal_buttons", "modal_buttons", "buttons", "quick_actions"):
             raw_buttons = props.get("buttons")

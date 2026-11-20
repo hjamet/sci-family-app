@@ -853,8 +853,7 @@ def generate_call_for_funds_pdf(
         f"• BIC : <font face='Courier-Bold' size=9.5><b>{bic_val}</b></font><br/>"
         f"• Montant exact : <b>{net_val:.2f} €</b><br/>"
         "• <b>Virement simple :</b> Il vous suffit d'effectuer votre virement depuis votre compte bancaire personnel "
-        "(le virement sera automatiquement détecté et affecté à votre trésorerie à votre nom).<br/>"
-        f"<font size=7.5 color='#64748b'><i>(Référence facultative : {payment_ref})</i></font>"
+        "(le virement sera automatiquement détecté et affecté à votre trésorerie à votre nom, sans référence particulière)."
     )
 
     qr_caption = (

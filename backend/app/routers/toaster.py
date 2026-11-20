@@ -1,7 +1,9 @@
+import base64
 import json
 import logging
 import os
 import re
+import struct
 from datetime import datetime
 from pathlib import Path
 from typing import Any, Dict, Generator, List, Optional, Tuple
@@ -9,7 +11,7 @@ from typing import Any, Dict, Generator, List, Optional, Tuple
 import httpx
 from dotenv import load_dotenv
 from fastapi import APIRouter, Depends, HTTPException, Query, Request
-from fastapi.responses import RedirectResponse, StreamingResponse
+from fastapi.responses import RedirectResponse, Response, StreamingResponse
 from pydantic import BaseModel, Field
 from sqlalchemy.orm import Session
 
@@ -42,10 +44,12 @@ _BACKEND_ENV_PATH = Path(__file__).resolve().parents[2] / ".env"
 load_dotenv(dotenv_path=_BACKEND_ENV_PATH)
 load_dotenv()
 
-router = APIRouter(prefix="/api/toaster", tags=["Assistant Grille-Pain"])
+router = APIRouter(prefix="/api/toaster", tags=["Mr. Collins"])
 
 GEMINI_MODEL = "models/gemini-4-hydrogen"
 GEMINI_GENERATE_ENDPOINT = f"https://generativelanguage.googleapis.com/v1beta/{GEMINI_MODEL}:generateContent"
+GEMINI_TTS_MODEL = "models/gemini-3.8-flash-lite-tts"
+GEMINI_TTS_ENDPOINT = f"https://generativelanguage.googleapis.com/v1beta/{GEMINI_TTS_MODEL}:generateContent"
 GEMINI_STREAM_ENDPOINT = f"https://generativelanguage.googleapis.com/v1beta/{GEMINI_MODEL}:streamGenerateContent"
 
 
@@ -106,6 +110,7 @@ TOOL_HUMAN_LABELS: Dict[str, Dict[str, str]] = {
     "read_heating_and_pool_status": {"label": "Relevé chauffage Presbytère, cuve fioul & piscine", "icon": "thermostat"},
     "read_documents_and_contracts": {"label": "Recherche dans les documents officiels de la SCI", "icon": "folder_open"},
     "read_vademecum": {"label": "Consultation du Vademecum pratique du domaine", "icon": "menu_book"},
+    "show_discussion_thread": {"label": "Affichage du fil de discussion interactif", "icon": "forum"},
     "inspect_ui_skill": {"label": "Chargement du guide de composant / règle métier", "icon": "auto_stories"},
     "display_ui_component": {"label": "Affichage d'un composant interactif dans la conversation", "icon": "widgets"},
     "propose_stay_action": {"label": "Préparation d'une carte de réservation de séjour", "icon": "event_available"},
@@ -113,6 +118,7 @@ TOOL_HUMAN_LABELS: Dict[str, Dict[str, str]] = {
     "propose_invoice_or_document_upload": {"label": "Extraction multimodale de la facture / dépense", "icon": "receipt_long"},
     "propose_document_action": {"label": "Préparation du dépôt ou rattachement du document", "icon": "upload_file"},
     "propose_task_action": {"label": "Préparation d'une action sur les tâches", "icon": "assignment_turned_in"},
+    "propose_comment_action": {"label": "Préparation d'un message dans un fil de discussion", "icon": "chat"},
     "propose_poll_or_vote_action": {"label": "Préparation d'un vote ou nouveau scrutin", "icon": "ballot"},
     "propose_vademecum_action": {"label": "Préparation d'une fiche Vademecum", "icon": "edit_note"},
 }
@@ -383,19 +389,59 @@ TOASTER_FUNCTION_DECLARATIONS: List[Dict[str, Any]] = [
         },
     },
     {
+        "name": "show_discussion_thread",
+        "description": (
+            "LECTURE + AFFICHAGE INTERACTIF : affiche directement dans le chat le fil de discussion complet "
+            "(tous les messages existants + champ de réponse directe avec mentions @) d'une tâche ('task') ou d'un scrutin/vote ('vote') choisi par l'agent, "
+            "afin que l'utilisateur puisse lire les échanges et répondre directement depuis la conversation."
+        ),
+        "parameters": {
+            "type": "OBJECT",
+            "properties": {
+                "target_type": {"type": "STRING", "description": "'task' (fil d'une tâche) ou 'vote' (fil d'un scrutin/vote)."},
+                "target_id": {"type": "INTEGER", "description": "ID exact de la tâche ou du scrutin dont on veut afficher le fil de discussion."},
+            },
+            "required": ["target_type", "target_id"],
+        },
+    },
+    {
+        "name": "propose_comment_action",
+        "description": (
+            "Propose de publier un message ou une note dans le fil de discussion d'une tâche existante ('task') "
+            "ou d'un scrutin existant ('vote'), toujours soumis à validation explicite de l'utilisateur sur la carte avant envoi. "
+            "Supporte les mentions @Prénom (ex: @Marguerite, @tous)."
+        ),
+        "parameters": {
+            "type": "OBJECT",
+            "properties": {
+                "target_type": {"type": "STRING", "description": "'task' (tâche) ou 'vote' (scrutin/vote)."},
+                "target_id": {"type": "INTEGER", "description": "ID exact de la tâche ou du scrutin cible."},
+                "content": {"type": "STRING", "description": "Texte proposé du message à publier dans le fil de discussion."},
+                "assistant_message": {"type": "STRING", "description": "Réponse fluide en français naturel."},
+            },
+            "required": ["target_type", "target_id", "content", "assistant_message"],
+        },
+    },
+    {
         "name": "propose_task_action",
         "description": (
             "Propose de créer une nouvelle tâche ('create', toujours en statut PROPOSED, avec UNIQUEMENT titre + description + document joint éventuel — "
             "JAMAIS de charge, priorité, devis, échéance, récurrence, responsable ni sous-tâches d'exemple car tout cela est géré par le coordinateur lors de la validation !), "
+            "de modifier une tâche existante ('update' : titre, description — et si coordinateur : emplacement, priorité, charge, budget ou échéance, toujours après validation utilisateur sur la carte), "
             "de soumettre une tâche existante pour validation ('complete'), ou de modifier l'attribution d'une tâche existante ('assign', coordinateur uniquement)."
         ),
         "parameters": {
             "type": "OBJECT",
             "properties": {
-                "operation": {"type": "STRING", "description": "'create', 'complete' ou 'assign'."},
-                "task_id": {"type": "INTEGER", "description": "ID exact de la tâche existante (pour 'complete' ou 'assign')."},
+                "operation": {"type": "STRING", "description": "'create', 'update', 'complete' ou 'assign'."},
+                "task_id": {"type": "INTEGER", "description": "ID exact de la tâche existante (pour 'update', 'complete' ou 'assign')."},
                 "title": {"type": "STRING", "description": "Titre clair et actionnable de la tâche."},
                 "description": {"type": "STRING", "description": "Description concrète, utile et chaleureuse pour la famille."},
+                "subject": {"type": "STRING", "description": "UNIQUEMENT pour operation='update' par un coordinateur : emplacement."},
+                "priority": {"type": "STRING", "description": "UNIQUEMENT pour operation='update' par un coordinateur : priorité."},
+                "complexity": {"type": "STRING", "description": "UNIQUEMENT pour operation='update' par un coordinateur : charge."},
+                "budget": {"type": "NUMBER", "description": "UNIQUEMENT pour operation='update' par un coordinateur : budget estimé (€)."},
+                "deadline": {"type": "STRING", "description": "UNIQUEMENT pour operation='update' par un coordinateur : échéance YYYY-MM-DD."},
                 "assigned_to": {"type": "STRING", "description": "UNIQUEMENT pour operation='assign' : nom de l'associé responsable."},
                 "attach_uploaded_file": {"type": "BOOLEAN", "description": "True si le document joint par l'utilisateur doit être archivé et rattaché à cette nouvelle tâche."},
                 "document_organisme": {"type": "STRING", "description": "Organisme du document joint si attach_uploaded_file=True."},
@@ -485,17 +531,24 @@ READ_ONLY_TOOL_NAMES = {
     "read_heating_and_pool_status",
     "read_documents_and_contracts",
     "read_vademecum",
+    "show_discussion_thread",
     "inspect_ui_skill",
     "display_ui_component",
 }
 
 
-STATIC_TOASTER_SYSTEM_PREFIX = """Tu es l'assistant officiel du portail de la SCI Hellenvilliers (domaine en Normandie comprenant le Presbytère, Rosings et L'Annexe).
+STATIC_TOASTER_SYSTEM_PREFIX = """Tu es **Mr. Collins**, l'assistant dévoué du portail de la SCI Hellenvilliers (domaine en Normandie comprenant le Presbytère, Rosings et L'Annexe).
+
+PERSONNALITÉ — PETIT CLIN D'ŒIL MR. COLLINS (BBC *Pride and Prejudice*, 1995 — David Bamber) :
+- Tu es avant tout **100 % factuel, concis, précis et directement utile** : l'information demandée ou l'action préparée passe TOUJOURS en premier, sans détour ni lourdeur.
+- Glisse avec parcimonie (une toute petite touche par réponse, jamais à chaque phrase et sans jamais exagérer ni allonger la réponse !) le charme délicieusement guindé du Mr. Collins de la mini-série BBC 1995 : une formule de courtoisie un rien solennelle et empressée (« avec le plus vif empressement », « j'ai l'honneur de vous confirmer », « quelle admirable prévoyance »), un petit compliment joliment « arrangé d'avance mais d'un air tout spontané », ou un discret émerveillement devant les agréments domestiques du **Presbytère** (clin d'œil à son cher presbytère d'Hunsford) et de **Rosings** (clin d'œil aux vitrages, cheminées et jardins de Rosings).
+- Ne cite jamais Lady Catherine de Bourgh à tort et à travers et ne deviens jamais verbeux ou théâtral : c'est un clin d'œil fin, élégant et souriant, jamais une caricature fatigante.
 
 CHARTE STYLISTIQUE ET RELATIONNELLE IMPÉRATIVE :
 1. PRÉNOMS UNIQUEMENT — ZÉRO TITRE FAMILIAL : les 7 associés sont exclusivement désignés par leur prénom : Élisabeth, Frédéric, Henri, Marguerite, Hortense, Joséphine et Eugénie. N'utilise JAMAIS les mots « Maman », « Papa », « ta mère », « ton père » ou « les parents ».
 2. RÉSUMÉS FLUIDES EN LANGAGE NATUREL — ZÉRO LONGUE LISTE À PUCES : rédige des réponses chaleureuses, directes et concises en français naturel (avec un peu de **gras** Markdown). Ne mentionne jamais le nom technique de ton modèle d'IA.
 3. EXACTITUDE STRICTE & CAPACITÉ RÉELLE : ne devine jamais un chiffre, un code Wi-Fi ou une date. Le domaine comporte EXACTEMENT **7 chambres** : **5 au Presbytère** (`Suite`, `Deuxième Chambre du Couloir`, `Première Chambre du Couloir`, `La Mezzanine`, `Chambre du bas`) et **2 à Rosings** (`Chambre Haut Droite`, `Chambre Haut Gauche`). Si quelqu'un demande plus de chambres que la capacité du bâtiment (ex. 10 chambres), signale-le immédiatement et propose un nombre valide ou l'ajout de l'autre bâtiment.
+4. VIREMENTS SWAN — AUCUNE RÉFÉRENCE REQUISE : pour régler une cotisation ou un appel de fonds vers le compte Swan de la SCI, il suffit de faire le virement depuis son compte bancaire personnel — le virement est détecté et affecté automatiquement au nom de l'associé. Ne demande JAMAIS d'indiquer une référence de virement ni un code `HLV-...` !
 
 COMPOSANTS VISUELS PARTAGEABLES (`display_ui_component`) :
 Enrichis tes réponses avec les composants interactifs natifs :
@@ -509,24 +562,28 @@ Enrichis tes réponses avec les composants interactifs natifs :
 - `custom_chart_card` : graphique SVG sur mesure (`bar`, `horizontal_bar`, `line`, `pie`) que tu peux composer librement à partir de n'importe quelles données chiffrées réelles de la SCI (dépenses, solde Swan, nuitées par associé, points de tâches, etc.).
 - `vademecum_card` : cartes pratiques du Vademecum avec codes copiables en 1 clic (`search_query`, `category`, `building`, `item_id`). Appelle `read_vademecum` et/ou `vademecum_card` dès qu'on pose une question pratique sur la maison (Wi-Fi, clés, poubelles, disjoncteurs, artisans, piscine, chauffage).
 - `document_viewer_card` : aperçu et téléchargement PDF officiel.
+- `discussion_thread_card` (ou outil direct **`show_discussion_thread(target_type='task'|'vote', target_id=...)`**) : affiche le fil de discussion complet d'une tâche ou d'un scrutin directement dans la conversation avec une zone de réponse en direct (+ mentions `@`). Appelle `show_discussion_thread` dès que l'utilisateur veut consulter un fil de discussion, répondre à un message ou voir les échanges sur une tâche ou un scrutin (et aussi pour les fils contenant des messages non lus dans `read_my_pending_actions`) !
 - `action_modal_buttons` : boutons d'ouverture de formulaires (`'stay'`, `'task'`, `'poll'`, `'document'`, `'vademecum'`).
 
 LISTE EXHAUSTIVE « CE QUE J'AI À FAIRE » (`read_my_pending_actions`) :
 - Dès que l'associé demande ce qu'il a à faire (tâches, votes, messages/mentions, frais à payer), appelle OBLIGATOIREMENT `read_my_pending_actions` puis couvre clairement les 4 axes (en indiquant sobrement « rien en attente » pour les axes vides) :
   1. Tâches à valider (si coordinateur) ou attribuées ; affiche aussitôt `tasks_overview_card` avec leurs `task_ids` s'il y en a au moins une.
   2. Votes à valider (si coordinateur) ou scrutins ouverts où il n'a pas encore voté / attribués ; affiche `poll_status_card` s'il y en a.
-  3. Messages le concernant dans les messageries des tâches ou votes (mentions `@...` ou nouveaux messages sur des tâches/votes attribués).
+  3. Messages le concernant dans les messageries des tâches ou votes (mentions `@...` ou nouveaux messages sur des tâches/votes attribués) ; affiche aussitôt `show_discussion_thread` pour le(s) fil(s) concerné(s) afin qu'il puisse y répondre directement !
   4. Frais ou cotisations à payer (solde CCA débiteur / appels de fonds ouverts) ; affiche `treasury_overview_card` s'il y a un montant à régler.
 
 COHÉRENCE STRICTE DES CYCLES DE VIE & VALIDATION EXPLICITE DES ACTIONS RÉELLES :
 - Tu opères directement sur le vrai portail de la SCI (base PostgreSQL, chauffage ViCare, piscine Klereo, bibliothèque documentaire Google Drive).
+- **Fils de discussion & messages** : tu peux à la fois **afficher un fil de discussion interactif** dans le chat via `show_discussion_thread` (pour que l'utilisateur lise et réponde directement) ET **proposer de publier un message / commentaire** sur une tâche ou un scrutin via `propose_comment_action` (toujours soumis à validation explicite de l'utilisateur sur la carte).
 - **Documents joints par l'utilisateur (upload & rattachement)** : lorsqu'un associé te fournit un document (PDF ou photo), examine-le et propose toujours l'opération la plus pertinente (qui reste soumise à confirmation explicite de l'associé sur la carte) :
   - Facture/reçu avec montant TTC → `propose_invoice_or_document_upload` (enregistre la dépense/avance + archive le document réel).
   - Document à archiver dans la bibliothèque SCI, ou à rattacher à une **tâche existante** ou un **scrutin existant** → `propose_document_action` (`operation='archive'`, `'link_task'` avec `task_id`, ou `'link_vote'` avec `project_id`).
   - Document nécessitant la création d'une **nouvelle tâche** (ex. photo d'un souci, devis à suivre) → `propose_task_action(operation='create', attach_uploaded_file=True, document_organisme=..., document_title=...)`.
   - Document nécessitant la création d'un **nouveau scrutin / vote** (ex. devis de travaux à soumettre aux associés) → `propose_poll_or_vote_action(operation='create', attach_uploaded_file=True, document_organisme=..., document_title=...)`.
 - **Séjours** : renseigne toujours date ET heure (`arrival_time`/`departure_time`), participants internes (`selected_members`) et invités extérieurs (`external_guests`), et différencie Eau Chaude Sanitaire (`activate_dhw`, 52 °C), Chauffage Presbytère (`activate_heating`, 20 °C, qui inclut l'ECS) et Piscine (`activate_pool`, 27 °C).
-- **Tâches (création ultra-simple)** : lors de la création d'une tâche (`propose_task_action`, `operation='create'`), toute nouvelle tâche est créée en statut `PROPOSED` et le créateur fournit UNIQUEMENT un **titre** et une **description** (plus un éventuel document joint). N'invente JAMAIS de sous-tâches / checklist d'exemple, et ne définis jamais la charge, la priorité, le devis, l'échéance ou le responsable : toutes ces valeurs sont estimées et gérées exclusivement par les coordinateurs lors de la validation !
+- **Tâches (création ultra-simple ET modification validée)** :
+  - Lors de la création (`propose_task_action`, `operation='create'`), toute nouvelle tâche est créée en statut `PROPOSED` et le créateur fournit UNIQUEMENT un **titre** et une **description** (plus un éventuel document joint). N'invente JAMAIS de sous-tâches / checklist d'exemple, et ne définis jamais la charge, la priorité, le devis, l'échéance ou le responsable : toutes ces valeurs sont estimées et gérées exclusivement par les coordinateurs lors de la validation !
+  - Lors de la **modification d'une tâche existante** (`propose_task_action`, `operation='update'`, avec `task_id`), tu PEUX parfaitement proposer de modifier son titre, sa description (et, si l'utilisateur est coordinateur, son emplacement, sa priorité, sa charge, son budget ou son échéance), toujours via la carte modifiable soumise à confirmation de l'utilisateur !
 - **Scrutins / Votes (cycle de vie officiel)** : toute nouvelle proposition de scrutin est créée en statut `PROPOSED` (en attente de validation/ouverture par un coordinateur) avec un lieu/catégorie canonique, une description claire, une priorité, un budget estimé éventuel, le mode choix unique/multiple et au moins 2 options.
 - Pour toute action de création, modification, archivage ou rattachement de document, appelle TOUJOURS l'outil `propose_*` correspondant afin de présenter une carte récapitulative modifiable que l'associé devra confirmer en un clic. **INTERDICTION ABSOLUE** de répondre « dans la carte ci-dessous » ou « j'ai pré-rempli » sans avoir effectivement invoqué l'outil `propose_*` dans ce tour !
 - Si la passerelle ViCare du Presbytère est hors ligne au moment où l'utilisateur demande d'allumer le chauffage, prépare tout de même la carte `propose_heating_or_pool_action` si souhaité mais préviens clairement dans ta réponse que la passerelle Vitoconnect est actuellement hors ligne."""
@@ -597,7 +654,7 @@ def _build_system_prompt(state: Dict[str, Any], attachment_name: Optional[str] =
     ) or "  (Aucune écriture au grand livre)"
 
     calls_txt = "\n".join(
-        f"  - {c.get('reference')} ({c.get('period_label')}) : cotisation={c.get('theoretical_contribution'):.2f} €, "
+        f"  - {c.get('period_label')} : cotisation={c.get('theoretical_contribution'):.2f} €, "
         f"avances déduites={c.get('approved_expenses_total'):.2f} €, net à payer={c.get('amount_due'):.2f} €, statut={c.get('status')}"
         for c in (treasury.get("calls_for_funds") or [])[:6]
     ) or "  (Aucun appel de fonds)"
@@ -621,7 +678,7 @@ def _build_system_prompt(state: Dict[str, Any], attachment_name: Optional[str] =
 
     dynamic_context = f"""
 DATE DU JOUR : {datetime.utcnow().strftime('%Y-%m-%d')}
-ASSOCIÉ CONNECTÉ : {member_name} (id={member.get('id')}, prénom={member_prenom}, coordinateur={'Oui' if member.get('is_coordinator') else 'Non'}, cotisation={member.get('monthly_contribution')} €/mois, référence virement={member.get('payment_reference')})
+ASSOCIÉ CONNECTÉ : {member_name} (id={member.get('id')}, prénom={member_prenom}, coordinateur={'Oui' if member.get('is_coordinator') else 'Non'}, cotisation={member.get('monthly_contribution')} €/mois)
 ACTIONS EN ATTENTE POUR {member_prenom.upper()} : {pending_summary_txt}
 
 TRÉSORERIE BANCAIRE SWAN & SOLDES CCA DES 7 ASSOCIÉS :
@@ -949,6 +1006,44 @@ def _build_action_card(
             "payload": payload,
         }
 
+    if func_name == "propose_comment_action":
+        target_type = str(args.get("target_type") or "task").strip().lower()
+        if target_type in ("vote", "poll", "project", "scrutin"):
+            target_type = "vote"
+        else:
+            target_type = "task"
+        target_id = args.get("target_id") or args.get("task_id") or args.get("project_id")
+        target_id_int = int(target_id) if target_id is not None and str(target_id).isdigit() else None
+        content = str(args.get("content") or args.get("message") or "").strip()
+
+        target_title = ""
+        if target_type == "task" and target_id_int:
+            t_match = next((t for t in (state.get("tasks") or []) if int(t.get("id") or 0) == target_id_int), None)
+            target_title = t_match.get("title", "") if t_match else ""
+        elif target_type == "vote" and target_id_int:
+            p_match = next((p for p in (state.get("open_votes") or []) if int(p.get("id") or 0) == target_id_int), None)
+            target_title = p_match.get("title", "") if p_match else ""
+
+        label_kind = "le scrutin" if target_type == "vote" else "la tâche"
+        card_title = (
+            f"Publier un message sur {label_kind} #{target_id_int}" + (f" (« {target_title} »)" if target_title else "")
+            if target_id_int
+            else f"Publier un message sur {label_kind}"
+        )
+        return {
+            "action_type": "comment",
+            "title": card_title,
+            "deduced_fields": [],
+            "missing_fields": missing,
+            "ready_to_execute": bool(target_id_int) and bool(content),
+            "payload": {
+                "target_type": target_type,
+                "target_id": target_id_int,
+                "target_title": target_title,
+                "content": content,
+            },
+        }
+
     if func_name == "propose_task_action":
         operation = str(args.get("operation") or "create").lower()
         task_id = args.get("task_id")
@@ -979,6 +1074,40 @@ def _build_action_card(
                 "deduced_fields": [],
                 "missing_fields": missing,
                 "ready_to_execute": bool(title),
+                "payload": payload,
+            }
+
+        if operation == "update":
+            tid_int = int(task_id) if task_id is not None and str(task_id).isdigit() else None
+            existing_t = next((t for t in (state.get("tasks") or []) if tid_int and int(t.get("id") or 0) == tid_int), None)
+            if not existing_t and title:
+                low_t = title.lower()
+                existing_t = next((t for t in (state.get("tasks") or []) if low_t in str(t.get("title") or "").lower()), None)
+                if existing_t:
+                    tid_int = int(existing_t["id"])
+            final_title = title or (existing_t.get("title", "") if existing_t else "")
+            final_desc = (
+                str(args.get("description")).strip()
+                if args.get("description") is not None
+                else (existing_t.get("description", "") if existing_t else "")
+            )
+            payload = {
+                "operation": "update",
+                "task_id": tid_int,
+                "title": final_title,
+                "description": final_desc,
+                "subject": str(args.get("subject") or (existing_t.get("subject") if existing_t else "Presbytère")).strip(),
+                "priority": str(args.get("priority") or (existing_t.get("priority") if existing_t else "Normale")).strip(),
+                "complexity": str(args.get("complexity") or (existing_t.get("complexity") if existing_t else "Modérée")).strip(),
+                "budget": args.get("budget") if args.get("budget") is not None else (existing_t.get("budget", 0) if existing_t else 0),
+                "deadline": str(args.get("deadline") if args.get("deadline") is not None else (existing_t.get("deadline") or "")).strip()[:10],
+            }
+            return {
+                "action_type": "task",
+                "title": f"Modifier la tâche #{tid_int} : « {final_title} »" if tid_int else f"Modifier la tâche : « {final_title} »",
+                "deduced_fields": [],
+                "missing_fields": missing,
+                "ready_to_execute": bool(tid_int) and bool(final_title),
                 "payload": payload,
             }
 
@@ -1762,3 +1891,135 @@ def toaster_execute_endpoint(
         )
     except ValueError as err:
         raise HTTPException(status_code=400, detail=str(err))
+
+
+class ToasterTtsRequest(BaseModel):
+    text: str
+    voice_name: Optional[str] = "Charon"
+
+
+def _strip_markdown_for_tts(raw_text: str) -> str:
+    """Nettoie le Markdown et les artefacts visuels pour une lecture orale naturelle en français."""
+    s = str(raw_text or "")
+    s = re.sub(r"```[\s\S]*?```", " ", s)
+    s = re.sub(r"`([^`]+)`", r"\1", s)
+    s = re.sub(r"\[([^\]]+)\]\([^)]+\)", r"\1", s)
+    s = re.sub(r"(?m)^\s{0,3}#{1,6}\s+", "", s)
+    s = re.sub(r"(?m)^\s*[-*•]\s+", "", s)
+    s = re.sub(r"\*\*([^*]+)\*\*", r"\1", s)
+    s = re.sub(r"\*([^*]+)\*", r"\1", s)
+    s = re.sub(r"__([^_]+)__", r"\1", s)
+    s = re.sub(r"[•|]+", ", ", s)
+    s = re.sub(r"\s+\n", "\n", s)
+    s = re.sub(r"\n{2,}", ". ", s)
+    s = re.sub(r"\n", ", ", s)
+    s = re.sub(r"\s{2,}", " ", s).strip()
+    if len(s) > 1800:
+        cut = s[:1800].rsplit(".", 1)[0]
+        s = (cut + ".") if len(cut) > 400 else (s[:1800] + "…")
+    return s
+
+
+def _pcm_to_wav_bytes(pcm_bytes: bytes, sample_rate: int = 24000, channels: int = 1, bits_per_sample: int = 16) -> bytes:
+    byte_rate = sample_rate * channels * (bits_per_sample // 8)
+    block_align = channels * (bits_per_sample // 8)
+    data_size = len(pcm_bytes)
+    header = struct.pack(
+        "<4sI4s4sIHHIIHH4sI",
+        b"RIFF",
+        36 + data_size,
+        b"WAVE",
+        b"fmt ",
+        16,
+        1,  # PCM
+        channels,
+        sample_rate,
+        byte_rate,
+        block_align,
+        bits_per_sample,
+        b"data",
+        data_size,
+    )
+    return header + pcm_bytes
+
+
+@router.post("/tts")
+def toaster_tts_endpoint(req: ToasterTtsRequest):
+    """
+    Synthèse vocale à la demande via gemini-3.8-flash-lite-tts (voix posée Mr. Collins).
+    Appelé UNIQUEMENT lors d'une demande vocale ou d'un clic explicite sur le bouton audio.
+    """
+    clean_text = _strip_markdown_for_tts(req.text)
+    if not clean_text:
+        raise HTTPException(status_code=400, detail="Aucun texte lisible à synthétiser.")
+
+    api_key = _get_toaster_api_key()
+    voice_name = (req.voice_name or "Charon").strip() or "Charon"
+    body = {
+        "contents": [{"parts": [{"text": clean_text}]}],
+        "generationConfig": {
+            "responseModalities": ["AUDIO"],
+            "speechConfig": {
+                "voiceConfig": {
+                    "prebuiltVoiceConfig": {
+                        "voiceName": voice_name,
+                    }
+                }
+            },
+        },
+    }
+
+    try:
+        with httpx.Client(timeout=httpx.Timeout(connect=10.0, read=45.0, write=10.0, pool=10.0)) as client:
+            resp = client.post(
+                f"{GEMINI_TTS_ENDPOINT}?key={api_key}",
+                json=body,
+                headers={"Content-Type": "application/json"},
+            )
+    except httpx.RequestError as exc:
+        raise HTTPException(status_code=502, detail=f"Erreur réseau Gemini TTS : {exc}")
+
+    if resp.status_code != 200:
+        raise HTTPException(
+            status_code=502,
+            detail=f"Gemini TTS (HTTP {resp.status_code}) : {resp.text[:300]}",
+        )
+
+    data = resp.json()
+    inline_data = None
+    for cand in data.get("candidates") or []:
+        for part in (cand.get("content") or {}).get("parts") or []:
+            if isinstance(part, dict) and part.get("inlineData", {}).get("data"):
+                inline_data = part["inlineData"]
+                break
+        if inline_data:
+            break
+
+    if not inline_data:
+        raise HTTPException(status_code=502, detail="Aucune donnée audio renvoyée par gemini-3.8-flash-lite-tts.")
+
+    raw_audio = base64.b64decode(inline_data["data"])
+    mime_raw = str(inline_data.get("mimeType") or "audio/wav").lower()
+
+    if "audio/wav" in mime_raw or raw_audio[:4] == b"RIFF":
+        return Response(
+            content=raw_audio,
+            media_type="audio/wav",
+            headers={"Cache-Control": "private, max-age=3600"},
+        )
+
+    if "pcm" in mime_raw or "l16" in mime_raw:
+        rate_match = re.search(r"rate=(\d+)", mime_raw)
+        sr = int(rate_match.group(1)) if rate_match else 24000
+        wav_bytes = _pcm_to_wav_bytes(raw_audio, sample_rate=sr)
+        return Response(
+            content=wav_bytes,
+            media_type="audio/wav",
+            headers={"Cache-Control": "private, max-age=3600"},
+        )
+
+    return Response(
+        content=raw_audio,
+        media_type=mime_raw.split(";")[0] or "audio/mpeg",
+        headers={"Cache-Control": "private, max-age=3600"},
+    )

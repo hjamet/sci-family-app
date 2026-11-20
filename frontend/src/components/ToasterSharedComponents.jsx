@@ -1,7 +1,8 @@
-import React, { useState, useEffect, useMemo } from 'react';
+import React, { useState, useEffect, useMemo, useRef } from 'react';
 import { FuelInteractiveGraph } from '../pages/VademecumPage';
 import WhatsAppPollView from './common/WhatsAppPollView';
 import DocumentViewerModal from './DocumentViewerModal';
+import { addTaskComment, addProjectComment, fetchTaskComments, fetchProjectComments } from '../api';
 
 // ============================================================================
 // 1. RENDU MARKDOWN PROPRE & LÉGER (Annotation 6)
@@ -1457,14 +1458,313 @@ function SharedActionButtons({ data, onOpenSandboxModal }) {
   );
 }
 
+function renderMentionHighlightedText(text) {
+  if (!text) return null;
+  const parts = String(text).split(/(@[A-Za-zÀ-ÿ_-]+)/g);
+  return parts.map((p, idx) =>
+    p.startsWith('@') && p.length > 1 ? (
+      <span key={idx} className="font-bold text-emerald-700 dark:text-emerald-300 bg-emerald-100/70 px-1 rounded">
+        {p}
+      </span>
+    ) : (
+      <React.Fragment key={idx}>{p}</React.Fragment>
+    )
+  );
+}
+
+function formatThreadTimestamp(isoStr) {
+  if (!isoStr) return '';
+  const dt = new Date(isoStr);
+  if (isNaN(dt.getTime())) return String(isoStr).slice(0, 16);
+  return dt.toLocaleString('fr-FR', {
+    day: '2-digit',
+    month: '2-digit',
+    hour: '2-digit',
+    minute: '2-digit',
+  });
+}
+
+function SharedDiscussionThreadWidget({
+  data,
+  activeMemberName = 'Henri Jamet',
+  activeMemberId = null,
+  onCommentPosted,
+}) {
+  const targetType = data?.target_type === 'vote' ? 'vote' : 'task';
+  const targetId = data?.target_id;
+  const [comments, setComments] = useState(() => (Array.isArray(data?.comments) ? data.comments : []));
+  const [replyText, setReplyText] = useState('');
+  const [sending, setSending] = useState(false);
+  const [refreshing, setRefreshing] = useState(false);
+  const [errMsg, setErrMsg] = useState(null);
+  const [showMentions, setShowMentions] = useState(false);
+  const listRef = useRef(null);
+
+  useEffect(() => {
+    if (Array.isArray(data?.comments)) {
+      setComments(data.comments);
+    }
+  }, [data?.target_id, data?.target_type]);
+
+  const activeFirst = String(activeMemberName || '').trim().split(' ')[0].toLowerCase();
+  const mentionTargets = useMemo(
+    () =>
+      ['tous', 'Henri', 'Marguerite', 'Hortense', 'Joséphine', 'Eugénie', 'Élisabeth', 'Frédéric'].filter(
+        (m) => m.toLowerCase() !== activeFirst
+      ),
+    [activeFirst]
+  );
+
+  const handleRefresh = async () => {
+    if (!targetId || refreshing) return;
+    setRefreshing(true);
+    setErrMsg(null);
+    try {
+      const fresh =
+        targetType === 'vote' ? await fetchProjectComments(targetId) : await fetchTaskComments(targetId);
+      if (Array.isArray(fresh)) {
+        setComments(fresh);
+      }
+    } catch (err) {
+      setErrMsg(err?.message || 'Impossible d’actualiser le fil.');
+    } finally {
+      setRefreshing(false);
+    }
+  };
+
+  const handleSendReply = async (e) => {
+    if (e) e.preventDefault();
+    const trimmed = replyText.trim();
+    if (!trimmed || !targetId || sending) return;
+    setSending(true);
+    setErrMsg(null);
+    try {
+      let created;
+      if (targetType === 'vote') {
+        created = await addProjectComment(targetId, {
+          author_name: activeMemberName || 'Henri Jamet',
+          content: trimmed,
+        });
+      } else {
+        created = await addTaskComment(targetId, {
+          author_id: activeMemberId || undefined,
+          author_name: activeMemberName || 'Henri Jamet',
+          author_role: 'Membre Associé',
+          content: trimmed,
+        });
+      }
+      const nextComment = created && typeof created === 'object'
+        ? {
+            id: created.id || `tmp-${Date.now()}`,
+            author_name: created.author_name || activeMemberName || 'Henri Jamet',
+            author_role: created.author_role || 'Associé',
+            content: created.content || trimmed,
+            created_at: created.created_at || new Date().toISOString(),
+          }
+        : {
+            id: `tmp-${Date.now()}`,
+            author_name: activeMemberName || 'Henri Jamet',
+            author_role: 'Associé',
+            content: trimmed,
+            created_at: new Date().toISOString(),
+          };
+      setComments((prev) => [...prev, nextComment]);
+      setReplyText('');
+      setShowMentions(false);
+      setTimeout(() => {
+        if (listRef.current) {
+          listRef.current.scrollTo({ top: listRef.current.scrollHeight, behavior: 'smooth' });
+        }
+      }, 40);
+      onCommentPosted?.();
+    } catch (err) {
+      setErrMsg(err?.message || "Erreur lors de l'envoi du message.");
+    } finally {
+      setSending(false);
+    }
+  };
+
+  const isVote = targetType === 'vote';
+
+  return (
+    <div
+      data-testid="toaster-discussion-thread"
+      className="mt-2.5 w-full max-w-2xl rounded-2xl bg-white dark:bg-slate-900 border border-border-subtle shadow-sm overflow-hidden"
+    >
+      {/* En-tête du fil */}
+      <div className="px-4 py-3 bg-sage-soft/55 border-b border-border-subtle flex items-center justify-between gap-2 flex-wrap">
+        <div className="flex items-center gap-2 min-w-0">
+          <span
+            className={`w-8 h-8 rounded-xl flex items-center justify-center shrink-0 ${
+              isVote ? 'bg-purple-100 text-purple-800' : 'bg-sky-100 text-sky-800'
+            }`}
+          >
+            <span className="material-symbols-outlined text-[18px]">
+              {isVote ? 'how_to_vote' : 'forum'}
+            </span>
+          </span>
+          <div className="min-w-0">
+            <div className="flex items-center gap-1.5 flex-wrap">
+              <span
+                className={`px-2 py-0.5 rounded-full text-[10px] font-bold border ${
+                  isVote
+                    ? 'bg-purple-50 text-purple-900 border-purple-200'
+                    : 'bg-sky-50 text-sky-900 border-sky-200'
+                }`}
+              >
+                {isVote ? `Scrutin #${targetId}` : `Tâche #${targetId}`}
+              </span>
+              <span className="text-[11px] font-semibold text-slate-500">
+                {comments.length} message{comments.length > 1 ? 's' : ''}
+              </span>
+            </div>
+            <h4 className="text-xs sm:text-sm font-bold text-forest-deep truncate mt-0.5">
+              {data?.target_title || (isVote ? `Discussion scrutin #${targetId}` : `Discussion tâche #${targetId}`)}
+            </h4>
+          </div>
+        </div>
+
+        <button
+          type="button"
+          onClick={handleRefresh}
+          disabled={refreshing}
+          title="Actualiser le fil"
+          className="inline-flex items-center gap-1 px-2.5 py-1 rounded-full bg-white hover:bg-emerald-50 border border-border-subtle text-[11px] font-semibold text-slate-600 hover:text-primary cursor-pointer shrink-0"
+        >
+          <span className={`material-symbols-outlined text-[14px] ${refreshing ? 'animate-spin' : ''}`}>
+            refresh
+          </span>
+          <span>Actualiser</span>
+        </button>
+      </div>
+
+      {/* Historique des messages */}
+      <div ref={listRef} className="max-h-72 overflow-y-auto p-3.5 space-y-2.5 bg-slate-50/60">
+        {comments.length === 0 ? (
+          <div className="py-5 text-center text-xs text-slate-500">
+            Aucun message dans ce fil pour l’instant. Répondez directement ci-dessous pour démarrer l’échange.
+          </div>
+        ) : (
+          comments.map((c) => {
+            const author = String(c.author_name || 'Associé');
+            const isSelf = activeFirst && author.toLowerCase().includes(activeFirst);
+            const initials = author
+              .split(/\s+/)
+              .map((w) => w[0])
+              .join('')
+              .slice(0, 2)
+              .toUpperCase();
+            return (
+              <div key={c.id} className={`flex flex-col ${isSelf ? 'items-end' : 'items-start'}`}>
+                <div
+                  className={`max-w-[88%] rounded-2xl px-3.5 py-2.5 text-xs leading-relaxed shadow-2xs border ${
+                    isSelf
+                      ? 'bg-emerald-50/90 border-emerald-200 text-slate-900 rounded-br-xs'
+                      : 'bg-white border-slate-200 text-slate-800 rounded-bl-xs'
+                  }`}
+                >
+                  <div className="flex items-center justify-between gap-3 mb-1">
+                    <div className="flex items-center gap-1.5">
+                      <span className="w-5 h-5 rounded-full bg-primary/15 text-primary text-[9.5px] font-bold flex items-center justify-center shrink-0">
+                        {initials}
+                      </span>
+                      <span className="font-bold text-[11px] text-forest-deep">{author}</span>
+                    </div>
+                    {c.created_at && (
+                      <span className="text-[10px] text-slate-400 shrink-0">
+                        {formatThreadTimestamp(c.created_at)}
+                      </span>
+                    )}
+                  </div>
+                  <p className="whitespace-pre-wrap break-words">
+                    {renderMentionHighlightedText(c.content)}
+                  </p>
+                </div>
+              </div>
+            );
+          })
+        )}
+      </div>
+
+      {/* Zone de réponse directe inline */}
+      <form onSubmit={handleSendReply} className="p-3 bg-white border-t border-border-subtle space-y-2">
+        {errMsg && (
+          <div className="px-2.5 py-1.5 rounded-lg bg-rose-50 border border-rose-200 text-rose-800 text-[11px] font-semibold">
+            {errMsg}
+          </div>
+        )}
+
+        {showMentions && (
+          <div className="flex flex-wrap gap-1">
+            {mentionTargets.map((m) => (
+              <button
+                key={m}
+                type="button"
+                onClick={() => {
+                  setReplyText((prev) => `${prev}${prev && !prev.endsWith(' ') ? ' ' : ''}@${m} `);
+                  setShowMentions(false);
+                }}
+                className="px-2 py-0.5 rounded-full bg-emerald-50 hover:bg-emerald-100 text-emerald-900 border border-emerald-200 text-[11px] font-semibold cursor-pointer"
+              >
+                @{m}
+              </button>
+            ))}
+          </div>
+        )}
+
+        <div className="flex items-end gap-2">
+          <button
+            type="button"
+            onClick={() => setShowMentions((v) => !v)}
+            title="Mentionner un associé (@)"
+            className={`w-8 h-8 rounded-full border flex items-center justify-center text-xs font-bold shrink-0 cursor-pointer transition-colors ${
+              showMentions
+                ? 'bg-emerald-700 text-white border-emerald-700'
+                : 'bg-slate-50 hover:bg-emerald-50 text-slate-600 border-slate-200'
+            }`}
+          >
+            @
+          </button>
+          <textarea
+            rows={1}
+            disabled={sending}
+            value={replyText}
+            onChange={(e) => setReplyText(e.target.value)}
+            onKeyDown={(e) => {
+              if (e.key === 'Enter' && !e.shiftKey) {
+                e.preventDefault();
+                handleSendReply();
+              }
+            }}
+            placeholder={`Répondre directement dans ce fil en tant que ${activeMemberName.split(' ')[0]}…`}
+            className="flex-1 min-h-[34px] max-h-28 px-3 py-1.5 rounded-xl bg-slate-50 focus:bg-white border border-slate-200 focus:border-primary text-xs text-slate-900 focus:outline-none resize-none"
+          />
+          <button
+            type="submit"
+            disabled={sending || !replyText.trim()}
+            className="inline-flex items-center gap-1 px-3.5 h-8 rounded-full bg-primary hover:bg-forest-deep text-white text-xs font-bold shrink-0 cursor-pointer disabled:opacity-40 disabled:cursor-not-allowed transition-colors"
+          >
+            <span className={`material-symbols-outlined text-[15px] ${sending ? 'animate-spin' : ''}`}>
+              {sending ? 'progress_activity' : 'send'}
+            </span>
+            <span>Répondre</span>
+          </button>
+        </div>
+      </form>
+    </div>
+  );
+}
+
 export function ToasterComponentRenderer({
   components = [],
   activeMemberName = 'Henri Jamet',
+  activeMemberId = null,
   isCoordinator = false,
   onOpenSandboxModal,
   onCastSandboxVote,
   onInspectTask,
   onInspectPoll,
+  onCommentPosted,
 }) {
   const [viewerDoc, setViewerDoc] = useState(null);
 
@@ -1534,6 +1834,17 @@ export function ToasterComponentRenderer({
                     file_type: 'application/pdf',
                   })
                 }
+              />
+            );
+          }
+          if (cid === 'discussion_thread_card') {
+            return (
+              <SharedDiscussionThreadWidget
+                key={idx}
+                data={comp}
+                activeMemberName={activeMemberName}
+                activeMemberId={activeMemberId}
+                onCommentPosted={onCommentPosted}
               />
             );
           }

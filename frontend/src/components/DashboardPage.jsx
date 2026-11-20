@@ -203,18 +203,13 @@ export default function DashboardPage({
     setInspectingTask({
       title: '',
       description: '',
-      subject: 'Rosings',
+      subject: 'Presbytère',
       complexity: 'Modérée',
       budget: 0,
       assigned_members: [],
       assignee: null,
       status: 'PROPOSED',
-      checklist: [
-        { text: 'Diagnostic initial et constat sur place', done: false },
-        { text: 'Demande de devis et consultation des artisans', done: false },
-        { text: 'Validation budgétaire en coordination', done: false },
-        { text: 'Réalisation des travaux et contrôle final', done: false },
-      ]
+      checklist: []
     });
     setIsTaskEditingDirect(true);
     setIsTaskModalOpen(true);
@@ -612,39 +607,37 @@ export default function DashboardPage({
         </div>
       </section>
 
-      {/* ==================== SCRUTIN FAMILIAL EN COURS ==================== */}
-      <section className="w-full bg-surface-container-lowest rounded-2xl p-6 sm:p-space-lg shadow-sm border-2 border-primary/30 flex flex-col space-y-space-md relative overflow-hidden">
-        <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-space-sm border-b border-outline-variant/20 pb-space-sm">
-          <div className="flex items-center gap-3 flex-wrap">
-            <div className="w-10 h-10 rounded-xl bg-sage-soft text-primary flex items-center justify-center font-bold">
-              <span className="material-symbols-outlined text-[24px]">how_to_vote</span>
-            </div>
-            <div>
-              <div className="flex items-center gap-2 flex-wrap">
-                <h2 className="font-headline-md text-base sm:text-headline-sm text-forest-deep font-bold tracking-tight">
-                  Scrutins en cours
-                </h2>
-                <span className="inline-flex items-center gap-1 text-[11px] font-semibold uppercase tracking-wider px-2.5 py-0.5 rounded-full bg-sage-soft text-primary">
-                  1 voix = 1 pers.
-                </span>
+      {/* ==================== SCRUTIN FAMILIAL EN COURS (masqué si aucun scrutin actif — Annotation 6) ==================== */}
+      {activeVote && (
+        <section className="w-full bg-surface-container-lowest rounded-2xl p-6 sm:p-space-lg shadow-sm border-2 border-primary/30 flex flex-col space-y-space-md relative overflow-hidden">
+          <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-space-sm border-b border-outline-variant/20 pb-space-sm">
+            <div className="flex items-center gap-3 flex-wrap">
+              <div className="w-10 h-10 rounded-xl bg-sage-soft text-primary flex items-center justify-center font-bold">
+                <span className="material-symbols-outlined text-[24px]">how_to_vote</span>
+              </div>
+              <div>
+                <div className="flex items-center gap-2 flex-wrap">
+                  <h2 className="font-headline-md text-base sm:text-headline-sm text-forest-deep font-bold tracking-tight">
+                    Scrutins en cours
+                  </h2>
+                  <span className="inline-flex items-center gap-1 text-[11px] font-semibold uppercase tracking-wider px-2.5 py-0.5 rounded-full bg-sage-soft text-primary">
+                    1 voix = 1 pers.
+                  </span>
+                </div>
               </div>
             </div>
+
+            <div className="flex items-center gap-2">
+              <button
+                type="button"
+                onClick={() => navigateTo('/taches')}
+                className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-DEFAULT bg-white border-2 border-outline-variant text-on-surface-variant font-label-sm text-xs font-semibold hover:border-outline hover:bg-canvas-slate transition-colors shadow-sm cursor-pointer"
+              >
+                Tous les votes ({projects.length})
+              </button>
+            </div>
           </div>
 
-          <div className="flex items-center gap-2">
-            <button
-              type="button"
-              onClick={() => navigateTo('/taches')}
-              className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-DEFAULT bg-white border-2 border-outline-variant text-on-surface-variant font-label-sm text-xs font-semibold hover:border-outline hover:bg-canvas-slate transition-colors shadow-sm cursor-pointer"
-            >
-              Tous les votes {(loadingProjects && projects.length === 0) ? '' : `(${projects.length})`}
-            </button>
-          </div>
-        </div>
-
-        {(loadingProjects && projects.length === 0) ? (
-          <VoteCardSkeleton />
-        ) : activeVote ? (
           <article
             onClick={() => {
               setSelectedVoteForModal(activeVote);
@@ -703,28 +696,8 @@ export default function DashboardPage({
               </div>
             </div>
           </article>
-        ) : (
-          <div className="bg-white rounded-xl p-space-lg border border-outline-variant/30 flex flex-col items-center justify-center text-center py-8">
-            <div className="w-12 h-12 rounded-full bg-surface-container flex items-center justify-center text-on-surface-variant mb-2">
-              <span className="material-symbols-outlined text-[24px]">how_to_vote</span>
-            </div>
-            <h3 className="font-headline-sm text-sm font-bold text-forest-deep mb-1">
-              Aucun scrutin statutaire actif
-            </h3>
-            <p className="font-body-md text-on-surface-variant text-xs max-w-sm mb-3">
-              Tous les arbitrages de dépenses et projets majeurs sont à jour. Les futurs scrutins statutaires s'afficheront ici.
-            </p>
-            <button
-              type="button"
-              onClick={handleOpenCreateVote}
-              className="inline-flex items-center gap-1.5 px-4 py-2 rounded-DEFAULT bg-white border-2 border-primary text-primary font-label-sm text-xs font-bold hover:bg-sage-soft transition-colors shadow-sm cursor-pointer"
-            >
-              <span className="material-symbols-outlined text-[18px]">add_circle</span>
-              Proposer une initiative au vote
-            </button>
-          </div>
-        )}
-      </section>
+        </section>
+      )}
 
       {/* ==================== SECTION SCINDÉE : SÉJOURS & MISSIONS ==================== */}
       <section className="grid grid-cols-1 lg:grid-cols-2 gap-space-lg items-start">
