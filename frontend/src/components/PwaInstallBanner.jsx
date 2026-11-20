@@ -109,7 +109,7 @@ export default function PwaInstallBanner() {
       id="pwa-install-banner"
       role="region"
       aria-label="Installer l'application Domaine d'Hellenvilliers"
-      className="bug-report-ignore fixed bottom-3 left-3 sm:bottom-5 sm:left-5 z-40 max-w-sm w-[calc(100vw-4.5rem)] sm:w-auto rounded-2xl bg-white/95 dark:bg-slate-900/95 backdrop-blur-md border border-primary/25 shadow-xl px-4 py-3 flex items-start gap-3 animate-in fade-in duration-200"
+      className="bug-report-ignore fixed top-[5.25rem] right-3 sm:top-[5.5rem] sm:right-6 z-40 max-w-sm w-[calc(100vw-1.5rem)] sm:w-auto rounded-2xl bg-white/95 dark:bg-slate-900/95 backdrop-blur-md border border-primary/25 shadow-xl px-4 py-3 flex items-start gap-3 animate-in fade-in duration-200"
     >
       <img
         src="/icons/icon-192.png"

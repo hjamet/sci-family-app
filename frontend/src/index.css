@@ -84,8 +84,8 @@
 
 /* Portrait Mr. Collins à bords doucement floutés et fondus */
 .mr-collins-portrait-mask {
-  -webkit-mask-image: radial-gradient(ellipse 68% 68% at 50% 48%, rgba(0, 0, 0, 1) 46%, rgba(0, 0, 0, 0.72) 66%, rgba(0, 0, 0, 0) 96%);
-  mask-image: radial-gradient(ellipse 68% 68% at 50% 48%, rgba(0, 0, 0, 1) 46%, rgba(0, 0, 0, 0.72) 66%, rgba(0, 0, 0, 0) 96%);
+  -webkit-mask-image: radial-gradient(ellipse 48% 48% at 50% 50%, rgba(0, 0, 0, 1) 48%, rgba(0, 0, 0, 0.65) 70%, rgba(0, 0, 0, 0) 98%);
+  mask-image: radial-gradient(ellipse 48% 48% at 50% 50%, rgba(0, 0, 0, 1) 48%, rgba(0, 0, 0, 0.65) 70%, rgba(0, 0, 0, 0) 98%);
 }
 
 /* Custom Chat Scrollbar for Task Discussion */

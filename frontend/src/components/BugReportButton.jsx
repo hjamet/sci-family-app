@@ -67,24 +67,27 @@ export default function BugReportButton({ currentUser = null }) {
       diagnosticTextRef.current = `Date : ${new Date().toISOString()}\nURL : ${pageUrlRef.current}\n`;
     }
 
-    // 2. Capture d'écran non-bloquante en arrière-plan (la modale porte la classe .bug-report-ignore)
+    // 2. Ouverture immédiate de la modale (< 25 ms), puis capture d'écran asynchrone en arrière-plan
+    // (la modale porte la classe .bug-report-ignore donc html2canvas l'exclut proprement)
     setCaptureStatus('capturing');
-    const p = captureScreen(`capture_bug_${ts}.jpg`)
-      .then((file) => {
-        screenshotFileRef.current = file;
-        setCaptureStatus('ready');
-        return file;
-      })
-      .catch((err) => {
-        console.warn("Capture d'écran non disponible:", err);
-        screenshotFileRef.current = null;
-        setCaptureStatus('unavailable');
-        return null;
-      });
-    capturePromiseRef.current = p;
-
-    // 3. Ouverture immédiate de la modale sans faire attendre l'utilisateur
     setIsOpen(true);
+
+    capturePromiseRef.current = new Promise((resolve) => {
+      setTimeout(() => {
+        captureScreen(`capture_bug_${ts}.jpg`)
+          .then((file) => {
+            screenshotFileRef.current = file;
+            setCaptureStatus('ready');
+            resolve(file);
+          })
+          .catch((err) => {
+            console.warn("Capture d'écran non disponible:", err);
+            screenshotFileRef.current = null;
+            setCaptureStatus('unavailable');
+            resolve(null);
+          });
+      }, 25);
+    });
   };
 
   const handleClose = () => {
