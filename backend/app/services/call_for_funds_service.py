@@ -1086,19 +1086,13 @@ def send_call_for_funds_notification(
     """
     import base64
     from .email_service import (
-        is_email_disabled,
-        is_test_mode,
         check_firewall,
         render_email_layout,
-        record_dispatched_email,
-        DEFAULT_FROM_EMAIL,
-        FALLBACK_FROM_EMAIL,
+        _dispatch_and_record,
         APP_BASE_URL,
-        RESEND_API_KEY,
-        MAINTENANCE_EMAIL_REDIRECT_ONLY,
-        MAINTENANCE_EMAIL_REDIRECT_TO,
-        is_henri_test_address,
-        httpx,
+        format_de_mois,
+        format_eur_fr,
+        escape_html_text,
     )
 
     member = call_obj.member or db.query(Member).filter(Member.id == call_obj.member_id).first()
@@ -1113,7 +1107,7 @@ def send_call_for_funds_notification(
     if amount_due <= 0.0 or net_amount <= 0.0 or call_obj.status in ("COUVERT", "REGLE", "ANNULE"):
         return {
             "status": "neutralized_no_email",
-            "message": f"Appel id={call_obj.id} ({call_obj.status}, due={amount_due:.2f} €) : aucun email à envoyer."
+            "message": f"Appel id={call_obj.id} ({call_obj.status}, due={format_eur_fr(amount_due)}) : aucun email à envoyer."
         }
 
     if not is_bank_account_active(db):
@@ -1139,17 +1133,20 @@ def send_call_for_funds_notification(
     bank_info = get_official_bank_info(db)
     iban_val = bank_info.get("iban", "")
     bic_val = bank_info.get("bic", DEFAULT_BIC)
-    prenom = getattr(member, "prenom", "Associé")
+    prenom = getattr(member, "prenom", "") or ""
+    safe_prenom = escape_html_text(prenom)
+    greeting_line = f"Bonjour {safe_prenom}," if safe_prenom else "Bonjour,"
     period_label = call_obj.period_label or f"{MONTH_NAMES_FR[call_obj.month]} {call_obj.year}"
+    de_mois = format_de_mois(period_label)
     theoretical = float(call_obj.theoretical_contribution or 50.0)
     expenses_total = float(call_obj.approved_expenses_total or 0.0)
-    payment_ref = call_obj.payment_reference or f"HLV-{prenom.upper()}"
+    payment_ref = call_obj.payment_reference or f"HLV-{(prenom or 'ASSOCIE').upper()}"
 
     details_raw = json.loads(call_obj.details_json) if call_obj.details_json else {}
     deducted = details_raw.get("deducted_expenses", []) if isinstance(details_raw, dict) else []
 
     # Lecture ou génération du PDF d'avis officiel pour pièce jointe
-    pdf_filename = call_obj.pdf_filename or f"SCI {call_obj.month:02d}{call_obj.year} Avis Appel de Fonds {prenom}.pdf"
+    pdf_filename = call_obj.pdf_filename or f"SCI {call_obj.month:02d}{call_obj.year} Avis Appel de Fonds {prenom or 'Associe'}.pdf"
     pdf_path = os.path.join(DOCUMENTS_DIR, pdf_filename)
     pdf_bytes = None
     if os.path.exists(pdf_path):
@@ -1190,17 +1187,20 @@ def send_call_for_funds_notification(
     )
     qr_b64 = base64.b64encode(qr_bytes).decode("ascii")
 
-    subject = f"🏛️ SCI Hellenvilliers — Appel de fonds {period_label} ({amount_due:.2f} €)"
-    preheader = f"Votre avis d'appel de fonds pour {period_label} est disponible : {amount_due:.2f} € à régler."
+    amount_due_fr = format_eur_fr(amount_due)
+    subject = f"[SCI Hellenvilliers] 🏛️ Appel de fonds {period_label} ({amount_due_fr})"
+    preheader = f"Votre avis d'appel de fonds {de_mois} est disponible : {amount_due_fr} à régler."
 
     expenses_rows_html = ""
     valid_expenses = [exp for exp in deducted if isinstance(exp, dict)]
     if valid_expenses:
         for exp in valid_expenses:
+            exp_title = escape_html_text(exp.get("title", "Dépense"))
+            exp_amt = format_eur_fr(float(exp.get("amount") or 0))
             expenses_rows_html += f"""
             <tr>
-                <td style="padding: 6px 10px; border-bottom: 1px solid #f1f5f9; color: #475569;">Déduction avance : {exp.get('title', 'Dépense')}</td>
-                <td style="padding: 6px 10px; border-bottom: 1px solid #f1f5f9; text-align: right; color: #b91c1c; font-weight: 600;">-{float(exp.get('amount') or 0):.2f} €</td>
+                <td style="padding: 6px 10px; border-bottom: 1px solid #f1f5f9; color: #475569;">Déduction avance : {exp_title}</td>
+                <td style="padding: 6px 10px; border-bottom: 1px solid #f1f5f9; text-align: right; color: #b91c1c; font-weight: 600;">-{exp_amt}</td>
             </tr>
             """
     else:
@@ -1215,35 +1215,35 @@ def send_call_for_funds_notification(
     if arrears > 0:
         arrears_rows_html = f"""
         <tr>
-            <td style="padding: 6px 10px; border-bottom: 1px solid #f1f5f9; font-weight: 600; color: #1e293b;">Sous-total échéance {period_label} :</td>
-            <td style="padding: 6px 10px; border-bottom: 1px solid #f1f5f9; text-align: right; font-weight: 600; color: #1e293b;">{net_amount:.2f} €</td>
+            <td style="padding: 6px 10px; border-bottom: 1px solid #f1f5f9; font-weight: 600; color: #1e293b;">Sous-total échéance ({escape_html_text(period_label)}) :</td>
+            <td style="padding: 6px 10px; border-bottom: 1px solid #f1f5f9; text-align: right; font-weight: 600; color: #1e293b;">{format_eur_fr(net_amount)}</td>
         </tr>
         <tr>
-            <td style="padding: 6px 10px; border-bottom: 1px solid #f1f5f9; font-weight: 600; color: #b45309;">Arriéré antérieur non réglé (Octobre 2026) :</td>
-            <td style="padding: 6px 10px; border-bottom: 1px solid #f1f5f9; text-align: right; font-weight: 600; color: #b45309;">+{arrears:.2f} €</td>
+            <td style="padding: 6px 10px; border-bottom: 1px solid #f1f5f9; font-weight: 600; color: #b45309;">Arriéré antérieur non réglé :</td>
+            <td style="padding: 6px 10px; border-bottom: 1px solid #f1f5f9; text-align: right; font-weight: 600; color: #b45309;">+{format_eur_fr(arrears)}</td>
         </tr>
         """
 
     total_row_label = "Total net à régler (échéance + arriéré) :" if arrears > 0 else "Solde net à régler :"
 
     content_html = f"""
-    <p>Bonjour {prenom},</p>
-    <p>Votre avis d'appel de fonds pour le mois de <strong>{period_label}</strong> a été établi pour la SCI Hellenvilliers (vous trouverez également l'avis officiel au format PDF en pièce jointe de cet e-mail) :</p>
+    <p>{greeting_line}</p>
+    <p>Votre avis d'appel de fonds pour le mois <strong>{escape_html_text(de_mois)}</strong> a été établi pour la SCI Hellenvilliers (vous trouverez également l'avis officiel au format PDF en pièce jointe de cet e-mail) :</p>
 
     <div style="background-color: #f8fafc; border: 1px solid #e2e8f0; border-left: 4px solid #064e3b; border-radius: 8px; padding: 18px; margin: 20px 0;">
         <div style="font-size: 16px; font-weight: bold; color: #064e3b; margin-bottom: 12px;">
-            📋 Décompte de la quote-part — {period_label}
+            📋 Décompte de la quote-part — {escape_html_text(period_label)}
         </div>
         <table role="presentation" border="0" cellpadding="0" cellspacing="0" width="100%" style="font-size: 13.5px; line-height: 1.6;">
             <tr>
                 <td style="padding: 6px 10px; border-bottom: 1px solid #f1f5f9;">Quote-part mensuelle théorique :</td>
-                <td style="padding: 6px 10px; border-bottom: 1px solid #f1f5f9; text-align: right; font-weight: bold; color: #1e293b;">+{theoretical:.2f} €</td>
+                <td style="padding: 6px 10px; border-bottom: 1px solid #f1f5f9; text-align: right; font-weight: bold; color: #1e293b;">+{format_eur_fr(theoretical)}</td>
             </tr>
             {expenses_rows_html}
             {arrears_rows_html}
             <tr style="background-color: #ecfdf5;">
                 <td style="padding: 10px; font-size: 15px; font-weight: bold; color: #064e3b;">{total_row_label}</td>
-                <td style="padding: 10px; font-size: 16px; font-weight: bold; text-align: right; color: #064e3b;">{amount_due:.2f} €</td>
+                <td style="padding: 10px; font-size: 16px; font-weight: bold; text-align: right; color: #064e3b;">{amount_due_fr}</td>
             </tr>
         </table>
     </div>
@@ -1257,12 +1257,12 @@ def send_call_for_funds_notification(
                 <td style="vertical-align: top; padding-right: 16px;">
                     <p style="font-size: 13px; color: #1e293b; margin: 0 0 10px 0; line-height: 1.6;">
                         • Titulaire : <strong>SCI HELLENVILLIERS</strong><br/>
-                        • IBAN : <code style="font-family: monospace; font-size: 13px; background: #ffffff; padding: 2px 6px; border-radius: 4px; border: 1px solid #cbd5e1;">{iban_val}</code><br/>
-                        • BIC : <code style="font-family: monospace;">{bic_val}</code><br/>
-                        • Montant à régler : <strong>{amount_due:.2f} €</strong>
+                        • IBAN : <code style="font-family: monospace; font-size: 13px; background: #ffffff; padding: 2px 6px; border-radius: 4px; border: 1px solid #cbd5e1;">{escape_html_text(iban_val)}</code><br/>
+                        • BIC : <code style="font-family: monospace;">{escape_html_text(bic_val)}</code><br/>
+                        • Montant à régler : <strong>{amount_due_fr}</strong>
                     </p>
                     <p style="font-size: 12.5px; color: #064e3b; margin: 0 0 10px 0; line-height: 1.5; font-weight: 500;">
-                        💡 Il vous suffit d'effectuer votre virement depuis votre compte bancaire personnel (le virement sera automatiquement détecté et affecté à votre trésorerie à votre nom).
+                        💡 Il vous suffit d'effectuer votre virement depuis votre compte bancaire personnel (il sera automatiquement détecté et affecté à votre trésorerie à votre nom).
                     </p>
                     <p style="font-size: 12px; color: #475569; margin: 0;">
                         📱 <em>Scannez le QR-Code SEPA EPC ci-contre ou dans le PDF joint avec votre application bancaire pour pré-remplir le virement instantanément.</em>
@@ -1274,10 +1274,6 @@ def send_call_for_funds_notification(
             </tr>
         </table>
     </div>
-
-    <p style="font-size: 12px; color: #64748b; margin-top: 24px; border-top: 1px solid #e2e8f0; padding-top: 12px;">
-        💡 <em>Vous pouvez consulter vos factures et gérer vos préférences à tout moment dans vos <a href="{APP_BASE_URL}/settings" style="color: #064e3b; text-decoration: underline;">Paramètres</a>.</em>
-    </p>
     """
 
     action_url = f"{APP_BASE_URL}/admin"
@@ -1289,70 +1285,32 @@ def send_call_for_funds_notification(
         action_label="Consulter l'avis & télécharger le PDF"
     )
 
-    will_send = actually_send and not is_email_disabled() and not is_test_mode()
-    email_entry = record_dispatched_email(
-        trigger_action="call_for_funds",
-        subject=subject,
-        recipients=to_email,
-        html_content=html_body,
-        recipients_names=[prenom],
-        status="sent" if will_send else "simulated"
-    )
-
-    if not will_send:
-        return {"status": "simulated", "id": email_entry["id"], "_email_dispatched": email_entry}
-
-    api_key = os.environ.get("RESEND_API_KEY", RESEND_API_KEY).strip()
-    if not api_key:
-        raise RuntimeError("RESEND_API_KEY manquante pour l'envoi réel de l'appel de fonds.")
-
-    effective_to = to_email
-    effective_subject = subject
-    if MAINTENANCE_EMAIL_REDIRECT_ONLY and not is_henri_test_address(to_email):
-        effective_to = MAINTENANCE_EMAIL_REDIRECT_TO
-        if not effective_subject.startswith("[TEST"):
-            effective_subject = f"[TEST -> {to_email}] {effective_subject}"
-
-    payload: Dict[str, Any] = {
-        "from": DEFAULT_FROM_EMAIL,
-        "to": [effective_to],
-        "subject": effective_subject,
-        "html": html_body,
-    }
+    attachments = None
     if pdf_bytes:
-        payload["attachments"] = [
+        attachments = [
             {
                 "filename": pdf_filename,
                 "content": base64.b64encode(pdf_bytes).decode("ascii"),
             }
         ]
 
-    headers = {
-        "Authorization": f"Bearer {api_key}",
-        "Content-Type": "application/json",
-    }
-    url = "https://api.resend.com/emails"
+    res = _dispatch_and_record(
+        trigger_action="call_for_funds",
+        to_email=to_email,
+        subject=subject,
+        html_body=html_body,
+        recipients_names=[prenom or "Associé"],
+        actually_send=actually_send,
+        attachments=attachments,
+    )
 
-    with httpx.Client(timeout=15.0) as client:
-        resp = client.post(url, headers=headers, json=payload)
-        if resp.status_code == 403 and "domain" in resp.text.lower() and payload["from"] != FALLBACK_FROM_EMAIL:
-            payload["from"] = FALLBACK_FROM_EMAIL
-            resp = client.post(url, headers=headers, json=payload)
+    if isinstance(res, dict) and res.get("status") == "sent":
+        call_obj.notification_sent = True
+        call_obj.notification_sent_at = datetime.utcnow()
+        call_obj.updated_at = datetime.utcnow()
+        db.commit()
+        db.refresh(call_obj)
 
-        if resp.status_code not in (200, 201):
-            logger.error(f"[CALL FOR FUNDS EMAIL ERROR] Resend HTTP {resp.status_code}: {resp.text}")
-            return {"status": "error", "status_code": resp.status_code, "error": resp.text}
-
-        res = resp.json()
-        res["status"] = "sent"
-        res["status_code"] = resp.status_code
-        res["_email_dispatched"] = email_entry
-
-    call_obj.notification_sent = True
-    call_obj.notification_sent_at = datetime.utcnow()
-    call_obj.updated_at = datetime.utcnow()
-    db.commit()
-    db.refresh(call_obj)
     return res
 
 

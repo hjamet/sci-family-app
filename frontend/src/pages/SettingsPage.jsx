@@ -160,7 +160,8 @@ export default function SettingsPage({ currentUser }) {
         const userProfile = await fetchUserProfile();
         if (!isMounted) return;
 
-        const prenomKey = (userProfile?.prenom || (typeof currentUser === 'string' ? currentUser : currentUser?.prenom) || 'henri').toLowerCase();
+        const rawPrenom = userProfile?.prenom || (typeof currentUser === 'string' ? currentUser : currentUser?.prenom) || 'henri';
+        const prenomKey = rawPrenom.normalize('NFD').replace(/[\u0300-\u036f]/g, '').trim().toLowerCase();
         const roleInfo = ASSOCIATE_ROLES[prenomKey] || {
           badge: 'Associé',
           role: userProfile?.role || 'Membre Associé',
@@ -329,9 +330,11 @@ export default function SettingsPage({ currentUser }) {
       }
       if (key === 'notify_mentions') {
         updated.notif_chat_mentions = nextVal;
+        updated.notify_mention_all = nextVal;
       }
       if (key === 'notif_chat_mentions') {
         updated.notify_mentions = nextVal;
+        updated.notify_mention_all = nextVal;
       }
       if (key === 'notif_stay_booked') updated.notify_new_stay = nextVal;
       if (key === 'notify_new_stay') updated.notif_stay_booked = nextVal;

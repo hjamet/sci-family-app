@@ -459,11 +459,17 @@ export default function ToasterPage({ currentUser }) {
   const fileInputRef = useRef(null);
   const latestAttachedFileRef = useRef(null);
 
-  // Dictée vocale fluide
+  // Dictée vocale fluide (continue : pas d'interruption auto sur courte pause, arrêt manuel micro/Envoyer ou 15s de silence total)
   const [isListening, setIsListening] = useState(false);
+  const [liveVoicePreview, setLiveVoicePreview] = useState('');
   const recognitionRef = useRef(null);
-  const voiceTranscriptRef = useRef('');
+  const voiceCommittedRef = useRef('');
+  const voiceSessionTranscriptRef = useRef('');
+  const voiceWantListeningRef = useRef(false);
   const voiceAbortedRef = useRef(false);
+  const voiceSentRef = useRef(false);
+  const voiceSilenceTimerRef = useRef(null);
+  const voiceRestartTimerRef = useRef(null);
   const sendVoiceTriggerRef = useRef(null);
 
   // Édition inline d'un champ déduit 🟢 / saisie libre 🔴 / popovers calendrier & heure / saisies invités
@@ -1131,35 +1137,88 @@ export default function ToasterPage({ currentUser }) {
     sendVoiceTriggerRef.current = sendMessagePayload;
   }, [sendMessagePayload]);
 
-  const handleSendMessage = (e) => {
-    if (e) e.preventDefault();
-    sendMessagePayload({ textOverride: null, clearComposerText: true });
-  };
+  const VOICE_SILENCE_TIMEOUT_MS = 15000;
 
-  const handleToggleSpeech = () => {
-    if (!speechSupported) {
-      setErrorBanner('La reconnaissance vocale n’est pas supportée par ce navigateur.');
-      return;
+  const clearVoiceTimers = useCallback(() => {
+    if (voiceSilenceTimerRef.current) {
+      clearTimeout(voiceSilenceTimerRef.current);
+      voiceSilenceTimerRef.current = null;
     }
-    if (isListening && recognitionRef.current) {
-      voiceAbortedRef.current = false;
-      recognitionRef.current.stop();
-      return;
+    if (voiceRestartTimerRef.current) {
+      clearTimeout(voiceRestartTimerRef.current);
+      voiceRestartTimerRef.current = null;
+    }
+  }, []);
+
+  const getCombinedVoiceTranscript = useCallback(() => {
+    return [voiceCommittedRef.current, voiceSessionTranscriptRef.current]
+      .map((s) => (s || '').trim())
+      .filter(Boolean)
+      .join(' ')
+      .trim();
+  }, []);
+
+  const finishAndSendVoice = useCallback(() => {
+    clearVoiceTimers();
+    voiceWantListeningRef.current = false;
+    voiceAbortedRef.current = false;
+
+    const finalSpoken = getCombinedVoiceTranscript();
+    const typedDraft = (inputText || '').trim();
+    const combinedMessage = [typedDraft, finalSpoken].filter(Boolean).join(' ').trim();
+
+    voiceCommittedRef.current = '';
+    voiceSessionTranscriptRef.current = '';
+    setLiveVoicePreview('');
+    setIsListening(false);
+
+    if (recognitionRef.current) {
+      const rec = recognitionRef.current;
+      recognitionRef.current = null;
+      try {
+        rec.onend = null;
+        rec.onerror = null;
+        rec.onresult = null;
+        rec.stop();
+      } catch (_) {}
     }
 
+    if (!voiceSentRef.current && combinedMessage && sendVoiceTriggerRef.current) {
+      voiceSentRef.current = true;
+      sendVoiceTriggerRef.current({ textOverride: combinedMessage, clearComposerText: true, fromVoice: true });
+    }
+  }, [clearVoiceTimers, getCombinedVoiceTranscript, inputText]);
+
+  const resetVoiceSilenceTimer = useCallback(() => {
+    if (voiceSilenceTimerRef.current) {
+      clearTimeout(voiceSilenceTimerRef.current);
+    }
+    voiceSilenceTimerRef.current = setTimeout(() => {
+      if (voiceWantListeningRef.current) {
+        finishAndSendVoice();
+      }
+    }, VOICE_SILENCE_TIMEOUT_MS);
+  }, [finishAndSendVoice]);
+
+  const startRecognitionSession = useCallback(() => {
     const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
+    if (!SpeechRecognition || !voiceWantListeningRef.current) return;
+
     const recognition = new SpeechRecognition();
     recognition.lang = 'fr-FR';
     recognition.interimResults = true;
-    recognition.continuous = false;
+    recognition.continuous = true;
     recognition.maxAlternatives = 1;
 
-    voiceTranscriptRef.current = '';
-    voiceAbortedRef.current = false;
+    voiceSessionTranscriptRef.current = '';
 
     recognition.onstart = () => {
       setIsListening(true);
       setErrorBanner(null);
+    };
+
+    recognition.onspeechstart = () => {
+      resetVoiceSilenceTimer();
     };
 
     recognition.onresult = (event) => {
@@ -1168,35 +1227,125 @@ export default function ToasterPage({ currentUser }) {
         const seg = event.results[i]?.[0]?.transcript || '';
         if (seg) pieces.push(seg.trim());
       }
-      voiceTranscriptRef.current = pieces.join(' ').trim();
+      const nextSession = pieces.join(' ').trim();
+      if (nextSession !== voiceSessionTranscriptRef.current) {
+        voiceSessionTranscriptRef.current = nextSession;
+        const preview = [voiceCommittedRef.current, nextSession].filter(Boolean).join(' ').trim();
+        setLiveVoicePreview(preview);
+        resetVoiceSilenceTimer();
+      }
     };
 
     recognition.onerror = (event) => {
+      if (event.error === 'not-allowed' || event.error === 'service-not-allowed' || event.error === 'audio-capture') {
+        console.warn('Erreur dictée vocale fatale:', event.error);
+        voiceWantListeningRef.current = false;
+        voiceAbortedRef.current = true;
+        clearVoiceTimers();
+        setIsListening(false);
+        setLiveVoicePreview('');
+        setErrorBanner("Impossible d'accéder au microphone pour la dictée vocale.");
+        return;
+      }
       if (event.error !== 'aborted' && event.error !== 'no-speech') {
         console.warn('Erreur dictée vocale:', event.error);
       }
-      setIsListening(false);
     };
 
     recognition.onend = () => {
-      setIsListening(false);
-      const finalSpoken = voiceTranscriptRef.current.trim();
-      voiceTranscriptRef.current = '';
-      if (!voiceAbortedRef.current && finalSpoken && sendVoiceTriggerRef.current) {
-        sendVoiceTriggerRef.current({ textOverride: finalSpoken, clearComposerText: false, fromVoice: true });
+      if (voiceSessionTranscriptRef.current.trim()) {
+        voiceCommittedRef.current = [voiceCommittedRef.current, voiceSessionTranscriptRef.current.trim()]
+          .filter(Boolean)
+          .join(' ')
+          .trim();
+        voiceSessionTranscriptRef.current = '';
       }
+
+      if (voiceAbortedRef.current) {
+        clearVoiceTimers();
+        setIsListening(false);
+        setLiveVoicePreview('');
+        return;
+      }
+
+      // Redémarrage transparent si le navigateur coupe automatiquement (ex. Chrome/Android après courte pause)
+      if (voiceWantListeningRef.current) {
+        voiceRestartTimerRef.current = setTimeout(() => {
+          if (voiceWantListeningRef.current && !voiceAbortedRef.current) {
+            try {
+              startRecognitionSession();
+            } catch (restartErr) {
+              console.warn('Échec reprise dictée continue:', restartErr);
+              finishAndSendVoice();
+            }
+          }
+        }, 80);
+        return;
+      }
+
+      finishAndSendVoice();
     };
 
     recognitionRef.current = recognition;
     recognition.start();
+  }, [clearVoiceTimers, finishAndSendVoice, resetVoiceSilenceTimer]);
+
+  useEffect(() => {
+    return () => {
+      voiceWantListeningRef.current = false;
+      voiceAbortedRef.current = true;
+      clearVoiceTimers();
+      if (recognitionRef.current) {
+        try {
+          recognitionRef.current.abort();
+        } catch (_) {}
+      }
+    };
+  }, [clearVoiceTimers]);
+
+  const handleSendMessage = (e) => {
+    if (e) e.preventDefault();
+    if (isListening || voiceWantListeningRef.current) {
+      finishAndSendVoice();
+      return;
+    }
+    sendMessagePayload({ textOverride: null, clearComposerText: true });
+  };
+
+  const handleToggleSpeech = () => {
+    if (!speechSupported) {
+      setErrorBanner('La reconnaissance vocale n’est pas supportée par ce navigateur.');
+      return;
+    }
+    if (isListening || voiceWantListeningRef.current) {
+      finishAndSendVoice();
+      return;
+    }
+
+    voiceCommittedRef.current = '';
+    voiceSessionTranscriptRef.current = '';
+    voiceAbortedRef.current = false;
+    voiceSentRef.current = false;
+    voiceWantListeningRef.current = true;
+    setLiveVoicePreview('');
+    setIsListening(true);
+    resetVoiceSilenceTimer();
+    startRecognitionSession();
   };
 
   const handleCancelSpeech = () => {
+    clearVoiceTimers();
+    voiceWantListeningRef.current = false;
     voiceAbortedRef.current = true;
-    voiceTranscriptRef.current = '';
+    voiceCommittedRef.current = '';
+    voiceSessionTranscriptRef.current = '';
+    setLiveVoicePreview('');
     if (recognitionRef.current) {
+      const rec = recognitionRef.current;
+      recognitionRef.current = null;
       try {
-        recognitionRef.current.abort();
+        rec.onend = null;
+        rec.abort();
       } catch (_) {}
     }
     setIsListening(false);
@@ -3774,7 +3923,7 @@ export default function ToasterPage({ currentUser }) {
                     <span className="w-1 h-2.5 rounded-full bg-emerald-500 animate-pulse [animation-delay:300ms]" />
                   </div>
                   <span className="text-xs sm:text-sm font-medium text-emerald-900 truncate">
-                    Écoute en cours… parlez librement, envoi direct dès la fin
+                    {liveVoicePreview || 'Écoute continue… cliquez sur le micro ou Envoyer pour expédier'}
                   </span>
                 </div>
                 <button
@@ -3844,10 +3993,10 @@ export default function ToasterPage({ currentUser }) {
             <button
               id="btn-toaster-send"
               type="submit"
-              disabled={isSending || isListening || (!inputText.trim() && !attachment)}
+              disabled={isSending || (!isListening && !inputText.trim() && !attachment)}
               className="w-10 h-10 rounded-full bg-primary hover:bg-forest-deep text-white inline-flex items-center justify-center shrink-0 transition-all duration-200 cursor-pointer shadow-xs disabled:opacity-35 disabled:cursor-not-allowed active:scale-95"
-              title="Envoyer"
-              aria-label="Envoyer"
+              title={isListening ? 'Arrêter la dictée et envoyer' : 'Envoyer'}
+              aria-label={isListening ? 'Arrêter la dictée et envoyer' : 'Envoyer'}
             >
               <span className={`material-symbols-outlined text-[20px] leading-none ${isSending ? 'animate-spin' : ''}`}>
                 {isSending ? 'progress_activity' : 'arrow_upward'}

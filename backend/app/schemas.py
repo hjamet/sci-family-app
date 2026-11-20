@@ -51,11 +51,13 @@ class MemberBase(BaseModel):
     notif_chat_mentions: Optional[bool] = None
     notif_task_chat_activity: bool = False
     notif_vote_chat_activity: bool = False
+    notify_task_creation: bool = False
     notify_vote_creation: bool = False
     notify_vote_arbitration: bool = False
     notify_mention_all: bool = True
     notif_new_invoices: bool = True
     notif_calls_for_funds: Optional[bool] = None
+    notif_invoice_approval_request: bool = False
     monthly_contribution: float = 50.0
 
 class MemberCreate(MemberBase):
@@ -78,7 +80,7 @@ class MemberUpdate(BaseModel):
     notif_chat_mentions: Optional[bool] = None
     notif_task_chat_activity: Optional[bool] = None
     notif_vote_chat_activity: Optional[bool] = None
-    notify_task_creation: Optional[bool] = False
+    notify_task_creation: Optional[bool] = None
     notify_vote_creation: Optional[bool] = None
     notify_vote_arbitration: Optional[bool] = None
     notify_mention_all: Optional[bool] = None

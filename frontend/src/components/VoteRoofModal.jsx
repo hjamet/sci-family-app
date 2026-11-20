@@ -616,10 +616,10 @@ function VoteRoofModalInner({
     return [];
   });
 
-  const loadProjectComments = async () => {
+  const loadProjectComments = async (silent = true) => {
     try {
       if (activeProject && activeProject.id) {
-        const commentsData = await fetchProjectComments(activeProject.id);
+        const commentsData = await fetchProjectComments(activeProject.id, { silentError: silent });
         if (Array.isArray(commentsData)) {
           setMessages(commentsData.map((c, idx) => ({
             id: c.id || idx + 1,
@@ -633,7 +633,9 @@ function VoteRoofModalInner({
         }
       }
     } catch (err) {
-      console.error("Error fetching project comments in VoteRoofModal:", err);
+      if (!silent) {
+        console.error("Error fetching project comments in VoteRoofModal:", err);
+      }
     }
   };
 
@@ -652,12 +654,16 @@ function VoteRoofModalInner({
   }, [activeProject.comments]);
 
   useEffect(() => {
-    if (activeProject && activeProject.id) {
-      loadProjectComments();
-      const interval = setInterval(loadProjectComments, 4000);
+    if (isOpen && activeProject && activeProject.id) {
+      loadProjectComments(true);
+      const interval = setInterval(() => {
+        if (typeof document !== 'undefined' && document.visibilityState === 'hidden') return;
+        if (typeof navigator !== 'undefined' && navigator.onLine === false) return;
+        loadProjectComments(true);
+      }, 4000);
       return () => clearInterval(interval);
     }
-  }, [activeProject?.id]);
+  }, [isOpen, activeProject?.id]);
 
   // Toast de notification
   const [toastMessage, setToastMessage] = useState(null);

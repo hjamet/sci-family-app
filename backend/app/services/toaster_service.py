@@ -2136,11 +2136,17 @@ def execute_toaster_action(
             for m_other in all_members:
                 if m_other.id == member.id:
                     continue
-                if _comment_mentions_member(content_val, m_other):
+                is_direct, is_all = _comment_mentions_member(content_val, m_other)
+                if is_direct or is_all:
+                    notif_title = (
+                        f"{member_display} a mentionné tous les associés sur « {target_proj.title} »"
+                        if is_all and not is_direct
+                        else f"{member_display} vous a mentionné sur « {target_proj.title} »"
+                    )
                     prod_db.add(
                         Notification(
                             member_id=m_other.id,
-                            title=f"{member_display} vous a mentionné sur « {target_proj.title} »",
+                            title=notif_title,
                             description=content_val[:220],
                             type="mention",
                             link_path=f"/taches?project_id={target_proj.id}",
@@ -2171,11 +2177,17 @@ def execute_toaster_action(
             for m_other in all_members:
                 if m_other.id == member.id:
                     continue
-                if _comment_mentions_member(content_val, m_other):
+                is_direct, is_all = _comment_mentions_member(content_val, m_other)
+                if is_direct or is_all:
+                    notif_title = (
+                        f"{member_display} a mentionné tous les associés sur « {target_task.title} »"
+                        if is_all and not is_direct
+                        else f"{member_display} vous a mentionné sur « {target_task.title} »"
+                    )
                     prod_db.add(
                         Notification(
                             member_id=m_other.id,
-                            title=f"{member_display} vous a mentionné sur « {target_task.title} »",
+                            title=notif_title,
                             description=content_val[:220],
                             type="mention",
                             link_path=f"/taches?task_id={target_task.id}",

@@ -1,7 +1,10 @@
 import os
+import re
 import json
+import html as html_lib
 import logging
 import base64
+import unicodedata
 from typing import List, Optional, Union, Set, Dict, Any
 import urllib.request
 import urllib.error
@@ -82,15 +85,18 @@ def get_circuit_breaker_response() -> dict:
     return {"status": "disabled", "id": "mock_emergency_off"}
 
 # PARE-FEU DE PRODUCTION : LISTE BLANCHE DES 7 ASSOCIÉS OFFICIELS DE LA SCI
-# Seules les adresses e-mails officielles des 7 associés de la SCI Hellenvilliers sont autorisées.
-# Toute adresse externe ou non autorisée (ex: henri.jamet.ch@gmail.com, spam) est STRICTEMENT INTERCEPTÉE.
+# Adresses officielles synchronisées avec la base PostgreSQL de production (plus anciens alias historiques).
 ALLOWED_RECIPIENTS: Set[str] = {
     "hellenvillierssci@gmail.com",
-    "hortense_jamet@yahoo.fr",
-    "marguerite.jamet@orange.fr",
     "marguerite_jamet@yahoo.fr",
-    "eugenie_jamet@yahoo.fr",
+    "hortense_jamet@yahoo.fr",
     "josephine_jamet@yahoo.fr",
+    "eejamet@gmail.com",
+    "frdjamet@gmail.com",
+    "elizabeth_jamet@yahoo.fr",
+    # Anciens alias historiques conservés par tolérance
+    "marguerite.jamet@orange.fr",
+    "eugenie_jamet@yahoo.fr",
     "elisabeth.jamet@yahoo.fr",
     "frederic_jamet@orange.fr",
 }
@@ -103,13 +109,103 @@ ALLOWED_TEST_RECIPIENTS: Set[str] = set(ALLOWED_RECIPIENTS)
 
 DEFAULT_MEMBER_EMAILS: List[str] = [
     "hellenvillierssci@gmail.com",
+    "marguerite_jamet@yahoo.fr",
     "hortense_jamet@yahoo.fr",
-    "marguerite.jamet@orange.fr",
-    "eugenie_jamet@yahoo.fr",
     "josephine_jamet@yahoo.fr",
-    "elisabeth.jamet@yahoo.fr",
-    "frederic_jamet@orange.fr",
+    "eejamet@gmail.com",
+    "frdjamet@gmail.com",
+    "elizabeth_jamet@yahoo.fr",
 ]
+
+
+# ==============================================================================
+# HELPERS LINGUISTIQUES & FORMATAGE FRANÇAIS (Accords, élisions, dates, montants)
+# ==============================================================================
+
+FEMININE_MEMBER_FIRSTNAMES: Set[str] = {
+    "marguerite",
+    "hortense",
+    "josephine",
+    "eugenie",
+    "elisabeth",
+    "elizabeth",
+    "maman",
+}
+
+
+def _norm_first_token(name: Optional[str]) -> str:
+    if not name:
+        return ""
+    nfkd = unicodedata.normalize("NFKD", str(name))
+    ascii_str = nfkd.encode("ASCII", "ignore").decode("utf-8").strip().lower()
+    return ascii_str.split()[0] if ascii_str else ""
+
+
+def is_feminine_member(name: Optional[str]) -> bool:
+    return _norm_first_token(name) in FEMININE_MEMBER_FIRSTNAMES
+
+
+def accord_fr(name: Optional[str], masc: str, fem: str, neutral: Optional[str] = None) -> str:
+    """Accorde un terme français selon le prénom du destinataire."""
+    if not name or not str(name).strip():
+        return neutral if neutral is not None else masc
+    return fem if is_feminine_member(name) else masc
+
+
+def escape_html_text(text: Optional[str], preserve_newlines: bool = False) -> str:
+    escaped = html_lib.escape(str(text or ""))
+    if preserve_newlines:
+        escaped = escaped.replace("\r\n", "\n").replace("\n", "<br>")
+    return escaped
+
+
+def format_de_mois(period_label: Optional[str]) -> str:
+    """Formate 'Octobre 2026' -> \"d'octobre 2026\", 'Novembre 2026' -> 'de novembre 2026'."""
+    clean = str(period_label or "ce mois").strip()
+    if not clean:
+        return "de ce mois"
+    lowered = clean[0].lower() + clean[1:]
+    first_norm = unicodedata.normalize("NFKD", lowered[0]).encode("ASCII", "ignore").decode("utf-8").lower()
+    if first_norm in ("a", "e", "i", "o", "u", "y", "h"):
+        return f"d'{lowered}"
+    return f"de {lowered}"
+
+
+def format_a_demeure(property_name: Optional[str]) -> str:
+    """Formate la préposition de lieu correcte ('au Presbytère', 'à Rosings', \"au Domaine d'Hellenvilliers\")."""
+    clean = str(property_name or "Domaine d'Hellenvilliers").strip()
+    low = clean.lower()
+    if "presbyt" in low:
+        return "au Presbytère"
+    if "rosing" in low:
+        return "à Rosings"
+    if "domaine" in low:
+        return "au Domaine d'Hellenvilliers"
+    if low.startswith("le "):
+        return f"au {clean[3:]}"
+    if low.startswith("les "):
+        return f"aux {clean[4:]}"
+    if low.startswith("la ") or low.startswith("l'"):
+        return f"à {clean}"
+    return f"à {clean}"
+
+
+def format_date_fr(date_val: Optional[str]) -> str:
+    """Convertit une date ISO YYYY-MM-DD (ou préfixe ISO) en DD/MM/YYYY."""
+    raw = str(date_val or "").strip()
+    m = re.match(r"^(\d{4})-(\d{2})-(\d{2})", raw)
+    if m:
+        return f"{m.group(3)}/{m.group(2)}/{m.group(1)}"
+    return raw
+
+
+def format_eur_fr(amount: Any) -> str:
+    """Formate un montant au format français : 1 250,50 €."""
+    try:
+        val = float(amount or 0.0)
+    except (ValueError, TypeError):
+        val = 0.0
+    return f"{val:,.2f}".replace(",", " ").replace(".", ",") + " €"
 
 # ==============================================================================
 # REGISTRE D'EMAILS RÉCENTS DISPATCHÉS / SIMULÉS (POUR NOTIFICATIONS & PREVIEWS)
@@ -122,9 +218,10 @@ def record_dispatched_email(
     recipients: Union[str, List[str]],
     html_content: str,
     recipients_names: Optional[List[str]] = None,
-    status: str = "simulated"
+    status: str = "simulated",
+    store_in_recent: bool = True
 ) -> Dict[str, Any]:
-    """Enregistre un email dans le registre en mémoire RECENT_DISPATCHED_EMAILS (max 20)."""
+    """Construit l'entrée de prévisualisation et, si store_in_recent=True, l'enregistre dans RECENT_DISPATCHED_EMAILS (max 20)."""
     global RECENT_DISPATCHED_EMAILS
     import uuid
     from datetime import datetime
@@ -146,10 +243,56 @@ def record_dispatched_email(
         "html_content": html_content,
         "status": status
     }
-    RECENT_DISPATCHED_EMAILS.insert(0, email_entry)
-    if len(RECENT_DISPATCHED_EMAILS) > 20:
-        RECENT_DISPATCHED_EMAILS = RECENT_DISPATCHED_EMAILS[:20]
+    if store_in_recent:
+        RECENT_DISPATCHED_EMAILS.insert(0, email_entry)
+        if len(RECENT_DISPATCHED_EMAILS) > 20:
+            RECENT_DISPATCHED_EMAILS = RECENT_DISPATCHED_EMAILS[:20]
     return email_entry
+
+
+def _dispatch_and_record(
+    trigger_action: str,
+    to_email: Union[str, List[str]],
+    subject: str,
+    html_body: str,
+    recipients_names: Optional[List[str]] = None,
+    actually_send: bool = True,
+    attachments: Optional[List[Dict[str, Any]]] = None
+) -> dict:
+    """Envoie l'e-mail via send_email() si actif, puis consigne son statut RÉEL."""
+    should_send = actually_send and not is_email_disabled() and not is_test_mode()
+    if should_send:
+        res = send_email(
+            to_email=to_email,
+            subject=subject,
+            html_content=html_body,
+            attachments=attachments
+        )
+        real_status = res.get("status", "error") if isinstance(res, dict) else "error"
+        email_entry = record_dispatched_email(
+            trigger_action=trigger_action,
+            subject=subject,
+            recipients=to_email,
+            html_content=html_body,
+            recipients_names=recipients_names,
+            status=real_status,
+            store_in_recent=True
+        )
+    else:
+        email_entry = record_dispatched_email(
+            trigger_action=trigger_action,
+            subject=subject,
+            recipients=to_email,
+            html_content=html_body,
+            recipients_names=recipients_names,
+            status="simulated",
+            store_in_recent=is_test_mode()
+        )
+        res = {"status": "simulated", "id": email_entry["id"]}
+
+    if isinstance(res, dict):
+        res["_email_dispatched"] = email_entry
+    return res
 
 def check_firewall(to_email: Union[str, List[str]]) -> Optional[dict]:
     """
@@ -199,14 +342,17 @@ def render_email_layout(title: str, preheader: str, content_html: str, action_ur
     Forest green accents (#1e3a2f), warm ivory background (#fcfbf9), gold highlights (#b89047),
     and crisp readable typography.
     """
+    safe_title = escape_html_text(title)
+    safe_preheader = escape_html_text(preheader)
     cta_html = ""
     if action_url and action_label:
+        safe_action_label = escape_html_text(action_label)
         cta_html = f"""
         <table role="presentation" border="0" cellpadding="0" cellspacing="0" style="margin: 28px 0 10px 0;">
             <tr>
                 <td align="center" style="border-radius: 6px; background-color: #1e3a2f;">
                     <a href="{action_url}" target="_blank" style="display: inline-block; padding: 14px 28px; font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif; font-size: 15px; font-weight: 600; color: #ffffff; text-decoration: none; border-radius: 6px; background: linear-gradient(135deg, #1e3a2f 0%, #2d5a47 100%); border: 1px solid #162c23; letter-spacing: 0.3px;">
-                        {action_label} &rarr;
+                        {safe_action_label} &rarr;
                     </a>
                 </td>
             </tr>
@@ -218,11 +364,11 @@ def render_email_layout(title: str, preheader: str, content_html: str, action_ur
 <head>
     <meta charset="utf-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>{title}</title>
+    <title>{safe_title}</title>
 </head>
 <body style="margin: 0; padding: 0; background-color: #f7f6f2; font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif; color: #1f2937; line-height: 1.6;">
     <div style="display: none; font-size: 1px; color: #f7f6f2; line-height: 1px; max-height: 0px; max-width: 0px; opacity: 0; overflow: hidden;">
-        {preheader}
+        {safe_preheader}
     </div>
     <table role="presentation" border="0" cellpadding="0" cellspacing="0" width="100%" style="background-color: #f7f6f2; padding: 24px 12px;">
         <tr>
@@ -243,7 +389,7 @@ def render_email_layout(title: str, preheader: str, content_html: str, action_ur
                     <tr>
                         <td style="padding: 32px 32px 24px 32px;">
                             <h1 style="font-family: Georgia, 'Times New Roman', serif; font-size: 20px; color: #1e3a2f; margin: 0 0 16px 0; font-weight: bold;">
-                                {title}
+                                {safe_title}
                             </h1>
                             <div style="font-size: 15px; color: #374151; line-height: 1.65;">
                                 {content_html}
@@ -255,11 +401,11 @@ def render_email_layout(title: str, preheader: str, content_html: str, action_ur
                     <tr>
                         <td style="background-color: #faf9f6; padding: 20px 32px; border-top: 1px solid #edebe4; font-size: 12px; color: #6b7280; text-align: center; line-height: 1.5;">
                             <div style="font-weight: 600; color: #1e3a2f; margin-bottom: 4px;">
-                                SCI Familiale Hellenvilliers • Rosings & Le Presbytère
+                                SCI Familiale Hellenvilliers &bull; Rosings &amp; Le Presbyt&egrave;re
                             </div>
                             <div>
-                                Notification automatique transmise aux associés. Vos préférences de notifications sont réglables sur votre
-                                <a href="{APP_BASE_URL}/settings" style="color: #2d5a47; text-decoration: underline; font-weight: 500;">espace profil</a>.
+                                Notification automatique transmise aux associ&eacute;s. Vos pr&eacute;f&eacute;rences de notifications sont r&eacute;glables dans vos
+                                <a href="{APP_BASE_URL}/parametres" style="color: #2d5a47; text-decoration: underline; font-weight: 500;">Param&egrave;tres</a>.
                             </div>
                         </td>
                     </tr>
@@ -280,7 +426,8 @@ def send_email(
     to_email: Union[str, List[str]],
     subject: str,
     html_content: str,
-    from_email: Optional[str] = None
+    from_email: Optional[str] = None,
+    attachments: Optional[List[Dict[str, Any]]] = None
 ) -> dict:
     """
     Sends an email using Resend HTTP API client.
@@ -383,23 +530,27 @@ def send_email(
         "Authorization": f"Bearer {api_key}",
         "Content-Type": "application/json"
     }
-    payload = {
+    payload: Dict[str, Any] = {
         "from": effective_from,
         "to": final_recipients,
         "subject": subject,
         "html": html_content
     }
+    if attachments:
+        payload["attachments"] = attachments
 
     try:
         if httpx is not None:
-            with httpx.Client(timeout=10.0) as client:
+            with httpx.Client(timeout=15.0) as client:
                 resp = client.post(url, headers=headers, json=payload)
-                
-                # If domain verification error occurred (e.g. 403 on unverified domain), fallback to onboarding@resend.dev
-                if resp.status_code == 403 and "domain" in resp.text.lower() and effective_from != FALLBACK_FROM_EMAIL:
-                    logger.warning(f"[EMAIL SERVICE] Sender '{effective_from}' returned 403 domain error. Retrying with fallback '{FALLBACK_FROM_EMAIL}'.")
-                    payload["from"] = FALLBACK_FROM_EMAIL
-                    resp = client.post(url, headers=headers, json=payload)
+
+                # If domain verification error occurred (403 on unverified domain), fallback cleanly
+                if resp.status_code == 403 and "domain" in resp.text.lower():
+                    fallback_sender = FALLBACK_FROM_EMAIL if effective_from != FALLBACK_FROM_EMAIL else SANDBOX_FROM_EMAIL
+                    if fallback_sender != effective_from:
+                        logger.warning(f"[EMAIL SERVICE] Sender '{effective_from}' returned 403 domain error. Retrying with fallback '{fallback_sender}'.")
+                        payload["from"] = fallback_sender
+                        resp = client.post(url, headers=headers, json=payload)
 
                 if resp.status_code in (200, 201):
                     result = resp.json()
@@ -453,10 +604,7 @@ def send_task_assigned_email(
     """
     Template 1: TÂCHE ASSIGNÉE
     Notifies a member that an estate task has been assigned to them.
-    Champs réels conservés : Titre, Catégorie/Domaine, Localisation, Priorité, Charge (points), Assigné à, Description.
-    Zéro champ fictif (aucune date limite).
     """
-    # Pare-feu et coupe-circuit hermétiques gérés de façon centrale dans send_email
     if is_email_disabled():
         return get_circuit_breaker_response()
 
@@ -470,55 +618,77 @@ def send_task_assigned_email(
     p_key = (priority or "normale").strip().lower()
     bg_p, text_p, border_p = priority_colors.get(p_key, ("#dbeafe", "#1e40af", "#2563eb"))
 
-    greeting = f"Bonjour {assignee_name}," if assignee_name else "Bonjour,"
-    action_url = f"{APP_BASE_URL}/#tasks"
+    safe_assignee = escape_html_text(assignee_name) if assignee_name else ""
+    safe_title = escape_html_text(task_title)
+    safe_domain = escape_html_text(domain or "SCI Familiale")
+    safe_location = escape_html_text(location or "Domaine d'Hellenvilliers")
+    safe_priority = escape_html_text(priority or "Normale")
+    safe_charge = escape_html_text(charge or "Non spécifiée")
+    safe_description = escape_html_text(description, preserve_newlines=True) if description else ""
+
+    greeting = f"Bonjour {safe_assignee}," if safe_assignee else "Bonjour,"
+    action_url = f"{APP_BASE_URL}/taches?task_id={task_id}" if task_id else f"{APP_BASE_URL}/taches"
+
+    location_row = ""
+    if safe_location and safe_location.lower() != safe_domain.lower():
+        location_row = f"""
+            <tr>
+                <td style="color: #6b7280;">📍 Lieu :</td>
+                <td style="font-weight: 600; color: #1f2937;">{safe_location}</td>
+            </tr>"""
+
+    deadline_row = ""
+    if deadline and str(deadline).strip():
+        deadline_row = f"""
+            <tr>
+                <td style="color: #6b7280;">📅 Échéance :</td>
+                <td style="font-weight: 600; color: #1f2937;">{escape_html_text(format_date_fr(deadline))}</td>
+            </tr>"""
 
     content_html = f"""
     <p>{greeting}</p>
     <p>Une nouvelle tâche vous a été assignée sur le Domaine d'Hellenvilliers :</p>
-    
+
     <div style="background-color: #f9f8f6; border: 1px solid #e5e3dc; border-left: 4px solid #1e3a2f; border-radius: 6px; padding: 18px; margin: 20px 0;">
         <div style="font-size: 17px; font-weight: bold; color: #1e3a2f; margin-bottom: 12px;">
-            📌 {task_title}
+            📌 {safe_title}
         </div>
         <table role="presentation" border="0" cellpadding="0" cellspacing="0" width="100%" style="font-size: 14px; line-height: 1.8;">
             <tr>
-                <td style="color: #6b7280; width: 140px;">👤 Assigné à :</td>
-                <td style="font-weight: 600; color: #1f2937;">{assignee_name or 'Non spécifié'}</td>
+                <td style="color: #6b7280; width: 150px;">👤 Assignée à :</td>
+                <td style="font-weight: 600; color: #1f2937;">{safe_assignee or 'Non spécifié'}</td>
             </tr>
             <tr>
-                <td style="color: #6b7280;">🏛️ Domaine / Réf :</td>
-                <td style="font-weight: 600; color: #1f2937;">{domain or 'SCI Familiale'}</td>
+                <td style="color: #6b7280;">🏛️ Domaine / Catégorie :</td>
+                <td style="font-weight: 600; color: #1f2937;">{safe_domain}</td>
             </tr>
-            <tr>
-                <td style="color: #6b7280;">📍 Lieu :</td>
-                <td style="font-weight: 600; color: #1f2937;">{location or 'Hellenvilliers'}</td>
-            </tr>
+            {location_row}
             <tr>
                 <td style="color: #6b7280;">⚡ Priorité :</td>
                 <td>
                     <span style="display: inline-block; background-color: {bg_p}; color: {text_p}; border: 1px solid {border_p}; padding: 2px 10px; border-radius: 9999px; font-size: 12px; font-weight: bold; text-transform: uppercase;">
-                        {priority}
+                        {safe_priority}
                     </span>
                 </td>
             </tr>
             <tr>
-                <td style="color: #6b7280;">⏱️ Charge (points) :</td>
-                <td style="font-weight: 600; color: #1f2937;">{charge or 'Non spécifiée'}</td>
+                <td style="color: #6b7280;">⏱️ Charge estimée :</td>
+                <td style="font-weight: 600; color: #1f2937;">{safe_charge}</td>
             </tr>
+            {deadline_row}
         </table>
-        {f'<div style="margin-top: 14px; padding-top: 12px; border-top: 1px dashed #d1cfc7; color: #4b5563; font-size: 13.5px;"><strong>Description :</strong> {description}</div>' if description else ''}
+        {f'<div style="margin-top: 14px; padding-top: 12px; border-top: 1px dashed #d1cfc7; color: #4b5563; font-size: 13.5px;"><strong>Description :</strong><br><div style="margin-top: 6px;">{safe_description}</div></div>' if safe_description else ''}
     </div>
 
     <p style="color: #4b5563; font-size: 14px;">
-        Vous pouvez consulter les détails, documents attachés, checklist et échanger avec les autres associés directement depuis votre espace :
+        Vous pouvez consulter les détails, les documents joints, la checklist et échanger avec les autres associés directement depuis votre espace :
     </p>
     """
 
     subject = f"[SCI Hellenvilliers] 📌 Tâche assignée : {task_title}"
     preheader = f"Une nouvelle mission vous a été confiée : {task_title} ({priority})"
     html_body = render_email_layout(
-        title="Nouvelle Tâche Assignée",
+        title="Nouvelle tâche assignée",
         preheader=preheader,
         content_html=content_html,
         action_url=action_url,
@@ -526,23 +696,14 @@ def send_task_assigned_email(
     )
 
     names = [assignee_name] if assignee_name else []
-    email_entry = record_dispatched_email(
+    return _dispatch_and_record(
         trigger_action="task_assigned",
+        to_email=to_email,
         subject=subject,
-        recipients=to_email,
-        html_content=html_body,
+        html_body=html_body,
         recipients_names=names,
-        status="sent" if (actually_send and not is_email_disabled() and not is_test_mode()) else "simulated"
+        actually_send=actually_send
     )
-
-    if actually_send and not is_email_disabled() and not is_test_mode():
-        res = send_email(to_email=to_email, subject=subject, html_content=html_body)
-    else:
-        res = {"status": "simulated", "id": email_entry["id"]}
-
-    if isinstance(res, dict):
-        res["_email_dispatched"] = email_entry
-    return res
 
 
 def send_task_creation_pending_email(
@@ -559,7 +720,7 @@ def send_task_creation_pending_email(
     actually_send: bool = True
 ) -> dict:
     """
-    Template: TÂCHE EN ATTENTE DE CRÉATION (Annotation 16 & Annotation 2)
+    Template: TÂCHE EN ATTENTE DE CRÉATION
     Notifies a coordinator that a new task proposal has been submitted and is pending creation/arbitration.
     """
     priority_colors = {
@@ -572,55 +733,70 @@ def send_task_creation_pending_email(
     p_key = (priority or "normale").strip().lower()
     bg_p, text_p, border_p = priority_colors.get(p_key, ("#dbeafe", "#1e40af", "#2563eb"))
 
-    greeting = f"Bonjour {coordinator_name}," if coordinator_name else "Bonjour,"
-    action_url = f"{APP_BASE_URL}/#tasks"
+    safe_coord = escape_html_text(coordinator_name) if coordinator_name else ""
+    safe_title = escape_html_text(task_title)
+    safe_creator = escape_html_text(created_by or "un associé")
+    safe_domain = escape_html_text(domain or "SCI Familiale")
+    safe_location = escape_html_text(location or "Domaine d'Hellenvilliers")
+    safe_priority = escape_html_text(priority or "Normale")
+    safe_complexity = escape_html_text(complexity or "Modérée")
+    safe_description = escape_html_text(description, preserve_newlines=True) if description else ""
+    coord_role_label = accord_fr(coordinator_name, "coordinateur", "coordinatrice", "membre de la coordination")
+
+    greeting = f"Bonjour {safe_coord}," if safe_coord else "Bonjour,"
+    action_url = f"{APP_BASE_URL}/taches?task_id={task_id}" if task_id else f"{APP_BASE_URL}/taches"
+
+    location_row = ""
+    if safe_location and safe_location.lower() != safe_domain.lower():
+        location_row = f"""
+            <tr>
+                <td style="color: #6b7280;">📍 Lieu :</td>
+                <td style="font-weight: 600; color: #1f2937;">{safe_location}</td>
+            </tr>"""
 
     content_html = f"""
     <p>{greeting}</p>
-    <p>Une nouvelle tâche a été soumise par <strong>{created_by or 'un associé'}</strong> et est actuellement <strong>en attente de création</strong> et d'arbitrage par la coordination :</p>
-    
+    <p>Une nouvelle tâche a été soumise par <strong>{safe_creator}</strong> et est actuellement <strong>en attente de validation</strong> par la coordination :</p>
+
     <div style="background-color: #fefce8; border: 1px solid #fef08a; border-left: 4px solid #ca8a04; border-radius: 6px; padding: 18px; margin: 20px 0;">
         <div style="font-size: 17px; font-weight: bold; color: #854d0e; margin-bottom: 12px;">
-            ⏳ {task_title}
+            ⏳ {safe_title}
         </div>
         <table role="presentation" border="0" cellpadding="0" cellspacing="0" width="100%" style="font-size: 14px; line-height: 1.8;">
             <tr>
-                <td style="color: #6b7280; width: 140px;">👤 Proposée par :</td>
-                <td style="font-weight: 600; color: #1f2937;">{created_by or 'Non spécifié'}</td>
+                <td style="color: #6b7280; width: 150px;">👤 Proposée par :</td>
+                <td style="font-weight: 600; color: #1f2937;">{safe_creator}</td>
             </tr>
             <tr>
-                <td style="color: #6b7280;">🏛️ Domaine / Réf :</td>
-                <td style="font-weight: 600; color: #1f2937;">{domain or 'SCI Familiale'}</td>
+                <td style="color: #6b7280;">🏛️ Domaine / Catégorie :</td>
+                <td style="font-weight: 600; color: #1f2937;">{safe_domain}</td>
             </tr>
-            <tr>
-                <td style="color: #6b7280;">📍 Lieu :</td>
-                <td style="font-weight: 600; color: #1f2937;">{location or 'Hellenvilliers'}</td>
-            </tr>
+            {location_row}
             <tr>
                 <td style="color: #6b7280;">⚡ Priorité :</td>
                 <td>
                     <span style="display: inline-block; background-color: {bg_p}; color: {text_p}; border: 1px solid {border_p}; padding: 2px 10px; border-radius: 9999px; font-size: 12px; font-weight: bold; text-transform: uppercase;">
-                        {priority}
+                        {safe_priority}
                     </span>
                 </td>
             </tr>
             <tr>
-                <td style="color: #6b7280;">⏱️ Charge de la tâche :</td>
-                <td style="font-weight: 600; color: #1f2937;">{complexity or 'Modérée'}</td>
+                <td style="color: #6b7280;">⏱️ Charge estimée :</td>
+                <td style="font-weight: 600; color: #1f2937;">{safe_complexity}</td>
             </tr>
         </table>
-        {f'<div style="margin-top: 14px; padding-top: 12px; border-top: 1px dashed #e2e8f0; color: #4b5563; font-size: 13.5px;"><strong>Description :</strong> {description}</div>' if description else ''}
+        {f'<div style="margin-top: 14px; padding-top: 12px; border-top: 1px dashed #e2e8f0; color: #4b5563; font-size: 13.5px;"><strong>Description :</strong><br><div style="margin-top: 6px;">{safe_description}</div></div>' if safe_description else ''}
     </div>
 
     <p style="color: #4b5563; font-size: 14px;">
-        Vous pouvez examiner la proposition, lui assigner un membre responsable et suivre sa mise en œuvre :
+        En tant que {coord_role_label}, vous pouvez examiner la proposition, désigner un responsable et lancer sa mise en œuvre :
     </p>
     """
 
-    subject = f"[SCI Hellenvilliers] ⏳ Nouvelle tâche en attente de création : {task_title}"
-    preheader = f"Une nouvelle proposition de mission a été soumise : {task_title} ({priority})"
+    subject = f"[SCI Hellenvilliers] ⏳ Nouvelle tâche en attente de validation : {task_title}"
+    preheader = f"Nouvelle proposition de tâche soumise par {created_by or 'un associé'} : {task_title}"
     html_body = render_email_layout(
-        title="Nouvelle Tâche en Attente de Création",
+        title="Nouvelle tâche en attente de validation",
         preheader=preheader,
         content_html=content_html,
         action_url=action_url,
@@ -628,23 +804,76 @@ def send_task_creation_pending_email(
     )
 
     names = [coordinator_name] if coordinator_name else []
-    email_entry = record_dispatched_email(
+    return _dispatch_and_record(
         trigger_action="task_creation_pending",
+        to_email=to_email,
         subject=subject,
-        recipients=to_email,
-        html_content=html_body,
+        html_body=html_body,
         recipients_names=names,
-        status="sent" if (actually_send and not is_email_disabled() and not is_test_mode()) else "simulated"
+        actually_send=actually_send
     )
 
-    if actually_send and not is_email_disabled() and not is_test_mode():
-        res = send_email(to_email=to_email, subject=subject, html_content=html_body)
-    else:
-        res = {"status": "simulated", "id": email_entry["id"]}
 
-    if isinstance(res, dict):
-        res["_email_dispatched"] = email_entry
-    return res
+def send_task_completion_pending_email(
+    to_email: Union[str, List[str]],
+    task_title: str,
+    submitted_by: str,
+    coordinator_name: Optional[str] = None,
+    completion_notes: Optional[str] = None,
+    task_id: Optional[Union[int, str]] = None,
+    actually_send: bool = True
+) -> dict:
+    """
+    Template: TÂCHE SOUMISE POUR VALIDATION DE CLÔTURE
+    Notifies coordinators when an associate submits a task as completed for validation.
+    """
+    safe_coord = escape_html_text(coordinator_name) if coordinator_name else ""
+    safe_title = escape_html_text(task_title)
+    safe_submitter = escape_html_text(submitted_by or "un associé")
+    safe_notes = escape_html_text(completion_notes, preserve_newlines=True) if completion_notes else ""
+    coord_role_label = accord_fr(coordinator_name, "coordinateur", "coordinatrice", "membre de la coordination")
+
+    greeting = f"Bonjour {safe_coord}," if safe_coord else "Bonjour,"
+    action_url = f"{APP_BASE_URL}/taches?task_id={task_id}" if task_id else f"{APP_BASE_URL}/taches"
+
+    content_html = f"""
+    <p>{greeting}</p>
+    <p><strong>{safe_submitter}</strong> a déclaré la tâche suivante comme terminée et demande sa <strong>validation finale</strong> par la coordination :</p>
+
+    <div style="background-color: #f0fdf4; border: 1px solid #bbf7d0; border-left: 4px solid #16a34a; border-radius: 6px; padding: 18px; margin: 20px 0;">
+        <div style="font-size: 17px; font-weight: bold; color: #166534; margin-bottom: 10px;">
+            ✅ {safe_title}
+        </div>
+        <div style="font-size: 14px; color: #374151;">
+            <strong>Soumise pour clôture par :</strong> {safe_submitter}
+        </div>
+        {f'<div style="margin-top: 12px; padding-top: 10px; border-top: 1px dashed #bbf7d0; color: #374151; font-size: 13.5px;"><strong>Compte-rendu :</strong><br><div style="margin-top: 6px;">{safe_notes}</div></div>' if safe_notes else ''}
+    </div>
+
+    <p style="color: #4b5563; font-size: 14px;">
+        En tant que {coord_role_label}, vous pouvez vérifier les justificatifs et valider ou renvoyer cette tâche en révision :
+    </p>
+    """
+
+    subject = f"[SCI Hellenvilliers] ✅ Tâche terminée à valider : {task_title}"
+    preheader = f"{submitted_by or 'Un associé'} demande la validation finale de la tâche : {task_title}"
+    html_body = render_email_layout(
+        title="Tâche en attente de validation finale",
+        preheader=preheader,
+        content_html=content_html,
+        action_url=action_url,
+        action_label="Vérifier et valider la tâche"
+    )
+
+    names = [coordinator_name] if coordinator_name else []
+    return _dispatch_and_record(
+        trigger_action="task_completion_pending",
+        to_email=to_email,
+        subject=subject,
+        html_body=html_body,
+        recipients_names=names,
+        actually_send=actually_send
+    )
 
 
 def send_vote_required_email(
@@ -658,18 +887,15 @@ def send_vote_required_email(
 ) -> dict:
     """
     Template 2: VOTE REQUIS
-    Notifies a member that a formal decision/vote requires their ballot.
-    Annotation 6:
-    - Supprime le montant estimé / budget qui n'a plus de sens.
-    - Ajoute la description complète du vote.
-    - Supprime l'encadré verbeux « Règle statutaire etc. ».
+    Notifies members that a formal decision/vote requires their ballot.
     """
     if is_email_disabled():
         return get_circuit_breaker_response()
 
-    import html as html_lib
-    action_url = f"{APP_BASE_URL}/#votes"
-    safe_description = html_lib.escape(description or "").replace("\n", "<br>") if description else ""
+    action_url = f"{APP_BASE_URL}/taches?project_id={project_id}" if project_id else f"{APP_BASE_URL}/taches"
+    safe_title = escape_html_text(vote_title)
+    safe_submitter = escape_html_text(submitted_by or "Un associé")
+    safe_description = escape_html_text(description, preserve_newlines=True) if description else ""
 
     content_html = f"""
     <p>Bonjour,</p>
@@ -677,12 +903,12 @@ def send_vote_required_email(
 
     <div style="background-color: #f9f8f6; border: 1px solid #e5e3dc; border-left: 4px solid #b89047; border-radius: 6px; padding: 18px; margin: 20px 0;">
         <div style="font-size: 17px; font-weight: bold; color: #1e3a2f; margin-bottom: 12px;">
-            🗳️ {vote_title}
+            🗳️ {safe_title}
         </div>
         <table role="presentation" border="0" cellpadding="0" cellspacing="0" width="100%" style="font-size: 14px; line-height: 1.8;">
             <tr>
                 <td style="color: #6b7280; width: 140px;">👤 Proposé par :</td>
-                <td style="font-weight: 600; color: #1f2937;">{submitted_by or 'Un associé'}</td>
+                <td style="font-weight: 600; color: #1f2937;">{safe_submitter}</td>
             </tr>
         </table>
         {f'<div style="margin-top: 14px; padding-top: 12px; border-top: 1px dashed #d1cfc7; color: #374151; font-size: 14px; line-height: 1.6;"><strong>Description du scrutin :</strong><br><div style="margin-top: 6px;">{safe_description}</div></div>' if safe_description else ''}
@@ -696,7 +922,7 @@ def send_vote_required_email(
     subject = f"[SCI Hellenvilliers] 🗳️ Vote requis : {vote_title}"
     preheader = f"Scrutin ouvert : votre avis est attendu sur {vote_title}"
     html_body = render_email_layout(
-        title="Scrutin Ouvert : Votre Vote est Requis",
+        title="Scrutin ouvert : votre vote est requis",
         preheader=preheader,
         content_html=content_html,
         action_url=action_url,
@@ -704,19 +930,14 @@ def send_vote_required_email(
     )
 
     names = ["Tous les associés"] if (isinstance(to_email, (list, tuple, set)) and len(to_email) >= 5) else None
-    email_entry = record_dispatched_email(
+    return _dispatch_and_record(
         trigger_action="vote_required",
+        to_email=to_email,
         subject=subject,
-        recipients=to_email,
-        html_content=html_body,
+        html_body=html_body,
         recipients_names=names,
-        status="simulated" if (is_email_disabled() or is_test_mode()) else "sent"
+        actually_send=True
     )
-
-    res = send_email(to_email=to_email, subject=subject, html_content=html_body)
-    if isinstance(res, dict):
-        res["_email_dispatched"] = email_entry
-    return res
 
 
 def send_vote_creation_pending_email(
@@ -729,26 +950,30 @@ def send_vote_creation_pending_email(
     actually_send: bool = True
 ) -> dict:
     """
-    Template: SCRUTIN EN ATTENTE D'ARBITRAGE DE CRÉATION (Annotation 3)
+    Template: SCRUTIN EN ATTENTE D'ARBITRAGE DE CRÉATION
     Notifies a coordinator that a new vote has been proposed in PROPOSED status and awaits arbitration to open.
     """
-    import html as html_lib
-    safe_description = html_lib.escape(description or "").replace("\n", "<br>") if description else ""
-    greeting = f"Bonjour {coordinator_name}," if coordinator_name else "Bonjour,"
-    action_url = f"{APP_BASE_URL}/#votes"
+    safe_coord = escape_html_text(coordinator_name) if coordinator_name else ""
+    safe_title = escape_html_text(vote_title)
+    safe_submitter = escape_html_text(submitted_by or "un associé")
+    safe_description = escape_html_text(description, preserve_newlines=True) if description else ""
+    coord_role_label = accord_fr(coordinator_name, "coordinateur", "coordinatrice", "membre de la coordination")
+
+    greeting = f"Bonjour {safe_coord}," if safe_coord else "Bonjour,"
+    action_url = f"{APP_BASE_URL}/taches?project_id={project_id}" if project_id else f"{APP_BASE_URL}/taches"
 
     content_html = f"""
     <p>{greeting}</p>
-    <p>Un nouveau scrutin a été soumis par <strong>{submitted_by or 'un associé'}</strong> et est actuellement <strong>en attente d'arbitrage</strong> par la coordination :</p>
+    <p>Un nouveau scrutin a été soumis par <strong>{safe_submitter}</strong> et est actuellement <strong>en attente d'arbitrage</strong> par la coordination :</p>
 
     <div style="background-color: #fefce8; border: 1px solid #fef08a; border-left: 4px solid #ca8a04; border-radius: 6px; padding: 18px; margin: 20px 0;">
         <div style="font-size: 17px; font-weight: bold; color: #854d0e; margin-bottom: 12px;">
-            ⏳ {vote_title}
+            ⏳ {safe_title}
         </div>
         <table role="presentation" border="0" cellpadding="0" cellspacing="0" width="100%" style="font-size: 14px; line-height: 1.8;">
             <tr>
                 <td style="color: #6b7280; width: 140px;">👤 Proposé par :</td>
-                <td style="font-weight: 600; color: #1f2937;">{submitted_by or 'Non spécifié'}</td>
+                <td style="font-weight: 600; color: #1f2937;">{safe_submitter}</td>
             </tr>
             <tr>
                 <td style="color: #6b7280;">📋 Statut :</td>
@@ -759,14 +984,14 @@ def send_vote_creation_pending_email(
     </div>
 
     <p style="color: #4b5563; font-size: 14px;">
-        En tant que coordinateur, vous pouvez examiner la proposition, ajuster les options de vote si nécessaire et ouvrir officiellement le scrutin à l'ensemble des associés :
+        En tant que {coord_role_label}, vous pouvez examiner la proposition, ajuster les options de vote si nécessaire et ouvrir officiellement le scrutin à l'ensemble des associés :
     </p>
     """
 
     subject = f"[SCI Hellenvilliers] 🗳️ Nouveau scrutin en attente d'arbitrage : {vote_title}"
     preheader = f"Une nouvelle proposition de scrutin a été soumise : {vote_title}"
     html_body = render_email_layout(
-        title="Nouveau Scrutin en Attente d'Arbitrage",
+        title="Nouveau scrutin en attente d'arbitrage",
         preheader=preheader,
         content_html=content_html,
         action_url=action_url,
@@ -774,23 +999,14 @@ def send_vote_creation_pending_email(
     )
 
     names = [coordinator_name] if coordinator_name else []
-    email_entry = record_dispatched_email(
+    return _dispatch_and_record(
         trigger_action="vote_creation_pending",
+        to_email=to_email,
         subject=subject,
-        recipients=to_email,
-        html_content=html_body,
+        html_body=html_body,
         recipients_names=names,
-        status="sent" if (actually_send and not is_email_disabled() and not is_test_mode()) else "simulated"
+        actually_send=actually_send
     )
-
-    if actually_send and not is_email_disabled() and not is_test_mode():
-        res = send_email(to_email=to_email, subject=subject, html_content=html_body)
-    else:
-        res = {"status": "simulated", "id": email_entry["id"]}
-
-    if isinstance(res, dict):
-        res["_email_dispatched"] = email_entry
-    return res
 
 
 def send_vote_arbitration_email(
@@ -804,51 +1020,65 @@ def send_vote_arbitration_email(
     actually_send: bool = True
 ) -> dict:
     """
-    Template: SCRUTIN EN ATTENTE D'ARBITRAGE D'ARCHIVAGE (Annotation 8)
-    Notifies coordinators when a vote reaches quorum (7/7) or REPORT_AG and is in PENDING_VALIDATION.
+    Template: SCRUTIN EN ATTENTE D'ARBITRAGE D'ARCHIVAGE
+    Notifies coordinators when a vote reaches quorum (7/7) or REPORT_AG and is in PENDING_VALIDATION / REPORT_AG.
     """
-    import html as html_lib
-    greeting = f"Bonjour {coordinator_name}," if coordinator_name else "Bonjour,"
-    action_url = f"{APP_BASE_URL}/#votes"
+    safe_coord = escape_html_text(coordinator_name) if coordinator_name else ""
+    safe_title = escape_html_text(vote_title)
+    safe_decision = escape_html_text(decision)
+    coord_role_label = accord_fr(coordinator_name, "coordinateur", "coordinatrice", "membre de la coordination")
 
-    summary_text = ""
+    greeting = f"Bonjour {safe_coord}," if safe_coord else "Bonjour,"
+    action_url = f"{APP_BASE_URL}/taches?project_id={project_id}" if project_id else f"{APP_BASE_URL}/taches"
+
     if isinstance(votes_summary, dict):
-        summary_text = f"Pour : {votes_summary.get('pour', 0)} | Contre : {votes_summary.get('contre', 0)} | Abstention : {votes_summary.get('abstention', 0)} | Report AG : {votes_summary.get('report_prochaine_ag', 0)}"
+        std_keys = {"pour", "oui", "contre", "non", "abstention", "report_prochaine_ag", "report_ag"}
+        custom_items = [(k, v) for k, v in votes_summary.items() if str(k).lower() not in std_keys and v]
+        parts = [
+            f"Pour : {votes_summary.get('pour', 0) + votes_summary.get('oui', 0)}",
+            f"Contre : {votes_summary.get('contre', 0) + votes_summary.get('non', 0)}",
+            f"Abstention : {votes_summary.get('abstention', 0)}",
+            f"Report AG : {votes_summary.get('report_prochaine_ag', 0) + votes_summary.get('report_ag', 0)}",
+        ]
+        for k, v in custom_items:
+            parts.append(f"{k} : {v}")
+        summary_text = " | ".join(parts)
     else:
-        summary_text = str(votes_summary)
+        summary_text = str(votes_summary or "")
 
-    safe_description = html_lib.escape(description or "").replace("\n", "<br>") if description else ""
+    safe_summary = escape_html_text(summary_text)
+    safe_description = escape_html_text(description, preserve_newlines=True) if description else ""
 
     content_html = f"""
     <p>{greeting}</p>
-    <p>Le scrutin <strong>« {vote_title} »</strong> vient d'atteindre le quorum complet (ou une demande de report) et est désormais <strong>en attente d'arbitrage de validation et d'archivage</strong> par la coordination :</p>
+    <p>Le scrutin <strong>« {safe_title} »</strong> vient d'atteindre le quorum complet (ou fait l'objet d'une demande de report en AG) et est désormais <strong>en attente d'arbitrage et d'archivage</strong> par la coordination :</p>
 
     <div style="background-color: #faf5ff; border: 1px solid #e9d5ff; border-left: 4px solid #9333ea; border-radius: 6px; padding: 18px; margin: 20px 0;">
         <div style="font-size: 17px; font-weight: bold; color: #581c87; margin-bottom: 12px;">
-            ⚖️ {vote_title}
+            ⚖️ {safe_title}
         </div>
         <table role="presentation" border="0" cellpadding="0" cellspacing="0" width="100%" style="font-size: 14px; line-height: 1.8;">
             <tr>
                 <td style="color: #6b7280; width: 150px;">📊 Statut provisoire :</td>
-                <td style="font-weight: 700; color: #581c87;">{decision}</td>
+                <td style="font-weight: 700; color: #581c87;">{safe_decision}</td>
             </tr>
             <tr>
                 <td style="color: #6b7280;">🗳️ Synthèse des voix :</td>
-                <td style="font-weight: 600; color: #1f2937;">{summary_text}</td>
+                <td style="font-weight: 600; color: #1f2937;">{safe_summary}</td>
             </tr>
         </table>
         {f'<div style="margin-top: 14px; padding-top: 12px; border-top: 1px dashed #e9d5ff; color: #4b5563; font-size: 13.5px;"><strong>Description du scrutin :</strong><br><div style="margin-top: 6px;">{safe_description}</div></div>' if safe_description else ''}
     </div>
 
     <p style="color: #4b5563; font-size: 14px;">
-        En tant que coordinateur, il vous appartient d'arbitrer formellement ce scrutin afin de valider son archivage définitif ou de demander un nouvel examen :
+        En tant que {coord_role_label}, il vous appartient d'arbitrer formellement ce scrutin afin de valider son archivage définitif ou de demander un nouvel examen :
     </p>
     """
 
-    subject = f"[SCI Hellenvilliers] ⚖️ Scrutin en attente d'arbitrage d'archivage : {vote_title}"
-    preheader = f"Arbitrage requis : le quorum est atteint sur {vote_title} ({decision})"
+    subject = f"[SCI Hellenvilliers] ⚖️ Scrutin en attente d'arbitrage : {vote_title}"
+    preheader = f"Arbitrage requis sur {vote_title} ({decision})"
     html_body = render_email_layout(
-        title="Scrutin en Attente d'Arbitrage d'Archivage",
+        title="Scrutin en attente d'arbitrage",
         preheader=preheader,
         content_html=content_html,
         action_url=action_url,
@@ -856,77 +1086,103 @@ def send_vote_arbitration_email(
     )
 
     names = [coordinator_name] if coordinator_name else []
-    email_entry = record_dispatched_email(
+    return _dispatch_and_record(
         trigger_action="vote_arbitration_pending",
+        to_email=to_email,
         subject=subject,
-        recipients=to_email,
-        html_content=html_body,
+        html_body=html_body,
         recipients_names=names,
-        status="sent" if (actually_send and not is_email_disabled() and not is_test_mode()) else "simulated"
+        actually_send=actually_send
     )
-
-    if actually_send and not is_email_disabled() and not is_test_mode():
-        res = send_email(to_email=to_email, subject=subject, html_content=html_body)
-    else:
-        res = {"status": "simulated", "id": email_entry["id"]}
-
-    if isinstance(res, dict):
-        res["_email_dispatched"] = email_entry
-    return res
 
 
 def send_vote_closed_email(
     to_email: Union[str, List[str]],
     vote_title: str,
     decision: str,
-    votes_summary: Dict[str, int],
+    votes_summary: Union[Dict[str, int], str],
     total_votes: int = 7,
     project_id: Optional[Union[int, str]] = None,
     estimated_cost: Optional[float] = None
 ) -> dict:
     """
     Template 3: DÉCISION FINALE DE VOTE
-    Notifies all members of the final result once all 7 associates have voted.
+    Notifies all members of the final archived decision of a vote.
     """
-    # Pare-feu et coupe-circuit hermétiques gérés de façon centrale dans send_email
-    is_adopted = "adopt" in decision.lower() or "approuv" in decision.lower()
-    is_report = "report" in decision.lower()
-
-    if is_adopted:
+    dec_norm = unicodedata.normalize("NFKD", str(decision or "")).encode("ASCII", "ignore").decode("utf-8").lower()
+    if "adopt" in dec_norm or "approuv" in dec_norm or "valid" in dec_norm:
         badge_bg, badge_text, badge_border = "#dcfce7", "#166534", "#22c55e"
         status_label = "✅ ADOPTÉ"
-    elif is_report:
+    elif "report" in dec_norm:
         badge_bg, badge_text, badge_border = "#fef3c7", "#92400e", "#f59e0b"
         status_label = "⚠️ REPORTÉ PROCHAINE AG"
-    else:
+    elif "rejet" in dec_norm or "refus" in dec_norm:
         badge_bg, badge_text, badge_border = "#fee2e2", "#991b1b", "#ef4444"
         status_label = "❌ REJETÉ"
+    elif "egalit" in dec_norm:
+        badge_bg, badge_text, badge_border = "#e0e7ff", "#3730a3", "#6366f1"
+        status_label = "⚖️ ÉGALITÉ — ARCHIVÉ"
+    else:
+        badge_bg, badge_text, badge_border = "#f1f5f9", "#334155", "#94a3b8"
+        status_label = "📋 ARCHIVÉ"
 
-    pour_cnt = votes_summary.get("pour", 0) + votes_summary.get("oui", 0)
-    contre_cnt = votes_summary.get("contre", 0) + votes_summary.get("non", 0)
-    abst_cnt = votes_summary.get("abstention", 0)
-    report_cnt = votes_summary.get("report_prochaine_ag", 0) + votes_summary.get("report_ag", 0)
+    safe_title = escape_html_text(vote_title)
+    votes_word = "vote exprimé" if total_votes == 1 else "votes exprimés"
+
+    if isinstance(votes_summary, dict):
+        pour_cnt = int(votes_summary.get("pour", 0) or 0) + int(votes_summary.get("oui", 0) or 0)
+        contre_cnt = int(votes_summary.get("contre", 0) or 0) + int(votes_summary.get("non", 0) or 0)
+        abst_cnt = int(votes_summary.get("abstention", 0) or 0)
+        report_cnt = int(votes_summary.get("report_prochaine_ag", 0) or 0) + int(votes_summary.get("report_ag", 0) or 0)
+        std_keys = {"pour", "oui", "contre", "non", "abstention", "report_prochaine_ag", "report_ag"}
+        custom_options = [(k, v) for k, v in votes_summary.items() if str(k).lower() not in std_keys and v]
+
+        if custom_options:
+            option_rows = "".join(
+                f'<tr><td style="padding: 4px 0; color: #374151;">• {escape_html_text(opt_name)}</td><td style="padding: 4px 0; text-align: right; font-weight: bold; color: #1e3a2f;">{int(cnt)}</td></tr>'
+                for opt_name, cnt in custom_options
+            )
+            if abst_cnt:
+                option_rows += f'<tr><td style="padding: 4px 0; color: #6b7280;">⚪ Abstention / Blanc</td><td style="padding: 4px 0; text-align: right; font-weight: bold;">{abst_cnt}</td></tr>'
+            if report_cnt:
+                option_rows += f'<tr><td style="padding: 4px 0; color: #92400e;">🟡 Report AG</td><td style="padding: 4px 0; text-align: right; font-weight: bold;">{report_cnt}</td></tr>'
+            tally_html = f'<table role="presentation" border="0" cellpadding="0" cellspacing="0" width="100%" style="font-size: 14px;">{option_rows}</table>'
+        else:
+            tally_html = f"""
+            <table role="presentation" border="0" cellpadding="0" cellspacing="0" width="100%" style="font-size: 14px;">
+                <tr>
+                    <td style="padding: 3px 0;">🟢 Pour : <strong>{pour_cnt}</strong></td>
+                    <td style="padding: 3px 0;">🔴 Contre : <strong>{contre_cnt}</strong></td>
+                    <td style="padding: 3px 0;">⚪ Abstention : <strong>{abst_cnt}</strong></td>
+                    <td style="padding: 3px 0;">🟡 Report AG : <strong>{report_cnt}</strong></td>
+                </tr>
+            </table>"""
+        preheader_detail = f"({pour_cnt} Pour / {contre_cnt} Contre)" if not custom_options else f"({total_votes} {votes_word})"
+    else:
+        safe_raw_summary = escape_html_text(str(votes_summary or "Résultats archivés"))
+        tally_html = f'<div style="font-size: 14px; color: #1f2937; font-weight: 600;">{safe_raw_summary}</div>'
+        preheader_detail = f"({votes_summary})" if votes_summary else ""
 
     cost_row = ""
     if estimated_cost and estimated_cost > 0:
         cost_row = f"""
         <tr>
             <td style="color: #6b7280;">💶 Montant engagé :</td>
-            <td style="font-weight: 700; color: #1e3a2f;">{estimated_cost:,.2f} €</td>
+            <td style="font-weight: 700; color: #1e3a2f;">{format_eur_fr(estimated_cost)}</td>
         </tr>
-        """.replace(",", " ")
+        """
 
-    action_url = f"{APP_BASE_URL}/#votes"
+    action_url = f"{APP_BASE_URL}/taches?project_id={project_id}" if project_id else f"{APP_BASE_URL}/taches"
 
     content_html = f"""
     <p>Bonjour,</p>
-    <p>Le scrutin concernant le projet ci-dessous est désormais clos suite au vote de tous les associés :</p>
+    <p>Le scrutin concernant le projet ci-dessous est désormais clos et archivé :</p>
 
     <div style="background-color: #f9f8f6; border: 1px solid #e5e3dc; border-radius: 6px; padding: 20px; margin: 20px 0;">
         <div style="font-size: 18px; font-weight: bold; color: #1e3a2f; margin-bottom: 12px;">
-            {vote_title}
+            {safe_title}
         </div>
-        
+
         <div style="margin-bottom: 16px;">
             <span style="display: inline-block; background-color: {badge_bg}; color: {badge_text}; border: 1px solid {badge_border}; padding: 6px 16px; border-radius: 9999px; font-size: 14px; font-weight: bold; text-transform: uppercase;">
                 {status_label}
@@ -936,7 +1192,7 @@ def send_vote_closed_email(
         <table role="presentation" border="0" cellpadding="0" cellspacing="0" width="100%" style="font-size: 14px; line-height: 1.8; margin-top: 10px;">
             <tr>
                 <td style="color: #6b7280; width: 140px;">📊 Participation :</td>
-                <td style="font-weight: 600; color: #1f2937;">{total_votes} votes exprimés sur 7 associés</td>
+                <td style="font-weight: 600; color: #1f2937;">{total_votes} {votes_word} sur 7 associés</td>
             </tr>
             {cost_row}
         </table>
@@ -945,14 +1201,7 @@ def send_vote_closed_email(
             <div style="font-size: 13px; font-weight: bold; color: #4b5563; margin-bottom: 8px; text-transform: uppercase; letter-spacing: 0.5px;">
                 Dépouillement des suffrages :
             </div>
-            <table role="presentation" border="0" cellpadding="0" cellspacing="0" width="100%" style="font-size: 14px;">
-                <tr>
-                    <td style="padding: 3px 0;">🟢 Pour : <strong>{pour_cnt}</strong></td>
-                    <td style="padding: 3px 0;">🔴 Contre : <strong>{contre_cnt}</strong></td>
-                    <td style="padding: 3px 0;">⚪ Abstention : <strong>{abst_cnt}</strong></td>
-                    <td style="padding: 3px 0;">🟡 Report AG : <strong>{report_cnt}</strong></td>
-                </tr>
-            </table>
+            {tally_html}
         </div>
     </div>
 
@@ -962,29 +1211,23 @@ def send_vote_closed_email(
     """
 
     subject = f"[SCI Hellenvilliers] ⚖️ Résultat du scrutin : {vote_title} ({status_label})"
-    preheader = f"Décision finale : le projet {vote_title} est {status_label} ({pour_cnt} Pour / {contre_cnt} Contre)"
+    preheader = f"Décision finale : {vote_title} — {status_label} {preheader_detail}".strip()
     html_body = render_email_layout(
-        title="Décision Finale de Vote",
+        title="Décision finale du scrutin",
         preheader=preheader,
         content_html=content_html,
         action_url=action_url,
-        action_label="Consulter les détails du vote"
+        action_label="Consulter les détails du scrutin"
     )
 
-    names = ["Tous les associés"]
-    email_entry = record_dispatched_email(
+    return _dispatch_and_record(
         trigger_action="vote_closed",
+        to_email=to_email,
         subject=subject,
-        recipients=to_email,
-        html_content=html_body,
-        recipients_names=names,
-        status="simulated" if (is_email_disabled() or is_test_mode()) else "sent"
+        html_body=html_body,
+        recipients_names=["Tous les associés"],
+        actually_send=True
     )
-
-    res = send_email(to_email=to_email, subject=subject, html_content=html_body)
-    if isinstance(res, dict):
-        res["_email_dispatched"] = email_entry
-    return res
 
 
 def send_stay_booked_email(
@@ -1002,7 +1245,6 @@ def send_stay_booked_email(
     Template 4: NOUVEAU SÉJOUR RÉSERVÉ
     Notifies family members when an associate books a stay at the estate.
     """
-    # Pare-feu et coupe-circuit hermétiques gérés de façon centrale dans send_email
     rooms_display = ""
     if rooms:
         if isinstance(rooms, str):
@@ -1017,32 +1259,43 @@ def send_stay_booked_email(
         else:
             rooms_display = str(rooms)
 
-    action_url = f"{APP_BASE_URL}/#calendar"
+    start_fr = format_date_fr(start_date)
+    end_fr = format_date_fr(end_date)
+    cnt = int(guest_count or 1)
+    occupants_label = f"{cnt} occupant" if cnt <= 1 else f"{cnt} occupants"
+    a_demeure = format_a_demeure(property_name)
+
+    safe_member = escape_html_text(member_name)
+    safe_prop = escape_html_text(property_name or "Domaine d'Hellenvilliers")
+    safe_rooms = escape_html_text(rooms_display)
+    safe_notes = escape_html_text(notes, preserve_newlines=True) if notes else ""
+
+    action_url = f"{APP_BASE_URL}/calendrier"
 
     content_html = f"""
     <p>Bonjour,</p>
-    <p>Un nouveau séjour vient d'être planifié au Domaine d'Hellenvilliers :</p>
+    <p>Un nouveau séjour vient d'être planifié {escape_html_text(a_demeure)} :</p>
 
     <div style="background-color: #f9f8f6; border: 1px solid #e5e3dc; border-left: 4px solid #2d5a47; border-radius: 6px; padding: 18px; margin: 20px 0;">
         <div style="font-size: 17px; font-weight: bold; color: #1e3a2f; margin-bottom: 12px;">
-            🏡 Séjour de {member_name}
+            🏡 Séjour de {safe_member}
         </div>
         <table role="presentation" border="0" cellpadding="0" cellspacing="0" width="100%" style="font-size: 14px; line-height: 1.8;">
             <tr>
                 <td style="color: #6b7280; width: 140px;">🏛️ Demeure :</td>
-                <td style="font-weight: 700; color: #1e3a2f;">{property_name or 'Domaine d\'Hellenvilliers'}</td>
+                <td style="font-weight: 700; color: #1e3a2f;">{safe_prop}</td>
             </tr>
             <tr>
                 <td style="color: #6b7280;">📅 Dates :</td>
-                <td style="font-weight: 600; color: #1f2937;">Du <strong>{start_date}</strong> au <strong>{end_date}</strong></td>
+                <td style="font-weight: 600; color: #1f2937;">Du <strong>{escape_html_text(start_fr)}</strong> au <strong>{escape_html_text(end_fr)}</strong></td>
             </tr>
             <tr>
                 <td style="color: #6b7280;">👥 Personnes :</td>
-                <td style="font-weight: 600; color: #1f2937;">{guest_count or 1} occupant(s)</td>
+                <td style="font-weight: 600; color: #1f2937;">{occupants_label}</td>
             </tr>
-            {f'<tr><td style="color: #6b7280;">🛏️ Chambres :</td><td style="font-weight: 600; color: #1f2937;">{rooms_display}</td></tr>' if rooms_display else ''}
+            {f'<tr><td style="color: #6b7280;">🛏️ Chambres :</td><td style="font-weight: 600; color: #1f2937;">{safe_rooms}</td></tr>' if safe_rooms else ''}
         </table>
-        {f'<div style="margin-top: 14px; padding-top: 12px; border-top: 1px dashed #d1cfc7; font-style: italic; color: #4b5563; font-size: 13.5px;">Remarques : {notes}</div>' if notes else ''}
+        {f'<div style="margin-top: 14px; padding-top: 12px; border-top: 1px dashed #d1cfc7; font-style: italic; color: #4b5563; font-size: 13.5px;">Remarques : {safe_notes}</div>' if safe_notes else ''}
     </div>
 
     <p style="color: #4b5563; font-size: 14px;">
@@ -1050,30 +1303,24 @@ def send_stay_booked_email(
     </p>
     """
 
-    subject = f"[SCI Hellenvilliers] 🏡 Nouveau séjour réservé : {member_name} ({start_date} ➔ {end_date})"
-    preheader = f"{member_name} a réservé à {property_name} du {start_date} au {end_date}"
+    subject = f"[SCI Hellenvilliers] 🏡 Nouveau séjour réservé : {member_name} ({start_fr} → {end_fr})"
+    preheader = f"{member_name} a réservé {a_demeure} du {start_fr} au {end_fr}"
     html_body = render_email_layout(
-        title="Nouveau Séjour Planifié",
+        title="Nouveau séjour planifié",
         preheader=preheader,
         content_html=content_html,
         action_url=action_url,
         action_label="Consulter le calendrier des séjours"
     )
 
-    names = ["Famille Hellenvilliers"]
-    email_entry = record_dispatched_email(
+    return _dispatch_and_record(
         trigger_action="stay_booked",
+        to_email=to_email,
         subject=subject,
-        recipients=to_email,
-        html_content=html_body,
-        recipients_names=names,
-        status="simulated" if (is_email_disabled() or is_test_mode()) else "sent"
+        html_body=html_body,
+        recipients_names=["Famille Hellenvilliers"],
+        actually_send=True
     )
-
-    res = send_email(to_email=to_email, subject=subject, html_content=html_body)
-    if isinstance(res, dict):
-        res["_email_dispatched"] = email_entry
-    return res
 
 
 def send_password_reset_email(
@@ -1088,34 +1335,36 @@ def send_password_reset_email(
     blocked = check_firewall(to_email)
     if blocked:
         return blocked
-    greeting = f"Bonjour {member_name}," if member_name else "Bonjour,"
+    safe_member = escape_html_text(member_name) if member_name else ""
+    safe_pwd = escape_html_text(new_temporary_password)
+    greeting = f"Bonjour {safe_member}," if safe_member else "Bonjour,"
     action_url = f"{APP_BASE_URL}/"
 
     content_html = f"""
     <p>{greeting}</p>
     <p>Une réinitialisation de votre mot de passe d'accès au portail de la <strong>SCI Familiale Hellenvilliers</strong> vient d'être effectuée.</p>
-    
+
     <p>Voici votre nouveau mot de passe temporaire pour vous connecter :</p>
-    
+
     <div style="background-color: #faf9f6; border: 1px solid #e5e3dc; border-left: 4px solid #1e3a2f; border-radius: 8px; padding: 20px; margin: 24px 0;">
         <div style="font-size: 12px; text-transform: uppercase; letter-spacing: 1.5px; color: #6b7280; font-weight: 600; margin-bottom: 10px;">
             Nouveau mot de passe temporaire
         </div>
         <div style="font-family: monospace; letter-spacing: 2px; font-size: 18px; font-weight: bold; background: #fff; padding: 12px; border: 1px dashed #b89047; text-align: center; color: #1e3a2f;">
-            {new_temporary_password}
+            {safe_pwd}
         </div>
     </div>
-    
+
     <p style="color: #4b5563; font-size: 14px; line-height: 1.6; margin-top: 16px;">
         🔒 <strong>Conseil de sécurité :</strong> Pour des raisons de confidentialité, nous vous recommandons vivement de modifier ce mot de passe dès votre première connexion en vous rendant dans l'onglet <strong>Paramètres</strong> du portail.
     </p>
-    
+
     <p style="color: #6b7280; font-size: 13px; line-height: 1.5; margin-top: 12px;">
-        Si vous n'êtes pas à l'origine de cette demande, vous pouvez ignorer cet e-mail ou contacter le gérant de la SCI.
+        Votre ancien mot de passe a été remplacé par ce mot de passe temporaire. Si vous n'êtes pas à l'origine de cette demande, connectez-vous immédiatement pour définir un nouveau mot de passe et prévenez le gérant de la SCI.
     </p>
     """
 
-    subject = "[SCI Hellenvilliers] Réinitialisation de votre mot de passe"
+    subject = "[SCI Hellenvilliers] 🔒 Réinitialisation de votre mot de passe"
     preheader = "Votre nouveau mot de passe temporaire pour accéder au Domaine d'Hellenvilliers"
     html_body = render_email_layout(
         title="Réinitialisation de mot de passe",
@@ -1181,24 +1430,25 @@ def send_thermal_change_email(
     """
     Template 5: MODIFICATION DES CONSIGNES THERMIQUES (Chauffage ViCare & Piscine Klereo)
     Notifies subscribed members when heating or pool settings are adjusted.
-    Enforces the strict hermetic family firewall (only hellenvillierssci@gmail.com is allowed).
     """
-    # Pare-feu et coupe-circuit hermétiques gérés de façon centrale dans send_email
+    safe_author = escape_html_text(author_name or "Système")
+    safe_equip = escape_html_text(equipment_type)
+    safe_details = escape_html_text(details, preserve_newlines=True)
 
-    subject = f"[Domaine d'Hellenvilliers] Modification des consignes thermiques — {equipment_type}"
+    subject = f"[SCI Hellenvilliers] 🌡️ Consignes thermiques — {equipment_type}"
     preheader = f"Consignes modifiées par {author_name} pour {equipment_type} : {details}"
     action_url = f"{APP_BASE_URL}/sejour"
 
     content_html = f"""
     <p>Bonjour,</p>
-    <p>Une modification des consignes thermiques a été enregistrée par <strong>{author_name}</strong> :</p>
+    <p>Une modification des consignes thermiques a été enregistrée par <strong>{safe_author}</strong> :</p>
 
     <div style="background-color: #f9f8f6; border: 1px solid #e5e3dc; border-radius: 6px; padding: 20px; margin: 20px 0;">
         <div style="font-size: 16px; font-weight: bold; color: #1e3a2f; margin-bottom: 8px;">
-            {equipment_type}
+            {safe_equip}
         </div>
         <div style="font-size: 14px; color: #1f2937; margin-bottom: 12px; line-height: 1.6;">
-            <strong>Détails de la modification :</strong> {details}
+            <strong>Détails de la modification :</strong> {safe_details}
         </div>
         <div style="font-size: 12px; color: #6b7280; line-height: 1.5; border-top: 1px dashed #e5e3dc; padding-top: 10px; margin-top: 10px;">
             Cette modification a été validée et enregistrée. Tous les associés ayant activé l'option de notification thermique reçoivent cet avis pour le suivi et la maîtrise énergétique du domaine.
@@ -1211,27 +1461,21 @@ def send_thermal_change_email(
     """
 
     html_body = render_email_layout(
-        title=f"Consignes Thermiques — {equipment_type}",
+        title=f"Consignes thermiques — {equipment_type}",
         preheader=preheader,
         content_html=content_html,
         action_url=action_url,
         action_label="Consulter l'espace Séjour & Énergie"
     )
 
-    names = ["Associés abonnés énergie"]
-    email_entry = record_dispatched_email(
+    return _dispatch_and_record(
         trigger_action="thermal_change",
+        to_email=target_emails,
         subject=subject,
-        recipients=target_emails,
-        html_content=html_body,
-        recipients_names=names,
-        status="simulated" if (is_email_disabled() or is_test_mode()) else "sent"
+        html_body=html_body,
+        recipients_names=["Associés abonnés énergie"],
+        actually_send=True
     )
-
-    res = send_email(to_email=target_emails, subject=subject, html_content=html_body)
-    if isinstance(res, dict):
-        res["_email_dispatched"] = email_entry
-    return res
 
 
 def send_notification_email(
@@ -1254,10 +1498,11 @@ def send_welcome_email(to_email: str, member_name: str) -> dict:
     """Envoi d'un email de bienvenue / accès portail."""
     if is_email_disabled() or is_test_mode():
         return get_circuit_breaker_response()
+    safe_member = escape_html_text(member_name)
     return send_notification_email(
         to_email=to_email,
-        subject="[Domaine d'Hellenvilliers] Bienvenue sur votre espace associé",
-        content_html=f"<p>Bonjour {member_name},</p><p>Votre accès au portail de la SCI d'Hellenvilliers est prêt.</p>",
+        subject="[SCI Hellenvilliers] Bienvenue sur votre espace associé",
+        content_html=f"<p>Bonjour {safe_member},</p><p>Votre accès au portail de la SCI d'Hellenvilliers est prêt.</p>",
         title="Bienvenue sur le portail"
     )
 
@@ -1293,10 +1538,6 @@ def send_mention_notification(
     """
     Template 6: MENTION DANS UNE DISCUSSION (@membre ou @all)
     Notifies a mentioned member by email when they are @tagged in a chat (tasks, projects/votes, issues).
-    Garde-fous Resend & Anti-Spam :
-    - Ne pas envoyer d'email si l'auteur du message se mentionne lui-même.
-    - Ne pas envoyer d'email si notify_mentions (ou notify_mention_all) == False.
-    - Respecter le commutateur global DISABLE_ALL_EMAILS, EMAIL_TEST_MODE et le pare-feu.
     Returns True if sent/simulated/dispatched successfully, False otherwise.
     """
     if not mentioned_member:
@@ -1306,7 +1547,7 @@ def send_mention_notification(
     member_prenom = getattr(mentioned_member, "prenom", "") or member_name
     to_email = getattr(mentioned_member, "email", None)
 
-    # 1. Garde-fou Anti-auto-mention (s'applique uniquement aux mentions directes individuelles, JAMAIS à @all)
+    # 1. Garde-fou Anti-auto-mention (uniquement mentions directes individuelles, jamais @all)
     author_clean = (author_name or "").strip().lower()
     name_clean = member_name.strip().lower()
     prenom_clean = member_prenom.strip().lower()
@@ -1317,7 +1558,7 @@ def send_mention_notification(
         or (len(author_clean) >= 3 and (author_clean in name_clean or name_clean in author_clean))
         or (len(prenom_clean) >= 3 and (prenom_clean in author_clean or author_clean in prenom_clean))
     ):
-        logger.info(f"[MENTION] Anti-auto-mention ignorée : '{author_name}' s'est mentionné(e) lui-même ({member_name}). Aucun email.")
+        logger.info(f"[MENTION] Anti-auto-mention ignorée : '{author_name}' s'est mentionné ({member_name}). Aucun email.")
         return False
 
     # 2. Préférence d'envoi d'e-mail physique du membre (directe ou collective @all)
@@ -1327,26 +1568,28 @@ def send_mention_notification(
         actually_send = False
 
     # 3. Construction du message HTML selon la charte de la SCI Hellenvilliers
-    import html as html_lib
-    safe_message = html_lib.escape(message_text or "").replace("\n", "<br>")
-    safe_author = html_lib.escape(author_name or "Un associé")
-    safe_title = html_lib.escape(context_title or "Discussion")
+    safe_message = escape_html_text(message_text, preserve_newlines=True)
+    safe_author = escape_html_text(author_name or "Un associé")
+    safe_title = escape_html_text(context_title or "Discussion")
 
-    greeting_name = member_prenom or member_name or "associé(e)"
+    greeting_raw = member_prenom or member_name or ""
+    safe_greeting = escape_html_text(greeting_raw) if greeting_raw else ""
+    greeting_line = f"Bonjour {safe_greeting}," if safe_greeting else "Bonjour,"
+    mentionne_word = accord_fr(greeting_raw, "mentionné", "mentionnée", "mentionné(e)")
 
     if is_collective:
-        subject = f'[Hellenvilliers SCI] 📢 {author_name} a mentionné tous les associés dans "{context_title}"'
+        subject = f'[SCI Hellenvilliers] 📢 {author_name} a mentionné tous les associés dans « {context_title} »'
         preheader = f"{author_name} a adressé un message à tous les associés dans {context_title}"
         email_title = "Mention collective dans une discussion"
         intro_text = f"<strong>{safe_author}</strong> a adressé un message à <strong>l'ensemble des associés (@all)</strong> dans la discussion de <strong>{safe_title}</strong> :"
     else:
-        subject = f'[Hellenvilliers SCI] {author_name} vous a mentionné(e) dans "{context_title}"'
-        preheader = f"{author_name} vous a mentionné(e) dans la discussion de {context_title}"
+        subject = f'[SCI Hellenvilliers] 💬 {author_name} vous a {mentionne_word} dans « {context_title} »'
+        preheader = f"{author_name} vous a {mentionne_word} dans la discussion de {context_title}"
         email_title = "Mention dans une discussion"
-        intro_text = f"<strong>{safe_author}</strong> vous a mentionné(e) dans la discussion de <strong>{safe_title}</strong> :"
+        intro_text = f"<strong>{safe_author}</strong> vous a {mentionne_word} dans la discussion de <strong>{safe_title}</strong> :"
 
     content_html = f"""
-    <p>Bonjour {greeting_name},</p>
+    <p>{greeting_line}</p>
     <p>{intro_text}</p>
 
     <div style="background-color: #f9f8f6; border: 1px solid #e5e3dc; border-left: 4px solid #1e3a2f; border-radius: 6px; padding: 16px 20px; margin: 20px 0; font-style: italic; color: #1f2937; font-size: 15px; line-height: 1.6;">
@@ -1355,9 +1598,6 @@ def send_mention_notification(
 
     <p style="color: #4b5563; font-size: 14px;">
         Vous pouvez accéder directement à la discussion pour prendre connaissance de l'échange et y répondre :
-    </p>
-    <p style="font-size: 12px; color: #6b7280; margin-top: 24px; padding-top: 12px; border-top: 1px solid #eee;">
-        💡 <em>Vous pouvez désactiver cette notification à tout moment dans vos <a href="{APP_BASE_URL}/settings" style="color: #2d5a47; text-decoration: underline;">Paramètres &amp; Préférences</a>.</em>
     </p>
     """
 
@@ -1370,26 +1610,23 @@ def send_mention_notification(
         action_label="Accéder à la discussion"
     )
 
-    # 4. Enregistrement systématique de l'email dispatché pour la cloche et aperçu modale
-    email_entry = record_dispatched_email(
+    can_physically_send = bool(actually_send and pref_enabled and to_email and "@" in str(to_email))
+    res = _dispatch_and_record(
         trigger_action="mention_all" if is_collective else "mention",
+        to_email=to_email or "famille@sci-familiale.fr",
         subject=subject,
-        recipients=to_email or "famille@sci-familiale.fr",
-        html_content=html_body,
-        recipients_names=[greeting_name],
-        status="sent" if (actually_send and not is_email_disabled() and not is_test_mode() and to_email and "@" in str(to_email)) else "simulated"
+        html_body=html_body,
+        recipients_names=[greeting_raw or "Associé"],
+        actually_send=can_physically_send
     )
+    email_entry = res.get("_email_dispatched") if isinstance(res, dict) else None
     setattr(send_mention_notification, "last_dispatched_email", email_entry)
 
-    # 5. Vérification de l'adresse e-mail & coupe-circuit pour envoi réel
     if not pref_enabled:
         return False
 
-    if not actually_send or not to_email or "@" not in str(to_email) or is_email_disabled():
+    if not can_physically_send or is_email_disabled():
         return True
-
-    # 6. Envoi de l'e-mail via Resend
-    res = send_email(to_email=to_email, subject=subject, html_content=html_body)
 
     if isinstance(res, dict) and (res.get("error") or res.get("status") == "error"):
         logger.error(f"[MENTION] Échec de l'envoi de l'e-mail Resend à {to_email} : {res}")
@@ -1411,18 +1648,18 @@ def send_task_chat_activity_email(
     Template: NOUVEAU MESSAGE SUR UNE TÂCHE CRÉÉE / PROPOSÉE (notif_task_chat_activity)
     Notifies the creator of a task when another member posts a comment.
     """
-    import html as html_lib
-    safe_message = html_lib.escape(message_text or "").replace("\n", "<br>")
-    safe_author = html_lib.escape(author_name or "Un associé")
-    safe_title = html_lib.escape(task_title or "Tâche")
-    greeting_name = recipient_name or "associé(e)"
+    safe_message = escape_html_text(message_text, preserve_newlines=True)
+    safe_author = escape_html_text(author_name or "Un associé")
+    safe_title = escape_html_text(task_title or "Tâche")
+    safe_recipient = escape_html_text(recipient_name) if recipient_name else ""
+    greeting_line = f"Bonjour {safe_recipient}," if safe_recipient else "Bonjour,"
 
-    subject = f'[Hellenvilliers SCI] 💬 Nouveau message sur votre tâche : {task_title}'
+    subject = f"[SCI Hellenvilliers] 💬 Nouveau message sur votre tâche : {task_title}"
     preheader = f"{author_name} a publié un message sur votre tâche {task_title}"
-    action_url = f"{APP_BASE_URL}/taches?task_id={task_id}"
+    action_url = f"{APP_BASE_URL}/taches?task_id={task_id}" if task_id else f"{APP_BASE_URL}/taches"
 
     content_html = f"""
-    <p>Bonjour {greeting_name},</p>
+    <p>{greeting_line}</p>
     <p><strong>{safe_author}</strong> a publié un nouveau message sur une tâche que vous avez créée ou proposée (<strong>{safe_title}</strong>) :</p>
 
     <div style="background-color: #f9f8f6; border: 1px solid #e5e3dc; border-left: 4px solid #1e3a2f; border-radius: 6px; padding: 16px 20px; margin: 20px 0; font-style: italic; color: #1f2937; font-size: 15px; line-height: 1.6;">
@@ -1431,9 +1668,6 @@ def send_task_chat_activity_email(
 
     <p style="color: #4b5563; font-size: 14px;">
         Vous pouvez accéder directement à la tâche pour lire l'échange et y répondre :
-    </p>
-    <p style="font-size: 12px; color: #6b7280; margin-top: 24px; padding-top: 12px; border-top: 1px solid #eee;">
-        💡 <em>Vous pouvez désactiver cette notification à tout moment dans vos <a href="{APP_BASE_URL}/settings" style="color: #2d5a47; text-decoration: underline;">Paramètres &amp; Préférences</a>.</em>
     </p>
     """
 
@@ -1445,24 +1679,14 @@ def send_task_chat_activity_email(
         action_label="Consulter la tâche"
     )
 
-    names = [greeting_name]
-    email_entry = record_dispatched_email(
+    return _dispatch_and_record(
         trigger_action="task_chat_activity",
+        to_email=to_email,
         subject=subject,
-        recipients=to_email,
-        html_content=html_body,
-        recipients_names=names,
-        status="sent" if (actually_send and not is_email_disabled() and not is_test_mode()) else "simulated"
+        html_body=html_body,
+        recipients_names=[recipient_name] if recipient_name else None,
+        actually_send=actually_send
     )
-
-    if actually_send and not is_email_disabled() and not is_test_mode():
-        res = send_email(to_email=to_email, subject=subject, html_content=html_body)
-    else:
-        res = {"status": "simulated", "id": email_entry["id"]}
-
-    if isinstance(res, dict):
-        res["_email_dispatched"] = email_entry
-    return res
 
 
 def send_vote_chat_activity_email(
@@ -1478,18 +1702,18 @@ def send_vote_chat_activity_email(
     Template: NOUVEAU MESSAGE SUR UN VOTE / SCRUTIN PROPOSÉ (notif_vote_chat_activity)
     Notifies the creator of a vote/proposal when another member posts a comment.
     """
-    import html as html_lib
-    safe_message = html_lib.escape(message_text or "").replace("\n", "<br>")
-    safe_author = html_lib.escape(author_name or "Un associé")
-    safe_title = html_lib.escape(vote_title or "Scrutin")
-    greeting_name = recipient_name or "associé(e)"
+    safe_message = escape_html_text(message_text, preserve_newlines=True)
+    safe_author = escape_html_text(author_name or "Un associé")
+    safe_title = escape_html_text(vote_title or "Scrutin")
+    safe_recipient = escape_html_text(recipient_name) if recipient_name else ""
+    greeting_line = f"Bonjour {safe_recipient}," if safe_recipient else "Bonjour,"
 
-    subject = f'[Hellenvilliers SCI] 💬 Nouveau message sur votre vote : {vote_title}'
+    subject = f"[SCI Hellenvilliers] 💬 Nouveau message sur votre scrutin : {vote_title}"
     preheader = f"{author_name} a publié un message sur votre scrutin {vote_title}"
-    action_url = f"{APP_BASE_URL}/taches?project_id={project_id}"
+    action_url = f"{APP_BASE_URL}/taches?project_id={project_id}" if project_id else f"{APP_BASE_URL}/taches"
 
     content_html = f"""
-    <p>Bonjour {greeting_name},</p>
+    <p>{greeting_line}</p>
     <p><strong>{safe_author}</strong> a publié un nouveau message sur un scrutin que vous avez proposé (<strong>{safe_title}</strong>) :</p>
 
     <div style="background-color: #f9f8f6; border: 1px solid #e5e3dc; border-left: 4px solid #1e3a2f; border-radius: 6px; padding: 16px 20px; margin: 20px 0; font-style: italic; color: #1f2937; font-size: 15px; line-height: 1.6;">
@@ -1499,37 +1723,24 @@ def send_vote_chat_activity_email(
     <p style="color: #4b5563; font-size: 14px;">
         Vous pouvez accéder directement au scrutin pour lire l'échange et y répondre :
     </p>
-    <p style="font-size: 12px; color: #6b7280; margin-top: 24px; padding-top: 12px; border-top: 1px solid #eee;">
-        💡 <em>Vous pouvez désactiver cette notification à tout moment dans vos <a href="{APP_BASE_URL}/settings" style="color: #2d5a47; text-decoration: underline;">Paramètres &amp; Préférences</a>.</em>
-    </p>
     """
 
     html_body = render_email_layout(
-        title="Nouveau message sur votre vote",
+        title="Nouveau message sur votre scrutin",
         preheader=preheader,
         content_html=content_html,
         action_url=action_url,
         action_label="Consulter le scrutin"
     )
 
-    names = [greeting_name]
-    email_entry = record_dispatched_email(
+    return _dispatch_and_record(
         trigger_action="vote_chat_activity",
+        to_email=to_email,
         subject=subject,
-        recipients=to_email,
-        html_content=html_body,
-        recipients_names=names,
-        status="sent" if (actually_send and not is_email_disabled() and not is_test_mode()) else "simulated"
+        html_body=html_body,
+        recipients_names=[recipient_name] if recipient_name else None,
+        actually_send=actually_send
     )
-
-    if actually_send and not is_email_disabled() and not is_test_mode():
-        res = send_email(to_email=to_email, subject=subject, html_content=html_body)
-    else:
-        res = {"status": "simulated", "id": email_entry["id"]}
-
-    if isinstance(res, dict):
-        res["_email_dispatched"] = email_entry
-    return res
 
 
 def send_call_for_funds_email(
@@ -1541,19 +1752,7 @@ def send_call_for_funds_email(
     """
     Template 10: APPEL DE FONDS & AVIS DE COTISATION MENSUELLE
     Envoie l'avis récapitulatif mensuel et le QR-code de virement dès que la quote-part nette est émise.
-    
-    RÈGLES D'OR STRICTES :
-    1. RÈGLE ABSOLUE DU SOLDE NET <= 0 € :
-       Si le solde net <= 0 € (dépenses supérieures ou égales à la cotisation),
-       AUCUN avis n'est émis et AUCUNE notification e-mail n'est envoyée.
-    2. GARDE-FOU BANCAIRE STRICT :
-       Tant que l'IBAN officiel Indy / Swan n'est pas renseigné et validé (IS_BANK_ACCOUNT_ACTIVE=false),
-       la génération des avis bancaires réels et les envois d'emails sont bloqués avec le statut
-       « En attente de validation IBAN Swan ». Zéro e-mail envoyé.
-    3. PRÉFÉRENCE DE NOTIFICATION :
-       Vérifie que member.notif_new_invoices (ou notif_calls_for_funds) est actif (True par défaut).
     """
-    # Import paresseux pour éviter les cycles
     from .call_for_funds_service import (
         is_bank_account_active,
         get_official_bank_info,
@@ -1561,25 +1760,22 @@ def send_call_for_funds_email(
         SCI_NAME,
     )
 
-    # 1. RÈGLE ABSOLUE : Solde net <= 0 € -> ZÉRO ÉMISSION & ZÉRO NOTIFICATION
-    # Tout associé à jour ou ayant un solde créditeur (ex: Frédéric Jamet) ne doit STRICTEMENT recevoir AUCUN email.
     net_amount = float(call_data.get("net_amount", 0.0))
     should_issue = call_data.get("should_issue", True)
     if net_amount <= 0.0 or not should_issue:
         logger.info(
             f"[EXCLUSION APPEL DE FONDS] Aucun e-mail d'appel de fonds envoyé à {getattr(member, 'name', '')} : "
-            f"solde net <= 0 € ({net_amount:.2f} €). Associé à jour ou créditeur (ex: Frédéric Jamet), compensation totale."
+            f"solde net <= 0 € ({format_eur_fr(net_amount)})."
         )
         return {
             "status": "neutralized_no_email",
             "message": "Solde net ≤ 0 € : aucun avis ni notification émis (associé à jour ou solde créditeur)."
         }
 
-    # 2. GARDE-FOU BANCAIRE STRICT : IBAN Swan non validé -> ZÉRO E-MAIL ENVOYÉ
     if not is_bank_account_active(db):
         log_msg = (
             f"[GARDE-FOU IBAN] Avis d'appel de fonds pour {getattr(member, 'name', '')} non expédié : "
-            "IBAN Swan officiel non validé (IS_BANK_ACCOUNT_ACTIVE=false). Statut : En attente de validation IBAN Swan."
+            "IBAN Swan officiel non validé (IS_BANK_ACCOUNT_ACTIVE=false)."
         )
         logger.warning(log_msg)
         return {
@@ -1587,7 +1783,6 @@ def send_call_for_funds_email(
             "message": "En attente de validation IBAN Swan. Zéro e-mail envoyé."
         }
 
-    # 3. Vérification de la préférence de notification de l'associé
     notif_pref = getattr(member, "notif_new_invoices", True)
     if not notif_pref:
         logger.info(f"[PRÉFÉRENCE DÉSACTIVÉE] {getattr(member, 'name', '')} a désactivé les notifications d'appels de fonds.")
@@ -1600,12 +1795,13 @@ def send_call_for_funds_email(
     if not to_email:
         return {"status": "skipped_no_email", "message": "Aucune adresse e-mail renseignée pour cet associé."}
 
-    prenom = getattr(member, "prenom", "Associé")
-    period_label = call_data.get("period_label", "Mois en cours")
+    prenom = getattr(member, "prenom", "") or ""
+    safe_prenom = escape_html_text(prenom)
+    greeting_line = f"Bonjour {safe_prenom}," if safe_prenom else "Bonjour,"
+    period_label = call_data.get("period_label", "mois en cours")
+    de_mois = format_de_mois(period_label)
     theoretical = float(call_data.get("theoretical_contribution", 50.0))
-    expenses_total = float(call_data.get("approved_expenses_total", 0.0))
-    payment_ref = call_data.get("payment_reference", f"Apport CCA - {prenom}")
-    reference = call_data.get("reference", "AF")
+    payment_ref = call_data.get("payment_reference", f"Apport CCA - {prenom or 'Associe'}")
     bank_info = get_official_bank_info(db)
     iban_val = bank_info.get("iban", "")
     bic_val = bank_info.get("bic", "SWNBFR22")
@@ -1620,10 +1816,10 @@ def send_call_for_funds_email(
     )
     qr_b64 = base64.b64encode(qr_bytes).decode("ascii")
 
-    subject = f"🏛️ SCI Hellenvilliers — Appel de fonds {period_label} ({net_amount:.2f} €)"
-    preheader = f"Votre avis d'appel de fonds pour {period_label} est disponible : {net_amount:.2f} € à régler."
+    net_fr = format_eur_fr(net_amount)
+    subject = f"[SCI Hellenvilliers] 🏛️ Appel de fonds {period_label} ({net_fr})"
+    preheader = f"Votre avis d'appel de fonds {de_mois} est disponible : {net_fr} à régler."
 
-    # Lignes du tableau des dépenses
     raw_deducted = call_data.get("deducted_expenses") or []
     if isinstance(raw_deducted, dict):
         deducted = raw_deducted.get("deducted_expenses") or []
@@ -1636,10 +1832,12 @@ def send_call_for_funds_email(
     valid_expenses = [exp for exp in deducted if isinstance(exp, dict)]
     if valid_expenses:
         for exp in valid_expenses:
+            exp_title = escape_html_text(exp.get("title", "Dépense"))
+            exp_amt = format_eur_fr(float(exp.get("amount") or 0))
             expenses_rows_html += f"""
             <tr>
-                <td style="padding: 6px 10px; border-bottom: 1px solid #f1f5f9; color: #475569;">Déduction avance : {exp.get('title', 'Dépense')}</td>
-                <td style="padding: 6px 10px; border-bottom: 1px solid #f1f5f9; text-align: right; color: #b91c1c; font-weight: 600;">-{float(exp.get('amount') or 0):.2f} €</td>
+                <td style="padding: 6px 10px; border-bottom: 1px solid #f1f5f9; color: #475569;">Déduction avance : {exp_title}</td>
+                <td style="padding: 6px 10px; border-bottom: 1px solid #f1f5f9; text-align: right; color: #b91c1c; font-weight: 600;">-{exp_amt}</td>
             </tr>
             """
     else:
@@ -1651,22 +1849,22 @@ def send_call_for_funds_email(
         """
 
     content_html = f"""
-    <p>Bonjour {prenom},</p>
-    <p>Votre avis d'appel de fonds pour le mois de <strong>{period_label}</strong> a été établi pour la SCI Hellenvilliers :</p>
+    <p>{greeting_line}</p>
+    <p>Votre avis d'appel de fonds pour le mois <strong>{escape_html_text(de_mois)}</strong> a été établi pour la SCI Hellenvilliers :</p>
 
     <div style="background-color: #f8fafc; border: 1px solid #e2e8f0; border-left: 4px solid #064e3b; border-radius: 8px; padding: 18px; margin: 20px 0;">
         <div style="font-size: 16px; font-weight: bold; color: #064e3b; margin-bottom: 12px;">
-            📋 Décompte de la quote-part — {period_label}
+            📋 Décompte de la quote-part — {escape_html_text(period_label)}
         </div>
         <table role="presentation" border="0" cellpadding="0" cellspacing="0" width="100%" style="font-size: 13.5px; line-height: 1.6;">
             <tr>
                 <td style="padding: 6px 10px; border-bottom: 1px solid #f1f5f9;">Quote-part mensuelle théorique :</td>
-                <td style="padding: 6px 10px; border-bottom: 1px solid #f1f5f9; text-align: right; font-weight: bold; color: #1e293b;">+{theoretical:.2f} €</td>
+                <td style="padding: 6px 10px; border-bottom: 1px solid #f1f5f9; text-align: right; font-weight: bold; color: #1e293b;">+{format_eur_fr(theoretical)}</td>
             </tr>
             {expenses_rows_html}
             <tr style="background-color: #ecfdf5;">
                 <td style="padding: 10px; font-size: 15px; font-weight: bold; color: #064e3b;">Solde net à régler :</td>
-                <td style="padding: 10px; font-size: 16px; font-weight: bold; text-align: right; color: #064e3b;">{net_amount:.2f} €</td>
+                <td style="padding: 10px; font-size: 16px; font-weight: bold; text-align: right; color: #064e3b;">{net_fr}</td>
             </tr>
         </table>
     </div>
@@ -1680,11 +1878,11 @@ def send_call_for_funds_email(
                 <td style="vertical-align: top; padding-right: 16px;">
                     <p style="font-size: 13px; color: #1e293b; margin: 0 0 10px 0; line-height: 1.6;">
                         • Titulaire : <strong>SCI HELLENVILLIERS</strong><br/>
-                        • IBAN : <code style="font-family: monospace; font-size: 13px; background: #ffffff; padding: 2px 6px; border-radius: 4px; border: 1px solid #cbd5e1;">{iban_val}</code><br/>
-                        • BIC : <code style="font-family: monospace;">{bic_val}</code>
+                        • IBAN : <code style="font-family: monospace; font-size: 13px; background: #ffffff; padding: 2px 6px; border-radius: 4px; border: 1px solid #cbd5e1;">{escape_html_text(iban_val)}</code><br/>
+                        • BIC : <code style="font-family: monospace;">{escape_html_text(bic_val)}</code>
                     </p>
                     <p style="font-size: 12.5px; color: #064e3b; margin: 0 0 10px 0; line-height: 1.5; font-weight: 500;">
-                        💡 Il vous suffit d'effectuer votre virement depuis votre compte bancaire personnel (le virement sera automatiquement détecté et affecté à votre trésorerie à votre nom).
+                        💡 Il vous suffit d'effectuer votre virement depuis votre compte bancaire personnel (il sera automatiquement détecté et affecté à votre trésorerie à votre nom).
                     </p>
                     <p style="font-size: 12px; color: #475569; margin: 0;">
                         📱 <em>Scannez le QR-Code SEPA EPC avec votre application bancaire pour pré-remplir le virement instantanément.</em>
@@ -1696,10 +1894,6 @@ def send_call_for_funds_email(
             </tr>
         </table>
     </div>
-
-    <p style="font-size: 12px; color: #64748b; margin-top: 24px; border-top: 1px solid #e2e8f0; padding-top: 12px;">
-        💡 <em>Vous pouvez consulter vos factures et gérer vos préférences à tout moment dans vos <a href="{APP_BASE_URL}/settings" style="color: #064e3b; text-decoration: underline;">Paramètres</a>.</em>
-    </p>
     """
 
     action_url = f"{APP_BASE_URL}/admin"
@@ -1711,24 +1905,14 @@ def send_call_for_funds_email(
         action_label="Consulter l'avis & télécharger le PDF"
     )
 
-    names = [prenom]
-    email_entry = record_dispatched_email(
+    return _dispatch_and_record(
         trigger_action="call_for_funds",
+        to_email=to_email,
         subject=subject,
-        recipients=to_email,
-        html_content=html_body,
-        recipients_names=names,
-        status="sent" if (actually_send and not is_email_disabled() and not is_test_mode()) else "simulated"
+        html_body=html_body,
+        recipients_names=[prenom or "Associé"],
+        actually_send=actually_send
     )
-
-    if actually_send and not is_email_disabled() and not is_test_mode():
-        res = send_email(to_email=to_email, subject=subject, html_content=html_body)
-    else:
-        res = {"status": "simulated", "id": email_entry["id"]}
-
-    if isinstance(res, dict):
-        res["_email_dispatched"] = email_entry
-    return res
 
 
 def send_invoice_approval_request_email(
@@ -1746,21 +1930,22 @@ def send_invoice_approval_request_email(
     Template: NOUVELLE FACTURE / DÉPENSE DÉPOSÉE POUR APPROBATION (notif_invoice_approval_request)
     Notifies members who opted in when a new invoice or expense advance is submitted.
     """
-    import html as html_lib
-    safe_submitter = html_lib.escape(submitter_name or "Un associé")
-    safe_title = html_lib.escape(expense_title or "Facture")
-    safe_amount = html_lib.escape(amount_str or "")
-    safe_date = html_lib.escape(expense_date_str or "")
-    greeting_name = recipient_name or "associé(e)"
+    safe_submitter = escape_html_text(submitter_name or "Un associé")
+    safe_title = escape_html_text(expense_title or "Facture")
+    safe_amount = escape_html_text(amount_str or "")
+    safe_date = escape_html_text(format_date_fr(expense_date_str) or "")
+    safe_recipient = escape_html_text(recipient_name) if recipient_name else ""
+    greeting_line = f"Bonjour {safe_recipient}," if safe_recipient else "Bonjour,"
 
-    type_label = "Facture directe à régler par la SCI" if (payer_type or "").lower() == "sci" else "Avance de frais membre"
-    subject = f"[Hellenvilliers SCI] 🧾 Nouvelle facture à approuver : {safe_title} ({safe_amount})"
-    preheader = f"{safe_submitter} a soumis une dépense ({safe_amount}) pour approbation."
-    action_url = f"{APP_BASE_URL}/taches?task_id={task_id}"
+    is_sci = (payer_type or "").lower() == "sci"
+    type_label = "Facture directe à régler par la SCI" if is_sci else "Avance de frais membre"
+    subject = f"[SCI Hellenvilliers] 🧾 Nouvelle {'facture' if is_sci else 'avance'} à approuver : {expense_title} ({amount_str})"
+    preheader = f"{submitter_name or 'Un associé'} a soumis une dépense ({amount_str}) pour approbation."
+    action_url = f"{APP_BASE_URL}/taches?task_id={task_id}" if task_id else f"{APP_BASE_URL}/taches"
 
     content_html = f"""
-    <p>Bonjour {greeting_name},</p>
-    <p>Une nouvelle facture / avance de frais a été soumise pour approbation par <strong>{safe_submitter}</strong> :</p>
+    <p>{greeting_line}</p>
+    <p>Une nouvelle {'facture directe SCI' if is_sci else 'avance de frais'} a été soumise pour approbation par <strong>{safe_submitter}</strong> :</p>
 
     <div style="background-color: #f9f8f6; border: 1px solid #e5e3dc; border-left: 4px solid #1e3a2f; border-radius: 6px; padding: 16px 20px; margin: 20px 0; color: #1f2937; font-size: 15px; line-height: 1.6;">
         <p style="margin: 0 0 8px 0;"><strong>Objet :</strong> {safe_title}</p>
@@ -1769,35 +1954,27 @@ def send_invoice_approval_request_email(
         <p style="margin: 0;"><strong>Type :</strong> {type_label}</p>
     </div>
 
-    <p>Vous pouvez consulter la tâche correspondante et valider les détails sur la plateforme de la SCI :</p>
+    <p style="color: #4b5563; font-size: 14px;">
+        Vous pouvez consulter la tâche correspondante et valider les justificatifs sur le portail de la SCI :
+    </p>
     """
 
-    html_body = build_responsive_email_layout(
-        title="Nouvelle Facture Déposée",
+    html_body = render_email_layout(
+        title="Nouvelle facture déposée" if is_sci else "Nouvelle avance de frais déposée",
         preheader=preheader,
         content_html=content_html,
         action_url=action_url,
         action_label="Consulter la tâche & approuver"
     )
 
-    names = [greeting_name]
-    email_entry = record_dispatched_email(
+    return _dispatch_and_record(
         trigger_action="invoice_approval_request",
+        to_email=to_email,
         subject=subject,
-        recipients=to_email,
-        html_content=html_body,
-        recipients_names=names,
-        status="sent" if (actually_send and not is_email_disabled() and not is_test_mode()) else "simulated"
+        html_body=html_body,
+        recipients_names=[recipient_name] if recipient_name else None,
+        actually_send=actually_send
     )
-
-    if actually_send and not is_email_disabled() and not is_test_mode():
-        res = send_email(to_email=to_email, subject=subject, html_content=html_body)
-    else:
-        res = {"status": "simulated", "id": email_entry["id"]}
-
-    if isinstance(res, dict):
-        res["_email_dispatched"] = email_entry
-    return res
 
 
 

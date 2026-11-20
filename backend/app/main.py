@@ -148,6 +148,7 @@ from .services.email_service import (
     send_email,
     send_task_assigned_email,
     send_task_creation_pending_email,
+    send_task_completion_pending_email,
     send_vote_creation_pending_email,
     send_vote_arbitration_email,
     send_vote_required_email,
@@ -167,7 +168,10 @@ from .services.email_service import (
     APP_BASE_URL,
     is_email_disabled,
     is_test_mode,
-    send_call_for_funds_email
+    send_call_for_funds_email,
+    accord_fr,
+    format_a_demeure,
+    format_date_fr,
 )
 try:
     from .services.call_for_funds_service import (
@@ -1038,6 +1042,120 @@ def normalize_text_for_matching(text: str) -> str:
     ascii_text = nfkd.encode('ASCII', 'ignore').decode('utf-8')
     return ascii_text.strip().lower()
 
+
+def resolve_member_from_name(raw_name: Any, db: Session, all_members: Optional[List[Member]] = None) -> Optional[Member]:
+    """Résout un associé par prénom, nom complet ou surnom (insensible aux accents, gère Élisabeth/Elizabeth/Maman)."""
+    norm = normalize_text_for_matching(str(raw_name or ""))
+    if not norm:
+        return None
+    members = all_members if all_members is not None else db.query(Member).all()
+    first_tok = norm.split()[0]
+    alias_map = {
+        "maman": "elisabeth",
+        "elizabeth": "elisabeth",
+        "papa": "frederic",
+    }
+    first_canon = alias_map.get(first_tok, first_tok)
+
+    for m in members:
+        m_prenom = normalize_text_for_matching(m.prenom or "")
+        m_name = normalize_text_for_matching(m.name or "")
+        if norm == m_name or norm == m_prenom or first_canon == m_prenom:
+            return m
+    for m in members:
+        m_prenom = normalize_text_for_matching(m.prenom or "")
+        m_name = normalize_text_for_matching(m.name or "")
+        if m_prenom and (m_prenom in norm or first_canon in m_name):
+            return m
+    return None
+
+
+def resolve_task_assignees(task: Task, db: Session) -> List[Member]:
+    """Retourne la liste dédupliquée des Member assignés à une tâche (via assignee_id et assigned_members)."""
+    all_members = db.query(Member).all()
+    by_id = {m.id: m for m in all_members}
+    assignees: List[Member] = []
+    seen_ids: set = set()
+
+    if task.assignee_id and task.assignee_id in by_id:
+        assignees.append(by_id[task.assignee_id])
+        seen_ids.add(task.assignee_id)
+
+    if task.assigned_members:
+        raw = task.assigned_members
+        assigned_list: List[Any] = []
+        if isinstance(raw, list):
+            assigned_list = raw
+        elif isinstance(raw, str):
+            try:
+                parsed = json.loads(raw)
+                assigned_list = parsed if isinstance(parsed, list) else ([raw] if raw.strip() and raw.strip() != "[]" else [])
+            except Exception:
+                if raw.strip() and raw.strip() != "[]":
+                    assigned_list = [raw.strip()]
+        for name_item in assigned_list:
+            m = resolve_member_from_name(name_item, db, all_members=all_members)
+            if m and m.id not in seen_ids:
+                assignees.append(m)
+                seen_ids.add(m.id)
+    return assignees
+
+
+def format_task_email_fields(task: Task) -> tuple:
+    """Retourne (domain, location, charge_label) propres pour les e-mails de tâches."""
+    domain = (task.subject or task.category or "SCI Familiale").strip()
+    raw_loc = (task.category or "").strip()
+    location = raw_loc if (raw_loc and raw_loc.lower() != domain.lower()) else "Domaine d'Hellenvilliers"
+    comp = (task.complexity or "Modérée").strip()
+    pts = getattr(task, "charge_points", None)
+    charge = f"{comp} ({pts} pt{'s' if pts != 1 else ''})" if isinstance(pts, int) and pts > 0 else comp
+    return domain, location, charge
+
+
+def build_vote_tally(all_project_votes: List[ProjectVote]) -> tuple:
+    """Calcule le décompte complet des suffrages (standard + options personnalisées) et un résumé texte."""
+    summary: Dict[str, int] = {"pour": 0, "contre": 0, "abstention": 0, "report_prochaine_ag": 0}
+    for v in all_project_votes:
+        raw = (v.vote or "").strip()
+        if not raw:
+            continue
+        choices = [raw]
+        if raw.startswith("[") and raw.endswith("]"):
+            try:
+                parsed = json.loads(raw)
+                if isinstance(parsed, list):
+                    choices = [str(c).strip() for c in parsed if str(c).strip()]
+            except Exception:
+                pass
+        for c in choices:
+            c_up = c.upper()
+            if c_up in ("POUR", "OUI", "APPROUVER"):
+                summary["pour"] += 1
+            elif c_up in ("CONTRE", "NON", "REJETER"):
+                summary["contre"] += 1
+            elif c_up in ("ABSTENTION", "BLANC"):
+                summary["abstention"] += 1
+            elif "REPORT" in c_up or "DEMANDE_AG" in c_up:
+                summary["report_prochaine_ag"] += 1
+            else:
+                summary[c] = summary.get(c, 0) + 1
+
+    std_keys = {"pour", "contre", "abstention", "report_prochaine_ag"}
+    custom_items = [(k, cnt) for k, cnt in summary.items() if k not in std_keys and cnt > 0]
+    if custom_items:
+        parts = [f"{k} : {cnt}" for k, cnt in custom_items]
+        if summary["abstention"]:
+            parts.append(f"Abstention : {summary['abstention']}")
+        if summary["report_prochaine_ag"]:
+            parts.append(f"Report AG : {summary['report_prochaine_ag']}")
+        summary_text = ", ".join(parts)
+    else:
+        parts = [f"{summary['pour']} Pour", f"{summary['contre']} Contre", f"{summary['abstention']} Abstention"]
+        if summary["report_prochaine_ag"]:
+            parts.append(f"{summary['report_prochaine_ag']} Report AG")
+        summary_text = ", ".join(parts)
+    return summary, summary_text
+
 def find_mentioned_members(content: str, db: Session) -> List[Member]:
     r"""
     Extracts @mentions with regex r'@([A-Za-zÀ-ÿ0-9_\-]+)' and matches with Member records.
@@ -1509,10 +1627,22 @@ def forgot_password(
             any(c.isdigit() for c in new_password)):
             break
 
-    # 3. Hachage avec pwd_context.hash(...)
-    hashed_password = pwd_context.hash(new_password)
+    # 3. Envoi de l'email AVANT de modifier le mot de passe en base (zéro verrouillage si échec / blocage)
+    email_res = send_password_reset_email(
+        to_email=member.email,
+        member_name=member.prenom,
+        new_temporary_password=new_password
+    )
+    email_status = email_res.get("status") if isinstance(email_res, dict) else "error"
+    if email_status not in ("sent", "simulated"):
+        logger.error(f"[FORGOT PASSWORD] Échec/blocage envoi reset email pour {member.prenom} ({member.email}): {email_res}")
+        raise HTTPException(
+            status_code=status.HTTP_502_BAD_GATEWAY,
+            detail="Impossible d'envoyer l'e-mail de réinitialisation pour le moment. Votre mot de passe actuel reste inchangé."
+        )
 
-    # 4. Mise à jour hashed_password dans members (et users si répliquée)
+    # 4. Hachage et mise à jour hashed_password dans members (et users si répliquée)
+    hashed_password = pwd_context.hash(new_password)
     member.password = hashed_password
     if hasattr(member, "hashed_password"):
         setattr(member, "hashed_password", hashed_password)
@@ -1539,13 +1669,6 @@ def forgot_password(
 
     db.commit()
     db.refresh(member)
-
-    # 5. Envoi de l'email via Resend
-    email_res = send_password_reset_email(
-        to_email=member.email,
-        member_name=member.prenom,
-        new_temporary_password=new_password
-    )
     logger.info(f"[FORGOT PASSWORD] Reset email envoyé pour {member.prenom} ({member.email}): {email_res}")
 
     # 6. Réponse standardisée
@@ -2474,6 +2597,10 @@ def dispatch_stay_confirmation(db_res: Reservation, db: Session, prop_name: Opti
         stay_recipients = list(dict.fromkeys(stay_recipients))
 
         effective_prop = db_res.property_name or prop_name or "Domaine d'Hellenvilliers"
+        a_demeure = format_a_demeure(effective_prop)
+        start_fr = format_date_fr(db_res.start_date)
+        end_fr = format_date_fr(db_res.end_date)
+
         if stay_recipients:
             send_res = send_stay_booked_email(
                 to_email=stay_recipients,
@@ -2489,25 +2616,25 @@ def dispatch_stay_confirmation(db_res: Reservation, db: Session, prop_name: Opti
             if isinstance(send_res, dict) and "_email_dispatched" in send_res:
                 dispatched_email = send_res["_email_dispatched"]
 
-        # Notification interne globale pour la cloche
-        create_internal_notification(
-            db=db,
-            title=f"Nouveau séjour réservé : {booker_name}",
-            description=f"Séjour au {effective_prop} du {db_res.start_date} au {db_res.end_date}.",
-            notif_type="booking",
-            link_path="/calendrier",
-            link_id=str(db_res.id) if db_res.id else None,
-            email_entry=dispatched_email
-        )
-
-        # Notifications internes ciblées pour CHAQUE participant assigné au séjour (Annotation 1 : systématique dans la cloche)
+        # Une seule notification interne par membre (confirmation dédiée aux participants, avis aux autres — zéro doublon)
         for m in all_members:
             if is_participant(m):
                 create_internal_notification(
                     db=db,
                     member_id=m.id,
-                    title=f"Confirmation de votre séjour au Domaine",
-                    description=f"Séjour avec {booker_name} au {effective_prop} du {db_res.start_date} au {db_res.end_date}.",
+                    title="Confirmation de votre séjour au Domaine",
+                    description=f"Séjour avec {booker_name} {a_demeure} du {start_fr} au {end_fr}.",
+                    notif_type="booking",
+                    link_path="/calendrier",
+                    link_id=str(db_res.id) if db_res.id else None,
+                    email_entry=dispatched_email
+                )
+            else:
+                create_internal_notification(
+                    db=db,
+                    member_id=m.id,
+                    title=f"Nouveau séjour réservé : {booker_name}",
+                    description=f"Séjour {a_demeure} du {start_fr} au {end_fr}.",
                     notif_type="booking",
                     link_path="/calendrier",
                     link_id=str(db_res.id) if db_res.id else None,
@@ -2948,7 +3075,7 @@ def create_project(proj: ProjectCreate, db: Session = Depends(get_db)):
 
             target_vote_members = {m.id: m for m in (coordinators + subscribed_vote)}.values()
 
-            coord_email_template = None
+            coord_email_map = {}
             for coord in target_vote_members:
                 m_email = coord.email or f"{coord.prenom.lower()}@sci-familiale.fr"
                 actually_send_mail = bool(getattr(coord, "notify_vote_creation", False) and coord.email)
@@ -2962,10 +3089,9 @@ def create_project(proj: ProjectCreate, db: Session = Depends(get_db)):
                     actually_send=actually_send_mail
                 )
                 if isinstance(send_coord_res, dict) and "_email_dispatched" in send_coord_res:
-                    coord_email_template = send_coord_res["_email_dispatched"]
-
-            if coord_email_template:
-                dispatched_email = coord_email_template
+                    coord_email_map[coord.id] = send_coord_res["_email_dispatched"]
+                    if not dispatched_email:
+                        dispatched_email = send_coord_res["_email_dispatched"]
 
             for coord in target_vote_members:
                 create_internal_notification(
@@ -2976,7 +3102,7 @@ def create_project(proj: ProjectCreate, db: Session = Depends(get_db)):
                     notif_type="vote",
                     link_path=f"/taches?project_id={db_proj.id}",
                     link_id=str(db_proj.id),
-                    email_entry=coord_email_template
+                    email_entry=coord_email_map.get(coord.id)
                 )
         except Exception as e:
             logger.error(f"[EMAIL ERROR] Failed to send coordinator vote proposal notification: {e}")
@@ -3118,34 +3244,37 @@ def approve_project_by_coordinator(
             db.rollback()
 
         decision = "ARCHIVÉ"
-        votes_summary = "Résultats validés"
+        votes_summary_str = "Résultats validés"
         try:
+            all_project_votes = db.query(ProjectVote).filter(ProjectVote.project_id == db_proj.id).all()
+            total_v = len(all_project_votes)
+            votes_summary_dict, votes_summary_str = build_vote_tally(all_project_votes)
+            pour_cnt = votes_summary_dict.get("pour", 0)
+            contre_cnt = votes_summary_dict.get("contre", 0)
+            report_cnt = votes_summary_dict.get("report_prochaine_ag", 0)
+
+            if report_cnt > 0:
+                decision = "REPORTÉ PROCHAINE AG"
+            elif pour_cnt > contre_cnt:
+                decision = "ADOPTÉ À LA MAJORITÉ"
+            elif contre_cnt > pour_cnt:
+                decision = "REJETÉ"
+            elif pour_cnt > 0 or contre_cnt > 0:
+                decision = "ÉGALITÉ — ARCHIVÉ"
+            else:
+                decision = "ARCHIVÉ"
+
             member_users = db.query(Member).filter(Member.email.isnot(None)).all()
             closed_recipients = [
                 m.email for m in member_users
                 if getattr(m, 'notif_vote_closed', True) and m.email
             ]
             if closed_recipients:
-                all_project_votes = db.query(ProjectVote).filter(ProjectVote.project_id == db_proj.id).all()
-                total_v = len(all_project_votes)
-                pour_cnt = sum(1 for v in all_project_votes if v.vote and str(v.vote).upper() in ["POUR", "OUI", "APPROUVER"])
-                contre_cnt = sum(1 for v in all_project_votes if v.vote and str(v.vote).upper() in ["CONTRE", "NON", "REJETER"])
-                abs_cnt = sum(1 for v in all_project_votes if v.vote and str(v.vote).upper() in ["ABSTENTION", "BLANC"])
-
-                if pour_cnt > contre_cnt:
-                    decision = "ADOPTÉ À LA MAJORITÉ"
-                elif contre_cnt > pour_cnt:
-                    decision = "REJETÉ"
-                else:
-                    decision = "ARCHIVÉ / ÉGALITÉ"
-
-                votes_summary = f"{pour_cnt} Pour, {contre_cnt} Contre, {abs_cnt} Abstention"
-
                 send_res = send_vote_closed_email(
                     to_email=closed_recipients,
                     vote_title=db_proj.title,
                     decision=decision,
-                    votes_summary=votes_summary,
+                    votes_summary=votes_summary_dict,
                     total_votes=total_v,
                     project_id=db_proj.id,
                     estimated_cost=float(db_proj.estimated_cost or 0.0)
@@ -3159,7 +3288,7 @@ def approve_project_by_coordinator(
         create_internal_notification(
             db=db,
             title=f"Scrutin archivé : {db_proj.title}",
-            description=f"Le scrutin « {db_proj.title} » a été validé et archivé par la coordination. Résultat : {decision} ({votes_summary}).",
+            description=f"Le scrutin « {db_proj.title} » a été validé et archivé par la coordination. Résultat : {decision} ({votes_summary_str}).",
             notif_type="vote",
             link_path=f"/taches?project_id={db_proj.id}",
             link_id=str(db_proj.id),
@@ -3358,6 +3487,8 @@ def review_project(project_id: int, review: ProjectUpdateRequest, db: Session = 
 
     # Invalidation étendue et réinitialisation des votes si titre, description, options, multi ou docs modifiés (Annotation 6)
     votes_count = db.query(ProjectVote).filter(ProjectVote.project_id == project_id).count()
+    reset_vote_email_sent = False
+    dispatched_email = None
     if should_reset_votes and votes_count > 0:
         db.query(ProjectVote).filter(ProjectVote.project_id == project_id).delete()
         if hasattr(db_proj, 'votes') and isinstance(db_proj.votes, list):
@@ -3378,7 +3509,7 @@ def review_project(project_id: int, review: ProjectUpdateRequest, db: Session = 
             member_users = db.query(Member).filter(Member.email.isnot(None)).all()
             member_emails = [u.email for u in member_users if getattr(u, 'notif_vote_needed', True) and u.email]
             if member_emails:
-                send_vote_required_email(
+                send_res = send_vote_required_email(
                     to_email=member_emails,
                     vote_title=db_proj.title,
                     submitted_by="Coordination SCI",
@@ -3386,6 +3517,9 @@ def review_project(project_id: int, review: ProjectUpdateRequest, db: Session = 
                     estimated_cost=float(db_proj.estimated_cost or 0.0),
                     project_id=db_proj.id
                 )
+                reset_vote_email_sent = True
+                if isinstance(send_res, dict) and "_email_dispatched" in send_res:
+                    dispatched_email = send_res["_email_dispatched"]
         except Exception as e:
             logger.error(f"[EMAIL ERROR] Failed to send vote reset notification: {e}")
 
@@ -3398,9 +3532,8 @@ def review_project(project_id: int, review: ProjectUpdateRequest, db: Session = 
         logger.error(f"[PROJECT REVIEW ERROR] Echec commit review: {exc}")
         raise HTTPException(status_code=400, detail=f"Erreur lors de la mise à jour du projet: {str(exc)}")
 
-    dispatched_email = None
-    # Email & notification trigger: passage en mode En cours (OPEN / EN_VOTE)
-    if db_proj.status in ["EN_VOTE", "OPEN"] and (old_status not in ["EN_VOTE", "OPEN"] or review.decision_mode == "SOUMETTRE_AU_VOTE"):
+    # Email & notification trigger: passage en mode En cours (OPEN / EN_VOTE) — sans doublon si déjà notifié par réinitialisation
+    if not reset_vote_email_sent and db_proj.status in ["EN_VOTE", "OPEN"] and (old_status not in ["EN_VOTE", "OPEN"] or review.decision_mode == "SOUMETTRE_AU_VOTE"):
         notif_msg = f"Le scrutin « {db_proj.title} » a été validé par la coordination et est désormais ouvert au vote de tous les associés."
         sys_comment = ProjectComment(
             project_id=project_id,
@@ -3438,8 +3571,8 @@ def review_project(project_id: int, review: ProjectUpdateRequest, db: Session = 
             title=f"Scrutin ouvert : {db_proj.title}",
             description=f"Le scrutin « {db_proj.title} » a été validé par la coordination et est ouvert au vote de tous les associés.",
             notif_type="vote",
-            link_path="/taches",
-            link_id=db_proj.id,
+            link_path=f"/taches?project_id={db_proj.id}",
+            link_id=str(db_proj.id),
             email_entry=dispatched_email
         )
 
@@ -3459,34 +3592,37 @@ def review_project(project_id: int, review: ProjectUpdateRequest, db: Session = 
             db.rollback()
 
         decision = "ARCHIVÉ"
-        votes_summary = "Résultats validés"
+        votes_summary_str = "Résultats validés"
         try:
+            all_project_votes = db.query(ProjectVote).filter(ProjectVote.project_id == db_proj.id).all()
+            total_v = len(all_project_votes)
+            votes_summary_dict, votes_summary_str = build_vote_tally(all_project_votes)
+            pour_cnt = votes_summary_dict.get("pour", 0)
+            contre_cnt = votes_summary_dict.get("contre", 0)
+            report_cnt = votes_summary_dict.get("report_prochaine_ag", 0)
+
+            if report_cnt > 0:
+                decision = "REPORTÉ PROCHAINE AG"
+            elif pour_cnt > contre_cnt:
+                decision = "ADOPTÉ À LA MAJORITÉ"
+            elif contre_cnt > pour_cnt:
+                decision = "REJETÉ"
+            elif pour_cnt > 0 or contre_cnt > 0:
+                decision = "ÉGALITÉ — ARCHIVÉ"
+            else:
+                decision = "ARCHIVÉ"
+
             member_users = db.query(Member).filter(Member.email.isnot(None)).all()
             closed_recipients = [
                 m.email for m in member_users
                 if getattr(m, 'notif_vote_closed', True) and m.email
             ]
             if closed_recipients:
-                all_project_votes = db.query(ProjectVote).filter(ProjectVote.project_id == db_proj.id).all()
-                total_v = len(all_project_votes)
-                pour_cnt = sum(1 for v in all_project_votes if v.vote and str(v.vote).upper() in ["POUR", "OUI", "APPROUVER"])
-                contre_cnt = sum(1 for v in all_project_votes if v.vote and str(v.vote).upper() in ["CONTRE", "NON", "REJETER"])
-                abs_cnt = sum(1 for v in all_project_votes if v.vote and str(v.vote).upper() in ["ABSTENTION", "BLANC"])
-
-                if pour_cnt > contre_cnt:
-                    decision = "ADOPTÉ À LA MAJORITÉ"
-                elif contre_cnt > pour_cnt:
-                    decision = "REJETÉ"
-                else:
-                    decision = "ARCHIVÉ / ÉGALITÉ"
-
-                votes_summary = f"{pour_cnt} Pour, {contre_cnt} Contre, {abs_cnt} Abstention"
-
                 send_res = send_vote_closed_email(
                     to_email=closed_recipients,
                     vote_title=db_proj.title,
                     decision=decision,
-                    votes_summary=votes_summary,
+                    votes_summary=votes_summary_dict,
                     total_votes=total_v,
                     project_id=db_proj.id,
                     estimated_cost=float(db_proj.estimated_cost or 0.0)
@@ -3500,10 +3636,10 @@ def review_project(project_id: int, review: ProjectUpdateRequest, db: Session = 
         create_internal_notification(
             db=db,
             title=f"Scrutin archivé : {db_proj.title}",
-            description=f"Le scrutin « {db_proj.title} » a été validé et archivé par la coordination. Résultat : {decision} ({votes_summary}).",
+            description=f"Le scrutin « {db_proj.title} » a été validé et archivé par la coordination. Résultat : {decision} ({votes_summary_str}).",
             notif_type="vote",
-            link_path="/taches",
-            link_id=db_proj.id,
+            link_path=f"/taches?project_id={db_proj.id}",
+            link_id=str(db_proj.id),
             email_entry=dispatched_email
         )
 
@@ -3569,6 +3705,7 @@ def process_vote_submission(
         ).first()
 
     proj_status = (db_proj.status or "").strip().upper()
+    was_already_pending_arbitration = proj_status in ("PENDING_VALIDATION", "REPORT_AG")
     if proj_status in ["PROPOSED", "PENDING_CREATION", "EN_ATTENTE_CREATION"]:
         raise HTTPException(
             status_code=400,
@@ -3739,32 +3876,24 @@ def process_vote_submission(
         db_proj.add_to_ag_agenda = False
 
     # Annotation 8 : Cycle de vie des votes calqué sur les tâches
-    # Lorsque le total des voix exprimées atteint le quorum complet (7 voix), basculer automatiquement
-    # le statut du projet en PENDING_VALIDATION (au lieu de clore directement), pour permettre l'arbitrage formel par les coordinateurs.
+    # Au quorum (7/7) ou sur demande de report en AG, basculer en PENDING_VALIDATION / REPORT_AG
+    # et notifier la coordination pour arbitrage. L'e-mail de décision finale (send_vote_closed_email)
+    # n'est envoyé qu'au moment de l'archivage définitif par les coordinateurs (jamais prématurément ici !).
     dispatched_email = None
     quorum_reached = len(distinct_voters) >= 7 or (total_associates > 0 and len(distinct_voters) >= total_associates)
-    if quorum_reached and db_proj.status in [
+    should_enter_arbitration = (quorum_reached or has_report_ag_vote) and db_proj.status in [
         "EN_VOTE", "OPEN", "SOUMIS", "PROPOSED", "REPORT_AG", "APPROUVE", "REFUSE", "PENDING_VALIDATION"
-    ]:
-        votes_summary = {"pour": 0, "contre": 0, "abstention": 0, "report_prochaine_ag": 0}
-        for v in all_project_votes:
-            v_s = (v.vote or "").upper()
-            if v_s in ("POUR", "OUI"):
-                votes_summary["pour"] += 1
-            elif v_s in ("CONTRE", "NON"):
-                votes_summary["contre"] += 1
-            elif v_s == "ABSTENTION":
-                votes_summary["abstention"] += 1
-            elif "REPORT" in v_s:
-                votes_summary["report_prochaine_ag"] += 1
+    ]
+    if should_enter_arbitration:
+        votes_summary, votes_summary_str = build_vote_tally(all_project_votes)
 
-        if votes_summary["report_prochaine_ag"] > 0:
+        if has_report_ag_vote or votes_summary["report_prochaine_ag"] > 0:
             db_proj.status = "REPORT_AG"
             db_proj.add_to_ag_agenda = True
-            decision = "REPORTÉ PROCHAINE AG"
+            decision = "REPORTÉ PROCHAINE AG — EN ATTENTE D'ARBITRAGE"
         else:
             db_proj.status = "PENDING_VALIDATION"
-            decision = "QUORUM ATTEINT (7/7) - EN ATTENTE DE VALIDATION COORDINATEURS"
+            decision = f"QUORUM ATTEINT ({len(distinct_voters)}/{total_associates}) — EN ATTENTE D'ARBITRAGE"
 
         try:
             db_proj.updated_at = datetime.utcnow()
@@ -3772,79 +3901,65 @@ def process_vote_submission(
             db.refresh(db_proj)
         except Exception as exc:
             db.rollback()
-            logger.error(f"[VOTE ERROR] Echec commit mise à jour statut quorum: {exc}")
+            logger.error(f"[VOTE ERROR] Echec commit mise à jour statut quorum/report: {exc}")
 
-        # Email Trigger 3: Send final decision email if notif_vote_closed is True
-        try:
-            members_to_notify = db.query(Member).filter(Member.email.isnot(None)).all()
-            closed_recipients = [
-                m.email for m in members_to_notify
-                if getattr(m, 'notif_vote_closed', True) and m.email
-            ]
-            if closed_recipients:
-                send_res = send_vote_closed_email(
-                    to_email=closed_recipients,
-                    vote_title=db_proj.title,
-                    decision=decision,
-                    votes_summary=votes_summary,
-                    total_votes=len(all_project_votes),
-                    project_id=db_proj.id,
-                    estimated_cost=float(db_proj.estimated_cost or 0.0)
-                )
-                if isinstance(send_res, dict) and "_email_dispatched" in send_res:
-                    dispatched_email = send_res["_email_dispatched"]
-        except Exception as e:
-            logger.error(f"[EMAIL ERROR] Failed to send vote closed notification: {e}")
+        # Ne déclencher les notifications d'arbitrage qu'à l'entrée en arbitrage (pas sur chaque édition de vote)
+        if not was_already_pending_arbitration:
+            coord_email_map = {}
+            try:
+                coordinators = db.query(Member).filter(
+                    or_(
+                        Member.is_coordinator == True,
+                        func.lower(Member.prenom).in_(["henri", "joséphine", "josephine"])
+                    )
+                ).all()
+                subscribed_arb = db.query(Member).filter(
+                    Member.notify_vote_arbitration == True
+                ).all()
+                target_arb_members = list({m.id: m for m in (coordinators + subscribed_arb)}.values())
 
-        # Notification des coordinateurs pour arbitrage (Annotation 8)
-        coord_email_template = None
-        try:
-            coordinators = db.query(Member).filter(
-                or_(
-                    Member.is_coordinator == True,
-                    func.lower(Member.prenom).in_(["henri", "joséphine", "josephine"])
-                ),
-                Member.email.isnot(None)
-            ).all()
+                for coord in target_arb_members:
+                    m_email = coord.email or f"{coord.prenom.lower()}@sci-familiale.fr"
+                    actually_send_arb = bool(getattr(coord, "notify_vote_arbitration", False) and coord.email)
+                    send_coord_res = send_vote_arbitration_email(
+                        to_email=m_email,
+                        vote_title=db_proj.title,
+                        decision=decision,
+                        votes_summary=votes_summary,
+                        coordinator_name=coord.prenom,
+                        project_id=db_proj.id,
+                        description=db_proj.description or "",
+                        actually_send=actually_send_arb
+                    )
+                    if isinstance(send_coord_res, dict) and "_email_dispatched" in send_coord_res:
+                        coord_email_map[coord.id] = send_coord_res["_email_dispatched"]
+                        if not dispatched_email:
+                            dispatched_email = send_coord_res["_email_dispatched"]
 
-            for coord in coordinators:
-                send_coord_res = send_vote_arbitration_email(
-                    to_email=coord.email,
-                    vote_title=db_proj.title,
-                    decision=decision,
-                    votes_summary=votes_summary,
-                    coordinator_name=coord.prenom,
-                    project_id=db_proj.id,
-                    description=db_proj.description or "",
-                    actually_send=bool(getattr(coord, "notify_vote_arbitration", False))
-                )
-                if isinstance(send_coord_res, dict) and "_email_dispatched" in send_coord_res:
-                    coord_email_template = send_coord_res["_email_dispatched"]
+                for coord in target_arb_members:
+                    create_internal_notification(
+                        db=db,
+                        member_id=coord.id,
+                        title=f"Arbitrage requis : {db_proj.title}",
+                        description=f"Le scrutin « {db_proj.title} » est en attente d'arbitrage par la coordination ({decision} — {votes_summary_str}).",
+                        notif_type="vote",
+                        link_path=f"/taches?project_id={db_proj.id}",
+                        link_id=str(db_proj.id),
+                        email_entry=coord_email_map.get(coord.id)
+                    )
+            except Exception as coord_err:
+                logger.error(f"[EMAIL ERROR] Failed to send coordinator vote arbitration notification: {coord_err}")
 
-            for coord in coordinators:
-                create_internal_notification(
-                    db=db,
-                    member_id=coord.id,
-                    title=f"Arbitrage requis : {db_proj.title}",
-                    description=f"Le scrutin « {db_proj.title} » est en attente d'arbitrage par la coordination ({decision}).",
-                    notif_type="vote",
-                    link_path=f"/taches?project_id={db_proj.id}",
-                    link_id=str(db_proj.id),
-                    email_entry=coord_email_template
-                )
-        except Exception as coord_err:
-            logger.error(f"[EMAIL ERROR] Failed to send coordinator vote arbitration notification: {coord_err}")
-
-        # Notification interne globale pour la cloche (Annotation 13)
-        create_internal_notification(
-            db=db,
-            title=f"Scrutin en attente d'arbitrage : {db_proj.title}",
-            description=f"Le quorum (7/7) a été atteint sur « {db_proj.title} ». Statut : {decision}.",
-            notif_type="vote",
-            link_path=f"/taches?project_id={db_proj.id}",
-            link_id=str(db_proj.id),
-            email_entry=dispatched_email or coord_email_template
-        )
+            # Notification interne globale pour la cloche
+            create_internal_notification(
+                db=db,
+                title=f"Scrutin en attente d'arbitrage : {db_proj.title}",
+                description=f"« {db_proj.title} » : {decision} ({votes_summary_str}).",
+                notif_type="vote",
+                link_path=f"/taches?project_id={db_proj.id}",
+                link_id=str(db_proj.id),
+                email_entry=dispatched_email
+            )
 
     elif not quorum_reached and db_proj.status == "PENDING_VALIDATION":
         # Annotation 10 : Si le total des votants repasse sous 7 (suite à un retrait), réverser automatiquement le statut à OPEN !
@@ -4988,58 +5103,50 @@ def create_task(
     db.commit()
     db.refresh(db_task)
 
-    # Email & In-App Notification Trigger 1: Notify all assigned members (Annotation 1)
+    # Synchroniser assignee_id depuis assigned_members si manquant (accent-insensitive)
+    resolved_assignees = resolve_task_assignees(db_task, db)
+    if resolved_assignees and not db_task.assignee_id:
+        db_task.assignee_id = resolved_assignees[0].id
+        db.commit()
+        db.refresh(db_task)
+
+    # Email & In-App Notification Trigger 1: Notify assigned members ONLY when task is active (never prematurely while PROPOSED)
     dispatched_email = None
-    try:
-        assignees = []
-        if db_task.assignee_id:
-            m = db.query(Member).filter(Member.id == db_task.assignee_id).first()
-            if m and m not in assignees:
-                assignees.append(m)
-        if db_task.assigned_members:
-            try:
-                assigned_list = json.loads(db_task.assigned_members) if isinstance(db_task.assigned_members, str) else list(db_task.assigned_members)
-                if isinstance(assigned_list, list):
-                    for name_item in assigned_list:
-                        first_name = str(name_item).strip().split()[0].lower()
-                        m = db.query(Member).filter(func.lower(Member.prenom) == first_name).first()
-                        if m and m not in assignees:
-                            assignees.append(m)
-            except Exception:
-                pass
+    domain_lbl, location_lbl, charge_lbl = format_task_email_fields(db_task)
+    if db_task.status != "PROPOSED":
+        try:
+            for assignee in resolved_assignees:
+                m_email = assignee.email or f"{assignee.prenom.lower()}@sci-familiale.fr"
+                should_send_mail = bool(getattr(assignee, 'notif_task_assigned', True) and assignee.email)
+                send_res = send_task_assigned_email(
+                    to_email=m_email,
+                    task_title=db_task.title,
+                    domain=domain_lbl,
+                    location=location_lbl,
+                    priority=db_task.priority or "Normale",
+                    charge=charge_lbl,
+                    task_id=db_task.id,
+                    assignee_name=assignee.prenom,
+                    deadline=db_task.deadline,
+                    description=db_task.description,
+                    actually_send=should_send_mail
+                )
+                m_dispatched = send_res.get("_email_dispatched") if isinstance(send_res, dict) else None
+                if not dispatched_email and m_dispatched:
+                    dispatched_email = m_dispatched
 
-        for assignee in assignees:
-            m_email = assignee.email or f"{assignee.prenom.lower()}@sci-familiale.fr"
-            should_send_mail = bool(getattr(assignee, 'notif_task_assigned', True) and assignee.email)
-            send_res = send_task_assigned_email(
-                to_email=m_email,
-                task_title=db_task.title,
-                domain=db_task.subject or db_task.category or "SCI Familiale",
-                location=db_task.category or "Domaine d'Hellenvilliers",
-                priority=db_task.priority or "Normale",
-                charge=db_task.complexity or "Modérée",
-                task_id=db_task.id,
-                assignee_name=assignee.prenom,
-                description=db_task.description,
-                actually_send=should_send_mail
-            )
-            m_dispatched = send_res.get("_email_dispatched") if isinstance(send_res, dict) else None
-            if not dispatched_email and m_dispatched:
-                dispatched_email = m_dispatched
-
-            # Notification interne SYSTÉMATIQUE dans la cloche pour chaque assigné (Annotation 1)
-            create_internal_notification(
-                db=db,
-                member_id=assignee.id,
-                title=f"Nouvelle tâche assignée : {db_task.title}",
-                description=f"Une mission vous a été attribuée : {db_task.title}.",
-                notif_type="task",
-                link_path=f"/taches?task_id={db_task.id}",
-                link_id=str(db_task.id),
-                email_entry=m_dispatched
-            )
-    except Exception as e:
-        logger.error(f"[EMAIL ERROR] Failed to send task assignment notification: {e}")
+                create_internal_notification(
+                    db=db,
+                    member_id=assignee.id,
+                    title=f"Nouvelle tâche assignée : {db_task.title}",
+                    description=f"Une mission vous a été attribuée : {db_task.title}.",
+                    notif_type="task",
+                    link_path=f"/taches?task_id={db_task.id}",
+                    link_id=str(db_task.id),
+                    email_entry=m_dispatched
+                )
+        except Exception as e:
+            logger.error(f"[EMAIL ERROR] Failed to send task assignment notification: {e}")
 
     # Email & In-App Notification Trigger 2: Notify coordinators & subscribed members on new task proposal (Annotation 2 & Annotation 1)
     if db_task.status == "PROPOSED":
@@ -5063,24 +5170,22 @@ def create_task(
             for member in target_members_dict.values():
                 m_email = member.email or f"{member.prenom.lower()}@sci-familiale.fr"
                 actually_send_mail = bool(getattr(member, "notify_task_creation", False) and member.email)
-                m_dispatched = None
-                if actually_send_mail:
-                    send_coord_res = send_task_creation_pending_email(
-                        to_email=m_email,
-                        task_title=db_task.title,
-                        created_by=created_by or "Un associé",
-                        domain=db_task.subject or db_task.category or "SCI Familiale",
-                        location=db_task.category or "Domaine d'Hellenvilliers",
-                        priority=db_task.priority or "Normale",
-                        complexity=db_task.complexity or "Modérée",
-                        task_id=db_task.id,
-                        coordinator_name=member.prenom,
-                        description=db_task.description,
-                        actually_send=True
-                    )
-                    m_dispatched = send_coord_res.get("_email_dispatched") if isinstance(send_coord_res, dict) else None
-                    if not dispatched_email and m_dispatched:
-                        dispatched_email = m_dispatched
+                send_coord_res = send_task_creation_pending_email(
+                    to_email=m_email,
+                    task_title=db_task.title,
+                    created_by=created_by or "Un associé",
+                    domain=domain_lbl,
+                    location=location_lbl,
+                    priority=db_task.priority or "Normale",
+                    complexity=charge_lbl,
+                    task_id=db_task.id,
+                    coordinator_name=member.prenom,
+                    description=db_task.description,
+                    actually_send=actually_send_mail
+                )
+                m_dispatched = send_coord_res.get("_email_dispatched") if isinstance(send_coord_res, dict) else None
+                if not dispatched_email and m_dispatched:
+                    dispatched_email = m_dispatched
 
                 # Notification interne obligatoire dans la cloche (Annotation 2)
                 create_internal_notification(
@@ -5171,20 +5276,7 @@ def update_task(
     task = resolve_task_by_id_or_ref(task_id, db)
     old_assignee_id = task.assignee_id
     old_status = task.status
-    old_assigned_member_ids = set()
-    if task.assignee_id:
-        old_assigned_member_ids.add(task.assignee_id)
-    if task.assigned_members:
-        try:
-            old_list = json.loads(task.assigned_members) if isinstance(task.assigned_members, str) else list(task.assigned_members)
-            if isinstance(old_list, list):
-                for name_item in old_list:
-                    fn = str(name_item).strip().split()[0].lower()
-                    m = db.query(Member).filter(func.lower(Member.prenom) == fn).first()
-                    if m:
-                        old_assigned_member_ids.add(m.id)
-        except Exception:
-            pass
+    old_assigned_member_ids = {m.id for m in resolve_task_assignees(task, db)}
 
     is_coord = bool(getattr(current_user, "is_coordinator", False)) if current_user else False
     is_creator = False
@@ -5299,18 +5391,7 @@ def update_task(
         # Cas 2 : Liste de membres explicitement fournie et non vide
         elif normalized_members:
             task.assigned_members = json.dumps(normalized_members, ensure_ascii=False)
-            first_name = normalized_members[0]
-            m_found = db.query(Member).filter(
-                or_(
-                    func.lower(Member.name) == first_name.lower(),
-                    func.lower(Member.prenom) == first_name.lower()
-                )
-            ).first()
-            if not m_found:
-                for mem in db.query(Member).all():
-                    if (mem.prenom and mem.prenom.lower() in first_name.lower()) or (mem.name and mem.name.lower() in first_name.lower()):
-                        m_found = mem
-                        break
+            m_found = resolve_member_from_name(normalized_members[0], db)
             task.assignee_id = m_found.id if m_found else None
             if m_found:
                 task.assignee = m_found
@@ -5424,57 +5505,51 @@ def update_task(
     db.commit()
     db.refresh(task)
 
-    # Email & In-App Notification Trigger 1 (Assignment / Reassignment / Additional Assignees): Notify newly assigned members (Annotation 6)
+    # Email & In-App Notification Trigger 1 (Assignment / Reassignment / Activation): Notify newly assigned members
     dispatched_email = None
-    try:
-        new_assignees = []
-        if task.assignee_id and task.assignee_id not in old_assigned_member_ids:
-            m = db.query(Member).filter(Member.id == task.assignee_id).first()
-            if m and m not in new_assignees:
-                new_assignees.append(m)
-        if task.assigned_members:
-            try:
-                assigned_list = json.loads(task.assigned_members) if isinstance(task.assigned_members, str) else list(task.assigned_members)
-                if isinstance(assigned_list, list):
-                    for name_item in assigned_list:
-                        fn = str(name_item).strip().split()[0].lower()
-                        m = db.query(Member).filter(func.lower(Member.prenom) == fn).first()
-                        if m and m.id not in old_assigned_member_ids and m not in new_assignees:
-                            new_assignees.append(m)
-            except Exception:
-                pass
-
-        for assignee in new_assignees:
-            m_email = assignee.email or f"{assignee.prenom.lower()}@sci-familiale.fr"
-            should_send_mail = bool(getattr(assignee, 'notif_task_assigned', True) and assignee.email)
-            send_res = send_task_assigned_email(
-                to_email=m_email,
-                task_title=task.title,
-                domain=task.subject or task.category or "SCI Familiale",
-                location=task.category or "Domaine d'Hellenvilliers",
-                priority=task.priority or "Normale",
-                charge=task.complexity or "Modérée",
-                task_id=task.id,
-                assignee_name=assignee.prenom,
-                description=task.description,
-                actually_send=should_send_mail
+    if task.status != "PROPOSED":
+        try:
+            current_assignees = resolve_task_assignees(task, db)
+            was_proposed_now_active = (old_status == "PROPOSED" and task.status != "PROPOSED")
+            new_assignees = (
+                current_assignees
+                if was_proposed_now_active
+                else [m for m in current_assignees if m.id not in old_assigned_member_ids]
             )
-            m_dispatched = send_res.get("_email_dispatched") if isinstance(send_res, dict) else None
-            if not dispatched_email and m_dispatched:
-                dispatched_email = m_dispatched
+            domain_lbl, location_lbl, charge_lbl = format_task_email_fields(task)
 
-            create_internal_notification(
-                db=db,
-                member_id=assignee.id,
-                title=f"Nouvelle tâche assignée : {task.title}",
-                description=f"Une mission vous a été attribuée : {task.title}.",
-                notif_type="task",
-                link_path=f"/taches?task_id={task.id}",
-                link_id=str(task.id),
-                email_entry=m_dispatched
-            )
-    except Exception as e:
-        logger.error(f"[EMAIL ERROR] Failed to send task assignment notification on update: {e}")
+            for assignee in new_assignees:
+                m_email = assignee.email or f"{assignee.prenom.lower()}@sci-familiale.fr"
+                should_send_mail = bool(getattr(assignee, 'notif_task_assigned', True) and assignee.email)
+                send_res = send_task_assigned_email(
+                    to_email=m_email,
+                    task_title=task.title,
+                    domain=domain_lbl,
+                    location=location_lbl,
+                    priority=task.priority or "Normale",
+                    charge=charge_lbl,
+                    task_id=task.id,
+                    assignee_name=assignee.prenom,
+                    deadline=task.deadline,
+                    description=task.description,
+                    actually_send=should_send_mail
+                )
+                m_dispatched = send_res.get("_email_dispatched") if isinstance(send_res, dict) else None
+                if not dispatched_email and m_dispatched:
+                    dispatched_email = m_dispatched
+
+                create_internal_notification(
+                    db=db,
+                    member_id=assignee.id,
+                    title=f"Nouvelle tâche assignée : {task.title}",
+                    description=f"Une mission vous a été attribuée : {task.title}.",
+                    notif_type="task",
+                    link_path=f"/taches?task_id={task.id}",
+                    link_id=str(task.id),
+                    email_entry=m_dispatched
+                )
+        except Exception as e:
+            logger.error(f"[EMAIL ERROR] Failed to send task assignment notification on update: {e}")
 
     # Email & In-App Notification Trigger 2 (Task Completion): Notify on completion (Annotation 1)
     if task.status in ["TERMINEE", "COMPLETED", "ARCHIVEE"] and old_status not in ["TERMINEE", "COMPLETED", "ARCHIVEE"]:
@@ -5621,7 +5696,7 @@ def invalidate_task_unified(
             task_id=task.id,
             author_id=current_user.id,
             author_name=f"{current_user.prenom} (Coordination)",
-            author_role="Coordinateur",
+            author_role=accord_fr(current_user.prenom, "Coordinateur", "Coordinatrice"),
             content=f"[Demande de révision / Refus] {str(explanation).strip()}",
             reactions="{}"
         )
@@ -5638,6 +5713,32 @@ def invalidate_task_unified(
 
     db.commit()
     db.refresh(task)
+
+    # Notifier les assignés (ou le créateur) de la demande de révision dans la cloche
+    try:
+        targets = resolve_task_assignees(task, db)
+        if not targets and task.created_by:
+            creator_m = resolve_member_from_name(task.created_by, db)
+            if creator_m:
+                targets = [creator_m]
+        for t_member in targets:
+            if t_member.id == current_user.id:
+                continue
+            desc = f"La tâche « {task.title} » a été renvoyée en révision par {current_user.prenom}."
+            if explanation and str(explanation).strip():
+                desc += f" Motif : {str(explanation).strip()[:180]}"
+            create_internal_notification(
+                db=db,
+                member_id=t_member.id,
+                title=f"Révision demandée : {task.title}",
+                description=desc,
+                notif_type="task",
+                link_path=f"/taches?task_id={task.id}",
+                link_id=str(task.id)
+            )
+    except Exception as inv_notif_err:
+        logger.error(f"[NOTIF ERROR] Échec notification invalidate_task: {inv_notif_err}")
+
     return format_task_response(task, include_comments=True)
 
 
@@ -5662,7 +5763,7 @@ def accept_task_proposal(
             task.assignee_id = payload.get("assignee_id")
         if payload.get("assigned_members") is not None:
             raw_members = payload.get("assigned_members")
-            task.assigned_members = json.dumps(raw_members) if isinstance(raw_members, list) else str(raw_members)
+            task.assigned_members = json.dumps(raw_members, ensure_ascii=False) if isinstance(raw_members, list) else str(raw_members)
         if "auto_assign_by_workload" in payload and payload["auto_assign_by_workload"] is not None:
             task.auto_assign_by_workload = bool(payload["auto_assign_by_workload"])
         if "key_values" in payload and payload["key_values"] is not None:
@@ -5712,11 +5813,10 @@ def accept_task_proposal(
                 complexity=task.complexity
             )
             if selected_member:
-                task.assigned_members = json.dumps([selected_member])
-                for m in all_members:
-                    if m.name == selected_member or (m.prenom and m.prenom.lower() in selected_member.lower()):
-                        task.assignee_id = m.id
-                        break
+                task.assigned_members = json.dumps([selected_member], ensure_ascii=False)
+                m_auto = resolve_member_from_name(selected_member, db, all_members=all_members)
+                if m_auto:
+                    task.assignee_id = m_auto.id
                 has_assignee = True
         except Exception as auto_err:
             logger.warning(f"Erreur lors de l'auto-attribution à l'approbation: {auto_err}")
@@ -5727,6 +5827,11 @@ def accept_task_proposal(
             detail="Assignation obligatoire : impossible d'accepter la tâche car aucun membre n'est assigné. Veuillez désigner au moins un responsable avant d'accepter la mission."
         )
 
+    # Synchroniser systématiquement assignee_id (y compris pour assignation manuelle via assigned_members)
+    resolved_assignees = resolve_task_assignees(task, db)
+    if resolved_assignees and not task.assignee_id:
+        task.assignee_id = resolved_assignees[0].id
+
     # Bascule le statut de la tâche de PROPOSED à EN_COURS (ou statut explicite demandé)
     target_status = "EN_COURS"
     if payload and (payload.get("status") or payload.get("target_status")):
@@ -5735,7 +5840,49 @@ def accept_task_proposal(
     task.updated_at = datetime.utcnow()
     db.commit()
     db.refresh(task)
-    return format_task_response(task, include_comments=True)
+
+    # Déclenchement e-mail + notification cloche pour CHAQUE membre assigné lors de l'acceptation/activation
+    dispatched_email = None
+    try:
+        domain_lbl, location_lbl, charge_lbl = format_task_email_fields(task)
+        for assignee in resolved_assignees:
+            m_email = assignee.email or f"{assignee.prenom.lower()}@sci-familiale.fr"
+            should_send_mail = bool(getattr(assignee, "notif_task_assigned", True) and assignee.email)
+            send_res = send_task_assigned_email(
+                to_email=m_email,
+                task_title=task.title,
+                domain=domain_lbl,
+                location=location_lbl,
+                priority=task.priority or "Normale",
+                charge=charge_lbl,
+                task_id=task.id,
+                assignee_name=assignee.prenom,
+                deadline=task.deadline,
+                description=task.description,
+                actually_send=should_send_mail
+            )
+            m_dispatched = send_res.get("_email_dispatched") if isinstance(send_res, dict) else None
+            if not dispatched_email and m_dispatched:
+                dispatched_email = m_dispatched
+
+            create_internal_notification(
+                db=db,
+                member_id=assignee.id,
+                title=f"Nouvelle tâche assignée : {task.title}",
+                description=f"Une mission vous a été attribuée par la coordination ({current_user.prenom}) : {task.title}.",
+                notif_type="task",
+                link_path=f"/taches?task_id={task.id}",
+                link_id=str(task.id),
+                email_entry=m_dispatched
+            )
+    except Exception as accept_email_err:
+        logger.error(f"[EMAIL ERROR] Failed to send task assignment notification on accept: {accept_email_err}")
+
+    task_res_data = format_task_response(task, include_comments=True)
+    if dispatched_email:
+        task_res_data["_email_dispatched"] = dispatched_email
+        task_res_data["email_dispatched"] = dispatched_email
+    return task_res_data
 
 
 @app.post("/api/tasks/{task_id}/reject")
@@ -5772,7 +5919,7 @@ def reject_task_proposal(
             task_id=task.id,
             author_id=current_user.id,
             author_name=f"{current_user.prenom} (Coordination)",
-            author_role="Coordinateur",
+            author_role=accord_fr(current_user.prenom, "Coordinateur", "Coordinatrice"),
             content=f"[Proposition refusée] {str(reason).strip()}",
             reactions="{}"
         )
@@ -5780,6 +5927,25 @@ def reject_task_proposal(
 
     db.commit()
     db.refresh(task)
+
+    try:
+        creator_m = resolve_member_from_name(task.created_by, db) if task.created_by else None
+        if creator_m and creator_m.id != current_user.id:
+            desc = f"Votre proposition « {task.title} » n'a pas été retenue par {current_user.prenom}."
+            if reason and str(reason).strip():
+                desc += f" Motif : {str(reason).strip()[:180]}"
+            create_internal_notification(
+                db=db,
+                member_id=creator_m.id,
+                title=f"Proposition refusée : {task.title}",
+                description=desc,
+                notif_type="task",
+                link_path=f"/taches?task_id={task.id}",
+                link_id=str(task.id)
+            )
+    except Exception as rej_err:
+        logger.error(f"[NOTIF ERROR] Échec notification reject_task: {rej_err}")
+
     return format_task_response(task, include_comments=True)
 
 
@@ -5801,7 +5967,56 @@ def submit_task_done(
         task.completion_docs = json.dumps(val) if isinstance(val, list) else str(val)
     db.commit()
     db.refresh(task)
-    return format_task_response(task, include_comments=True)
+
+    # Notifier les coordinateurs qu'une tâche est terminée et attend leur validation finale
+    dispatched_email = None
+    try:
+        submitter_name = (
+            getattr(current_user, "prenom", None)
+            or (payload.get("submitted_by") if isinstance(payload, dict) else None)
+            or "Un associé"
+        )
+        coordinators = db.query(Member).filter(
+            or_(
+                Member.is_coordinator == True,
+                func.lower(Member.prenom).in_(["henri", "joséphine", "josephine"])
+            )
+        ).all()
+        for coord in coordinators:
+            if current_user and coord.id == current_user.id:
+                continue
+            m_email = coord.email or f"{coord.prenom.lower()}@sci-familiale.fr"
+            actually_send_mail = bool(getattr(coord, "notify_task_creation", False) and coord.email)
+            send_res = send_task_completion_pending_email(
+                to_email=m_email,
+                task_title=task.title,
+                submitted_by=submitter_name,
+                coordinator_name=coord.prenom,
+                completion_notes=task.completion_notes,
+                task_id=task.id,
+                actually_send=actually_send_mail
+            )
+            m_dispatched = send_res.get("_email_dispatched") if isinstance(send_res, dict) else None
+            if not dispatched_email and m_dispatched:
+                dispatched_email = m_dispatched
+            create_internal_notification(
+                db=db,
+                member_id=coord.id,
+                title=f"Validation finale requise : {task.title}",
+                description=f"{submitter_name} a marqué « {task.title} » comme terminée (en attente de validation coordination).",
+                notif_type="task",
+                link_path=f"/taches?task_id={task.id}",
+                link_id=str(task.id),
+                email_entry=m_dispatched
+            )
+    except Exception as comp_err:
+        logger.error(f"[EMAIL ERROR] Failed to send completion pending notification: {comp_err}")
+
+    task_res_data = format_task_response(task, include_comments=True)
+    if dispatched_email:
+        task_res_data["_email_dispatched"] = dispatched_email
+        task_res_data["email_dispatched"] = dispatched_email
+    return task_res_data
 
 
 @app.get("/api/tasks/{task_id}/comments")
@@ -9291,7 +9506,7 @@ def set_pool_pump_mode(req: PoolPumpModeRequest, db: Session = Depends(get_db)):
                 send_res = send_thermal_change_email(
                     target_emails=target_emails,
                     author_name=author,
-                    equipment_type="Pompe de Filtration Piscine (Villa Rosing)",
+                    equipment_type="Pompe de Filtration Piscine (Rosings)",
                     details=details
                 )
                 if isinstance(send_res, dict) and "_email_dispatched" in send_res:
@@ -9427,7 +9642,7 @@ def set_pool_heating_mode(req: PoolHeatingModeRequest, db: Session = Depends(get
                 send_res = send_thermal_change_email(
                     target_emails=target_emails,
                     author_name=author,
-                    equipment_type="Chauffage PAC Piscine Inopac 20 kW (Villa Rosing)",
+                    equipment_type="Chauffage PAC Piscine Inopac 20 kW (Rosings)",
                     details=details
                 )
                 if isinstance(send_res, dict) and "_email_dispatched" in send_res:
@@ -9854,7 +10069,7 @@ def update_pool_settings(
     db: Session = Depends(get_db)
 ):
     """
-    Enregistre les consignes de température et filtration piscine Klereo (Villa Rosing),
+    Enregistre les consignes de température et filtration piscine Klereo (Rosings),
     synchronise Klereo Connect en direct (Fail-Fast),
     et déclenche l'envoi d'un e-mail d'alerte à tous les membres ayant notif_thermal_changes == True.
     """
@@ -9986,7 +10201,7 @@ def update_pool_settings(
             send_res = send_thermal_change_email(
                 target_emails=target_emails,
                 author_name=author,
-                equipment_type="Piscine Klereo (Villa Rosing)",
+                equipment_type="Piscine Klereo (Rosings)",
                 details=details
             )
             if isinstance(send_res, dict) and "_email_dispatched" in send_res:
@@ -11311,10 +11526,21 @@ async def create_member_expense(
     db.refresh(expense)
 
     try:
+        is_sci_invoice = (clean_payer_type or "").lower() == "sci"
+        notif_title = (
+            f"Nouvelle facture SCI à régler : {clean_title} ({amount_with_symbol})"
+            if is_sci_invoice
+            else f"Nouvelle avance à valider : {member.prenom} ({amount_with_symbol})"
+        )
+        notif_desc = (
+            f"{member.prenom} a déposé une facture SCI de {amount_with_symbol} pour « {clean_title} ». Tâche assignée à Henri."
+            if is_sci_invoice
+            else f"{member.prenom} a avancé {amount_with_symbol} pour « {clean_title} ». Tâche assignée à Henri."
+        )
         create_internal_notification(
             db=db,
-            title=f"Nouvelle avance à valider : {member.prenom} ({amount_with_symbol})",
-            description=f"{member.prenom} a avancé {amount_with_symbol} pour « {clean_title} ». Tâche assignée à Henri.",
+            title=notif_title,
+            description=notif_desc,
             notif_type="expense_validation",
             link_path=f"/taches?task_id={validation_task.id}",
             link_id=str(validation_task.id)

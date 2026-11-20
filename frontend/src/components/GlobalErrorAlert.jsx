@@ -213,9 +213,15 @@ export default function GlobalErrorAlert() {
       });
     };
 
+    const handleOnline = () => {
+      // Effacer automatiquement les alertes réseau transitoires (HTTP 0) dès le retour de connexion
+      setErrors((prev) => prev.filter((e) => e.status !== 0));
+    };
+
     window.addEventListener('app-error', handleAppError);
     window.addEventListener('error', handleWindowError);
     window.addEventListener('unhandledrejection', handleUnhandledRejection);
+    window.addEventListener('online', handleOnline);
 
     // Exposition optionnelle pour test direct dans la console navigateur
     window.__triggerTestAppError = (custom) => {
@@ -235,6 +241,7 @@ export default function GlobalErrorAlert() {
       window.removeEventListener('app-error', handleAppError);
       window.removeEventListener('error', handleWindowError);
       window.removeEventListener('unhandledrejection', handleUnhandledRejection);
+      window.removeEventListener('online', handleOnline);
       delete window.__triggerTestAppError;
     };
   }, [pushError]);

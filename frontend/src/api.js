@@ -66,12 +66,12 @@ export function triggerEmailNotification(email) {
   }
 }
 
-// Suivi du déchargement de page et de la revalidation d'arrière-plan pour éviter les faux positifs HTTP 0
+// Suivi du déchargement de page pour éviter les faux positifs HTTP 0 (reset sur pageshow pour bfcache mobile)
 let isPageUnloading = false;
-let isBackgroundRevalidating = false;
 if (typeof window !== 'undefined') {
   window.addEventListener('beforeunload', () => { isPageUnloading = true; });
   window.addEventListener('pagehide', () => { isPageUnloading = true; });
+  window.addEventListener('pageshow', () => { isPageUnloading = false; });
 }
 
 // Wrapper surveillé pour intercepter toutes les erreurs réseau et réponses HTTP non-ok (4xx, 5xx)
@@ -80,25 +80,34 @@ const _nativeFetch = (typeof window !== 'undefined' ? window.fetch.bind(window) 
 async function monitoredFetch(input, init = {}) {
   const method = (init && init.method) ? init.method.toUpperCase() : 'GET';
   const url = typeof input === 'string' ? input : (input?.url || (input?.toString ? input.toString() : ''));
+  const silentError = Boolean(init?.silentError);
 
   let res;
   try {
     res = await _nativeFetch(input, init);
   } catch (netErr) {
     const isAbort = netErr?.name === 'AbortError' || netErr?.message?.includes('aborted');
-    if (method === 'GET' && !isAbort && !isPageUnloading) {
-      // 1 retry automatique après 500 ms en cas de micro-coupure réseau transitoire
-      try {
-        await new Promise((resolve) => setTimeout(resolve, 500));
-        res = await _nativeFetch(input, init);
-      } catch (retryErr) {
-        netErr = retryErr;
+    const isOffline = typeof navigator !== 'undefined' && navigator.onLine === false;
+    const isHidden = typeof document !== 'undefined' && document.visibilityState === 'hidden';
+    if (method === 'GET' && !isAbort && !isPageUnloading && !isOffline && !isHidden) {
+      // Jusqu'à 2 retries doux (600 ms puis 1800 ms) pour absorber le réveil radio mobile (4G/Wi-Fi)
+      for (const delayMs of [600, 1800]) {
+        try {
+          await new Promise((resolve) => setTimeout(resolve, delayMs));
+          if (typeof navigator !== 'undefined' && navigator.onLine === false) break;
+          res = await _nativeFetch(input, init);
+          break;
+        } catch (retryErr) {
+          netErr = retryErr;
+        }
       }
     }
 
     if (!res) {
       const errorMsg = netErr?.message || 'Erreur réseau (serveur inaccessible ou connexion interrompue)';
-      const shouldMute = isPageUnloading || isAbort || init?.silentError === true || isBackgroundRevalidating;
+      const nowHidden = typeof document !== 'undefined' && document.visibilityState === 'hidden';
+      const nowOffline = typeof navigator !== 'undefined' && navigator.onLine === false;
+      const shouldMute = isPageUnloading || isAbort || silentError || nowHidden || nowOffline;
       if (!shouldMute) {
         emitAppError({
           url,
@@ -333,6 +342,7 @@ export function mutate(key, data) {
  */
 export async function swrFetch(cacheKey, fetcher, options = {}) {
   const forceRefresh = options?.forceRefresh === true;
+  const silentError = Boolean(options?.silentError);
 
   // 1. SWR instantané : si données en cache et pas de rafraîchissement forcé
   if (!forceRefresh) {
@@ -342,8 +352,7 @@ export async function swrFetch(cacheKey, fetcher, options = {}) {
       if (!inFlightRequests.has(cacheKey)) {
         const bgPromise = (async () => {
           try {
-            isBackgroundRevalidating = true;
-            const fresh = await fetcher();
+            const fresh = await fetcher({ silentError: true });
             if (fresh !== undefined && fresh !== null) {
               setCachedData(cacheKey, fresh, options.ttl || 120000);
             }
@@ -352,7 +361,6 @@ export async function swrFetch(cacheKey, fetcher, options = {}) {
             // Erreur silencieuse en arrière-plan, la donnée en cache reste valide
             return cached;
           } finally {
-            isBackgroundRevalidating = false;
             inFlightRequests.delete(cacheKey);
           }
         })();
@@ -369,7 +377,7 @@ export async function swrFetch(cacheKey, fetcher, options = {}) {
 
   const promise = (async () => {
     try {
-      const freshData = await fetcher();
+      const freshData = await fetcher({ silentError });
       if (freshData !== undefined && freshData !== null) {
         setCachedData(cacheKey, freshData, options.ttl || 120000);
       }
@@ -538,13 +546,14 @@ export async function fetchReservations(params = {}, options = {}) {
   const qStr = query.toString();
   const cacheKey = `reservations${qStr ? `?${qStr}` : ''}`;
 
-  return swrFetch(cacheKey, async () => {
+  return swrFetch(cacheKey, async ({ silentError } = {}) => {
     const res = await fetch(`${API_BASE}/reservations?${qStr}`, {
-      headers: getAuthHeaders()
+      headers: getAuthHeaders(),
+      silentError: Boolean(silentError || options?.silentError),
     });
     if (!res.ok) throw new Error('Erreur lors de la récupération des réservations');
     return res.json();
-  }, { ttl: 30000, forceRefresh: options?.forceRefresh });
+  }, { ttl: 30000, forceRefresh: options?.forceRefresh, silentError: options?.silentError });
 }
 
 export async function createReservation(data) {
@@ -591,13 +600,14 @@ export async function fetchProjects(params = {}, options = {}) {
   const qStr = query.toString();
   const cacheKey = `projects${qStr ? `?${qStr}` : ''}`;
 
-  return swrFetch(cacheKey, async () => {
+  return swrFetch(cacheKey, async ({ silentError } = {}) => {
     const res = await fetch(`${API_BASE}/projects?${qStr}`, {
-      headers: getAuthHeaders()
+      headers: getAuthHeaders(),
+      silentError: Boolean(silentError || options?.silentError),
     });
     if (!res.ok) throw new Error('Erreur lors de la récupération des projets');
     return res.json();
-  }, { ttl: 25000, forceRefresh: options?.forceRefresh });
+  }, { ttl: 25000, forceRefresh: options?.forceRefresh, silentError: options?.silentError });
 }
 
 export async function createProject(data) {
@@ -711,9 +721,10 @@ export async function castProjectVote(projectId, data) {
   return res.json();
 }
 
-export async function fetchProjectComments(projectId) {
+export async function fetchProjectComments(projectId, options = {}) {
   const res = await fetch(`${API_BASE}/projects/${projectId}/comments`, {
-    headers: getAuthHeaders()
+    headers: getAuthHeaders(),
+    silentError: Boolean(options?.silentError),
   });
   if (!res.ok) throw new Error('Erreur lors de la récupération des commentaires du projet');
   return res.json();
@@ -1100,13 +1111,14 @@ export async function fetchTasks(params = {}, options = {}) {
   const qStr = query.toString();
   const cacheKey = `tasks${qStr ? `?${qStr}` : ''}`;
 
-  return swrFetch(cacheKey, async () => {
+  return swrFetch(cacheKey, async ({ silentError } = {}) => {
     const res = await fetch(`${API_BASE}/tasks${qStr ? `?${qStr}` : ''}`, {
-      headers: getAuthHeaders()
+      headers: getAuthHeaders(),
+      silentError: Boolean(silentError || options?.silentError),
     });
     if (!res.ok) throw new Error('Erreur lors du chargement des tâches');
     return res.json();
-  }, { ttl: 20000, forceRefresh: options?.forceRefresh });
+  }, { ttl: 20000, forceRefresh: options?.forceRefresh, silentError: options?.silentError });
 }
 
 export async function createTask(taskData) {
@@ -1273,13 +1285,14 @@ export async function fetchStats() {
 
 // Auth Current User
 export async function fetchCurrentUser(options = {}) {
-  return swrFetch('current_user', async () => {
+  return swrFetch('current_user', async ({ silentError } = {}) => {
     const res = await fetch(`${API_BASE}/auth/me`, {
-      headers: getAuthHeaders()
+      headers: getAuthHeaders(),
+      silentError: Boolean(silentError || options?.silentError),
     });
-    if (!res.ok) throw new Error('Erreur lors de la récupération du profil');
+    if (!res.ok) throw new Error(`HTTP ${res.status} : Erreur lors de la récupération du profil`);
     return res.json();
-  }, { ttl: 60000, forceRefresh: options?.forceRefresh });
+  }, { ttl: 60000, forceRefresh: options?.forceRefresh, silentError: options?.silentError });
 }
 
 // Rooms

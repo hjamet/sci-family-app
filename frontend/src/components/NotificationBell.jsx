@@ -125,11 +125,11 @@ export default function NotificationBell({
         console.warn('Fallback notifications DB:', err.message);
       }
 
-      // 2. Récupération des éléments dynamiques pour compléter (projets actifs, tâches assignées)
+      // 2. Récupération silencieuse des éléments dynamiques pour compléter (projets actifs, tâches assignées)
       const [projRes, taskRes, resRes] = await Promise.allSettled([
-        fetchProjects(),
-        fetchTasks(),
-        fetchReservations(),
+        fetchProjects({}, { silentError: true }),
+        fetchTasks({}, { silentError: true }),
+        fetchReservations({}, { silentError: true }),
       ]);
 
       const dynamicNotifs = [];
@@ -231,9 +231,30 @@ export default function NotificationBell({
   }, [currentUser]);
 
   useEffect(() => {
-    loadNotifications();
-    const interval = setInterval(loadNotifications, 45000);
-    return () => clearInterval(interval);
+    let lastLoadedAt = 0;
+    const safeLoad = (force = false) => {
+      if (typeof document !== 'undefined' && document.visibilityState === 'hidden') return;
+      if (typeof navigator !== 'undefined' && navigator.onLine === false) return;
+      const now = Date.now();
+      if (!force && now - lastLoadedAt < 15000) return;
+      lastLoadedAt = now;
+      loadNotifications();
+    };
+
+    safeLoad(true);
+    const interval = setInterval(() => safeLoad(false), 45000);
+    const handleResume = () => {
+      if (typeof document === 'undefined' || document.visibilityState === 'visible') {
+        safeLoad(false);
+      }
+    };
+    document.addEventListener('visibilitychange', handleResume);
+    window.addEventListener('online', handleResume);
+    return () => {
+      clearInterval(interval);
+      document.removeEventListener('visibilitychange', handleResume);
+      window.removeEventListener('online', handleResume);
+    };
   }, [loadNotifications]);
 
   // Écoute de l'événement global email-dispatched pour affichage temps réel dans la cloche (Annotation 13)
