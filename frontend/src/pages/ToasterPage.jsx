@@ -459,17 +459,24 @@ export default function ToasterPage({ currentUser }) {
   const fileInputRef = useRef(null);
   const latestAttachedFileRef = useRef(null);
 
-  // Dictée vocale fluide (continue : pas d'interruption auto sur courte pause, arrêt manuel micro/Envoyer ou 15s de silence total)
+  // Dictée vocale fluide :
+  // - bouton Micro pendant l'enregistrement -> arrête et transcrit dans la zone de saisie (sans envoyer)
+  // - bouton Envoyer pendant l'enregistrement -> arrête la transcription et envoie dès qu'elle est finalisée
+  // - 15s de silence total -> arrête et transcrit dans la zone de saisie
   const [isListening, setIsListening] = useState(false);
+  const [isFinalizingVoice, setIsFinalizingVoice] = useState(false);
   const [liveVoicePreview, setLiveVoicePreview] = useState('');
   const recognitionRef = useRef(null);
+  const inputTextRef = useRef('');
   const voiceCommittedRef = useRef('');
   const voiceSessionTranscriptRef = useRef('');
   const voiceWantListeningRef = useRef(false);
   const voiceAbortedRef = useRef(false);
   const voiceSentRef = useRef(false);
+  const voiceStopActionRef = useRef(null); // null | 'transcribe' | 'send'
   const voiceSilenceTimerRef = useRef(null);
   const voiceRestartTimerRef = useRef(null);
+  const voiceFinalizingTimerRef = useRef(null);
   const sendVoiceTriggerRef = useRef(null);
 
   // Édition inline d'un champ déduit 🟢 / saisie libre 🔴 / popovers calendrier & heure / saisies invités
@@ -1137,7 +1144,12 @@ export default function ToasterPage({ currentUser }) {
     sendVoiceTriggerRef.current = sendMessagePayload;
   }, [sendMessagePayload]);
 
+  useEffect(() => {
+    inputTextRef.current = inputText;
+  }, [inputText]);
+
   const VOICE_SILENCE_TIMEOUT_MS = 15000;
+  const VOICE_FINALIZE_TIMEOUT_MS = 1500;
 
   const clearVoiceTimers = useCallback(() => {
     if (voiceSilenceTimerRef.current) {
@@ -1147,6 +1159,10 @@ export default function ToasterPage({ currentUser }) {
     if (voiceRestartTimerRef.current) {
       clearTimeout(voiceRestartTimerRef.current);
       voiceRestartTimerRef.current = null;
+    }
+    if (voiceFinalizingTimerRef.current) {
+      clearTimeout(voiceFinalizingTimerRef.current);
+      voiceFinalizingTimerRef.current = null;
     }
   }, []);
 
@@ -1158,36 +1174,92 @@ export default function ToasterPage({ currentUser }) {
       .trim();
   }, []);
 
-  const finishAndSendVoice = useCallback(() => {
-    clearVoiceTimers();
-    voiceWantListeningRef.current = false;
-    voiceAbortedRef.current = false;
+  const completeVoiceSession = useCallback(
+    (explicitAction = null) => {
+      const action = explicitAction || voiceStopActionRef.current || 'transcribe';
+      clearVoiceTimers();
+      voiceWantListeningRef.current = false;
+      voiceAbortedRef.current = false;
+      voiceStopActionRef.current = null;
 
-    const finalSpoken = getCombinedVoiceTranscript();
-    const typedDraft = (inputText || '').trim();
-    const combinedMessage = [typedDraft, finalSpoken].filter(Boolean).join(' ').trim();
+      const finalSpoken = getCombinedVoiceTranscript();
+      const typedDraft = (inputTextRef.current || '').trim();
+      const combinedMessage = [typedDraft, finalSpoken].filter(Boolean).join(' ').trim();
 
-    voiceCommittedRef.current = '';
-    voiceSessionTranscriptRef.current = '';
-    setLiveVoicePreview('');
-    setIsListening(false);
+      voiceCommittedRef.current = '';
+      voiceSessionTranscriptRef.current = '';
+      setLiveVoicePreview('');
+      setIsListening(false);
+      setIsFinalizingVoice(false);
 
-    if (recognitionRef.current) {
-      const rec = recognitionRef.current;
-      recognitionRef.current = null;
-      try {
-        rec.onend = null;
-        rec.onerror = null;
-        rec.onresult = null;
-        rec.stop();
-      } catch (_) {}
-    }
+      if (recognitionRef.current) {
+        const rec = recognitionRef.current;
+        recognitionRef.current = null;
+        try {
+          rec.onend = null;
+          rec.onerror = null;
+          rec.onresult = null;
+          rec.abort();
+        } catch (_) {}
+      }
 
-    if (!voiceSentRef.current && combinedMessage && sendVoiceTriggerRef.current) {
-      voiceSentRef.current = true;
-      sendVoiceTriggerRef.current({ textOverride: combinedMessage, clearComposerText: true, fromVoice: true });
-    }
-  }, [clearVoiceTimers, getCombinedVoiceTranscript, inputText]);
+      if (action === 'send') {
+        if (!voiceSentRef.current && (combinedMessage || attachment) && sendVoiceTriggerRef.current) {
+          voiceSentRef.current = true;
+          sendVoiceTriggerRef.current({
+            textOverride: combinedMessage,
+            clearComposerText: true,
+            fromVoice: true,
+          });
+        }
+      } else {
+        inputTextRef.current = combinedMessage;
+        setInputText(combinedMessage);
+        requestAnimationFrame(() => {
+          chatInputRef.current?.focus();
+        });
+      }
+    },
+    [attachment, clearVoiceTimers, getCombinedVoiceTranscript]
+  );
+
+  const requestStopVoice = useCallback(
+    (action) => {
+      if (voiceSilenceTimerRef.current) {
+        clearTimeout(voiceSilenceTimerRef.current);
+        voiceSilenceTimerRef.current = null;
+      }
+      if (voiceRestartTimerRef.current) {
+        clearTimeout(voiceRestartTimerRef.current);
+        voiceRestartTimerRef.current = null;
+      }
+
+      voiceWantListeningRef.current = false;
+      voiceStopActionRef.current = action;
+
+      // Si une session SpeechRecognition est active, on appelle stop() SANS couper onresult/onend
+      // pour laisser le navigateur finaliser les derniers mots avant de transcrire ou d'envoyer.
+      const activeRec = recognitionRef.current;
+      if (activeRec) {
+        const alreadyStopping = Boolean(voiceFinalizingTimerRef.current);
+        setIsFinalizingVoice(true);
+        if (!alreadyStopping) {
+          voiceFinalizingTimerRef.current = setTimeout(() => {
+            completeVoiceSession(voiceStopActionRef.current || action);
+          }, VOICE_FINALIZE_TIMEOUT_MS);
+          try {
+            activeRec.stop();
+          } catch (_) {
+            completeVoiceSession(action);
+          }
+        }
+        return;
+      }
+
+      completeVoiceSession(action);
+    },
+    [completeVoiceSession]
+  );
 
   const resetVoiceSilenceTimer = useCallback(() => {
     if (voiceSilenceTimerRef.current) {
@@ -1195,10 +1267,10 @@ export default function ToasterPage({ currentUser }) {
     }
     voiceSilenceTimerRef.current = setTimeout(() => {
       if (voiceWantListeningRef.current) {
-        finishAndSendVoice();
+        requestStopVoice('transcribe');
       }
     }, VOICE_SILENCE_TIMEOUT_MS);
-  }, [finishAndSendVoice]);
+  }, [requestStopVoice]);
 
   const startRecognitionSession = useCallback(() => {
     const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
@@ -1218,7 +1290,9 @@ export default function ToasterPage({ currentUser }) {
     };
 
     recognition.onspeechstart = () => {
-      resetVoiceSilenceTimer();
+      if (voiceWantListeningRef.current) {
+        resetVoiceSilenceTimer();
+      }
     };
 
     recognition.onresult = (event) => {
@@ -1232,17 +1306,24 @@ export default function ToasterPage({ currentUser }) {
         voiceSessionTranscriptRef.current = nextSession;
         const preview = [voiceCommittedRef.current, nextSession].filter(Boolean).join(' ').trim();
         setLiveVoicePreview(preview);
-        resetVoiceSilenceTimer();
+        if (voiceWantListeningRef.current) {
+          resetVoiceSilenceTimer();
+        }
       }
     };
 
     recognition.onerror = (event) => {
       if (event.error === 'not-allowed' || event.error === 'service-not-allowed' || event.error === 'audio-capture') {
         console.warn('Erreur dictée vocale fatale:', event.error);
+        if (recognitionRef.current === recognition) {
+          recognitionRef.current = null;
+        }
         voiceWantListeningRef.current = false;
         voiceAbortedRef.current = true;
+        voiceStopActionRef.current = null;
         clearVoiceTimers();
         setIsListening(false);
+        setIsFinalizingVoice(false);
         setLiveVoicePreview('');
         setErrorBanner("Impossible d'accéder au microphone pour la dictée vocale.");
         return;
@@ -1253,6 +1334,10 @@ export default function ToasterPage({ currentUser }) {
     };
 
     recognition.onend = () => {
+      if (recognitionRef.current === recognition) {
+        recognitionRef.current = null;
+      }
+
       if (voiceSessionTranscriptRef.current.trim()) {
         voiceCommittedRef.current = [voiceCommittedRef.current, voiceSessionTranscriptRef.current.trim()]
           .filter(Boolean)
@@ -1264,6 +1349,7 @@ export default function ToasterPage({ currentUser }) {
       if (voiceAbortedRef.current) {
         clearVoiceTimers();
         setIsListening(false);
+        setIsFinalizingVoice(false);
         setLiveVoicePreview('');
         return;
       }
@@ -1276,24 +1362,31 @@ export default function ToasterPage({ currentUser }) {
               startRecognitionSession();
             } catch (restartErr) {
               console.warn('Échec reprise dictée continue:', restartErr);
-              finishAndSendVoice();
+              completeVoiceSession('transcribe');
             }
           }
         }, 80);
         return;
       }
 
-      finishAndSendVoice();
+      completeVoiceSession(voiceStopActionRef.current || 'transcribe');
     };
 
     recognitionRef.current = recognition;
-    recognition.start();
-  }, [clearVoiceTimers, finishAndSendVoice, resetVoiceSilenceTimer]);
+    try {
+      recognition.start();
+    } catch (startErr) {
+      console.warn('Échec démarrage dictée vocale:', startErr);
+      recognitionRef.current = null;
+      completeVoiceSession('transcribe');
+    }
+  }, [clearVoiceTimers, completeVoiceSession, resetVoiceSilenceTimer]);
 
   useEffect(() => {
     return () => {
       voiceWantListeningRef.current = false;
       voiceAbortedRef.current = true;
+      voiceStopActionRef.current = null;
       clearVoiceTimers();
       if (recognitionRef.current) {
         try {
@@ -1305,8 +1398,8 @@ export default function ToasterPage({ currentUser }) {
 
   const handleSendMessage = (e) => {
     if (e) e.preventDefault();
-    if (isListening || voiceWantListeningRef.current) {
-      finishAndSendVoice();
+    if (isListening || isFinalizingVoice || voiceWantListeningRef.current) {
+      requestStopVoice('send');
       return;
     }
     sendMessagePayload({ textOverride: null, clearComposerText: true });
@@ -1317,8 +1410,11 @@ export default function ToasterPage({ currentUser }) {
       setErrorBanner('La reconnaissance vocale n’est pas supportée par ce navigateur.');
       return;
     }
-    if (isListening || voiceWantListeningRef.current) {
-      finishAndSendVoice();
+    if (isListening || isFinalizingVoice || voiceWantListeningRef.current) {
+      // Appuyer sur Micro arrête la dictée et transcrit dans la zone de saisie (sans envoyer)
+      if (!isFinalizingVoice) {
+        requestStopVoice('transcribe');
+      }
       return;
     }
 
@@ -1326,8 +1422,10 @@ export default function ToasterPage({ currentUser }) {
     voiceSessionTranscriptRef.current = '';
     voiceAbortedRef.current = false;
     voiceSentRef.current = false;
+    voiceStopActionRef.current = null;
     voiceWantListeningRef.current = true;
     setLiveVoicePreview('');
+    setIsFinalizingVoice(false);
     setIsListening(true);
     resetVoiceSilenceTimer();
     startRecognitionSession();
@@ -1337,6 +1435,7 @@ export default function ToasterPage({ currentUser }) {
     clearVoiceTimers();
     voiceWantListeningRef.current = false;
     voiceAbortedRef.current = true;
+    voiceStopActionRef.current = null;
     voiceCommittedRef.current = '';
     voiceSessionTranscriptRef.current = '';
     setLiveVoicePreview('');
@@ -1348,6 +1447,7 @@ export default function ToasterPage({ currentUser }) {
         rec.abort();
       } catch (_) {}
     }
+    setIsFinalizingVoice(false);
     setIsListening(false);
   };
 
@@ -3923,7 +4023,9 @@ export default function ToasterPage({ currentUser }) {
                     <span className="w-1 h-2.5 rounded-full bg-emerald-500 animate-pulse [animation-delay:300ms]" />
                   </div>
                   <span className="text-xs sm:text-sm font-medium text-emerald-900 truncate">
-                    {liveVoicePreview || 'Écoute continue… cliquez sur le micro ou Envoyer pour expédier'}
+                    {isFinalizingVoice
+                      ? liveVoicePreview || 'Finalisation de la transcription…'
+                      : liveVoicePreview || 'Écoute en cours… Micro pour transcrire, Envoyer pour expédier'}
                   </span>
                 </div>
                 <button
@@ -3965,7 +4067,7 @@ export default function ToasterPage({ currentUser }) {
                 id="btn-toaster-voice"
                 type="button"
                 onClick={handleToggleSpeech}
-                disabled={isSending}
+                disabled={isSending || isFinalizingVoice}
                 className={`relative w-10 h-10 rounded-full inline-flex items-center justify-center shrink-0 transition-all duration-300 cursor-pointer disabled:opacity-40 ${
                   isListening
                     ? 'bg-emerald-600 text-white shadow-md scale-105 ring-4 ring-emerald-500/20'
@@ -3973,10 +4075,10 @@ export default function ToasterPage({ currentUser }) {
                 }`}
                 title={
                   isListening
-                    ? 'Terminer et envoyer directement le message vocal'
-                    : "Parler à l'assistant (envoi direct à la fin)"
+                    ? 'Arrêter la dictée et transcrire dans la zone de saisie (sans envoyer)'
+                    : 'Dicter un message vocal'
                 }
-                aria-label={isListening ? 'Terminer et envoyer le message vocal' : 'Message vocal'}
+                aria-label={isListening ? 'Arrêter et transcrire le message vocal' : 'Dicter un message vocal'}
               >
                 {isListening && (
                   <span
@@ -3985,7 +4087,7 @@ export default function ToasterPage({ currentUser }) {
                   />
                 )}
                 <span className="material-symbols-outlined text-[20px] relative z-10 leading-none">
-                  {isListening ? 'graphic_eq' : 'mic'}
+                  {isListening ? 'stop' : 'mic'}
                 </span>
               </button>
             )}
@@ -3993,13 +4095,25 @@ export default function ToasterPage({ currentUser }) {
             <button
               id="btn-toaster-send"
               type="submit"
-              disabled={isSending || (!isListening && !inputText.trim() && !attachment)}
+              disabled={isSending || (!isListening && !isFinalizingVoice && !inputText.trim() && !attachment)}
               className="w-10 h-10 rounded-full bg-primary hover:bg-forest-deep text-white inline-flex items-center justify-center shrink-0 transition-all duration-200 cursor-pointer shadow-xs disabled:opacity-35 disabled:cursor-not-allowed active:scale-95"
-              title={isListening ? 'Arrêter la dictée et envoyer' : 'Envoyer'}
-              aria-label={isListening ? 'Arrêter la dictée et envoyer' : 'Envoyer'}
+              title={
+                isListening || isFinalizingVoice
+                  ? "Arrêter la transcription et envoyer dès qu'elle est terminée"
+                  : 'Envoyer'
+              }
+              aria-label={
+                isListening || isFinalizingVoice
+                  ? 'Arrêter la transcription et envoyer'
+                  : 'Envoyer'
+              }
             >
-              <span className={`material-symbols-outlined text-[20px] leading-none ${isSending ? 'animate-spin' : ''}`}>
-                {isSending ? 'progress_activity' : 'arrow_upward'}
+              <span
+                className={`material-symbols-outlined text-[20px] leading-none ${
+                  isSending || isFinalizingVoice ? 'animate-spin' : ''
+                }`}
+              >
+                {isSending || isFinalizingVoice ? 'progress_activity' : 'arrow_upward'}
               </span>
             </button>
           </div>
