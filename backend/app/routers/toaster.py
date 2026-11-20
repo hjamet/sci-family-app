@@ -98,6 +98,7 @@ class ToasterExecuteRequest(BaseModel):
 
 
 TOOL_HUMAN_LABELS: Dict[str, Dict[str, str]] = {
+    "read_my_pending_actions": {"label": "Vérification de vos actions en attente (tâches, votes, messages, frais)", "icon": "notifications_active"},
     "read_treasury_and_banking": {"label": "Consultation de la trésorerie Swan & des comptes associés", "icon": "account_balance"},
     "read_tasks_and_equity": {"label": "Vérification des tâches du domaine & du classement", "icon": "task_alt"},
     "read_stays_and_calendar": {"label": "Lecture du calendrier des séjours", "icon": "calendar_month"},
@@ -109,7 +110,8 @@ TOOL_HUMAN_LABELS: Dict[str, Dict[str, str]] = {
     "display_ui_component": {"label": "Affichage d'un composant interactif dans la conversation", "icon": "widgets"},
     "propose_stay_action": {"label": "Préparation d'une carte de réservation de séjour", "icon": "event_available"},
     "propose_heating_or_pool_action": {"label": "Préparation d'un réglage chauffage / piscine", "icon": "local_fire_department"},
-    "propose_invoice_or_document_upload": {"label": "Extraction multimodale de la facture / pièce jointe", "icon": "receipt_long"},
+    "propose_invoice_or_document_upload": {"label": "Extraction multimodale de la facture / dépense", "icon": "receipt_long"},
+    "propose_document_action": {"label": "Préparation du dépôt ou rattachement du document", "icon": "upload_file"},
     "propose_task_action": {"label": "Préparation d'une action sur les tâches", "icon": "assignment_turned_in"},
     "propose_poll_or_vote_action": {"label": "Préparation d'un vote ou nouveau scrutin", "icon": "ballot"},
     "propose_vademecum_action": {"label": "Préparation d'une fiche Vademecum", "icon": "edit_note"},
@@ -324,8 +326,22 @@ TOASTER_FUNCTION_DECLARATIONS: List[Dict[str, Any]] = [
         },
     },
     {
+        "name": "read_my_pending_actions",
+        "description": (
+            "LECTURE SEULE : liste de manière exhaustive toutes les choses à faire concernant l'associé connecté : "
+            "(1) tâches à valider (coordinateur) ou attribuées, "
+            "(2) votes à valider (coordinateur) ou scrutins ouverts où il n'a pas encore voté / attribués, "
+            "(3) messages qui le concernent dans les messageries des tâches ou votes (mentions @ ou nouveaux messages sur tâches/votes attribués), "
+            "(4) frais ou cotisations à payer (solde CCA débiteur / appels de fonds ouverts)."
+        ),
+        "parameters": {"type": "OBJECT", "properties": {}},
+    },
+    {
         "name": "propose_invoice_or_document_upload",
-        "description": "Extrait les informations d'une facture/reçu et prépare son enregistrement comptable.",
+        "description": (
+            "Extrait les informations d'une facture ou d'un reçu (avec montant TTC > 0) et prépare son enregistrement comptable "
+            "(avance personnelle créditée au CCA ou facture à régler par la SCI) avec archivage réel du justificatif joint."
+        ),
         "parameters": {
             "type": "OBJECT",
             "properties": {
@@ -343,11 +359,35 @@ TOASTER_FUNCTION_DECLARATIONS: List[Dict[str, Any]] = [
         },
     },
     {
+        "name": "propose_document_action",
+        "description": (
+            "Propose de téléverser et archiver le document joint dans la bibliothèque officielle de la SCI ('archive'), "
+            "de le téléverser et le rattacher à une tâche existante ('link_task'), "
+            "de le téléverser et le rattacher à un scrutin/vote existant ('link_vote'), "
+            "ou de rattacher un document déjà archivé (existing_document_id) à une tâche ou un scrutin existant. "
+            "L'opération n'est jamais exécutée sans validation explicite de l'utilisateur sur la carte."
+        ),
+        "parameters": {
+            "type": "OBJECT",
+            "properties": {
+                "operation": {"type": "STRING", "description": "'archive', 'link_task' ou 'link_vote'."},
+                "organisme": {"type": "STRING", "description": "Organisme émetteur ou destinataire (ex: 'EURL Bompais', 'Declercq', 'SCI', 'AXA', 'Notaire')."},
+                "title": {"type": "STRING", "description": "Titre clair du document (pour le nom canonique ORGANISME MMAAAA Titre.ext)."},
+                "category": {"type": "STRING", "description": "Catégorie d'archive (ex: 'Travaux & Chantiers', 'Factures', 'Contrats & Assurances', 'Statuts & Actes', 'Notices & Plans', 'Autre')."},
+                "task_id": {"type": "INTEGER", "description": "ID de la tâche existante si operation='link_task'."},
+                "project_id": {"type": "INTEGER", "description": "ID du scrutin/vote existant si operation='link_vote'."},
+                "existing_document_id": {"type": "INTEGER", "description": "ID d'un document déjà existant dans la bibliothèque SCI (optionnel, si l'on lie un document existant au lieu d'un fichier joint)."},
+                "assistant_message": {"type": "STRING", "description": "Réponse fluide en français naturel."},
+            },
+            "required": ["operation", "title", "assistant_message"],
+        },
+    },
+    {
         "name": "propose_task_action",
         "description": (
-            "Propose de créer une nouvelle tâche (toujours en statut PROPOSED, sans responsable pré-choisi car l'attribution "
-            "a lieu lors de la validation par les coordinateurs), de soumettre une tâche existante pour validation ('complete'), "
-            "ou de modifier l'attribution d'une tâche existante ('assign', réservé aux coordinateurs)."
+            "Propose de créer une nouvelle tâche ('create', toujours en statut PROPOSED, avec UNIQUEMENT titre + description + document joint éventuel — "
+            "JAMAIS de charge, priorité, devis, échéance, récurrence, responsable ni sous-tâches d'exemple car tout cela est géré par le coordinateur lors de la validation !), "
+            "de soumettre une tâche existante pour validation ('complete'), ou de modifier l'attribution d'une tâche existante ('assign', coordinateur uniquement)."
         ),
         "parameters": {
             "type": "OBJECT",
@@ -356,20 +396,16 @@ TOASTER_FUNCTION_DECLARATIONS: List[Dict[str, Any]] = [
                 "task_id": {"type": "INTEGER", "description": "ID exact de la tâche existante (pour 'complete' ou 'assign')."},
                 "title": {"type": "STRING", "description": "Titre clair et actionnable de la tâche."},
                 "description": {"type": "STRING", "description": "Description concrète, utile et chaleureuse pour la famille."},
-                "subject": {"type": "STRING", "description": f"Lieu / Sujet parmi : {', '.join(TASK_SUBJECTS)}."},
-                "complexity": {"type": "STRING", "description": f"Charge parmi : {', '.join(TASK_COMPLEXITIES)} (défaut 'Modérée')."},
-                "priority": {"type": "STRING", "description": f"Priorité parmi : {', '.join(TASK_PRIORITIES)} (défaut 'Normale')."},
-                "budget": {"type": "NUMBER", "description": "Prix estimé / Devis en € (optionnel, 0 si aucun)."},
-                "deadline": {"type": "STRING", "description": "Date d'échéance YYYY-MM-DD (optionnel)."},
-                "is_recurring": {"type": "BOOLEAN", "description": "True si tâche périodique récurrente."},
-                "recurrence_interval": {"type": "INTEGER", "description": "Intervalle de récurrence (ex: 1, 2, 6)."},
-                "recurrence_unit": {"type": "STRING", "description": "'jours', 'semaines', 'mois' ou 'sejours'."},
-                "checklist": {
-                    "type": "ARRAY",
-                    "items": {"type": "STRING"},
-                    "description": "Sous-tâches / étapes concrètes de la checklist (optionnel).",
-                },
                 "assigned_to": {"type": "STRING", "description": "UNIQUEMENT pour operation='assign' : nom de l'associé responsable."},
+                "attach_uploaded_file": {"type": "BOOLEAN", "description": "True si le document joint par l'utilisateur doit être archivé et rattaché à cette nouvelle tâche."},
+                "document_organisme": {"type": "STRING", "description": "Organisme du document joint si attach_uploaded_file=True."},
+                "document_title": {"type": "STRING", "description": "Titre du document joint si attach_uploaded_file=True."},
+                "document_category": {"type": "STRING", "description": "Catégorie du document joint si attach_uploaded_file=True."},
+                "attach_document_ids": {
+                    "type": "ARRAY",
+                    "items": {"type": "INTEGER"},
+                    "description": "Liste optionnelle d'IDs de documents déjà présents dans la bibliothèque SCI à rattacher à la nouvelle tâche.",
+                },
                 "assistant_message": {"type": "STRING", "description": "Réponse fluide en français naturel."},
             },
             "required": ["operation", "title", "assistant_message"],
@@ -380,7 +416,7 @@ TOASTER_FUNCTION_DECLARATIONS: List[Dict[str, Any]] = [
         "description": (
             "Propose de voter sur un scrutin ouvert ('vote'), de valider/ouvrir un scrutin proposé ('open', coordinateur uniquement) "
             "ou de proposer un nouveau scrutin ('create', créé en statut PROPOSED comme sur le portail avec catégorie/lieu, budget estimé, "
-            "priorité, description, toggle choix multiples et liste d'options). "
+            "priorité, description, toggle choix multiples, liste d'options et document joint éventuel). "
             "IMPORTANT : n'appelle PAS poll_status_card dans le même tour que cet outil pour le même scrutin."
         ),
         "parameters": {
@@ -400,6 +436,15 @@ TOASTER_FUNCTION_DECLARATIONS: List[Dict[str, Any]] = [
                     "type": "ARRAY",
                     "items": {"type": "STRING"},
                     "description": "Liste des options proposées au vote (au moins 2 options ; ex: ['Approuver le projet', 'Rejeter le projet'] ou liste de dates).",
+                },
+                "attach_uploaded_file": {"type": "BOOLEAN", "description": "True si le document joint par l'utilisateur doit être archivé et rattaché à ce nouveau scrutin."},
+                "document_organisme": {"type": "STRING", "description": "Organisme du document joint si attach_uploaded_file=True."},
+                "document_title": {"type": "STRING", "description": "Titre du document joint si attach_uploaded_file=True."},
+                "document_category": {"type": "STRING", "description": "Catégorie du document joint si attach_uploaded_file=True."},
+                "attach_document_ids": {
+                    "type": "ARRAY",
+                    "items": {"type": "INTEGER"},
+                    "description": "Liste optionnelle d'IDs de documents déjà présents dans la bibliothèque SCI à rattacher au nouveau scrutin.",
                 },
                 "assistant_message": {"type": "STRING", "description": "Réponse fluide en français naturel."},
             },
@@ -431,6 +476,7 @@ TOASTER_FUNCTION_DECLARATIONS: List[Dict[str, Any]] = [
 ]
 
 READ_ONLY_TOOL_NAMES = {
+    "read_my_pending_actions",
     "read_treasury_and_banking",
     "consult_treasury_and_ledger",
     "read_tasks_and_equity",
@@ -465,12 +511,24 @@ Enrichis tes réponses avec les composants interactifs natifs :
 - `document_viewer_card` : aperçu et téléchargement PDF officiel.
 - `action_modal_buttons` : boutons d'ouverture de formulaires (`'stay'`, `'task'`, `'poll'`, `'document'`, `'vademecum'`).
 
+LISTE EXHAUSTIVE « CE QUE J'AI À FAIRE » (`read_my_pending_actions`) :
+- Dès que l'associé demande ce qu'il a à faire (tâches, votes, messages/mentions, frais à payer), appelle OBLIGATOIREMENT `read_my_pending_actions` puis couvre clairement les 4 axes (en indiquant sobrement « rien en attente » pour les axes vides) :
+  1. Tâches à valider (si coordinateur) ou attribuées ; affiche aussitôt `tasks_overview_card` avec leurs `task_ids` s'il y en a au moins une.
+  2. Votes à valider (si coordinateur) ou scrutins ouverts où il n'a pas encore voté / attribués ; affiche `poll_status_card` s'il y en a.
+  3. Messages le concernant dans les messageries des tâches ou votes (mentions `@...` ou nouveaux messages sur des tâches/votes attribués).
+  4. Frais ou cotisations à payer (solde CCA débiteur / appels de fonds ouverts) ; affiche `treasury_overview_card` s'il y a un montant à régler.
+
 COHÉRENCE STRICTE DES CYCLES DE VIE & VALIDATION EXPLICITE DES ACTIONS RÉELLES :
-- Tu opères directement sur le vrai portail de la SCI (base PostgreSQL, chauffage ViCare, piscine Klereo).
+- Tu opères directement sur le vrai portail de la SCI (base PostgreSQL, chauffage ViCare, piscine Klereo, bibliothèque documentaire Google Drive).
+- **Documents joints par l'utilisateur (upload & rattachement)** : lorsqu'un associé te fournit un document (PDF ou photo), examine-le et propose toujours l'opération la plus pertinente (qui reste soumise à confirmation explicite de l'associé sur la carte) :
+  - Facture/reçu avec montant TTC → `propose_invoice_or_document_upload` (enregistre la dépense/avance + archive le document réel).
+  - Document à archiver dans la bibliothèque SCI, ou à rattacher à une **tâche existante** ou un **scrutin existant** → `propose_document_action` (`operation='archive'`, `'link_task'` avec `task_id`, ou `'link_vote'` avec `project_id`).
+  - Document nécessitant la création d'une **nouvelle tâche** (ex. photo d'un souci, devis à suivre) → `propose_task_action(operation='create', attach_uploaded_file=True, document_organisme=..., document_title=...)`.
+  - Document nécessitant la création d'un **nouveau scrutin / vote** (ex. devis de travaux à soumettre aux associés) → `propose_poll_or_vote_action(operation='create', attach_uploaded_file=True, document_organisme=..., document_title=...)`.
 - **Séjours** : renseigne toujours date ET heure (`arrival_time`/`departure_time`), participants internes (`selected_members`) et invités extérieurs (`external_guests`), et différencie Eau Chaude Sanitaire (`activate_dhw`, 52 °C), Chauffage Presbytère (`activate_heating`, 20 °C, qui inclut l'ECS) et Piscine (`activate_pool`, 27 °C).
-- **Tâches (cycle de vie officiel)** : toute nouvelle tâche est créée en statut `PROPOSED` SANS responsable pré-assigné (c'est lors de la validation par les coordinateurs Henri ou Joséphine que le responsable est choisi). Ne propose JAMAIS de champ statut ni responsable lors d'une création de tâche !
+- **Tâches (création ultra-simple)** : lors de la création d'une tâche (`propose_task_action`, `operation='create'`), toute nouvelle tâche est créée en statut `PROPOSED` et le créateur fournit UNIQUEMENT un **titre** et une **description** (plus un éventuel document joint). N'invente JAMAIS de sous-tâches / checklist d'exemple, et ne définis jamais la charge, la priorité, le devis, l'échéance ou le responsable : toutes ces valeurs sont estimées et gérées exclusivement par les coordinateurs lors de la validation !
 - **Scrutins / Votes (cycle de vie officiel)** : toute nouvelle proposition de scrutin est créée en statut `PROPOSED` (en attente de validation/ouverture par un coordinateur) avec un lieu/catégorie canonique, une description claire, une priorité, un budget estimé éventuel, le mode choix unique/multiple et au moins 2 options.
-- Pour toute action de création ou modification, appelle TOUJOURS l'outil `propose_*` correspondant afin de présenter une carte récapitulative modifiable que l'associé devra confirmer en un clic. **INTERDICTION ABSOLUE** de répondre « dans la carte ci-dessous » ou « j'ai pré-rempli » sans avoir effectivement invoqué l'outil `propose_*` dans ce tour !
+- Pour toute action de création, modification, archivage ou rattachement de document, appelle TOUJOURS l'outil `propose_*` correspondant afin de présenter une carte récapitulative modifiable que l'associé devra confirmer en un clic. **INTERDICTION ABSOLUE** de répondre « dans la carte ci-dessous » ou « j'ai pré-rempli » sans avoir effectivement invoqué l'outil `propose_*` dans ce tour !
 - Si la passerelle ViCare du Presbytère est hors ligne au moment où l'utilisateur demande d'allumer le chauffage, prépare tout de même la carte `propose_heating_or_pool_action` si souhaité mais préviens clairement dans ta réponse que la passerelle Vitoconnect est actuellement hors ligne."""
 
 
@@ -544,8 +602,19 @@ def _build_system_prompt(state: Dict[str, Any], attachment_name: Optional[str] =
         for c in (treasury.get("calls_for_funds") or [])[:6]
     ) or "  (Aucun appel de fonds)"
 
+    pending = state.get("pending_actions") or {}
+    pending_counts = pending.get("counts") or {}
+    pending_summary_txt = (
+        f"Total={pending.get('total_count', 0)} "
+        f"(tâches={pending_counts.get('tasks', 0)}, votes={pending_counts.get('votes', 0)}, "
+        f"messages/mentions={pending_counts.get('messages', 0)}, frais à payer={pending_counts.get('fees', 0)} / {float(pending.get('total_fees_due_eur') or 0.0):.2f} €)"
+    )
+
     attach_info = (
-        f"\nPIÈCE JOINTE FOURNIE DANS CE TOUR : « {attachment_name} » (examine-la visuellement et appelle propose_invoice_or_document_upload si c'est une facture ou un reçu)."
+        f"\nPIÈCE JOINTE FOURNIE DANS CE TOUR : « {attachment_name} » "
+        f"(examine-la visuellement et propose l'action adaptée parmi : propose_invoice_or_document_upload si facture/reçu avec montant, "
+        f"propose_document_action pour archiver ou lier à une tâche/un scrutin existant, "
+        f"ou propose_task_action / propose_poll_or_vote_action avec attach_uploaded_file=True pour créer une nouvelle tâche ou un nouveau scrutin avec ce document joint)."
         if attachment_name
         else ""
     )
@@ -553,6 +622,7 @@ def _build_system_prompt(state: Dict[str, Any], attachment_name: Optional[str] =
     dynamic_context = f"""
 DATE DU JOUR : {datetime.utcnow().strftime('%Y-%m-%d')}
 ASSOCIÉ CONNECTÉ : {member_name} (id={member.get('id')}, prénom={member_prenom}, coordinateur={'Oui' if member.get('is_coordinator') else 'Non'}, cotisation={member.get('monthly_contribution')} €/mois, référence virement={member.get('payment_reference')})
+ACTIONS EN ATTENTE POUR {member_prenom.upper()} : {pending_summary_txt}
 
 TRÉSORERIE BANCAIRE SWAN & SOLDES CCA DES 7 ASSOCIÉS :
 - Compte SCI Swan : solde {float(swan.get('balance') or 0.0):.2f} € | IBAN {swan.get('iban')} | {docs_count} documents officiels | {vad_count} fiches Vademecum
@@ -824,6 +894,7 @@ def _build_action_card(
             "category": category,
             "advanced_by_member": bool(advanced_by_member) if advanced_by_member is not None else True,
             "document_filename": attachment_name or "facture_jointe.pdf",
+            "attach_uploaded_file": bool(attachment_name),
         }
         return {
             "action_type": "expense",
@@ -834,48 +905,73 @@ def _build_action_card(
             "payload": payload,
         }
 
+    if func_name == "propose_document_action":
+        operation = str(args.get("operation") or "archive").strip().lower()
+        if operation not in ("archive", "link_task", "link_vote"):
+            operation = "archive"
+        organisme = str(args.get("organisme") or "SCI").strip()
+        title = str(args.get("title") or (attachment_name or "Document SCI")).strip()
+        category = str(args.get("category") or "Travaux & Chantiers").strip()
+        task_id = args.get("task_id")
+        project_id = args.get("project_id")
+        existing_doc_id = args.get("existing_document_id")
+
+        target_label = "la bibliothèque documentaire SCI"
+        if operation == "link_task" and task_id:
+            t_match = next((t for t in (state.get("tasks") or []) if int(t.get("id") or 0) == int(task_id)), None)
+            target_label = f"la tâche #{task_id}" + (f" (« {t_match['title']} »)" if t_match else "")
+        elif operation == "link_vote" and project_id:
+            p_match = next((p for p in (state.get("open_votes") or []) if int(p.get("id") or 0) == int(project_id)), None)
+            target_label = f"le scrutin #{project_id}" + (f" (« {p_match['title']} »)" if p_match else "")
+
+        payload = {
+            "operation": operation,
+            "organisme": organisme,
+            "title": title,
+            "category": category,
+            "task_id": int(task_id) if task_id is not None and str(task_id).isdigit() else None,
+            "project_id": int(project_id) if project_id is not None and str(project_id).isdigit() else None,
+            "existing_document_id": int(existing_doc_id) if existing_doc_id is not None and str(existing_doc_id).isdigit() else None,
+            "document_filename": attachment_name or "",
+            "attach_uploaded_file": bool(attachment_name) and not existing_doc_id,
+        }
+        card_title = (
+            f"Archiver et rattacher le document à {target_label}"
+            if operation in ("link_task", "link_vote")
+            else f"Archiver le document : « {title} »"
+        )
+        return {
+            "action_type": "document",
+            "title": card_title,
+            "deduced_fields": [],
+            "missing_fields": missing,
+            "ready_to_execute": bool(title) and (operation == "archive" or bool(payload["task_id"]) or bool(payload["project_id"])),
+            "payload": payload,
+        }
+
     if func_name == "propose_task_action":
         operation = str(args.get("operation") or "create").lower()
         task_id = args.get("task_id")
         title = str(args.get("title") or "").strip()
-        subject = str(args.get("subject") or "Presbytère").strip()
-        if subject not in TASK_SUBJECTS:
-            subject = next((s for s in TASK_SUBJECTS if subject.lower() in s.lower() or s.lower() in subject.lower()), "Presbytère")
-        complexity = str(args.get("complexity") or "Modérée").strip()
-        if complexity not in TASK_COMPLEXITIES:
-            complexity = "Modérée"
-        priority = str(args.get("priority") or "Normale").strip()
-        if priority not in TASK_PRIORITIES:
-            priority = "Normale"
-        budget_val = float(args.get("budget") or 0.0) if args.get("budget") not in (None, "") else 0.0
-        deadline_val = _normalize_date_2026(args.get("deadline")) or ""
-        is_recurring = bool(args.get("is_recurring", False))
-        recurrence_interval = max(1, int(args.get("recurrence_interval") or 1))
-        recurrence_unit = str(args.get("recurrence_unit") or "semaines")
-        raw_cl = args.get("checklist")
-        checklist_arr = []
-        if isinstance(raw_cl, list):
-            for it in raw_cl:
-                txt = it.get("text") if isinstance(it, dict) else str(it)
-                if txt and str(txt).strip():
-                    checklist_arr.append({"text": str(txt).strip(), "done": False})
         assigned_to = _sanitize_family_titles(str(args.get("assigned_to") or "").strip())
+        attach_uploaded_file = bool(args.get("attach_uploaded_file", False)) or bool(attachment_name)
+        raw_attach_ids = args.get("attach_document_ids") or []
+        attach_doc_ids = [int(x) for x in raw_attach_ids if str(x).isdigit()] if isinstance(raw_attach_ids, list) else []
 
         if operation == "create":
-            # Annotations 7 & 8 : Zéro champ Statut ni Responsable sur création — formulaire miroir de TaskDetailModal !
+            # Annotations 5 & 6 : Le créateur décrit UNIQUEMENT la tâche (titre + description + éventuel doc joint) ;
+            # Zéro sous-tâches d'exemple, zéro charge/priorité/devis/échéance (tout est géré par le coordinateur) !
             payload = {
                 "operation": "create",
                 "title": title,
                 "description": str(args.get("description") or "").strip(),
-                "subject": subject,
-                "complexity": complexity,
-                "priority": priority,
-                "budget": budget_val,
-                "deadline": deadline_val,
-                "is_recurring": is_recurring,
-                "recurrence_interval": recurrence_interval,
-                "recurrence_unit": recurrence_unit,
-                "checklist": checklist_arr,
+                "checklist": [],
+                "attach_uploaded_file": attach_uploaded_file and bool(attachment_name),
+                "document_organisme": str(args.get("document_organisme") or "SCI").strip(),
+                "document_title": str(args.get("document_title") or title or (attachment_name or "Document")).strip(),
+                "document_category": str(args.get("document_category") or "Travaux & Chantiers").strip(),
+                "document_filename": attachment_name or "",
+                "attach_document_ids": attach_doc_ids,
             }
             return {
                 "action_type": "task",
@@ -907,8 +1003,6 @@ def _build_action_card(
             "task_id": int(task_id) if task_id is not None else None,
             "title": title,
             "description": args.get("description") or title,
-            "subject": subject,
-            "priority": priority,
             "assigned_to": assigned_to,
         }
         card_title = (
@@ -978,6 +1072,9 @@ def _build_action_card(
                 deduced.append({"key": "comment", "label": "Commentaire", "value": comment})
 
         allow_multi = bool(args.get("allow_multiple_choices", len(options) > 3))
+        attach_uploaded_file = bool(args.get("attach_uploaded_file", False)) or (operation == "create" and bool(attachment_name))
+        raw_attach_ids = args.get("attach_document_ids") or []
+        attach_doc_ids = [int(x) for x in raw_attach_ids if str(x).isdigit()] if isinstance(raw_attach_ids, list) else []
         payload = {
             "operation": operation,
             "project_id": int(project_id) if project_id is not None else None,
@@ -990,6 +1087,12 @@ def _build_action_card(
             "estimated_cost": estimated_cost,
             "allow_multiple_choices": allow_multi,
             "options": options,
+            "attach_uploaded_file": attach_uploaded_file and bool(attachment_name),
+            "document_organisme": str(args.get("document_organisme") or "SCI").strip(),
+            "document_title": str(args.get("document_title") or title or (attachment_name or "Document")).strip(),
+            "document_category": str(args.get("document_category") or "Travaux & Chantiers").strip(),
+            "document_filename": attachment_name or "",
+            "attach_document_ids": attach_doc_ids,
         }
         card_title = (
             f"Vote sur « {title} »"
@@ -1097,12 +1200,20 @@ def _prepare_gemini_contents(req: ToasterChatRequest) -> List[Dict[str, Any]]:
                     mime_type = "image/png"
                 else:
                     mime_type = "image/jpeg"
+            if req.attachment_name:
+                parts.append({"text": f"[Fichier joint par l'utilisateur : {req.attachment_name} ({mime_type})]"})
             parts.append({"inlineData": {"mimeType": mime_type, "data": b64_str}})
             if not text_val:
                 parts.insert(
                     0,
-                    {"text": f"Analyse cette pièce jointe ({req.attachment_name or 'document'}) et propose l'action correspondante."},
+                    {"text": f"Analyse cette pièce jointe ({req.attachment_name or 'document'}) et propose l'action correspondante (archivage bibliothèque, liaison à une tâche ou un vote existant/nouveau, ou enregistrement de facture)."},
                 )
+        elif is_last and req.attachment_name:
+            parts.append(
+                {
+                    "text": f"[Fichier volumineux joint par l'utilisateur prêt à être téléversé sur Google Drive après validation : {req.attachment_name} ({req.attachment_mime or 'application/octet-stream'}). Le contenu binaire n'est pas prévisualisé inline car il dépasse 2,9 Mo, mais le bouton de confirmation de la carte téléversera directement ce fichier complet sur le portail.]"
+                }
+            )
 
         if not parts:
             continue

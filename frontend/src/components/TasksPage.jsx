@@ -141,18 +141,13 @@ export default function TasksPage({ currentUser = 'Henri Jamet' }) {
     setInspectingTask({
       title: '',
       description: '',
-      subject: 'Rosings',
+      subject: 'Presbytère',
       complexity: 'Modérée',
       budget: 0,
       assigned_members: [],
       assignee: null,
       status: 'PROPOSED',
-      checklist: [
-        { text: 'Diagnostic initial et constat sur place', done: false },
-        { text: 'Demande de devis et consultation des artisans', done: false },
-        { text: 'Validation budgétaire en coordination', done: false },
-        { text: 'Réalisation des travaux et contrôle final', done: false },
-      ]
+      checklist: []
     });
     setIsTaskEditingDirect(true);
     setIsTaskModalOpen(true);

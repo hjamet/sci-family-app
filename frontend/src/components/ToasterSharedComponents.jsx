@@ -1649,19 +1649,9 @@ export function ToasterSandboxFormModal({
   const [activateHeating, setActivateHeating] = useState(true);
   const [activatePool, setActivatePool] = useState(false);
 
-  // Tâche (miroir TaskDetailModal.jsx en mode création : ZÉRO statut, ZÉRO responsable)
+  // Tâche (création ultra-simple : titre + description uniquement ; charge/priorité/devis/attribution gérés par le coordinateur)
   const [taskTitle, setTaskTitle] = useState('');
-  const [taskSubject, setTaskSubject] = useState('Presbytère');
-  const [taskComplexity, setTaskComplexity] = useState('Modérée');
-  const [taskPriority, setTaskPriority] = useState('Normale');
-  const [taskBudget, setTaskBudget] = useState('');
-  const [taskDeadline, setTaskDeadline] = useState('');
-  const [taskIsRecurring, setTaskIsRecurring] = useState(false);
-  const [taskRecInterval, setTaskRecInterval] = useState(1);
-  const [taskRecUnit, setTaskRecUnit] = useState('semaines');
   const [taskDesc, setTaskDesc] = useState('');
-  const [taskChecklist, setTaskChecklist] = useState([]);
-  const [taskChecklistInput, setTaskChecklistInput] = useState('');
 
   // Scrutin / Vote (miroir VoteRoofModal.jsx : catégorie, priorité, budget, choix multiples, options, statut PROPOSED)
   const [pollTitle, setPollTitle] = useState('');
@@ -1723,7 +1713,6 @@ export function ToasterSandboxFormModal({
       setTaskDesc(prefill.description);
       setPollDesc(prefill.description);
     }
-    if (prefill.subject && TASK_SUBJECTS.includes(prefill.subject)) setTaskSubject(prefill.subject);
     if (prefill.content) setVadContent(prefill.content);
     if (prefill.category) {
       setVadCategory(prefill.category);
@@ -1771,13 +1760,6 @@ export function ToasterSandboxFormModal({
     setExternalGuestInput('');
   };
 
-  const addChecklistItem = () => {
-    const clean = taskChecklistInput.trim();
-    if (!clean) return;
-    setTaskChecklist((prev) => [...prev, { text: clean, done: false }]);
-    setTaskChecklistInput('');
-  };
-
   const totalOccupants = Math.max(1, selectedMembers.length + externalGuests.length);
 
   const handleSubmit = async (e) => {
@@ -1807,15 +1789,7 @@ export function ToasterSandboxFormModal({
           operation: 'create',
           title: taskTitle.trim(),
           description: taskDesc.trim() || taskTitle.trim(),
-          subject: taskSubject,
-          complexity: taskComplexity,
-          priority: taskPriority,
-          budget: taskBudget ? parseFloat(taskBudget) : 0,
-          deadline: taskDeadline || '',
-          is_recurring: taskIsRecurring,
-          recurrence_interval: Number(taskRecInterval) || 1,
-          recurrence_unit: taskRecUnit,
-          checklist: taskChecklist,
+          checklist: [],
         });
       } else if (type === 'poll') {
         const opts = pollOptionsText
@@ -2112,7 +2086,7 @@ export function ToasterSandboxFormModal({
               <div className="p-2.5 rounded-xl bg-amber-50 border border-amber-200 text-amber-950 text-[11px] flex items-start gap-1.5">
                 <span className="material-symbols-outlined text-[15px] text-amber-700 shrink-0 mt-0.5">info</span>
                 <span>
-                  Cette tâche sera enregistrée comme <strong>proposition à arbitrer</strong>. Les coordinateurs la valideront et attribueront le responsable.
+                  Cette tâche sera enregistrée comme <strong>proposition à arbitrer</strong>. Décrivez simplement la tâche : la charge, la priorité, le devis, l’emplacement et l’attribution sont gérés par les coordinateurs lors de la validation.
                 </span>
               </div>
               <div>
@@ -2120,157 +2094,21 @@ export function ToasterSandboxFormModal({
                 <input
                   type="text"
                   required
-                  placeholder="Ex : Vérifier le goutte-à-goutte du jardin"
+                  placeholder="Titre clair de la tâche..."
                   value={taskTitle}
                   onChange={(e) => setTaskTitle(e.target.value)}
                   className="w-full h-9 px-3 rounded-xl border border-slate-200"
                 />
               </div>
-              <div className="grid grid-cols-3 gap-2">
-                <div>
-                  <label className="font-bold text-slate-700 block mb-1">Emplacement</label>
-                  <select
-                    value={taskSubject}
-                    onChange={(e) => setTaskSubject(e.target.value)}
-                    className="w-full h-9 px-2 rounded-xl border border-slate-200 bg-white"
-                  >
-                    {TASK_SUBJECTS.map((s) => (
-                      <option key={s} value={s}>{s}</option>
-                    ))}
-                  </select>
-                </div>
-                <div>
-                  <label className="font-bold text-slate-700 block mb-1">Charge</label>
-                  <select
-                    value={taskComplexity}
-                    onChange={(e) => setTaskComplexity(e.target.value)}
-                    className="w-full h-9 px-2 rounded-xl border border-slate-200 bg-white"
-                  >
-                    {TASK_COMPLEXITIES.map((c) => (
-                      <option key={c} value={c}>{c}</option>
-                    ))}
-                  </select>
-                </div>
-                <div>
-                  <label className="font-bold text-slate-700 block mb-1">Priorité</label>
-                  <select
-                    value={taskPriority}
-                    onChange={(e) => setTaskPriority(e.target.value)}
-                    className="w-full h-9 px-2 rounded-xl border border-slate-200 bg-white"
-                  >
-                    {TASK_PRIORITIES.map((p) => (
-                      <option key={p} value={p}>{p}</option>
-                    ))}
-                  </select>
-                </div>
-              </div>
-              <div className="grid grid-cols-2 gap-2">
-                <div>
-                  <label className="font-bold text-slate-700 block mb-1">Devis / Budget estimé (€)</label>
-                  <input
-                    type="number"
-                    min="0"
-                    step="1"
-                    placeholder="0"
-                    value={taskBudget}
-                    onChange={(e) => setTaskBudget(e.target.value)}
-                    className="w-full h-9 px-3 rounded-xl border border-slate-200"
-                  />
-                </div>
-                <div>
-                  <label className="font-bold text-slate-700 block mb-1">Échéance souhaitée</label>
-                  <input
-                    type="date"
-                    value={taskDeadline}
-                    onChange={(e) => setTaskDeadline(e.target.value)}
-                    className="w-full h-9 px-3 rounded-xl border border-slate-200"
-                  />
-                </div>
-              </div>
-              <div className="flex items-center gap-3 flex-wrap">
-                <label className="flex items-center gap-1.5 font-semibold text-slate-700 cursor-pointer">
-                  <input
-                    type="checkbox"
-                    checked={taskIsRecurring}
-                    onChange={(e) => setTaskIsRecurring(e.target.checked)}
-                    className="accent-primary"
-                  />
-                  <span>Tâche récurrente</span>
-                </label>
-                {taskIsRecurring && (
-                  <div className="flex items-center gap-1.5">
-                    <span>Tous les</span>
-                    <input
-                      type="number"
-                      min="1"
-                      max="365"
-                      value={taskRecInterval}
-                      onChange={(e) => setTaskRecInterval(e.target.value)}
-                      className="w-14 h-8 px-2 rounded-lg border border-slate-200"
-                    />
-                    <select
-                      value={taskRecUnit}
-                      onChange={(e) => setTaskRecUnit(e.target.value)}
-                      className="h-8 px-2 rounded-lg border border-slate-200 bg-white"
-                    >
-                      <option value="jours">jours</option>
-                      <option value="semaines">semaines</option>
-                      <option value="mois">mois</option>
-                      <option value="ans">ans</option>
-                    </select>
-                  </div>
-                )}
-              </div>
               <div>
-                <label className="font-bold text-slate-700 block mb-1">Consignes concrètes</label>
+                <label className="font-bold text-slate-700 block mb-1">Description</label>
                 <textarea
-                  rows={2}
+                  rows={4}
                   value={taskDesc}
                   onChange={(e) => setTaskDesc(e.target.value)}
-                  placeholder="Étapes simples et directes..."
+                  placeholder="Décrivez le besoin, le problème constaté ou les détails utiles..."
                   className="w-full p-2.5 rounded-xl border border-slate-200"
                 />
-              </div>
-              <div className="space-y-1.5">
-                <label className="font-bold text-slate-700 block">Sous-tâches / Checklist (optionnel)</label>
-                <div className="flex gap-1.5">
-                  <input
-                    type="text"
-                    value={taskChecklistInput}
-                    onChange={(e) => setTaskChecklistInput(e.target.value)}
-                    onKeyDown={(e) => {
-                      if (e.key === 'Enter') {
-                        e.preventDefault();
-                        addChecklistItem();
-                      }
-                    }}
-                    placeholder="Ajouter une étape..."
-                    className="flex-1 h-8 px-2.5 rounded-lg border border-slate-200"
-                  />
-                  <button
-                    type="button"
-                    onClick={addChecklistItem}
-                    className="px-3 h-8 rounded-lg bg-slate-100 hover:bg-slate-200 text-slate-800 font-bold cursor-pointer"
-                  >
-                    +
-                  </button>
-                </div>
-                {taskChecklist.length > 0 && (
-                  <ul className="space-y-1">
-                    {taskChecklist.map((item, idx) => (
-                      <li key={idx} className="flex items-center justify-between gap-2 px-2.5 py-1 rounded-lg bg-slate-50 border border-slate-200">
-                        <span>• {item.text}</span>
-                        <button
-                          type="button"
-                          onClick={() => setTaskChecklist((prev) => prev.filter((_, i) => i !== idx))}
-                          className="text-slate-400 hover:text-rose-600 cursor-pointer"
-                        >
-                          ×
-                        </button>
-                      </li>
-                    ))}
-                  </ul>
-                )}
               </div>
             </>
           )}

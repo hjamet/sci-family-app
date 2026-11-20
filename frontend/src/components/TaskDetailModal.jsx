@@ -896,7 +896,7 @@ export default function TaskDetailModal({
               }
               return prev;
             });
-            if (isNewTask && !hasPrefilledNewAssigneeRef.current) {
+            if (isNewTask && isCoordinator && !hasPrefilledNewAssigneeRef.current) {
               hasPrefilledNewAssigneeRef.current = true;
               setEditMembers((prev) => {
                 if (!prev || prev.length === 0) {
@@ -2424,8 +2424,8 @@ export default function TaskDetailModal({
                   </div>
                 )}
 
-                {/* Section 1 : Gouvernance & Gestion technique (Pour Henri & Joséphine ou Initiative au vote) */}
-                {(isCoordinator || isVoteInitiative || isNewTask) && (
+                {/* Section 1 : Gouvernance & Gestion technique (Réservée aux coordinateurs Henri & Joséphine, ou Initiative au vote) */}
+                {(isCoordinator || isVoteInitiative) && (
                   <section className="bg-white border-2 border-emerald-600/30 rounded-2xl p-4 sm:p-5 shadow-xs flex flex-col gap-4">
                     <div className="flex flex-wrap items-center justify-between gap-2 border-b border-slate-100 pb-3">
                       <div className="flex items-center gap-2">
@@ -2745,8 +2745,8 @@ export default function TaskDetailModal({
                   </div>
                 </section>
 
-                {/* Section Attribution & Recommandation d'Équité (toujours visible & éditable en mode édition - Annotation 1) */}
-                {!isVoteInitiative && (
+                {/* Section Attribution & Recommandation d'Équité (Réservée aux coordinateurs : les créateurs décrivent uniquement la tâche) */}
+                {!isVoteInitiative && isCoordinator && (
                   <section className="bg-white border border-emerald-300 rounded-2xl p-4 sm:p-5 shadow-xs flex flex-col gap-3">
                     <div className="flex items-center justify-between border-b border-slate-100 pb-3">
                       <h3 className="font-headline-sm text-sm sm:text-base font-bold text-forest-deep flex items-center gap-2">

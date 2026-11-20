@@ -1,6 +1,7 @@
 import base64
 import json
 import logging
+import re
 import unicodedata
 from datetime import datetime, timedelta
 from typing import Any, Dict, List, Optional, Tuple
@@ -19,6 +20,7 @@ from ..models import (
     Log,
     Member,
     MemberExpense,
+    Notification,
     Project,
     ProjectComment,
     ProjectVote,
@@ -501,6 +503,533 @@ def resolve_member(db: Session, member_id: Optional[int] = None, member_prenom: 
     return next((m for m in members if _norm_text(m.prenom) == "henri"), members[0])
 
 
+def _is_author_same_as_member(author_name: Optional[str], member: Member) -> bool:
+    if not author_name or not member:
+        return False
+    a_norm = _norm_text(sanitize_display_user_name(author_name))
+    p_norm = _norm_text(format_member_prenom(member))
+    n_norm = _norm_text(format_member_display_name(member))
+    if not a_norm:
+        return False
+    if a_norm == p_norm or a_norm == n_norm:
+        return True
+    if len(p_norm) >= 3 and p_norm in a_norm:
+        return True
+    if p_norm == "elisabeth" and ("maman" in a_norm or "elizabeth" in a_norm):
+        return True
+    return False
+
+
+def _comment_mentions_member(content: Optional[str], member: Member) -> Tuple[bool, bool]:
+    """
+    Retourne (is_direct_mention, is_collective_mention) pour un commentaire.
+    """
+    if not content or "@" not in content or not member:
+        return False, False
+    raw_mentions = re.findall(r"@([A-Za-zÀ-ÿ0-9_\-]+)", content)
+    if not raw_mentions:
+        return False, False
+    p_norm = _norm_text(format_member_prenom(member))
+    n_norm = _norm_text(format_member_display_name(member))
+    n_tokens = [tok for tok in re.split(r"[\s\(\)\-_]+", n_norm) if tok]
+    is_direct = False
+    is_all = False
+    for rm in raw_mentions:
+        m_norm = _norm_text(rm)
+        if not m_norm:
+            continue
+        if m_norm in ("all", "tous"):
+            is_all = True
+            continue
+        if (
+            m_norm == p_norm
+            or m_norm == n_norm
+            or m_norm in n_tokens
+            or (p_norm == "elisabeth" and m_norm in ("maman", "elisabeth", "elizabeth"))
+        ):
+            is_direct = True
+    return is_direct, is_all
+
+
+def _format_doc_entry_for_json(doc: AdminDocument) -> Dict[str, Any]:
+    download_url = doc.file_url or f"/api/documents/{doc.id}/download"
+    fname = doc.file_name or doc.title or f"document_{doc.id}.pdf"
+    is_pdf = fname.lower().endswith(".pdf") or (doc.file_type or "").lower() == "application/pdf"
+    is_img = (doc.file_type or "").lower().startswith("image/") or bool(
+        re.search(r"\.(png|jpe?g|webp|gif|svg)$", fname, re.IGNORECASE)
+    )
+    return {
+        "id": doc.id,
+        "name": doc.title or fname,
+        "title": doc.title or fname,
+        "filename": fname,
+        "file_url": download_url,
+        "url": download_url,
+        "type": "PDF" if is_pdf else ("Image" if is_img else "Document"),
+        "file_type": doc.file_type or ("application/pdf" if is_pdf else "application/octet-stream"),
+        "size": f"{round((doc.file_size or 0) / 1024, 1)} Ko" if doc.file_size else "",
+        "category": doc.category,
+        "uploaded_by": doc.uploaded_by,
+        "created_at": doc.created_at.isoformat() if hasattr(doc.created_at, "isoformat") and doc.created_at else None,
+    }
+
+
+def _attach_docs_to_task_record(prod_db: Session, task: Task, doc_ids: List[int]) -> List[Dict[str, Any]]:
+    existing_docs: List[Any] = []
+    if task.documents:
+        try:
+            parsed = json.loads(task.documents) if isinstance(task.documents, str) else task.documents
+            if isinstance(parsed, list):
+                existing_docs = parsed
+        except ValueError:
+            existing_docs = []
+    attached: List[Dict[str, Any]] = []
+    for raw_id in doc_ids:
+        if not str(raw_id).isdigit():
+            continue
+        doc = prod_db.query(AdminDocument).options(defer(AdminDocument.file_data)).filter(AdminDocument.id == int(raw_id)).first()
+        if not doc:
+            continue
+        entry = _format_doc_entry_for_json(doc)
+        if not any(
+            isinstance(d, dict) and (d.get("id") == doc.id or d.get("url") == entry["url"])
+            for d in existing_docs
+        ):
+            existing_docs.append(entry)
+            attached.append(entry)
+        if doc.task_id is None:
+            doc.task_id = task.id
+    task.documents = json.dumps(existing_docs, ensure_ascii=False)
+    return attached
+
+
+def _attach_docs_to_project_record(prod_db: Session, project: Project, doc_ids: List[int]) -> List[Dict[str, Any]]:
+    existing_docs: List[Any] = []
+    if project.document_urls:
+        try:
+            parsed = json.loads(project.document_urls) if isinstance(project.document_urls, str) else project.document_urls
+            if isinstance(parsed, list):
+                existing_docs = parsed
+        except ValueError:
+            existing_docs = []
+    attached: List[Dict[str, Any]] = []
+    for raw_id in doc_ids:
+        if not str(raw_id).isdigit():
+            continue
+        doc = prod_db.query(AdminDocument).options(defer(AdminDocument.file_data)).filter(AdminDocument.id == int(raw_id)).first()
+        if not doc:
+            continue
+        entry = _format_doc_entry_for_json(doc)
+        if not any(
+            isinstance(d, dict) and (d.get("id") == doc.id or d.get("url") == entry["url"])
+            for d in existing_docs
+        ):
+            existing_docs.append(entry)
+            attached.append(entry)
+    project.document_urls = json.dumps(existing_docs, ensure_ascii=False)
+    return attached
+
+
+def compute_member_pending_actions(
+    prod_db: Session,
+    active_member: Optional[Member],
+    treasury_summary: Optional[Dict[str, Any]] = None,
+) -> Dict[str, Any]:
+    """
+    Calcule en temps réel toutes les actions en attente concernant l'associé connecté :
+    1. Tâches à valider (coordinateur) ou attribuées (en cours / à faire)
+    2. Votes à valider (coordinateur) ou ouverts sans vote / attribués
+    3. Messages le concernant dans les messageries des tâches ou votes (mentions @, ou nouveaux messages sur tâches/votes attribués)
+    4. Frais / cotisations à payer (solde CCA débiteur ou appel de fonds non soldé)
+    """
+    if not active_member:
+        return {
+            "total_count": 0,
+            "has_pending": False,
+            "tasks": [],
+            "votes": [],
+            "messages": [],
+            "fees": [],
+            "counts": {"tasks": 0, "votes": 0, "messages": 0, "fees": 0},
+        }
+
+    is_coord = bool(active_member.is_coordinator)
+    member_prenom = format_member_prenom(active_member)
+    ap_norm = _norm_text(member_prenom)
+    now_utc = datetime.utcnow()
+    recent_cutoff = now_utc - timedelta(days=60)
+
+    # 1. Tâches à valider ou attribuées
+    all_tasks = prod_db.query(Task).order_by(Task.id.desc()).all()
+    tasks_by_id: Dict[int, Task] = {t.id: t for t in all_tasks}
+    pending_tasks: List[Dict[str, Any]] = []
+    assigned_active_task_ids: set = set()
+    active_non_archived_task_ids: set = set()
+
+    for t in all_tasks:
+        st_up = str(t.status or "").strip().upper()
+        st_norm = normalize_status(t.status)
+        is_closed = st_norm in COMPLETED_TASK_STATUSES or st_up in (
+            "DONE", "TERMINEE", "TERMINE", "ARCHIVEE", "ARCHIVE", "REJECTED", "REJETEE"
+        )
+        if is_closed:
+            continue
+        active_non_archived_task_ids.add(t.id)
+        is_assigned = is_member_assigned_to_task(active_member, t)
+        if is_assigned:
+            assigned_active_task_ids.add(t.id)
+
+        reasons: List[str] = []
+        kind = "assigned"
+        if is_coord and st_up in ("PROPOSED", "PROPOSEE"):
+            reasons.append("Proposition à arbitrer")
+            kind = "validate"
+        elif is_coord and st_up in ("PENDING_VALIDATION", "EN_ATTENTE_VALIDATION"):
+            reasons.append("Réalisation à valider")
+            kind = "validate"
+
+        if is_assigned and st_up not in ("PROPOSED", "PROPOSEE", "PENDING_VALIDATION", "EN_ATTENTE_VALIDATION"):
+            reasons.append("Tâche attribuée")
+
+        if reasons:
+            pending_tasks.append(
+                {
+                    "id": t.id,
+                    "ref": t.ref or f"T-{t.id}",
+                    "title": t.title,
+                    "status": t.status,
+                    "subject": t.subject,
+                    "priority": t.priority,
+                    "deadline": t.deadline,
+                    "kind": kind,
+                    "reason": " • ".join(reasons),
+                }
+            )
+
+    # 2. Votes à valider ou attribués (vote attendu / responsable)
+    all_projects = prod_db.query(Project).order_by(Project.id.desc()).all()
+    projects_by_id: Dict[int, Project] = {p.id: p for p in all_projects}
+    all_votes = prod_db.query(ProjectVote).all()
+    votes_by_proj: Dict[int, List[ProjectVote]] = {}
+    for v in all_votes:
+        votes_by_proj.setdefault(v.project_id, []).append(v)
+
+    pending_votes: List[Dict[str, Any]] = []
+    relevant_active_project_ids: set = set()
+    active_non_archived_project_ids: set = set()
+
+    for p in all_projects:
+        st_up = str(p.status or "").strip().upper()
+        if st_up in ("ARCHIVE", "ARCHIVEE", "ARCHIVED", "CLOSED", "ANNULE", "ANNULEE", "APPROUVE", "REFUSE", "TERMINE"):
+            continue
+        active_non_archived_project_ids.add(p.id)
+        p_votes = votes_by_proj.get(p.id, [])
+        has_voted = any(ap_norm and ap_norm in _norm_text(sanitize_display_user_name(v.user_name)) for v in p_votes)
+        is_responsible = bool(p.responsible and ap_norm and ap_norm in _norm_text(sanitize_display_user_name(p.responsible)))
+        is_submitter = _is_author_same_as_member(p.submitted_by, active_member)
+        if is_responsible or is_submitter or (st_up in ("EN_VOTE", "OPEN", "VOTING") and not has_voted):
+            relevant_active_project_ids.add(p.id)
+
+        reasons_v: List[str] = []
+        kind_v = "vote_needed"
+        if is_coord and st_up in (
+            "PROPOSED", "SOUMIS", "SOUMISE", "PROPOSE", "PROPOSEE", "PENDING_CREATION", "EN_ATTENTE_CREATION"
+        ):
+            reasons_v.append("Scrutin à valider et ouvrir")
+            kind_v = "validate"
+        elif is_coord and st_up in (
+            "PENDING_VALIDATION", "EN_ATTENTE_VALIDATION", "PENDING_ARCHIVE", "EN_ATTENTE_ARCHIVAGE", "REPORT_AG", "A_ARBITRER"
+        ):
+            reasons_v.append("Scrutin à arbitrer / clôturer")
+            kind_v = "validate"
+        elif st_up in ("EN_VOTE", "OPEN", "VOTING") and not has_voted:
+            reasons_v.append("Vote attendu (non voté)")
+            kind_v = "vote_needed"
+        elif is_responsible:
+            reasons_v.append("Scrutin qui vous est attribué")
+            kind_v = "assigned"
+
+        if reasons_v:
+            pending_votes.append(
+                {
+                    "id": p.id,
+                    "title": p.title,
+                    "status": p.status,
+                    "category": p.category,
+                    "estimated_cost": float(p.estimated_cost or 0.0),
+                    "kind": kind_v,
+                    "reason": " • ".join(reasons_v),
+                }
+            )
+
+    # 3. Messages qui concernent l'utilisateur (mentions + nouveaux messages sur tâches/votes attribués)
+    pending_messages: List[Dict[str, Any]] = []
+    seen_msg_keys: set = set()
+
+    # Cartographie des notifications lues les plus récentes par (source, target_id) pour ne pas réafficher un fil déjà consulté
+    member_notifs = (
+        prod_db.query(Notification)
+        .filter(Notification.member_id == active_member.id)
+        .filter(Notification.type.in_(["mention", "task_chat", "vote_chat"]))
+        .order_by(Notification.created_at.desc())
+        .all()
+    )
+    read_cutoff_by_target: Dict[Tuple[str, int], datetime] = {}
+
+    for n in member_notifs:
+        lp = str(n.link_path or "")
+        src = "vote" if (n.type == "vote_chat" or "project_id=" in lp) else "task"
+        tid: Optional[int] = None
+        if n.link_id and str(n.link_id).isdigit():
+            tid = int(n.link_id)
+        if tid is None:
+            continue
+        if n.is_read:
+            prev_dt = read_cutoff_by_target.get((src, tid))
+            if n.created_at and (prev_dt is None or n.created_at > prev_dt):
+                read_cutoff_by_target[(src, tid)] = n.created_at
+            continue
+
+        # Ignorer les notifications orphelines vers une tâche ou un scrutin supprimé/archivé
+        if src == "task" and tid not in active_non_archived_task_ids:
+            continue
+        if src == "vote" and tid not in active_non_archived_project_ids:
+            continue
+
+        target_title = (
+            tasks_by_id[tid].title
+            if src == "task" and tid in tasks_by_id
+            else (projects_by_id[tid].title if src == "vote" and tid in projects_by_id else n.title)
+        )
+        dedup_key = (src, tid, (n.description or "")[:60])
+        if dedup_key in seen_msg_keys:
+            continue
+        seen_msg_keys.add(dedup_key)
+        pending_messages.append(
+            {
+                "source": src,
+                "target_id": tid,
+                "target_title": target_title,
+                "author": "",
+                "excerpt": (n.description or n.title or "")[:160],
+                "reason": "Mention directe" if n.type == "mention" else (
+                    "Nouveau message sur vote" if src == "vote" else "Nouveau message sur tâche"
+                ),
+                "is_mention": n.type == "mention",
+                "notification_id": n.id,
+                "created_at": n.created_at.isoformat() + "Z" if n.created_at else None,
+            }
+        )
+
+    # Complément direct via TaskComment (tâches attribuées + mentions non couvertes par notification)
+    if active_non_archived_task_ids:
+        recent_task_comments = (
+            prod_db.query(TaskComment)
+            .filter(TaskComment.task_id.in_(list(active_non_archived_task_ids)))
+            .order_by(TaskComment.created_at.asc())
+            .all()
+        )
+        comments_by_task: Dict[int, List[TaskComment]] = {}
+        for c in recent_task_comments:
+            comments_by_task.setdefault(c.task_id, []).append(c)
+
+        for tid, clist in comments_by_task.items():
+            if not clist:
+                continue
+            read_cut = read_cutoff_by_target.get(("task", tid))
+            t_obj = tasks_by_id.get(tid)
+            if not t_obj:
+                continue
+            # Vérifier les mentions récentes non lues
+            for c in reversed(clist):
+                if c.created_at and c.created_at < recent_cutoff:
+                    break
+                if read_cut and c.created_at and c.created_at <= read_cut:
+                    continue
+                if _is_author_same_as_member(c.author_name, active_member):
+                    continue
+                if _norm_text(c.author_name) in ("systeme", "coordination sci"):
+                    continue
+                is_dir, is_all = _comment_mentions_member(c.content, active_member)
+                if is_dir or is_all:
+                    already_listed = any(m["source"] == "task" and m["target_id"] == tid and m["is_mention"] for m in pending_messages)
+                    if not already_listed:
+                        pending_messages.append(
+                            {
+                                "source": "task",
+                                "target_id": tid,
+                                "target_title": t_obj.title,
+                                "author": sanitize_display_user_name(c.author_name),
+                                "excerpt": (c.content or "")[:160],
+                                "reason": "Mention (@all)" if (is_all and not is_dir) else "Mention directe",
+                                "is_mention": True,
+                                "notification_id": None,
+                                "created_at": c.created_at.isoformat() + "Z" if c.created_at else None,
+                            }
+                        )
+                    break
+
+            # Vérifier le dernier message non répondu sur une tâche attribuée
+            if tid in assigned_active_task_ids:
+                last_c = clist[-1]
+                if (
+                    (not last_c.created_at or last_c.created_at >= recent_cutoff)
+                    and not (read_cut and last_c.created_at and last_c.created_at <= read_cut)
+                    and not _is_author_same_as_member(last_c.author_name, active_member)
+                    and _norm_text(last_c.author_name) not in ("systeme", "coordination sci")
+                ):
+                    already_listed = any(m["source"] == "task" and m["target_id"] == tid for m in pending_messages)
+                    if not already_listed:
+                        pending_messages.append(
+                            {
+                                "source": "task",
+                                "target_id": tid,
+                                "target_title": t_obj.title,
+                                "author": sanitize_display_user_name(last_c.author_name),
+                                "excerpt": (last_c.content or "")[:160],
+                                "reason": "Nouveau message sur tâche attribuée",
+                                "is_mention": False,
+                                "notification_id": None,
+                                "created_at": last_c.created_at.isoformat() + "Z" if last_c.created_at else None,
+                            }
+                        )
+
+    # Complément direct via ProjectComment (votes attribués / pertinents + mentions)
+    if active_non_archived_project_ids:
+        recent_proj_comments = (
+            prod_db.query(ProjectComment)
+            .filter(ProjectComment.project_id.in_(list(active_non_archived_project_ids)))
+            .order_by(ProjectComment.created_at.asc())
+            .all()
+        )
+        comments_by_proj: Dict[int, List[ProjectComment]] = {}
+        for c in recent_proj_comments:
+            comments_by_proj.setdefault(c.project_id, []).append(c)
+
+        for pid, clist in comments_by_proj.items():
+            if not clist:
+                continue
+            read_cut = read_cutoff_by_target.get(("vote", pid))
+            p_obj = projects_by_id.get(pid)
+            if not p_obj:
+                continue
+            for c in reversed(clist):
+                if c.created_at and c.created_at < recent_cutoff:
+                    break
+                if read_cut and c.created_at and c.created_at <= read_cut:
+                    continue
+                if _is_author_same_as_member(c.author_name, active_member):
+                    continue
+                if _norm_text(c.author_name) in ("systeme", "coordination sci"):
+                    continue
+                is_dir, is_all = _comment_mentions_member(c.content, active_member)
+                if is_dir or is_all:
+                    already_listed = any(m["source"] == "vote" and m["target_id"] == pid and m["is_mention"] for m in pending_messages)
+                    if not already_listed:
+                        pending_messages.append(
+                            {
+                                "source": "vote",
+                                "target_id": pid,
+                                "target_title": p_obj.title,
+                                "author": sanitize_display_user_name(c.author_name),
+                                "excerpt": (c.content or "")[:160],
+                                "reason": "Mention (@all)" if (is_all and not is_dir) else "Mention directe",
+                                "is_mention": True,
+                                "notification_id": None,
+                                "created_at": c.created_at.isoformat() + "Z" if c.created_at else None,
+                            }
+                        )
+                    break
+
+            if pid in relevant_active_project_ids:
+                last_c = clist[-1]
+                if (
+                    (not last_c.created_at or last_c.created_at >= recent_cutoff)
+                    and not (read_cut and last_c.created_at and last_c.created_at <= read_cut)
+                    and not _is_author_same_as_member(last_c.author_name, active_member)
+                    and _norm_text(last_c.author_name) not in ("systeme", "coordination sci")
+                ):
+                    already_listed = any(m["source"] == "vote" and m["target_id"] == pid for m in pending_messages)
+                    if not already_listed:
+                        pending_messages.append(
+                            {
+                                "source": "vote",
+                                "target_id": pid,
+                                "target_title": p_obj.title,
+                                "author": sanitize_display_user_name(last_c.author_name),
+                                "excerpt": (last_c.content or "")[:160],
+                                "reason": "Nouveau message sur vote",
+                                "is_mention": False,
+                                "notification_id": None,
+                                "created_at": last_c.created_at.isoformat() + "Z" if last_c.created_at else None,
+                            }
+                        )
+
+    # 4. Frais / cotisations à payer
+    t_sum = treasury_summary if isinstance(treasury_summary, dict) else get_member_treasury_summary(prod_db, active_member)
+    cca_balance = float(t_sum.get("balance") or 0.0)
+    unpaid_calls = (
+        prod_db.query(CallForFunds)
+        .filter(CallForFunds.member_id == active_member.id)
+        .filter(CallForFunds.status.in_(["EMIS", "PENDING_SWAN_IBAN", "EN_ATTENTE", "UNPAID"]))
+        .order_by(CallForFunds.year.desc(), CallForFunds.month.desc())
+        .all()
+    )
+    pending_fees: List[Dict[str, Any]] = []
+    # Uniquement si l'associé est effectivement débiteur ou a un appel ouvert > 0 non couvert
+    for c in unpaid_calls:
+        amt = float(c.amount_due if c.amount_due is not None else (c.net_amount or 0.0))
+        if amt > 0.01 and cca_balance < -0.01:
+            pending_fees.append(
+                {
+                    "type": "call_for_funds",
+                    "id": c.id,
+                    "reference": c.reference,
+                    "period_label": c.period_label,
+                    "amount_due": round(amt, 2),
+                    "status": c.status,
+                    "payment_reference": c.payment_reference or t_sum.get("payment_reference"),
+                    "iban": t_sum.get("iban") or "FR76 1732 8844 0071 5921 5570 591",
+                }
+            )
+    if not pending_fees and cca_balance < -0.01:
+        pending_fees.append(
+            {
+                "type": "cca_deficit",
+                "id": None,
+                "reference": t_sum.get("payment_reference") or f"HLV-{member_prenom.upper()}",
+                "period_label": "Solde CCA débiteur",
+                "amount_due": round(abs(cca_balance), 2),
+                "status": "A_REGULARISER",
+                "payment_reference": t_sum.get("payment_reference") or f"HLV-{member_prenom.upper()}",
+                "iban": t_sum.get("iban") or "FR76 1732 8844 0071 5921 5570 591",
+            }
+        )
+
+    counts = {
+        "tasks": len(pending_tasks),
+        "votes": len(pending_votes),
+        "messages": len(pending_messages),
+        "fees": len(pending_fees),
+    }
+    total_count = sum(counts.values())
+    total_fees_due = round(abs(cca_balance), 2) if cca_balance < -0.01 else 0.0
+
+    return {
+        "member_name": format_member_display_name(active_member),
+        "member_prenom": member_prenom,
+        "is_coordinator": is_coord,
+        "total_count": total_count,
+        "has_pending": total_count > 0,
+        "total_fees_due_eur": total_fees_due,
+        "counts": counts,
+        "tasks": pending_tasks,
+        "votes": pending_votes,
+        "messages": pending_messages,
+        "fees": pending_fees,
+    }
+
+
 def get_toaster_state(prod_db: Session, member_id: Optional[int] = None) -> Dict[str, Any]:
     """
     Lit directement l'état vivant de PostgreSQL (zéro clone SQLite).
@@ -748,6 +1277,12 @@ def get_toaster_state(prod_db: Session, member_id: Optional[int] = None) -> Dict
         else None
     )
 
+    pending_actions = compute_member_pending_actions(
+        prod_db=prod_db,
+        active_member=active_member,
+        treasury_summary=treasury_summary,
+    )
+
     member_summary = {
         "member": active_member_dict,
         "treasury": treasury_summary,
@@ -759,6 +1294,7 @@ def get_toaster_state(prod_db: Session, member_id: Optional[int] = None) -> Dict
         "tasks": tasks_list,
         "open_votes": polls_list,
         "heating_telemetry": heating_data,
+        "pending_actions": pending_actions,
     }
 
     return {
@@ -775,6 +1311,7 @@ def get_toaster_state(prod_db: Session, member_id: Optional[int] = None) -> Dict
         "tasks": tasks_list,
         "open_votes": polls_list,
         "heating_telemetry": heating_data,
+        "pending_actions": pending_actions,
         "room_catalog": DOMAIN_ROOMS,
     }
 
@@ -805,6 +1342,7 @@ def execute_toaster_action(
     member_display = format_member_display_name(member)
     member_prenom = format_member_prenom(member)
     confirmation_msg = ""
+    extra_return: Dict[str, Any] = {}
 
     if norm_type in ("stay", "propose_stay_action", "reservation", "sejour"):
         operation = str(merged_payload.get("operation") or "create").lower()
@@ -1066,7 +1604,58 @@ def execute_toaster_action(
                 f"Commande envoyée à la chaudière Viessmann du Presbytère : mode « {mode} » à {target_temp:.1f} °C."
             )
 
-    elif norm_type in ("expense", "propose_invoice_or_document_upload", "invoice", "document", "facture"):
+    elif norm_type in ("document", "propose_document_action", "link_document", "archive_document"):
+        operation = str(merged_payload.get("operation") or "archive").strip().lower()
+        doc_id = merged_payload.get("uploaded_document_id") or merged_payload.get("existing_document_id") or merged_payload.get("document_id")
+        task_id = merged_payload.get("task_id")
+        project_id = merged_payload.get("project_id")
+
+        if not doc_id or not str(doc_id).isdigit():
+            raise ValueError(
+                "Aucun document téléversé ou identifiant de document existant fourni. Joignez un fichier ou choisissez un document de la bibliothèque."
+            )
+        doc_obj = (
+            prod_db.query(AdminDocument)
+            .options(defer(AdminDocument.file_data))
+            .filter(AdminDocument.id == int(doc_id))
+            .first()
+        )
+        if not doc_obj:
+            raise ValueError(f"Document #{doc_id} introuvable dans la bibliothèque SCI.")
+
+        extra_return["document_id"] = doc_obj.id
+        doc_label = doc_obj.file_name or doc_obj.title or f"Document #{doc_obj.id}"
+
+        if operation == "link_task" or (task_id and str(task_id).isdigit() and operation != "link_vote"):
+            if not task_id or not str(task_id).isdigit():
+                raise ValueError("Veuillez sélectionner une tâche existante à laquelle rattacher ce document.")
+            target_task = prod_db.query(Task).filter(Task.id == int(task_id)).first()
+            if not target_task:
+                raise ValueError(f"Tâche #{task_id} introuvable.")
+            _attach_docs_to_task_record(prod_db, target_task, [doc_obj.id])
+            prod_db.commit()
+            extra_return["task_id"] = target_task.id
+            confirmation_msg = (
+                f"Document « {doc_label} » archivé (#{doc_obj.id}) et rattaché à la tâche #{target_task.id} « {target_task.title} »."
+            )
+        elif operation == "link_vote" or (project_id and str(project_id).isdigit()):
+            if not project_id or not str(project_id).isdigit():
+                raise ValueError("Veuillez sélectionner un scrutin existant auquel rattacher ce document.")
+            target_proj = prod_db.query(Project).filter(Project.id == int(project_id)).first()
+            if not target_proj:
+                raise ValueError(f"Scrutin #{project_id} introuvable.")
+            _attach_docs_to_project_record(prod_db, target_proj, [doc_obj.id])
+            prod_db.commit()
+            extra_return["project_id"] = target_proj.id
+            confirmation_msg = (
+                f"Document « {doc_label} » archivé (#{doc_obj.id}) et rattaché au scrutin #{target_proj.id} « {target_proj.title} »."
+            )
+        else:
+            confirmation_msg = (
+                f"Document « {doc_label} » archivé dans la bibliothèque officielle de la SCI (#{doc_obj.id}, catégorie « {doc_obj.category} »)."
+            )
+
+    elif norm_type in ("expense", "propose_invoice_or_document_upload", "invoice", "facture"):
         supplier = str(merged_payload.get("supplier") or merged_payload.get("artisan") or "Artisan / Fournisseur").strip()
         raw_title = str(merged_payload.get("title") or f"Facture {supplier}").strip()
         amount = float(merged_payload.get("amount") or merged_payload.get("amount_ttc") or 0.0)
@@ -1084,18 +1673,30 @@ def execute_toaster_action(
         payer_type = "member" if advanced_by_member else "sci"
         exp_status = "VALIDATED" if advanced_by_member else "PENDING_SCI_PAYMENT"
 
-        doc = AdminDocument(
-            title=raw_title,
-            category="Factures",
-            file_url=f"/uploads/documents/{filename}",
-            file_name=filename,
-            file_type="application/pdf",
-            uploaded_by=member_display,
-            notes=f"Fournisseur : {supplier} | Bâtiment : {building} | Montant TTC : {amount:.2f} €",
-            created_at=datetime.utcnow(),
-        )
-        prod_db.add(doc)
-        prod_db.flush()
+        uploaded_doc_id = merged_payload.get("uploaded_document_id") or merged_payload.get("existing_document_id")
+        doc = None
+        if uploaded_doc_id and str(uploaded_doc_id).isdigit():
+            doc = (
+                prod_db.query(AdminDocument)
+                .options(defer(AdminDocument.file_data))
+                .filter(AdminDocument.id == int(uploaded_doc_id))
+                .first()
+            )
+        if doc:
+            filename = doc.file_name or filename
+        else:
+            doc = AdminDocument(
+                title=raw_title,
+                category="Factures",
+                file_url=f"/uploads/documents/{filename}",
+                file_name=filename,
+                file_type="application/pdf",
+                uploaded_by=member_display,
+                notes=f"Fournisseur : {supplier} | Bâtiment : {building} | Montant TTC : {amount:.2f} €",
+                created_at=datetime.utcnow(),
+            )
+            prod_db.add(doc)
+            prod_db.flush()
 
         expense = MemberExpense(
             member_id=member.id,
@@ -1116,6 +1717,8 @@ def execute_toaster_action(
         prod_db.add(expense)
         prod_db.commit()
         prod_db.refresh(expense)
+        extra_return["document_id"] = doc.id
+        extra_return["expense_id"] = expense.id
 
         if advanced_by_member:
             ledger_entry = add_ledger_entry(
@@ -1146,8 +1749,10 @@ def execute_toaster_action(
             )
             prod_db.add(sci_task)
             prod_db.flush()
+            _attach_docs_to_task_record(prod_db, sci_task, [doc.id])
             expense.task_id = sci_task.id
             prod_db.commit()
+            extra_return["created_task_id"] = sci_task.id
             confirmation_msg = (
                 f"Facture « {expense.title} » ({amount:.2f} €) archivée et inscrite en attente de règlement par la SCI (tâche #{sci_task.id})."
             )
@@ -1279,10 +1884,17 @@ def execute_toaster_action(
                 created_at=datetime.utcnow(),
             )
             prod_db.add(new_task)
+            prod_db.flush()
+            raw_doc_ids = merged_payload.get("attach_document_ids") or []
+            if isinstance(raw_doc_ids, (int, str)) and str(raw_doc_ids).isdigit():
+                raw_doc_ids = [int(raw_doc_ids)]
+            attached_list = _attach_docs_to_task_record(prod_db, new_task, raw_doc_ids) if isinstance(raw_doc_ids, list) and raw_doc_ids else []
             prod_db.commit()
             prod_db.refresh(new_task)
+            extra_return["created_task_id"] = new_task.id
+            doc_suffix = f" avec {len(attached_list)} document(s) joint(s)" if attached_list else ""
             confirmation_msg = (
-                f"Proposition de tâche #{new_task.id} ({new_task.ref}) « {new_task.title} » enregistrée sur {subject_val} "
+                f"Proposition de tâche #{new_task.id} ({new_task.ref}) « {new_task.title} » enregistrée{doc_suffix} "
                 f"(en attente de validation et d'attribution par les coordinateurs)."
             )
 
@@ -1326,10 +1938,17 @@ def execute_toaster_action(
                 created_at=datetime.utcnow(),
             )
             prod_db.add(new_proj)
+            prod_db.flush()
+            raw_doc_ids = merged_payload.get("attach_document_ids") or []
+            if isinstance(raw_doc_ids, (int, str)) and str(raw_doc_ids).isdigit():
+                raw_doc_ids = [int(raw_doc_ids)]
+            attached_list = _attach_docs_to_project_record(prod_db, new_proj, raw_doc_ids) if isinstance(raw_doc_ids, list) and raw_doc_ids else []
             prod_db.commit()
             prod_db.refresh(new_proj)
+            extra_return["created_project_id"] = new_proj.id
+            doc_suffix = f" avec {len(attached_list)} document(s) joint(s)" if attached_list else ""
             confirmation_msg = (
-                f"Initiative de scrutin #{new_proj.id} « {new_proj.title} » proposée ({cat_val}) — "
+                f"Initiative de scrutin #{new_proj.id} « {new_proj.title} » proposée ({cat_val}){doc_suffix} — "
                 f"en attente de validation par un coordinateur avant ouverture au vote."
             )
 
@@ -1465,6 +2084,7 @@ def execute_toaster_action(
         "confirmation_message": confirmation_msg,
         "reply": confirmation_msg,
         "state": new_state,
+        **extra_return,
         **new_state,
     }
 
@@ -1481,6 +2101,10 @@ def execute_toaster_read_tool(
     from .drive_service import drive_jail_service
 
     args = dict(args or {})
+
+    if tool_name == "read_my_pending_actions":
+        target_member = resolve_member(prod_db, member_id=member_id)
+        return compute_member_pending_actions(prod_db=prod_db, active_member=target_member)
 
     if tool_name in ("read_treasury_and_banking", "consult_treasury_and_ledger"):
         target_name = _norm_text(args.get("member_name"))

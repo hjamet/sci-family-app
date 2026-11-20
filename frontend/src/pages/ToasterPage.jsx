@@ -7,11 +7,10 @@ import {
   getMaxRoomsForBuilding,
   getRoomsListForBuilding,
   TASK_SUBJECTS,
-  TASK_COMPLEXITIES,
-  TASK_PRIORITIES,
   VOTE_PRIORITIES,
   STATUTORY_ASSOCIATES_LIST,
 } from '../components/ToasterSharedComponents';
+import { uploadUniversalDocument, compressImageIfApplicable } from '../utils/fileUpload';
 import TaskDetailModal from '../components/TaskDetailModal';
 import VoteRoofModal from '../components/VoteRoofModal';
 
@@ -366,12 +365,57 @@ const ACTION_TYPE_META = {
   heating: { icon: 'thermostat', badge: 'Chauffage & Piscine', color: 'bg-teal-100 text-teal-900 border-teal-300' },
   expense: { icon: 'receipt_long', badge: 'Facture & Dépense', color: 'bg-rose-100 text-rose-900 border-rose-300' },
   invoice: { icon: 'receipt_long', badge: 'Facture & Dépense', color: 'bg-rose-100 text-rose-900 border-rose-300' },
+  document: { icon: 'upload_file', badge: 'Document & Archive', color: 'bg-indigo-100 text-indigo-900 border-indigo-300' },
   task: { icon: 'task_alt', badge: 'Tâche & Chantier', color: 'bg-sky-100 text-sky-900 border-sky-300' },
   vote: { icon: 'how_to_vote', badge: 'Scrutin & Vote', color: 'bg-purple-100 text-purple-900 border-purple-300' },
   poll: { icon: 'how_to_vote', badge: 'Scrutin & Vote', color: 'bg-purple-100 text-purple-900 border-purple-300' },
   vademecum: { icon: 'menu_book', badge: 'Vademecum', color: 'bg-emerald-100 text-emerald-900 border-emerald-300' },
   treasury: { icon: 'account_balance', badge: 'Trésorerie & CCA', color: 'bg-emerald-100 text-emerald-900 border-emerald-300' },
 };
+
+const DOCUMENT_ARCHIVE_CATEGORIES = [
+  'Travaux & Chantiers',
+  'Factures',
+  'Contrats & Assurances',
+  'Statuts & Actes',
+  'Notices & Plans',
+  'Impôts & Taxes',
+  'Autre',
+];
+
+const PENDING_ACTIONS_PROMPT =
+  "Liste tout ce que j'ai à faire actuellement : mes tâches à valider ou qui me sont attribuées, mes votes à valider ou sur lesquels je dois voter, les messages qui me concernent dans les messageries (mentions ou nouveaux messages sur des tâches ou votes attribués), et mes frais ou cotisations à payer.";
+
+const EXAMPLE_QUESTIONS = [
+  {
+    id: 'wifi',
+    icon: 'wifi',
+    title: 'Codes Wi-Fi & infos pratiques',
+    subtitle: 'Vademecum du Presbytère et de Rosings',
+    prompt: 'Quels sont les codes Wi-Fi du Presbytère et de Rosings ?',
+  },
+  {
+    id: 'fioul-piscine',
+    icon: 'local_gas_station',
+    title: 'Fioul & état de la piscine',
+    subtitle: 'Niveau de la cuve et télémétrie Klereo',
+    prompt: "Quel est le niveau de la cuve à fioul et l'état actuel de la piscine ?",
+  },
+  {
+    id: 'sejour',
+    icon: 'calendar_add_on',
+    title: 'Réserver un séjour',
+    subtitle: 'Préparer dates, chambres et chauffage',
+    prompt: 'Je voudrais réserver le Presbytère pour le week-end prochain',
+  },
+  {
+    id: 'equite-treso',
+    icon: 'leaderboard',
+    title: 'Équité & trésorerie SCI',
+    subtitle: 'Classement participatif et compte Swan',
+    prompt: "Montre-moi le classement d'équité participative et l'état de la trésorerie SCI",
+  },
+];
 
 export default function ToasterPage({ currentUser }) {
   const [selectedMemberId, setSelectedMemberId] = useState(() => {
@@ -398,9 +442,11 @@ export default function ToasterPage({ currentUser }) {
   const [inspectingTask, setInspectingTask] = useState(null);
   const [inspectingPoll, setInspectingPoll] = useState(null);
 
-  // Pièce jointe multimodale (Photo / PDF)
+  // Pièce jointe multimodale (Photo / PDF / Document)
   const [attachment, setAttachment] = useState(null);
+  const [isDraggingOverChat, setIsDraggingOverChat] = useState(false);
   const fileInputRef = useRef(null);
+  const latestAttachedFileRef = useRef(null);
 
   // Dictée vocale fluide
   const [isListening, setIsListening] = useState(false);
@@ -409,15 +455,16 @@ export default function ToasterPage({ currentUser }) {
   const voiceAbortedRef = useRef(false);
   const sendVoiceTriggerRef = useRef(null);
 
-  // Édition inline d'un champ déduit 🟢 / saisie libre 🔴 / popovers calendrier & heure / saisies invités & checklist
+  // Édition inline d'un champ déduit 🟢 / saisie libre 🔴 / popovers calendrier & heure / saisies invités
   const [editingField, setEditingField] = useState(null);
   const [customMissingInputs, setCustomMissingInputs] = useState({});
   const [openDatePickerTarget, setOpenDatePickerTarget] = useState(null); // { msgId, optIdx }
   const [openStayPicker, setOpenStayPicker] = useState(null); // { msgId, which: 'start' | 'end' }
   const [stayExternalInputs, setStayExternalInputs] = useState({});
-  const [taskChecklistInputs, setTaskChecklistInputs] = useState({});
 
-  const chatEndRef = useRef(null);
+  const chatScrollRef = useRef(null);
+  const prevMsgCountRef = useRef(0);
+  const wasSendingRef = useRef(false);
   const messagesRef = useRef(messages);
   useEffect(() => {
     messagesRef.current = messages;
@@ -484,9 +531,21 @@ export default function ToasterPage({ currentUser }) {
     loadPortalState(selectedMemberId);
   }, [selectedMemberId, loadPortalState]);
 
+  // Annotation 4 : ne scroller la zone de discussion QUE lors d'un nouveau message ou démarrage d'envoi,
+  // JAMAIS lorsqu'un utilisateur remplit/modifie un composant ou une carte d'action !
   useEffect(() => {
-    chatEndRef.current?.scrollIntoView({ behavior: 'smooth' });
-  }, [messages, isSending]);
+    const countIncreased = messages.length > prevMsgCountRef.current;
+    const startedSending = isSending && !wasSendingRef.current;
+    prevMsgCountRef.current = messages.length;
+    wasSendingRef.current = isSending;
+
+    if (countIncreased || startedSending) {
+      const container = chatScrollRef.current;
+      if (container) {
+        container.scrollTo({ top: container.scrollHeight, behavior: 'smooth' });
+      }
+    }
+  }, [messages.length, isSending]);
 
   const membersOptions = useMemo(() => {
     const rawMembers = portalState?.members;
@@ -525,29 +584,63 @@ export default function ToasterPage({ currentUser }) {
     return names.length >= 5 ? names : STATUTORY_ASSOCIATES_LIST;
   }, [membersOptions]);
 
+  const attachLocalFile = useCallback(async (rawFile) => {
+    if (!rawFile) return;
+    setErrorBanner(null);
+    const detectedMime =
+      rawFile.type ||
+      (rawFile.name.toLowerCase().endsWith('.pdf')
+        ? 'application/pdf'
+        : rawFile.name.toLowerCase().endsWith('.png')
+        ? 'image/png'
+        : 'image/jpeg');
+
+    try {
+      // Préparer un aperçu léger pour l'analyse multimodale (tout en conservant rawFile pour upload Drive/PostgreSQL)
+      let fileForPreview = rawFile;
+      const isImg = detectedMime.startsWith('image/') || /\.(jpe?g|png|webp|heic|heif)$/i.test(rawFile.name || '');
+      if (isImg && rawFile.size > 1.2 * 1024 * 1024) {
+        fileForPreview = await compressImageIfApplicable(rawFile);
+      }
+
+      const maxInlineBytes = 2.9 * 1024 * 1024;
+      let base64Clean = null;
+      if (fileForPreview.size <= maxInlineBytes) {
+        base64Clean = await new Promise((resolve, reject) => {
+          const reader = new FileReader();
+          reader.onload = () => {
+            const resultStr = String(reader.result || '');
+            resolve(resultStr.includes(',') ? resultStr.split(',')[1] : resultStr);
+          };
+          reader.onerror = () => reject(new Error('Impossible de lire le fichier sélectionné.'));
+          reader.readAsDataURL(fileForPreview);
+        });
+      }
+
+      const attObj = {
+        file: rawFile,
+        name: rawFile.name,
+        mime: detectedMime,
+        base64: base64Clean,
+        size: rawFile.size,
+      };
+      latestAttachedFileRef.current = attObj;
+      setAttachment(attObj);
+    } catch (err) {
+      setErrorBanner(err.message || 'Impossible de lire le fichier sélectionné.');
+    }
+  }, []);
+
   const handleFileSelect = (e) => {
     const file = e.target.files?.[0];
-    if (!file) return;
-    const reader = new FileReader();
-    reader.onload = () => {
-      const resultStr = String(reader.result || '');
-      const base64Clean = resultStr.includes(',') ? resultStr.split(',')[1] : resultStr;
-      setAttachment({
-        name: file.name,
-        mime: file.type || (file.name.toLowerCase().endsWith('.pdf') ? 'application/pdf' : 'image/jpeg'),
-        base64: base64Clean,
-        size: file.size,
-      });
-    };
-    reader.onerror = () => {
-      setErrorBanner('Impossible de lire le fichier sélectionné.');
-    };
-    reader.readAsDataURL(file);
+    if (file) {
+      attachLocalFile(file);
+    }
     e.target.value = '';
   };
 
   const normalizeActionCard = useCallback(
-    (rawCard) => {
+    (rawCard, turnAttachedFile = null) => {
       if (!rawCard || typeof rawCard !== 'object') return null;
       const deduced = Array.isArray(rawCard.deduced_fields)
         ? rawCard.deduced_fields.map((f) => ({
@@ -632,12 +725,41 @@ export default function ToasterPage({ currentUser }) {
       }
 
       if (rawCard.action_type === 'task') {
-        if (!Array.isArray(basePayload.checklist)) {
-          basePayload.checklist = [];
+        basePayload.checklist = [];
+      }
+
+      if (rawCard.action_type === 'document') {
+        if (!basePayload.operation) basePayload.operation = 'archive';
+        if (!basePayload.organisme) basePayload.organisme = 'SCI';
+        if (!basePayload.category) basePayload.category = 'Travaux & Chantiers';
+      }
+
+      const candidateFile =
+        turnAttachedFile ||
+        (basePayload.attach_uploaded_file || rawCard.action_type === 'document'
+          ? latestAttachedFileRef.current
+          : null);
+      const supportsFileAttachment =
+        rawCard.action_type === 'document' ||
+        rawCard.action_type === 'expense' ||
+        (rawCard.action_type === 'task' && basePayload.operation === 'create') ||
+        (rawCard.action_type === 'vote' && basePayload.operation === 'create');
+      const localFileObj =
+        candidateFile?.file &&
+        supportsFileAttachment &&
+        (turnAttachedFile?.file ||
+          rawCard.action_type === 'document' ||
+          rawCard.action_type === 'expense' ||
+          basePayload.attach_uploaded_file)
+          ? candidateFile
+          : null;
+      if (localFileObj) {
+        if (basePayload.attach_uploaded_file === undefined) {
+          basePayload.attach_uploaded_file = true;
         }
-        if (!basePayload.subject) basePayload.subject = 'Presbytère';
-        if (!basePayload.complexity) basePayload.complexity = 'Modérée';
-        if (!basePayload.priority) basePayload.priority = 'Normale';
+        if (!basePayload.document_filename) {
+          basePayload.document_filename = localFileObj.name;
+        }
       }
 
       return {
@@ -647,6 +769,7 @@ export default function ToasterPage({ currentUser }) {
         missing_fields: missing,
         ready_to_execute: missing.length === 0 ? true : Boolean(rawCard.ready_to_execute && missing.length === 0),
         payload: basePayload,
+        localFileObj,
         executed: false,
         executing: false,
         executionResult: null,
@@ -764,7 +887,7 @@ export default function ToasterPage({ currentUser }) {
               content: sanitizeFamilyLabel(`${m.content || ''}${ev.delta}`),
             }));
           } else if (ev.type === 'action_card' && ev.action_card) {
-            const cardObj = normalizeActionCard(ev.action_card);
+            const cardObj = normalizeActionCard(ev.action_card, currentAttachment);
             updateAssistant((m) => ({
               ...m,
               action_card: cardObj,
@@ -772,7 +895,7 @@ export default function ToasterPage({ currentUser }) {
           } else if (ev.type === 'done') {
             receivedDone = true;
             const finalReply = sanitizeFamilyLabel(ev.reply || ev.message || ev.content || '');
-            const finalCard = ev.action_card ? normalizeActionCard(ev.action_card) : null;
+            const finalCard = ev.action_card ? normalizeActionCard(ev.action_card, currentAttachment) : null;
             updateAssistant((m) => ({
               ...m,
               content: finalReply || m.content,
@@ -1161,29 +1284,6 @@ export default function ToasterPage({ currentUser }) {
     });
   };
 
-  const handleAddTaskChecklistItem = (msgId) => {
-    const raw = String(taskChecklistInputs[msgId] || '').trim();
-    if (!raw) return;
-    updateCardInMessage(msgId, (card) => {
-      const prev = Array.isArray(card.payload?.checklist) ? card.payload.checklist : [];
-      return {
-        ...card,
-        payload: { ...(card.payload || {}), checklist: [...prev, { text: raw, done: false }] },
-      };
-    });
-    setTaskChecklistInputs((prev) => ({ ...prev, [msgId]: '' }));
-  };
-
-  const handleRemoveTaskChecklistItem = (msgId, idxToRemove) => {
-    updateCardInMessage(msgId, (card) => {
-      const prev = Array.isArray(card.payload?.checklist) ? card.payload.checklist : [];
-      return {
-        ...card,
-        payload: { ...(card.payload || {}), checklist: prev.filter((_, i) => i !== idxToRemove) },
-      };
-    });
-  };
-
   const handleResolveMissingField = (msgId, missingField, chosenOption) => {
     updateCardInMessage(msgId, (card) => {
       const remainingMissing = card.missing_fields.filter((f) => f.key !== missingField.key);
@@ -1358,6 +1458,60 @@ export default function ToasterPage({ currentUser }) {
         finalPayload.options = finalPayload.options.map((o) => String(o || '').trim()).filter(Boolean);
       }
 
+      const localFile = card.localFileObj?.file || null;
+      const uploaderName = formatAssociateLabel(activeMemberObj);
+
+      // Cas 1 (Annotation 3) : Archivage / rattachement direct d'un document fourni dans le chat
+      if (card.action_type === 'document' && localFile && !finalPayload.existing_document_id) {
+        const op = finalPayload.operation || 'archive';
+        const targetTaskId = op === 'link_task' && finalPayload.task_id ? Number(finalPayload.task_id) : null;
+        const targetProjectId = op === 'link_vote' && finalPayload.project_id ? Number(finalPayload.project_id) : null;
+        const cat = finalPayload.category || 'Travaux & Chantiers';
+
+        const uploadedDoc = await uploadUniversalDocument(localFile, {
+          organisme: finalPayload.organisme || 'SCI',
+          title: finalPayload.title || localFile.name.replace(/\.[^.]+$/, ''),
+          category: cat,
+          tags: [cat],
+          task_id: targetTaskId,
+          project_id: targetProjectId,
+          uploaded_by: uploaderName,
+        });
+
+        const docLabel = uploadedDoc?.file_name || uploadedDoc?.title || localFile.name;
+        const destLabel = targetTaskId
+          ? ` et rattaché à la tâche #${targetTaskId}`
+          : targetProjectId
+          ? ` et rattaché au scrutin #${targetProjectId}`
+          : ' dans la bibliothèque SCI';
+        const confirmText = sanitizeFamilyLabel(`Document « ${docLabel} » téléversé sur Google Drive${destLabel}.`);
+
+        updateCardInMessage(msgId, (c) => ({
+          ...c,
+          executing: false,
+          executed: true,
+          executionResult: { message: confirmText },
+        }));
+        showToast(confirmText);
+        await loadPortalState(selectedMemberId);
+        return;
+      }
+
+      // Cas 2 : Facture / dépense avec pièce jointe réelle -> archiver d'abord le justificatif dans AdminDocument
+      if (card.action_type === 'expense' && localFile && finalPayload.attach_uploaded_file !== false) {
+        const uploadedInvoice = await uploadUniversalDocument(localFile, {
+          organisme: finalPayload.supplier || 'Artisan',
+          title: finalPayload.title || localFile.name.replace(/\.[^.]+$/, ''),
+          category: 'Factures',
+          tags: ['Factures'],
+          uploaded_by: uploaderName,
+        });
+        if (uploadedInvoice?.id) {
+          finalPayload.uploaded_document_id = uploadedInvoice.id;
+          finalPayload.document_filename = uploadedInvoice.file_name || uploadedInvoice.title || localFile.name;
+        }
+      }
+
       const res = await fetch('/api/toaster/execute', {
         method: 'POST',
         headers: getAuthHeaders(),
@@ -1378,9 +1532,46 @@ export default function ToasterPage({ currentUser }) {
       }
 
       const resData = await res.json();
-      const confirmText = sanitizeFamilyLabel(
+      let confirmText = sanitizeFamilyLabel(
         resData.message || resData.confirmation || resData.reply || 'Action confirmée et appliquée.'
       );
+
+      // Cas 3 : Pièce jointe à téléverser et lier automatiquement à une NOUVELLE tâche ou un NOUVEAU scrutin
+      if (
+        localFile &&
+        finalPayload.attach_uploaded_file !== false &&
+        card.action_type === 'task' &&
+        finalPayload.operation === 'create' &&
+        resData.created_task_id
+      ) {
+        const cat = finalPayload.document_category || 'Travaux & Chantiers';
+        const uploadedDoc = await uploadUniversalDocument(localFile, {
+          organisme: finalPayload.document_organisme || 'SCI',
+          title: finalPayload.document_title || finalPayload.title || localFile.name.replace(/\.[^.]+$/, ''),
+          category: cat,
+          tags: [cat],
+          task_id: Number(resData.created_task_id),
+          uploaded_by: uploaderName,
+        });
+        confirmText = `${confirmText} Pièce jointe « ${uploadedDoc?.file_name || localFile.name} » archivée et liée à la tâche.`;
+      } else if (
+        localFile &&
+        finalPayload.attach_uploaded_file !== false &&
+        card.action_type === 'vote' &&
+        finalPayload.operation === 'create' &&
+        resData.created_project_id
+      ) {
+        const cat = finalPayload.document_category || 'Travaux & Chantiers';
+        const uploadedDoc = await uploadUniversalDocument(localFile, {
+          organisme: finalPayload.document_organisme || 'SCI',
+          title: finalPayload.document_title || finalPayload.title || localFile.name.replace(/\.[^.]+$/, ''),
+          category: cat,
+          tags: [cat],
+          project_id: Number(resData.created_project_id),
+          uploaded_by: uploaderName,
+        });
+        confirmText = `${confirmText} Pièce jointe « ${uploadedDoc?.file_name || localFile.name} » archivée et liée au scrutin.`;
+      }
 
       updateCardInMessage(msgId, (c) => ({
         ...c,
@@ -1402,8 +1593,45 @@ export default function ToasterPage({ currentUser }) {
     }
   };
 
+  const pendingActions = portalState?.pending_actions || null;
+  const pendingTotalCount = Number(pendingActions?.total_count || 0);
+  const hasPendingActions = Boolean(pendingActions?.has_pending || pendingTotalCount > 0);
+  const pendingSummaryPills = useMemo(() => {
+    if (!pendingActions || !pendingActions.counts) return [];
+    const pills = [];
+    const c = pendingActions.counts;
+    if (c.tasks > 0) pills.push(`${c.tasks} tâche${c.tasks > 1 ? 's' : ''}`);
+    if (c.votes > 0) pills.push(`${c.votes} vote${c.votes > 1 ? 's' : ''}`);
+    if (c.messages > 0) pills.push(`${c.messages} message${c.messages > 1 ? 's' : ''}`);
+    if (c.fees > 0) {
+      const eur = Number(pendingActions.total_fees_due_eur || 0);
+      pills.push(eur > 0 ? `${eur.toFixed(0)} € à régler` : `${c.fees} frais à régler`);
+    }
+    return pills;
+  }, [pendingActions]);
+
+  const handleChatDragOver = (e) => {
+    e.preventDefault();
+    if (!isDraggingOverChat) setIsDraggingOverChat(true);
+  };
+
+  const handleChatDragLeave = (e) => {
+    if (!e.currentTarget.contains(e.relatedTarget)) {
+      setIsDraggingOverChat(false);
+    }
+  };
+
+  const handleChatDrop = (e) => {
+    e.preventDefault();
+    setIsDraggingOverChat(false);
+    const droppedFile = e.dataTransfer?.files?.[0];
+    if (droppedFile) {
+      attachLocalFile(droppedFile);
+    }
+  };
+
   return (
-    <div className="relative flex flex-col w-full max-w-5xl mx-auto pb-10 min-h-[calc(100vh-120px)]">
+    <div className="relative flex flex-col w-full max-w-5xl mx-auto pb-4 min-h-[calc(100vh-92px)]">
       {/* Notification Toast */}
       {toastMessage && (
         <div className="fixed bottom-6 right-6 z-50 bg-forest-deep text-white px-5 py-3 rounded-full shadow-xl flex items-center gap-3 border border-emerald-500/30 animate-in fade-in duration-200">
@@ -1419,18 +1647,9 @@ export default function ToasterPage({ currentUser }) {
         </div>
       )}
 
-      {/* En-tête épuré de l'interface finale (Ann. 1 : sans sous-titre Connecté/CCA) */}
-      <header className="flex flex-wrap items-center justify-between gap-3 px-1 pb-3">
-        <div className="flex items-center gap-2.5">
-          <span className="w-9 h-9 rounded-full bg-sage-soft text-primary flex items-center justify-center shadow-2xs">
-            <span className="material-symbols-outlined text-[21px]">smart_toy</span>
-          </span>
-          <h1 className="font-headline-sm text-base sm:text-lg font-bold text-forest-deep leading-tight">
-            Assistant Grille-Pain
-          </h1>
-        </div>
-
-        {messages.length > 0 && (
+      {/* Annotation 1 : En-tête Assistant Grille-Pain supprimé pour gagner de l'espace (seul le bouton Nouvelle discussion apparaît en cours de fil) */}
+      {messages.length > 0 && (
+        <div className="flex items-center justify-end px-1 pb-2">
           <button
             type="button"
             onClick={() => {
@@ -1444,8 +1663,8 @@ export default function ToasterPage({ currentUser }) {
             <span className="material-symbols-outlined text-[16px]">add_comment</span>
             <span>Nouvelle discussion</span>
           </button>
-        )}
-      </header>
+        </div>
+      )}
 
       {/* Bannière d'erreur Fail-Fast avec bouton Réessayer */}
       {errorBanner && (
@@ -1480,19 +1699,121 @@ export default function ToasterPage({ currentUser }) {
       )}
 
       {/* ZONE DE CONVERSATION, COMPOSANTS PARTAGÉS & CARTES D'ACTION */}
-      <div className="flex-1 bg-surface-container-lowest rounded-3xl border border-border-subtle shadow-sm flex flex-col overflow-hidden min-h-[540px]">
-        <div className="flex-1 overflow-y-auto p-4 sm:p-6 space-y-5">
+      <div
+        onDragOver={handleChatDragOver}
+        onDragLeave={handleChatDragLeave}
+        onDrop={handleChatDrop}
+        className={`relative flex-1 bg-surface-container-lowest rounded-3xl border shadow-sm flex flex-col overflow-hidden min-h-[480px] transition-colors ${
+          isDraggingOverChat ? 'border-primary ring-4 ring-primary/15 bg-emerald-50/30' : 'border-border-subtle'
+        }`}
+      >
+        {isDraggingOverChat && (
+          <div className="pointer-events-none absolute inset-0 z-30 bg-emerald-50/85 backdrop-blur-[1px] flex flex-col items-center justify-center gap-2 border-2 border-dashed border-primary rounded-3xl">
+            <span className="material-symbols-outlined text-primary text-[36px]">upload_file</span>
+            <span className="text-sm font-bold text-forest-deep">
+              Déposez votre photo ou document PDF ici
+            </span>
+          </div>
+        )}
+
+        <div ref={chatScrollRef} className="flex-1 overflow-y-auto p-4 sm:p-6 space-y-5">
           {messages.length === 0 ? (
-            <div className="h-full min-h-[360px] flex flex-col items-center justify-center text-center max-w-xl mx-auto px-4 py-8">
-              <div className="w-14 h-14 rounded-full bg-sage-soft text-primary flex items-center justify-center mb-3.5 shadow-2xs">
-                <span className="material-symbols-outlined text-[28px]">chat_bubble</span>
+            <div className="h-full min-h-[340px] flex flex-col items-center justify-center text-center max-w-2xl mx-auto px-3 py-5">
+              <div className="w-12 h-12 rounded-full bg-sage-soft text-primary flex items-center justify-center mb-3 shadow-2xs">
+                <span className="material-symbols-outlined text-[24px]">chat_bubble</span>
               </div>
               <h2 className="font-headline-sm text-base sm:text-lg font-bold text-forest-deep">
                 Bonjour {formatAssociatePrenom(activeMemberObj)}, comment puis-je vous aider aujourd'hui ?
               </h2>
-              <p className="text-xs sm:text-sm text-on-surface-variant mt-1.5 leading-relaxed">
-                Consultez le Vademecum, la trésorerie, le classement participatif, la piscine, la cuve à fioul ou préparez en un clic une réservation, une tâche ou un scrutin familial.
+              <p className="text-xs sm:text-sm text-on-surface-variant mt-1.5 leading-relaxed max-w-xl">
+                Consultez le Vademecum, la trésorerie, le classement participatif, la piscine, la cuve à fioul ou préparez en un clic une réservation, une tâche ou un scrutin familial. Tout est possible. Dingue, non ?!
               </p>
+
+              {/* Annotation 7 : Gros bouton central rouge pulsant dès qu'il y a >= 1 action à faire */}
+              <div className="mt-5 w-full flex justify-center">
+                <button
+                  id="btn-toaster-pending-actions"
+                  type="button"
+                  disabled={isSending}
+                  onClick={() =>
+                    sendMessagePayload({
+                      textOverride: PENDING_ACTIONS_PROMPT,
+                      clearComposerText: false,
+                    })
+                  }
+                  className={`group relative inline-flex flex-col sm:flex-row items-center justify-center gap-2 sm:gap-3 px-6 py-3.5 rounded-2xl text-sm font-bold transition-all cursor-pointer disabled:opacity-50 max-w-xl w-full sm:w-auto ${
+                    hasPendingActions
+                      ? 'bg-rose-600 hover:bg-rose-700 text-white border border-rose-400/70 animate-pulse-urgent'
+                      : loadingState && !portalState
+                      ? 'bg-slate-100 text-slate-600 border border-slate-200'
+                      : 'bg-emerald-50 hover:bg-emerald-100 text-emerald-950 border border-emerald-200 shadow-xs'
+                  }`}
+                >
+                  <span className="inline-flex items-center gap-2.5">
+                    {hasPendingActions ? (
+                      <span className="relative flex h-3 w-3 shrink-0" aria-hidden="true">
+                        <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-white opacity-80" />
+                        <span className="relative inline-flex rounded-full h-3 w-3 bg-white" />
+                      </span>
+                    ) : (
+                      <span className="material-symbols-outlined text-[20px] text-emerald-700">
+                        {loadingState && !portalState ? 'progress_activity' : 'task_alt'}
+                      </span>
+                    )}
+                    <span className="text-sm sm:text-[15px]">
+                      {hasPendingActions
+                        ? 'Voir tout ce que j’ai à faire'
+                        : loadingState && !portalState
+                        ? 'Vérification de vos actions en cours…'
+                        : 'Tout est à jour — Voir mon récapitulatif'}
+                    </span>
+                  </span>
+
+                  {hasPendingActions && (
+                    <span className="inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-full bg-white/20 border border-white/30 text-xs font-extrabold tracking-tight">
+                      <span>{pendingTotalCount}</span>
+                      {pendingSummaryPills.length > 0 && (
+                        <span className="font-semibold opacity-95">
+                          · {pendingSummaryPills.join(' · ')}
+                        </span>
+                      )}
+                    </span>
+                  )}
+                </button>
+              </div>
+
+              {/* Annotation 7 : 4 boutons de questions d'exemple */}
+              <div
+                id="toaster-example-questions"
+                className="grid grid-cols-1 sm:grid-cols-2 gap-2.5 w-full max-w-2xl mt-5 text-left"
+              >
+                {EXAMPLE_QUESTIONS.map((q) => (
+                  <button
+                    key={q.id}
+                    type="button"
+                    disabled={isSending}
+                    onClick={() =>
+                      sendMessagePayload({
+                        textOverride: q.prompt,
+                        clearComposerText: false,
+                      })
+                    }
+                    className="group flex items-start gap-3 px-3.5 py-2.5 rounded-2xl bg-white hover:bg-sage-soft/55 border border-border-subtle hover:border-primary/40 shadow-2xs transition-all cursor-pointer disabled:opacity-45"
+                  >
+                    <span className="w-8 h-8 rounded-xl bg-sage-soft/80 group-hover:bg-primary/15 text-primary flex items-center justify-center shrink-0 mt-0.5 transition-colors">
+                      <span className="material-symbols-outlined text-[18px]">{q.icon}</span>
+                    </span>
+                    <div className="min-w-0 flex-1">
+                      <span className="block text-xs font-bold text-forest-deep group-hover:text-primary transition-colors truncate">
+                        {q.title}
+                      </span>
+                      <span className="block text-[11px] text-on-surface-variant truncate mt-0.5">
+                        {q.subtitle}
+                      </span>
+                    </div>
+                  </button>
+                ))}
+              </div>
             </div>
           ) : (
             messages.map((msg) => {
@@ -1526,12 +1847,11 @@ export default function ToasterPage({ currentUser }) {
                 openStayPicker && openStayPicker.msgId === msg.id && openStayPicker.which === 'end'
               );
 
-              // Création de tâche — miroir strict TaskDetailModal (Annotations 7 & 8)
+              // Création de tâche — Annotations 5 & 6 : Titre + Description uniquement (tout le reste géré par les coordinateurs)
               const isTaskCreateCard = card?.action_type === 'task' && card?.payload?.operation === 'create';
               const taskCreateMissingTitle = isTaskCreateCard && !String(card.payload?.title || '').trim();
-              const taskChecklistItems = isTaskCreateCard && Array.isArray(card.payload?.checklist) ? card.payload.checklist : [];
 
-              // Création / Ouverture de scrutin — miroir strict VoteRoofModal (Annotation 8)
+              // Création / Ouverture de scrutin — miroir strict VoteRoofModal
               const isPollSetupCard =
                 card?.action_type === 'vote' &&
                 (card?.payload?.operation === 'create' || card?.payload?.operation === 'open');
@@ -1539,6 +1859,15 @@ export default function ToasterPage({ currentUser }) {
               const pollValidOptionsCount = pollOptions.filter((o) => String(o || '').trim()).length;
               const pollEmptyOptions = isPollSetupCard && pollValidOptionsCount < 2;
               const pollMissingTitle = isPollSetupCard && !String(card.payload?.title || '').trim();
+
+              // Archivage / Liaison de document (Annotation 3)
+              const isDocumentCard = card?.action_type === 'document';
+              const docOperation = isDocumentCard ? card.payload?.operation || 'archive' : 'archive';
+              const docNeedsUpload = isDocumentCard && !card.payload?.existing_document_id;
+              const docMissingFile = isDocumentCard && docNeedsUpload && !card.localFileObj?.file;
+              const docMissingTitle = isDocumentCard && docNeedsUpload && !String(card.payload?.title || '').trim();
+              const docMissingTask = isDocumentCard && docOperation === 'link_task' && !card.payload?.task_id;
+              const docMissingVote = isDocumentCard && docOperation === 'link_vote' && !card.payload?.project_id;
 
               const isVademecumCard = card?.action_type === 'vademecum';
 
@@ -1558,7 +1887,7 @@ export default function ToasterPage({ currentUser }) {
                 'target_temperature',
               ]);
               const chipFields = card
-                ? isTaskCreateCard || isPollSetupCard
+                ? isTaskCreateCard || isPollSetupCard || isDocumentCard
                   ? []
                   : card.deduced_fields.filter((f) => {
                       if (isStayCard && STAY_DEDICATED_KEYS.has(f.key)) return false;
@@ -1574,7 +1903,11 @@ export default function ToasterPage({ currentUser }) {
                 stayRoomOverflow ||
                 taskCreateMissingTitle ||
                 pollEmptyOptions ||
-                pollMissingTitle;
+                pollMissingTitle ||
+                docMissingFile ||
+                docMissingTitle ||
+                docMissingTask ||
+                docMissingVote;
 
               return (
                 <div
@@ -2143,13 +2476,13 @@ export default function ToasterPage({ currentUser }) {
                           </div>
                         )}
 
-                        {/* TÂCHES (CRÉATION) — Ann. 7 & 8 : Miroir strict TaskDetailModal (ZÉRO Statut, ZÉRO Responsable) */}
+                        {/* TÂCHES (CRÉATION) — Annotations 5 & 6 : Titre + Description uniquement (tout le reste est géré par les coordinateurs) */}
                         {isTaskCreateCard && (
                           <div className="space-y-3 text-xs">
                             <div className="p-2.5 rounded-xl bg-amber-50 border border-amber-200 text-amber-950 text-[11.5px] flex items-start gap-2">
                               <span className="material-symbols-outlined text-[16px] text-amber-700 shrink-0 mt-0.5">info</span>
                               <span>
-                                Statut initial automatique : <strong>Proposition à arbitrer</strong>. L’attribution du responsable se fait ensuite par les coordinateurs lors de la validation.
+                                Statut initial automatique : <strong>Proposition à arbitrer</strong>. Décrivez simplement la tâche (titre et description) : l’emplacement, la charge, la priorité, le devis et l’attribution sont estimés et gérés ensuite par les coordinateurs.
                               </span>
                             </div>
 
@@ -2172,160 +2505,12 @@ export default function ToasterPage({ currentUser }) {
                               />
                             </div>
 
-                            <div className="grid grid-cols-1 sm:grid-cols-3 gap-2">
-                              <div className="space-y-1">
-                                <label className="text-[11px] font-bold text-slate-600 block">Emplacement</label>
-                                <select
-                                  disabled={card.executed}
-                                  value={card.payload?.subject || 'Presbytère'}
-                                  onChange={(e) =>
-                                    updateCardInMessage(msg.id, (c) => ({
-                                      ...c,
-                                      payload: { ...(c.payload || {}), subject: e.target.value },
-                                    }))
-                                  }
-                                  className="w-full h-9 px-2.5 rounded-xl bg-white border border-slate-200 text-xs font-medium text-slate-900"
-                                >
-                                  {TASK_SUBJECTS.map((s) => (
-                                    <option key={s} value={s}>{s}</option>
-                                  ))}
-                                </select>
-                              </div>
-                              <div className="space-y-1">
-                                <label className="text-[11px] font-bold text-slate-600 block">Charge estimée</label>
-                                <select
-                                  disabled={card.executed}
-                                  value={card.payload?.complexity || 'Modérée'}
-                                  onChange={(e) =>
-                                    updateCardInMessage(msg.id, (c) => ({
-                                      ...c,
-                                      payload: { ...(c.payload || {}), complexity: e.target.value },
-                                    }))
-                                  }
-                                  className="w-full h-9 px-2.5 rounded-xl bg-white border border-slate-200 text-xs font-medium text-slate-900"
-                                >
-                                  {TASK_COMPLEXITIES.map((cx) => (
-                                    <option key={cx} value={cx}>{cx}</option>
-                                  ))}
-                                </select>
-                              </div>
-                              <div className="space-y-1">
-                                <label className="text-[11px] font-bold text-slate-600 block">Priorité</label>
-                                <select
-                                  disabled={card.executed}
-                                  value={card.payload?.priority || 'Normale'}
-                                  onChange={(e) =>
-                                    updateCardInMessage(msg.id, (c) => ({
-                                      ...c,
-                                      payload: { ...(c.payload || {}), priority: e.target.value },
-                                    }))
-                                  }
-                                  className="w-full h-9 px-2.5 rounded-xl bg-white border border-slate-200 text-xs font-medium text-slate-900"
-                                >
-                                  {TASK_PRIORITIES.map((pr) => (
-                                    <option key={pr} value={pr}>{pr}</option>
-                                  ))}
-                                </select>
-                              </div>
-                            </div>
-
-                            <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
-                              <div className="space-y-1">
-                                <label className="text-[11px] font-bold text-slate-600 block">
-                                  Devis / Budget estimé (€)
-                                </label>
-                                <input
-                                  type="number"
-                                  min="0"
-                                  step="1"
-                                  disabled={card.executed}
-                                  value={card.payload?.budget || ''}
-                                  onChange={(e) =>
-                                    updateCardInMessage(msg.id, (c) => ({
-                                      ...c,
-                                      payload: { ...(c.payload || {}), budget: e.target.value ? Number(e.target.value) : 0 },
-                                    }))
-                                  }
-                                  placeholder="0 € (si aucun coût)"
-                                  className="w-full h-9 px-3 rounded-xl bg-white border border-slate-200 text-xs text-slate-900"
-                                />
-                              </div>
-                              <div className="space-y-1">
-                                <label className="text-[11px] font-bold text-slate-600 block">Échéance souhaitée</label>
-                                <input
-                                  type="date"
-                                  disabled={card.executed}
-                                  value={card.payload?.deadline || ''}
-                                  onChange={(e) =>
-                                    updateCardInMessage(msg.id, (c) => ({
-                                      ...c,
-                                      payload: { ...(c.payload || {}), deadline: e.target.value },
-                                    }))
-                                  }
-                                  className="w-full h-9 px-3 rounded-xl bg-white border border-slate-200 text-xs text-slate-900"
-                                />
-                              </div>
-                            </div>
-
-                            <div className="flex items-center gap-3 flex-wrap">
-                              <label className="inline-flex items-center gap-1.5 font-semibold text-slate-700 cursor-pointer">
-                                <input
-                                  type="checkbox"
-                                  disabled={card.executed}
-                                  checked={Boolean(card.payload?.is_recurring)}
-                                  onChange={(e) =>
-                                    updateCardInMessage(msg.id, (c) => ({
-                                      ...c,
-                                      payload: { ...(c.payload || {}), is_recurring: e.target.checked },
-                                    }))
-                                  }
-                                  className="accent-primary"
-                                />
-                                <span>Tâche récurrente</span>
-                              </label>
-                              {card.payload?.is_recurring && (
-                                <div className="flex items-center gap-1.5">
-                                  <span className="text-slate-600">Tous les</span>
-                                  <input
-                                    type="number"
-                                    min="1"
-                                    max="365"
-                                    disabled={card.executed}
-                                    value={card.payload?.recurrence_interval || 1}
-                                    onChange={(e) =>
-                                      updateCardInMessage(msg.id, (c) => ({
-                                        ...c,
-                                        payload: { ...(c.payload || {}), recurrence_interval: Number(e.target.value) || 1 },
-                                      }))
-                                    }
-                                    className="w-14 h-8 px-2 rounded-lg border border-slate-200 bg-white"
-                                  />
-                                  <select
-                                    disabled={card.executed}
-                                    value={card.payload?.recurrence_unit || 'semaines'}
-                                    onChange={(e) =>
-                                      updateCardInMessage(msg.id, (c) => ({
-                                        ...c,
-                                        payload: { ...(c.payload || {}), recurrence_unit: e.target.value },
-                                      }))
-                                    }
-                                    className="h-8 px-2 rounded-lg border border-slate-200 bg-white"
-                                  >
-                                    <option value="jours">jours</option>
-                                    <option value="semaines">semaines</option>
-                                    <option value="mois">mois</option>
-                                    <option value="ans">ans</option>
-                                  </select>
-                                </div>
-                              )}
-                            </div>
-
                             <div className="space-y-1">
                               <label className="text-[11px] font-bold text-slate-600 block">
-                                Consignes / Description
+                                Description
                               </label>
                               <textarea
-                                rows={2}
+                                rows={4}
                                 disabled={card.executed}
                                 value={card.payload?.description || ''}
                                 onChange={(e) =>
@@ -2334,63 +2519,38 @@ export default function ToasterPage({ currentUser }) {
                                     payload: { ...(c.payload || {}), description: e.target.value },
                                   }))
                                 }
-                                placeholder="Détails concrets pour la réalisation..."
+                                placeholder="Décrivez le besoin ou le problème constaté..."
                                 className="w-full p-2.5 rounded-xl bg-sky-50/35 border border-sky-200 text-xs text-slate-800 focus:outline-none focus:border-primary"
                               />
                             </div>
 
-                            <div className="space-y-1.5">
-                              <label className="text-[11px] font-bold text-slate-600 block">
-                                Sous-tâches / Checklist ({taskChecklistItems.length})
-                              </label>
-                              {!card.executed && (
-                                <div className="flex gap-1.5">
+                            {card.localFileObj?.file && (
+                              <label className="flex items-center justify-between gap-2.5 p-2.5 rounded-xl bg-indigo-50/60 border border-indigo-200 cursor-pointer">
+                                <div className="flex items-center gap-2 min-w-0">
                                   <input
-                                    type="text"
-                                    value={taskChecklistInputs[msg.id] || ''}
+                                    type="checkbox"
+                                    disabled={card.executed}
+                                    checked={card.payload?.attach_uploaded_file !== false}
                                     onChange={(e) =>
-                                      setTaskChecklistInputs((prev) => ({ ...prev, [msg.id]: e.target.value }))
+                                      updateCardInMessage(msg.id, (c) => ({
+                                        ...c,
+                                        payload: { ...(c.payload || {}), attach_uploaded_file: e.target.checked },
+                                      }))
                                     }
-                                    onKeyDown={(e) => {
-                                      if (e.key === 'Enter') {
-                                        e.preventDefault();
-                                        handleAddTaskChecklistItem(msg.id);
-                                      }
-                                    }}
-                                    placeholder="Ajouter une étape à la checklist…"
-                                    className="flex-1 h-8 px-3 rounded-xl bg-white border border-slate-200 text-xs focus:outline-none focus:border-primary"
+                                    className="w-4 h-4 rounded accent-indigo-700 shrink-0"
                                   />
-                                  <button
-                                    type="button"
-                                    onClick={() => handleAddTaskChecklistItem(msg.id)}
-                                    className="h-8 px-3 rounded-xl bg-sky-50 hover:bg-sky-100 text-sky-900 border border-sky-200 text-xs font-bold cursor-pointer"
-                                  >
-                                    + Étape
-                                  </button>
+                                  <span className="material-symbols-outlined text-[16px] text-indigo-700 shrink-0">
+                                    attach_file
+                                  </span>
+                                  <span className="text-xs font-semibold text-indigo-950 truncate">
+                                    Archiver et joindre « {card.localFileObj.name} » à cette nouvelle tâche
+                                  </span>
                                 </div>
-                              )}
-                              {taskChecklistItems.length > 0 && (
-                                <div className="space-y-1">
-                                  {taskChecklistItems.map((it, idx) => (
-                                    <div
-                                      key={idx}
-                                      className="flex items-center justify-between gap-2 px-2.5 py-1.5 rounded-xl bg-slate-50 border border-slate-200 text-xs"
-                                    >
-                                      <span className="text-slate-800">• {typeof it === 'string' ? it : it.text}</span>
-                                      {!card.executed && (
-                                        <button
-                                          type="button"
-                                          onClick={() => handleRemoveTaskChecklistItem(msg.id, idx)}
-                                          className="text-slate-400 hover:text-rose-600 cursor-pointer"
-                                        >
-                                          ×
-                                        </button>
-                                      )}
-                                    </div>
-                                  ))}
-                                </div>
-                              )}
-                            </div>
+                                <span className="text-[10.5px] font-bold text-indigo-700 shrink-0">
+                                  {Math.max(1, Math.round((card.localFileObj.size || 0) / 1024))} Ko
+                                </span>
+                              </label>
+                            )}
                           </div>
                         )}
 
@@ -2601,7 +2761,288 @@ export default function ToasterPage({ currentUser }) {
                                 })}
                               </div>
                             </div>
+
+                            {card.localFileObj?.file && card.payload?.operation === 'create' && (
+                              <label className="flex items-center justify-between gap-2.5 p-2.5 rounded-xl bg-indigo-50/60 border border-indigo-200 cursor-pointer">
+                                <div className="flex items-center gap-2 min-w-0">
+                                  <input
+                                    type="checkbox"
+                                    disabled={card.executed}
+                                    checked={card.payload?.attach_uploaded_file !== false}
+                                    onChange={(e) =>
+                                      updateCardInMessage(msg.id, (c) => ({
+                                        ...c,
+                                        payload: { ...(c.payload || {}), attach_uploaded_file: e.target.checked },
+                                      }))
+                                    }
+                                    className="w-4 h-4 rounded accent-indigo-700 shrink-0"
+                                  />
+                                  <span className="material-symbols-outlined text-[16px] text-indigo-700 shrink-0">
+                                    attach_file
+                                  </span>
+                                  <span className="text-xs font-semibold text-indigo-950 truncate">
+                                    Archiver et joindre « {card.localFileObj.name} » à ce nouveau scrutin
+                                  </span>
+                                </div>
+                                <span className="text-[10.5px] font-bold text-indigo-700 shrink-0">
+                                  {Math.max(1, Math.round((card.localFileObj.size || 0) / 1024))} Ko
+                                </span>
+                              </label>
+                            )}
                           </div>
+                        )}
+
+                        {/* DOCUMENTS (ARCHIVAGE / LIAISON TÂCHE OU VOTE) — Annotation 3 */}
+                        {isDocumentCard && (
+                          <div className="space-y-3 text-xs">
+                            {card.payload?.existing_document_id ? (
+                              <div className="p-2.5 rounded-xl bg-indigo-50 border border-indigo-200 text-indigo-950 flex items-center gap-2 font-semibold">
+                                <span className="material-symbols-outlined text-[18px] text-indigo-700 shrink-0">
+                                  folder_open
+                                </span>
+                                <span>
+                                  Document existant en bibliothèque (#{card.payload.existing_document_id}) : «{' '}
+                                  {card.payload.title || card.payload.document_filename || 'Document'} »
+                                </span>
+                              </div>
+                            ) : card.localFileObj?.file ? (
+                              <div className="p-2.5 rounded-xl bg-indigo-50/70 border border-indigo-200 text-indigo-950 flex items-center justify-between gap-2">
+                                <div className="flex items-center gap-2 min-w-0">
+                                  <span className="material-symbols-outlined text-[18px] text-indigo-700 shrink-0">
+                                    upload_file
+                                  </span>
+                                  <span className="font-semibold truncate">{card.localFileObj.name}</span>
+                                </div>
+                                <span className="text-[11px] font-bold text-indigo-700 shrink-0">
+                                  {Math.max(1, Math.round((card.localFileObj.size || 0) / 1024))} Ko · Google Drive
+                                </span>
+                              </div>
+                            ) : (
+                              <div className="p-2.5 rounded-xl bg-rose-50 border border-rose-200 text-rose-900 flex items-center justify-between gap-2 flex-wrap">
+                                <span className="font-semibold">
+                                  Aucun fichier local sélectionné pour cet archivage.
+                                </span>
+                                {!card.executed && (
+                                  <label className="inline-flex items-center gap-1 px-3 py-1 rounded-full bg-rose-700 hover:bg-rose-800 text-white text-[11px] font-bold cursor-pointer">
+                                    <span className="material-symbols-outlined text-[14px]">add</span>
+                                    <span>Choisir un fichier</span>
+                                    <input
+                                      type="file"
+                                      accept="image/*,.pdf,application/pdf,.doc,.docx,.txt,.csv,.xlsx"
+                                      className="sr-only"
+                                      onChange={(e) => {
+                                        const picked = e.target.files?.[0];
+                                        if (picked) {
+                                          updateCardInMessage(msg.id, (c) => ({
+                                            ...c,
+                                            localFileObj: {
+                                              file: picked,
+                                              name: picked.name,
+                                              mime: picked.type || 'application/octet-stream',
+                                              size: picked.size,
+                                            },
+                                            payload: {
+                                              ...(c.payload || {}),
+                                              document_filename: picked.name,
+                                              title: c.payload?.title || picked.name.replace(/\.[^.]+$/, ''),
+                                            },
+                                          }));
+                                        }
+                                        e.target.value = '';
+                                      }}
+                                    />
+                                  </label>
+                                )}
+                              </div>
+                            )}
+
+                            {docNeedsUpload && (
+                              <div className="grid grid-cols-1 sm:grid-cols-3 gap-2">
+                                <div className="space-y-1">
+                                  <label className="text-[11px] font-bold text-slate-600 block">
+                                    Organisme / Source
+                                  </label>
+                                  <input
+                                    type="text"
+                                    disabled={card.executed}
+                                    value={card.payload?.organisme || ''}
+                                    onChange={(e) =>
+                                      updateCardInMessage(msg.id, (c) => ({
+                                        ...c,
+                                        payload: { ...(c.payload || {}), organisme: e.target.value },
+                                      }))
+                                    }
+                                    placeholder="Ex : EDF, Plombier, SCI..."
+                                    className="w-full h-9 px-3 rounded-xl bg-white border border-slate-200 text-xs font-medium text-slate-900 focus:outline-none focus:border-primary"
+                                  />
+                                </div>
+                                <div className="space-y-1">
+                                  <label className="text-[11px] font-bold uppercase tracking-wider text-indigo-900 block">
+                                    Titre du document *
+                                  </label>
+                                  <input
+                                    type="text"
+                                    disabled={card.executed}
+                                    value={card.payload?.title || ''}
+                                    onChange={(e) =>
+                                      updateCardInMessage(msg.id, (c) => ({
+                                        ...c,
+                                        payload: { ...(c.payload || {}), title: e.target.value },
+                                      }))
+                                    }
+                                    placeholder="Ex : Devis réfection gouttière"
+                                    className="w-full h-9 px-3 rounded-xl bg-white border border-indigo-200 text-xs font-semibold text-slate-900 focus:outline-none focus:border-indigo-500"
+                                  />
+                                </div>
+                                <div className="space-y-1">
+                                  <label className="text-[11px] font-bold text-slate-600 block">Catégorie</label>
+                                  <select
+                                    disabled={card.executed}
+                                    value={card.payload?.category || 'Travaux & Chantiers'}
+                                    onChange={(e) =>
+                                      updateCardInMessage(msg.id, (c) => ({
+                                        ...c,
+                                        payload: { ...(c.payload || {}), category: e.target.value },
+                                      }))
+                                    }
+                                    className="w-full h-9 px-2.5 rounded-xl bg-white border border-slate-200 text-xs font-medium text-slate-900"
+                                  >
+                                    {DOCUMENT_ARCHIVE_CATEGORIES.map((cat) => (
+                                      <option key={cat} value={cat}>
+                                        {cat}
+                                      </option>
+                                    ))}
+                                  </select>
+                                </div>
+                              </div>
+                            )}
+
+                            <div className="space-y-2">
+                              <label className="text-[11px] font-bold text-slate-600 block">Destination sur le portail</label>
+                              <div className="flex flex-wrap gap-1.5">
+                                {[
+                                  { value: 'archive', label: 'Bibliothèque SCI uniquement', icon: 'folder' },
+                                  { value: 'link_task', label: 'Lier à une tâche existante', icon: 'checklist' },
+                                  { value: 'link_vote', label: 'Lier à un scrutin existant', icon: 'how_to_vote' },
+                                ].map((opt) => {
+                                  const active = docOperation === opt.value;
+                                  return (
+                                    <button
+                                      key={opt.value}
+                                      type="button"
+                                      disabled={card.executed}
+                                      onClick={() =>
+                                        updateCardInMessage(msg.id, (c) => ({
+                                          ...c,
+                                          payload: {
+                                            ...(c.payload || {}),
+                                            operation: opt.value,
+                                            task_id: opt.value === 'link_task' ? c.payload?.task_id || null : null,
+                                            project_id: opt.value === 'link_vote' ? c.payload?.project_id || null : null,
+                                          },
+                                        }))
+                                      }
+                                      className={`inline-flex items-center gap-1.5 px-3 py-1.5 rounded-full border text-xs font-semibold transition-all cursor-pointer ${
+                                        active
+                                          ? 'bg-indigo-700 text-white border-indigo-700 shadow-2xs'
+                                          : 'bg-white text-slate-700 border-slate-200 hover:border-indigo-300'
+                                      }`}
+                                    >
+                                      <span className="material-symbols-outlined text-[15px]">{opt.icon}</span>
+                                      <span>{opt.label}</span>
+                                    </button>
+                                  );
+                                })}
+                              </div>
+
+                              {docOperation === 'link_task' && (
+                                <div className="space-y-1 pt-1">
+                                  <label className="text-[11px] font-bold text-indigo-900 block">
+                                    Tâche cible *
+                                  </label>
+                                  <select
+                                    disabled={card.executed}
+                                    value={card.payload?.task_id || ''}
+                                    onChange={(e) =>
+                                      updateCardInMessage(msg.id, (c) => ({
+                                        ...c,
+                                        payload: {
+                                          ...(c.payload || {}),
+                                          task_id: e.target.value ? Number(e.target.value) : null,
+                                        },
+                                      }))
+                                    }
+                                    className="w-full h-9 px-2.5 rounded-xl bg-white border border-indigo-200 text-xs font-medium text-slate-900"
+                                  >
+                                    <option value="">— Sélectionner une tâche —</option>
+                                    {(portalState?.tasks || []).map((t) => (
+                                      <option key={t.id} value={t.id}>
+                                        #{t.id} — {t.title} ({t.status})
+                                      </option>
+                                    ))}
+                                  </select>
+                                </div>
+                              )}
+
+                              {docOperation === 'link_vote' && (
+                                <div className="space-y-1 pt-1">
+                                  <label className="text-[11px] font-bold text-indigo-900 block">
+                                    Scrutin cible *
+                                  </label>
+                                  <select
+                                    disabled={card.executed}
+                                    value={card.payload?.project_id || ''}
+                                    onChange={(e) =>
+                                      updateCardInMessage(msg.id, (c) => ({
+                                        ...c,
+                                        payload: {
+                                          ...(c.payload || {}),
+                                          project_id: e.target.value ? Number(e.target.value) : null,
+                                        },
+                                      }))
+                                    }
+                                    className="w-full h-9 px-2.5 rounded-xl bg-white border border-indigo-200 text-xs font-medium text-slate-900"
+                                  >
+                                    <option value="">— Sélectionner un scrutin —</option>
+                                    {(portalState?.open_votes || []).map((v) => (
+                                      <option key={v.id} value={v.id}>
+                                        #{v.id} — {v.title} ({v.status})
+                                      </option>
+                                    ))}
+                                  </select>
+                                </div>
+                              )}
+                            </div>
+                          </div>
+                        )}
+
+                        {/* Justificatif réel attaché à une carte Dépense / Facture */}
+                        {card.action_type === 'expense' && card.localFileObj?.file && (
+                          <label className="flex items-center justify-between gap-2.5 p-2.5 rounded-xl bg-amber-50/70 border border-amber-200 cursor-pointer text-xs">
+                            <div className="flex items-center gap-2 min-w-0">
+                              <input
+                                type="checkbox"
+                                disabled={card.executed}
+                                checked={card.payload?.attach_uploaded_file !== false}
+                                onChange={(e) =>
+                                  updateCardInMessage(msg.id, (c) => ({
+                                    ...c,
+                                    payload: { ...(c.payload || {}), attach_uploaded_file: e.target.checked },
+                                  }))
+                                }
+                                className="w-4 h-4 rounded accent-amber-700 shrink-0"
+                              />
+                              <span className="material-symbols-outlined text-[16px] text-amber-700 shrink-0">
+                                receipt_long
+                              </span>
+                              <span className="font-semibold text-amber-950 truncate">
+                                Archiver le justificatif « {card.localFileObj.name} » sur Google Drive
+                              </span>
+                            </div>
+                            <span className="text-[10.5px] font-bold text-amber-800 shrink-0">
+                              {Math.max(1, Math.round((card.localFileObj.size || 0) / 1024))} Ko
+                            </span>
+                          </label>
                         )}
 
                         {/* Ann. 10 : Contenu éditable pour les fiches Vademecum */}
@@ -2730,6 +3171,14 @@ export default function ToasterPage({ currentUser }) {
                                 ? 'Saisissez un titre pour ce scrutin.'
                                 : pollEmptyOptions
                                 ? 'Indiquez au moins 2 options de vote non vides.'
+                                : docMissingFile
+                                ? 'Sélectionnez le fichier à téléverser ci-dessus.'
+                                : docMissingTitle
+                                ? 'Saisissez un titre pour archiver ce document.'
+                                : docMissingTask
+                                ? 'Sélectionnez la tâche à laquelle rattacher ce document.'
+                                : docMissingVote
+                                ? 'Sélectionnez le scrutin auquel rattacher ce document.'
                                 : card.missing_fields.length > 0
                                 ? `Répondez aux ${card.missing_fields.length} précision(s) requise(s) ci-dessus.`
                                 : 'Vérifiez les paramètres puis confirmez pour appliquer sur le portail.'}
@@ -2761,8 +3210,6 @@ export default function ToasterPage({ currentUser }) {
               );
             })
           )}
-
-          <div ref={chatEndRef} />
         </div>
 
         {/* BARRE DE SAISIE MODERNE & VOIX */}
@@ -2797,23 +3244,32 @@ export default function ToasterPage({ currentUser }) {
                 : 'bg-slate-50/90 hover:bg-slate-50 focus-within:bg-white border-slate-200/90 focus-within:border-primary/45 focus-within:shadow-[0_6px_24px_-6px_rgba(6,78,59,0.14)]'
             }`}
           >
+            {/* Annotation 3 : <label htmlFor> natif + input sr-only (jamais display:none) pour ouvrir fiablement le sélecteur de fichiers */}
             <input
+              id="toaster-file-input"
               ref={fileInputRef}
               type="file"
-              accept="image/*,.pdf,application/pdf"
+              accept="image/*,.pdf,application/pdf,.doc,.docx,.txt,.csv,.xlsx"
               onChange={handleFileSelect}
-              className="hidden"
+              className="sr-only"
             />
-            <button
+            <label
               id="btn-toaster-attach"
-              type="button"
-              onClick={() => fileInputRef.current?.click()}
-              className="w-10 h-10 rounded-full bg-white hover:bg-emerald-50 text-slate-600 hover:text-primary border border-slate-200/80 hover:border-emerald-300 inline-flex items-center justify-center shrink-0 transition-all duration-200 cursor-pointer shadow-2xs active:scale-95"
-              title="Joindre une photo ou un PDF"
-              aria-label="Joindre une photo ou un PDF"
+              htmlFor="toaster-file-input"
+              role="button"
+              tabIndex={0}
+              onKeyDown={(e) => {
+                if (e.key === 'Enter' || e.key === ' ') {
+                  e.preventDefault();
+                  fileInputRef.current?.click();
+                }
+              }}
+              className="w-10 h-10 rounded-full bg-white hover:bg-emerald-50 text-slate-600 hover:text-primary border border-slate-200/80 hover:border-emerald-300 inline-flex items-center justify-center shrink-0 transition-all duration-200 cursor-pointer shadow-2xs active:scale-95 select-none"
+              title="Joindre une photo ou un document (PDF, image, etc.)"
+              aria-label="Joindre une photo ou un document"
             >
-              <span className="material-symbols-outlined text-[21px] leading-none">add</span>
-            </button>
+              <span className="material-symbols-outlined text-[21px] leading-none pointer-events-none">add</span>
+            </label>
 
             {isListening ? (
               <div className="flex-1 flex items-center justify-between px-3 py-1.5 min-w-0">
@@ -2844,7 +3300,14 @@ export default function ToasterPage({ currentUser }) {
                 type="text"
                 value={inputText}
                 onChange={(e) => setInputText(e.target.value)}
-                placeholder="Posez une question ou décrivez une action au domaine…"
+                onPaste={(e) => {
+                  const pastedFile = e.clipboardData?.files?.[0];
+                  if (pastedFile) {
+                    e.preventDefault();
+                    attachLocalFile(pastedFile);
+                  }
+                }}
+                placeholder="Posez une question, collez un document ou décrivez une action au domaine…"
                 className="flex-1 h-10 px-2.5 bg-transparent text-sm text-slate-800 dark:text-slate-100 placeholder:text-slate-400 focus:outline-none min-w-0"
               />
             )}
