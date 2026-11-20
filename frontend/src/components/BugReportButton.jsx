@@ -1,4 +1,5 @@
 import React, { useState, useRef, useEffect } from 'react';
+import { useLocation } from 'react-router-dom';
 import { captureScreen } from '../utils/screenCapture';
 import { generateDiagnosticReport } from '../utils/errorLogger';
 import { uploadDocument, createTask, emitAppError } from '../api';
@@ -10,6 +11,12 @@ import { uploadDocument, createTask, emitAppError } from '../api';
  * - Téléversement parallèle au clic Envoyer et création d'une tâche directement attribuée à Henri.
  */
 export default function BugReportButton({ currentUser = null }) {
+  const location = useLocation();
+  const isMrCollinsPage =
+    location.pathname === '/' ||
+    location.pathname === '/grille-pain' ||
+    location.pathname === '/mr-collins';
+
   const [isOpen, setIsOpen] = useState(false);
   const [description, setDescription] = useState('');
   const [captureStatus, setCaptureStatus] = useState('idle'); // 'idle' | 'capturing' | 'ready' | 'unavailable'
@@ -232,7 +239,13 @@ export default function BugReportButton({ currentUser = null }) {
         </div>
       )}
 
-      <div className="bug-report-ignore fixed bottom-3 right-3 sm:bottom-5 sm:right-5 z-40">
+      <div
+        className={`bug-report-ignore fixed z-40 ${
+          isMrCollinsPage
+            ? 'top-[5.35rem] left-3 lg:top-auto lg:left-auto lg:bottom-5 lg:right-5'
+            : 'bottom-3 right-3 sm:bottom-5 sm:right-5'
+        }`}
+      >
         <button
           id="btn-bug-report"
           type="button"
