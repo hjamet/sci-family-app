@@ -23,8 +23,8 @@ import { fetchProperties, fetchProjects, fetchTaskById, castProjectVote, getCach
 import GlobalErrorAlert from './components/GlobalErrorAlert';
 import MaintenanceScreen from './components/MaintenanceScreen';
 
-// Mode maintenance temporaire (remettre à false une fois les tests e-mails & améliorations terminés)
-const MAINTENANCE_MODE = true;
+// Mode maintenance temporaire (remettre à true uniquement pour masquer le site à la famille pendant des travaux)
+const MAINTENANCE_MODE = false;
 const MAINTENANCE_BYPASS_KEY = 'sci_maintenance_bypass';
 
 export default function App() {

@@ -49,7 +49,7 @@ DISABLE_ALL_EMAILS: bool = False
 # - Toute autre adresse (sœurs, parents, externe) est automatiquement redirigée vers
 #   hellenvillierssci@gmail.com avec indication du destinataire prévu dans l'objet.
 # - Zéro e-mail ne peut atteindre la famille pendant la maintenance.
-MAINTENANCE_EMAIL_REDIRECT_ONLY: bool = os.getenv("MAINTENANCE_EMAIL_REDIRECT_ONLY", "true").strip().lower() in ("true", "1", "yes")
+MAINTENANCE_EMAIL_REDIRECT_ONLY: bool = os.getenv("MAINTENANCE_EMAIL_REDIRECT_ONLY", "false").strip().lower() in ("true", "1", "yes")
 MAINTENANCE_EMAIL_REDIRECT_TO: str = "hellenvillierssci@gmail.com"
 
 
