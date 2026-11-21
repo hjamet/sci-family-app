@@ -349,7 +349,7 @@ export default function TaskCard({
 
       {/* Card Footer: Assignee & Action Buttons */}
       <div
-        className={`pt-space-sm flex flex-col sm:flex-row sm:items-center justify-between gap-space-sm border-t ${
+        className={`pt-space-sm flex flex-wrap items-center justify-between gap-2.5 border-t ${
           isProposed
             ? 'border-amber-200 dark:border-amber-800/60'
             : isValidationTask
@@ -357,7 +357,7 @@ export default function TaskCard({
             : 'border-slate-100 dark:border-slate-800'
         }`}
       >
-        <div className="flex items-center gap-2">
+        <div className="flex items-center gap-2 min-w-0">
           <div className="flex -space-x-2 overflow-hidden">
             <div
               className={`w-8 h-8 rounded-full ${
@@ -401,10 +401,10 @@ export default function TaskCard({
             e.stopPropagation();
             if (onOpen) onOpen(task);
           }}
-          className={`h-[40px] px-4 rounded-DEFAULT transition-all flex items-center justify-center gap-2 shrink-0 cursor-pointer border-2 shadow-xs ${actionButtonClass}`}
+          className={`min-h-[38px] max-w-full px-3.5 py-1.5 rounded-DEFAULT transition-all flex items-center justify-center gap-1.5 cursor-pointer border-2 shadow-xs text-xs ${actionButtonClass}`}
         >
-          <span className="material-symbols-outlined text-[18px]">{actionButtonIcon}</span>
-          <span>{actionButtonLabel}</span>
+          <span className="material-symbols-outlined text-[17px] shrink-0">{actionButtonIcon}</span>
+          <span className="truncate">{actionButtonLabel}</span>
         </button>
       </div>
 

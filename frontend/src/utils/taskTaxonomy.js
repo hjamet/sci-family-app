@@ -160,8 +160,12 @@ export function getDifficultyPoints(raw, explicitPoints = null) {
 
 export function getDifficultyMeta(raw, explicitPoints = null) {
   const canonical = normalizeDifficulty(raw);
-  const found = DIFFICULTY_OPTIONS.find((d) => d.value === canonical) || DIFFICULTY_OPTIONS[2];
+  let found = DIFFICULTY_OPTIONS.find((d) => d.value === canonical) || DIFFICULTY_OPTIONS[2];
   const points = getDifficultyPoints(canonical, explicitPoints);
+  if (explicitPoints !== null && explicitPoints !== undefined && points !== found.points) {
+    const byPts = DIFFICULTY_OPTIONS.find((d) => d.points === points);
+    if (byPts) found = byPts;
+  }
   return {
     ...found,
     points,
