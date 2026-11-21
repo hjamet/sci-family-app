@@ -3,7 +3,7 @@ import json
 import logging
 import re
 import unicodedata
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from typing import Any, Dict, List, Optional, Tuple
 
 from fastapi import HTTPException
@@ -171,6 +171,19 @@ COMPLETED_TASK_STATUSES = {
 UNAPPROVED_TASK_STATUSES = {"PROPOSED", "PROPOSEE", "REJECTED", "REJETEE", "BROUILLON", "DRAFT"}
 
 
+def _to_naive_utc(dt: Optional[datetime]) -> Optional[datetime]:
+    if dt is None:
+        return None
+    if dt.tzinfo is not None:
+        return dt.astimezone(timezone.utc).replace(tzinfo=None)
+    return dt
+
+
+def _iso_utc(dt: Optional[datetime]) -> Optional[str]:
+    naive = _to_naive_utc(dt)
+    return naive.isoformat() + "Z" if naive else None
+
+
 def _norm_text(s: Optional[str]) -> str:
     if not s:
         return ""
@@ -319,7 +332,7 @@ def _read_heating_summary(db: Session) -> Dict[str, Any]:
     if fuel_liters is None and last_hist:
         fuel_liters = last_hist.fuel_liters_remaining
 
-    recorded_at = snapshot.recorded_at if snapshot else (last_hist.recorded_at if last_hist else None)
+    recorded_at = _to_naive_utc(snapshot.recorded_at if snapshot else (last_hist.recorded_at if last_hist else None))
     age_s = (datetime.utcnow() - recorded_at).total_seconds() if recorded_at else 999999.0
     is_gateway_offline = age_s > 1200
     fuel_val = float(fuel_liters) if fuel_liters is not None else 942.1
@@ -789,8 +802,9 @@ def compute_member_pending_actions(
             continue
         if n.is_read:
             prev_dt = read_cutoff_by_target.get((src, tid))
-            if n.created_at and (prev_dt is None or n.created_at > prev_dt):
-                read_cutoff_by_target[(src, tid)] = n.created_at
+            n_dt = _to_naive_utc(n.created_at)
+            if n_dt and (prev_dt is None or n_dt > prev_dt):
+                read_cutoff_by_target[(src, tid)] = n_dt
             continue
 
         # Ignorer les notifications orphelines vers une tâche ou un scrutin supprimé/archivé
@@ -820,7 +834,7 @@ def compute_member_pending_actions(
                 ),
                 "is_mention": n.type == "mention",
                 "notification_id": n.id,
-                "created_at": n.created_at.isoformat() + "Z" if n.created_at else None,
+                "created_at": _iso_utc(n.created_at),
             }
         )
 
@@ -845,9 +859,10 @@ def compute_member_pending_actions(
                 continue
             # Vérifier les mentions récentes non lues
             for c in reversed(clist):
-                if c.created_at and c.created_at < recent_cutoff:
+                c_dt = _to_naive_utc(c.created_at)
+                if c_dt and c_dt < recent_cutoff:
                     break
-                if read_cut and c.created_at and c.created_at <= read_cut:
+                if read_cut and c_dt and c_dt <= read_cut:
                     continue
                 if _is_author_same_as_member(c.author_name, active_member):
                     continue
@@ -867,7 +882,7 @@ def compute_member_pending_actions(
                                 "reason": "Mention (@all)" if (is_all and not is_dir) else "Mention directe",
                                 "is_mention": True,
                                 "notification_id": None,
-                                "created_at": c.created_at.isoformat() + "Z" if c.created_at else None,
+                                "created_at": _iso_utc(c.created_at),
                             }
                         )
                     break
@@ -875,9 +890,10 @@ def compute_member_pending_actions(
             # Vérifier le dernier message non répondu sur une tâche attribuée
             if tid in assigned_active_task_ids:
                 last_c = clist[-1]
+                last_dt = _to_naive_utc(last_c.created_at)
                 if (
-                    (not last_c.created_at or last_c.created_at >= recent_cutoff)
-                    and not (read_cut and last_c.created_at and last_c.created_at <= read_cut)
+                    (not last_dt or last_dt >= recent_cutoff)
+                    and not (read_cut and last_dt and last_dt <= read_cut)
                     and not _is_author_same_as_member(last_c.author_name, active_member)
                     and _norm_text(last_c.author_name) not in ("systeme", "coordination sci")
                 ):
@@ -893,7 +909,7 @@ def compute_member_pending_actions(
                                 "reason": "Nouveau message sur tâche attribuée",
                                 "is_mention": False,
                                 "notification_id": None,
-                                "created_at": last_c.created_at.isoformat() + "Z" if last_c.created_at else None,
+                                "created_at": _iso_utc(last_c.created_at),
                             }
                         )
 
@@ -917,9 +933,10 @@ def compute_member_pending_actions(
             if not p_obj:
                 continue
             for c in reversed(clist):
-                if c.created_at and c.created_at < recent_cutoff:
+                c_dt = _to_naive_utc(c.created_at)
+                if c_dt and c_dt < recent_cutoff:
                     break
-                if read_cut and c.created_at and c.created_at <= read_cut:
+                if read_cut and c_dt and c_dt <= read_cut:
                     continue
                 if _is_author_same_as_member(c.author_name, active_member):
                     continue
@@ -939,16 +956,17 @@ def compute_member_pending_actions(
                                 "reason": "Mention (@all)" if (is_all and not is_dir) else "Mention directe",
                                 "is_mention": True,
                                 "notification_id": None,
-                                "created_at": c.created_at.isoformat() + "Z" if c.created_at else None,
+                                "created_at": _iso_utc(c.created_at),
                             }
                         )
                     break
 
             if pid in relevant_active_project_ids:
                 last_c = clist[-1]
+                last_dt = _to_naive_utc(last_c.created_at)
                 if (
-                    (not last_c.created_at or last_c.created_at >= recent_cutoff)
-                    and not (read_cut and last_c.created_at and last_c.created_at <= read_cut)
+                    (not last_dt or last_dt >= recent_cutoff)
+                    and not (read_cut and last_dt and last_dt <= read_cut)
                     and not _is_author_same_as_member(last_c.author_name, active_member)
                     and _norm_text(last_c.author_name) not in ("systeme", "coordination sci")
                 ):
@@ -964,7 +982,7 @@ def compute_member_pending_actions(
                                 "reason": "Nouveau message sur vote",
                                 "is_mention": False,
                                 "notification_id": None,
-                                "created_at": last_c.created_at.isoformat() + "Z" if last_c.created_at else None,
+                                "created_at": _iso_utc(last_c.created_at),
                             }
                         )
 
@@ -2299,7 +2317,7 @@ def _build_discussion_thread_payload(
                 "author_name": sanitize_display_user_name(c.author_name),
                 "author_role": "Associé",
                 "content": c.content,
-                "created_at": c.created_at.isoformat() + "Z" if c.created_at else None,
+                "created_at": _iso_utc(c.created_at),
             }
             for c in comments_q
         ]
@@ -3148,10 +3166,13 @@ def execute_toaster_read_tool(
                         "description": t.description,
                         "subject": t.subject,
                         "category": t.category or t.subject,
-                        "priority": t.priority,
-                        "complexity": t.complexity or "Modérée",
+                        "priority": normalize_urgency(t.priority),
+                        "urgency": normalize_urgency(t.priority),
+                        "complexity": normalize_difficulty(t.complexity),
+                        "difficulty": normalize_difficulty(t.complexity),
+                        "onsite_presence": True if getattr(t, "onsite_presence", None) is None else bool(t.onsite_presence),
                         "status": t.status,
-                        "charge_points": t.charge_points or get_task_charge_points(t.complexity or "Modérée"),
+                        "charge_points": t.charge_points or get_task_charge_points(normalize_difficulty(t.complexity)),
                         "budget": float(t.budget or 0.0),
                         "deadline": t.deadline,
                         "is_recurring": bool(t.is_recurring),

@@ -1003,6 +1003,7 @@ export default function ToasterPage({ currentUser }) {
       };
 
       let receivedDone = false;
+      let streamedCardIdx = 0;
 
       const processSseFrame = (frame) => {
         const lines = frame.split('\n');
@@ -1048,14 +1049,49 @@ export default function ToasterPage({ currentUser }) {
             }));
           } else if (ev.type === 'action_card' && ev.action_card) {
             const cardObj = normalizeActionCard(ev.action_card, currentAttachment);
-            updateAssistant((m) => ({
-              ...m,
-              action_card: cardObj,
-            }));
+            const cardIdx = streamedCardIdx;
+            streamedCardIdx += 1;
+            if (cardIdx === 0) {
+              updateAssistant((m) => ({
+                ...m,
+                action_card: cardObj,
+              }));
+            } else {
+              const companionId = `${assistantId}-card-${cardIdx}`;
+              setMessages((prev) => {
+                if (prev.some((m) => m.id === companionId)) {
+                  return prev.map((m) => (m.id === companionId ? { ...m, action_card: cardObj } : m));
+                }
+                return [
+                  ...prev,
+                  {
+                    id: companionId,
+                    role: 'assistant',
+                    content: '',
+                    thoughts: '',
+                    toolSteps: [],
+                    uiComponents: [],
+                    action_card: cardObj,
+                    isCompanionCard: true,
+                    isStreaming: false,
+                    timestamp: new Date().toISOString(),
+                  },
+                ];
+              });
+            }
           } else if (ev.type === 'done') {
             receivedDone = true;
             const finalReply = sanitizeFamilyLabel(ev.reply || ev.message || ev.content || '');
-            const finalCard = ev.action_card ? normalizeActionCard(ev.action_card, currentAttachment) : null;
+            const rawCardsList =
+              Array.isArray(ev.action_cards) && ev.action_cards.length > 0
+                ? ev.action_cards
+                : ev.action_card
+                ? [ev.action_card]
+                : [];
+            const normalizedCards = rawCardsList
+              .map((rc) => normalizeActionCard(rc, currentAttachment))
+              .filter(Boolean);
+            const finalCard = normalizedCards[0] || null;
             updateAssistant((m) => ({
               ...m,
               content: finalReply || m.content,
@@ -1065,6 +1101,32 @@ export default function ToasterPage({ currentUser }) {
               action_card: finalCard || m.action_card,
               isStreaming: false,
             }));
+            if (normalizedCards.length > 1) {
+              setMessages((prev) => {
+                const next = [...prev];
+                for (let idx = 1; idx < normalizedCards.length; idx += 1) {
+                  const companionId = `${assistantId}-card-${idx}`;
+                  const existingPos = next.findIndex((m) => m.id === companionId);
+                  if (existingPos >= 0) {
+                    next[existingPos] = { ...next[existingPos], action_card: normalizedCards[idx] };
+                  } else {
+                    next.push({
+                      id: companionId,
+                      role: 'assistant',
+                      content: '',
+                      thoughts: '',
+                      toolSteps: [],
+                      uiComponents: [],
+                      action_card: normalizedCards[idx],
+                      isCompanionCard: true,
+                      isStreaming: false,
+                      timestamp: new Date().toISOString(),
+                    });
+                  }
+                }
+                return next;
+              });
+            }
             if (ev.state) {
               setPortalState(ev.state);
             }
@@ -2389,7 +2451,7 @@ export default function ToasterPage({ currentUser }) {
                   key={msg.id}
                   className={`flex flex-col animate-in fade-in duration-200 ${isUser ? 'items-end' : 'items-start'}`}
                 >
-                  {!isUser && (
+                  {!isUser && !msg.isCompanionCard && (
                     <ToasterActivityAccordion
                       thoughts={msg.thoughts}
                       toolSteps={msg.toolSteps}

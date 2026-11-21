@@ -1502,7 +1502,7 @@ def _stream_toaster_orchestration(
     tool_steps_log: List[Dict[str, Any]] = []
     thoughts_accum: List[str] = []
     ui_components_out: List[Dict[str, Any]] = []
-    write_func_call: Optional[Dict[str, Any]] = None
+    write_func_calls: List[Dict[str, Any]] = []
     final_text_parts: List[str] = []
 
     MAX_STEPS = 5
@@ -1568,7 +1568,7 @@ def _stream_toaster_orchestration(
                             yield {"type": "text_delta", "delta": clean_delta}
 
             read_calls: List[Dict[str, Any]] = []
-            step_write_call: Optional[Dict[str, Any]] = None
+            step_write_calls: List[Dict[str, Any]] = []
 
             for part in accumulated_parts:
                 if part.get("thought"):
@@ -1580,22 +1580,24 @@ def _stream_toaster_orchestration(
                     if fc_name in READ_ONLY_TOOL_NAMES:
                         read_calls.append(fc)
                     else:
-                        step_write_call = fc
+                        step_write_calls.append(fc)
 
-            if step_write_call is not None:
-                w_name = step_write_call.get("name") or ""
-                w_args = step_write_call.get("args") or {}
-                w_label, w_icon = _describe_tool_call(w_name, w_args)
-                step_entry = {"id": f"tool-{len(tool_steps_log)+1}", "name": w_name, "label": w_label, "icon": w_icon, "status": "done"}
-                tool_steps_log.append(step_entry)
-                yield {"type": "tool_step", "step": step_entry}
+            if step_write_calls:
+                has_poll_write = any((wc.get("name") or "") == "propose_poll_or_vote_action" for wc in step_write_calls)
+                for wc in step_write_calls:
+                    w_name = wc.get("name") or ""
+                    w_args = wc.get("args") or {}
+                    w_label, w_icon = _describe_tool_call(w_name, w_args)
+                    step_entry = {"id": f"tool-{len(tool_steps_log)+1}", "name": w_name, "label": w_label, "icon": w_icon, "status": "done"}
+                    tool_steps_log.append(step_entry)
+                    yield {"type": "tool_step", "step": step_entry}
 
                 for rc in read_calls:
                     rc_name = rc.get("name") or ""
                     rc_args = rc.get("args") or {}
                     # Déduplication stricte Ann. 3 : ne pas afficher poll_status_card si on propose déjà une carte scrutin
                     if (
-                        w_name == "propose_poll_or_vote_action"
+                        has_poll_write
                         and rc_name == "display_ui_component"
                         and str(rc_args.get("component_id") or "").lower() in ("poll_status_card", "poll", "vote", "scrutin")
                     ):
@@ -1613,12 +1615,12 @@ def _stream_toaster_orchestration(
                     yield {"type": "tool_step", "step": r_entry}
 
                 # Si poll_status_card avait été émis dans une étape précédente du même tour pour le même scrutin, le retirer
-                if w_name == "propose_poll_or_vote_action":
+                if has_poll_write:
                     ui_components_out = [
                         c for c in ui_components_out if c.get("component_id") != "poll_status_card"
                     ]
 
-                write_func_call = step_write_call
+                write_func_calls.extend(step_write_calls)
                 final_text_parts.extend(step_texts)
                 break
 
@@ -1721,7 +1723,7 @@ def _stream_toaster_orchestration(
             # forcer 1 tour d'appel d'outil (mode ANY) pour émettre la vraie action_card !
             if (
                 step_texts
-                and not write_func_call
+                and not write_func_calls
                 and not ui_components_out
                 and not force_text_only
                 and not retried_missing_action
@@ -1762,34 +1764,48 @@ def _stream_toaster_orchestration(
             break
 
     reply_text = _sanitize_family_titles("".join(final_text_parts).strip())
-    action_card: Optional[Dict[str, Any]] = None
+    action_cards: List[Dict[str, Any]] = []
     tool_called: Optional[str] = tools_called_trace[-1] if tools_called_trace else None
 
-    if write_func_call:
-        w_name = write_func_call.get("name") or ""
-        tool_called = w_name
-        tool_args = write_func_call.get("args") or {}
-        assistant_msg = _sanitize_family_titles(str(tool_args.get("assistant_message") or "").strip())
-        if assistant_msg and not reply_text:
-            reply_text = assistant_msg
+    if write_func_calls:
+        collected_msgs: List[str] = []
+        for wc in write_func_calls:
+            w_name = wc.get("name") or ""
+            tool_called = w_name
+            tool_args = wc.get("args") or {}
+            assistant_msg = _sanitize_family_titles(str(tool_args.get("assistant_message") or "").strip())
+            if assistant_msg and assistant_msg not in collected_msgs:
+                collected_msgs.append(assistant_msg)
+            built_card = _build_action_card(
+                func_name=w_name,
+                args=tool_args,
+                state=state,
+                attachment_name=req.attachment_name,
+            )
+            if built_card:
+                action_cards.append(built_card)
+
+        if collected_msgs and not reply_text:
+            reply_text = "\n\n".join(collected_msgs)
             yield {"type": "text_delta", "delta": reply_text}
 
-        action_card = _build_action_card(
-            func_name=w_name,
-            args=tool_args,
-            state=state,
-            attachment_name=req.attachment_name,
-        )
-        if not reply_text and action_card:
-            if action_card["missing_fields"]:
-                questions = " ".join(m["question"] for m in action_card["missing_fields"])
-                reply_text = f"J'ai préparé la carte **{action_card['title']}**. {questions}"
+        if not reply_text and action_cards:
+            if len(action_cards) == 1:
+                first_card = action_cards[0]
+                if first_card["missing_fields"]:
+                    questions = " ".join(m["question"] for m in first_card["missing_fields"])
+                    reply_text = f"J'ai préparé la carte **{first_card['title']}**. {questions}"
+                else:
+                    reply_text = f"J'ai préparé la carte **{first_card['title']}**. Vous pouvez vérifier les paramètres et confirmer l'action ci-dessous."
             else:
-                reply_text = f"J'ai préparé la carte **{action_card['title']}**. Vous pouvez vérifier les paramètres et confirmer l'action ci-dessous."
+                titles_list = ", ".join(f"**{c['title']}**" for c in action_cards)
+                reply_text = f"J'ai préparé les **{len(action_cards)} cartes d'action** ci-dessous ({titles_list}). Vous pouvez vérifier chacune et la confirmer indépendamment."
             yield {"type": "text_delta", "delta": reply_text}
 
-        if action_card:
-            yield {"type": "action_card", "action_card": action_card}
+        for card in action_cards:
+            yield {"type": "action_card", "action_card": card}
+
+    action_card: Optional[Dict[str, Any]] = action_cards[0] if action_cards else None
 
     if not reply_text and ui_components_out:
         reply_text = "Voici les informations demandées ci-dessous."
@@ -1847,6 +1863,7 @@ def _stream_toaster_orchestration(
         "tool_steps": tool_steps_log,
         "ui_components": ui_components_out,
         "action_card": action_card,
+        "action_cards": action_cards,
         "state": state,
     }
 
