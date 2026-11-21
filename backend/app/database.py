@@ -109,6 +109,21 @@ def init_db(target_engine=None, force_init: bool = False):
                     if "custom_fields" not in existing_cols:
                         conn.execute(text("ALTER TABLE tasks ADD COLUMN custom_fields TEXT DEFAULT '[]';"))
                         conn.commit()
+                    if "onsite_presence" not in existing_cols:
+                        conn.execute(text("ALTER TABLE tasks ADD COLUMN onsite_presence BOOLEAN DEFAULT 1 NOT NULL;"))
+                        conn.commit()
+                    if "assigned_reservation_id" not in existing_cols:
+                        conn.execute(text("ALTER TABLE tasks ADD COLUMN assigned_reservation_id INTEGER REFERENCES reservations(id) ON DELETE SET NULL;"))
+                        conn.commit()
+                    if "taken_over_from_id" not in existing_cols:
+                        conn.execute(text("ALTER TABLE tasks ADD COLUMN taken_over_from_id INTEGER REFERENCES members(id) ON DELETE SET NULL;"))
+                        conn.commit()
+                    # Normalisation douce des libellés d'urgence legacy (Critique/Haute/Planifié) sans toucher aux titulaires (Option 1)
+                    conn.execute(text("UPDATE tasks SET onsite_presence = 1 WHERE onsite_presence IS NULL;"))
+                    conn.execute(text("UPDATE tasks SET priority = 'Immédiate' WHERE LOWER(priority) IN ('critique', 'urgent', 'urgente');"))
+                    conn.execute(text("UPDATE tasks SET priority = 'Rapide' WHERE LOWER(priority) IN ('haute', 'high');"))
+                    conn.execute(text("UPDATE tasks SET priority = 'Sans urgence' WHERE LOWER(priority) IN ('planifié', 'planifie', 'basse');"))
+                    conn.commit()
 
                 check_projects = conn.execute(text("SELECT name FROM sqlite_master WHERE type='table' AND name='projects'")).fetchone()
                 if check_projects:
@@ -188,6 +203,14 @@ def init_db(target_engine=None, force_init: bool = False):
                 conn.execute(text("ALTER TABLE projects ADD COLUMN IF NOT EXISTS key_values TEXT;"))
                 conn.execute(text("ALTER TABLE tasks ADD COLUMN IF NOT EXISTS custom_fields TEXT DEFAULT '[]';"))
                 conn.execute(text("ALTER TABLE projects ADD COLUMN IF NOT EXISTS custom_fields TEXT DEFAULT '[]';"))
+                conn.execute(text("ALTER TABLE tasks ADD COLUMN IF NOT EXISTS onsite_presence BOOLEAN DEFAULT TRUE NOT NULL;"))
+                conn.execute(text("UPDATE tasks SET onsite_presence = TRUE WHERE onsite_presence IS NULL;"))
+                conn.execute(text("ALTER TABLE tasks ADD COLUMN IF NOT EXISTS assigned_reservation_id INTEGER REFERENCES reservations(id) ON DELETE SET NULL;"))
+                conn.execute(text("ALTER TABLE tasks ADD COLUMN IF NOT EXISTS taken_over_from_id INTEGER REFERENCES members(id) ON DELETE SET NULL;"))
+                # Normalisation douce des libellés d'urgence legacy (Critique/Haute/Planifié) sans toucher aux titulaires (Option 1)
+                conn.execute(text("UPDATE tasks SET priority = 'Immédiate' WHERE LOWER(priority) IN ('critique', 'urgent', 'urgente');"))
+                conn.execute(text("UPDATE tasks SET priority = 'Rapide' WHERE LOWER(priority) IN ('haute', 'high');"))
+                conn.execute(text("UPDATE tasks SET priority = 'Sans urgence' WHERE LOWER(priority) IN ('planifié', 'planifie', 'basse');"))
 
                 # Migrations Trésorerie & Dépenses (PostgreSQL Supabase)
                 conn.execute(text("""
@@ -275,6 +298,67 @@ def init_db(target_engine=None, force_init: bool = False):
             conn.commit()
     except Exception as mig_tasks_err:
         pass
+
+_TASKS_PRESENCE_SCHEMA_READY = False
+
+
+def ensure_tasks_presence_schema_once(target_engine=None) -> bool:
+    """
+    Vérification lecture seule (zéro verrou DDL dès que les colonnes existent) des 3 colonnes
+    de présence/reprise sur `tasks` (onsite_presence, assigned_reservation_id, taken_over_from_id)
+    + normalisation douce des libellés d'urgence (Option 1 : titulaires existants préservés).
+    Exécute ALTER TABLE uniquement lors du tout premier démarrage où une colonne manque réellement.
+    """
+    global _TASKS_PRESENCE_SCHEMA_READY
+    if _TASKS_PRESENCE_SCHEMA_READY:
+        return True
+
+    eng = target_engine or engine
+    from sqlalchemy import text
+    required = {"onsite_presence", "assigned_reservation_id", "taken_over_from_id"}
+    with eng.connect() as conn:
+        if eng.dialect.name == "sqlite":
+            check_table = conn.execute(text("SELECT name FROM sqlite_master WHERE type='table' AND name='tasks'")).fetchone()
+            if not check_table:
+                return False
+            existing_cols = {row[1] for row in conn.execute(text("PRAGMA table_info(tasks)")).fetchall()}
+            missing = required - existing_cols
+            if missing:
+                if "onsite_presence" in missing:
+                    conn.execute(text("ALTER TABLE tasks ADD COLUMN onsite_presence BOOLEAN DEFAULT 1 NOT NULL;"))
+                if "assigned_reservation_id" in missing:
+                    conn.execute(text("ALTER TABLE tasks ADD COLUMN assigned_reservation_id INTEGER REFERENCES reservations(id) ON DELETE SET NULL;"))
+                if "taken_over_from_id" in missing:
+                    conn.execute(text("ALTER TABLE tasks ADD COLUMN taken_over_from_id INTEGER REFERENCES members(id) ON DELETE SET NULL;"))
+                conn.execute(text("UPDATE tasks SET onsite_presence = 1 WHERE onsite_presence IS NULL;"))
+                conn.execute(text("UPDATE tasks SET priority = 'Immédiate' WHERE LOWER(priority) IN ('critique', 'urgent', 'urgente');"))
+                conn.execute(text("UPDATE tasks SET priority = 'Rapide' WHERE LOWER(priority) IN ('haute', 'high');"))
+                conn.execute(text("UPDATE tasks SET priority = 'Sans urgence' WHERE LOWER(priority) IN ('planifié', 'planifie', 'basse');"))
+                conn.commit()
+        else:
+            rows = conn.execute(text("""
+                SELECT column_name
+                FROM information_schema.columns
+                WHERE table_schema = current_schema()
+                  AND table_name = 'tasks'
+                  AND column_name IN ('onsite_presence', 'assigned_reservation_id', 'taken_over_from_id')
+            """)).fetchall()
+            existing_cols = {r[0] for r in rows}
+            missing = required - existing_cols
+            if missing:
+                conn.execute(text("SET LOCAL lock_timeout = '5s';"))
+                conn.execute(text("ALTER TABLE tasks ADD COLUMN IF NOT EXISTS onsite_presence BOOLEAN DEFAULT TRUE NOT NULL;"))
+                conn.execute(text("ALTER TABLE tasks ADD COLUMN IF NOT EXISTS assigned_reservation_id INTEGER REFERENCES reservations(id) ON DELETE SET NULL;"))
+                conn.execute(text("ALTER TABLE tasks ADD COLUMN IF NOT EXISTS taken_over_from_id INTEGER REFERENCES members(id) ON DELETE SET NULL;"))
+                conn.execute(text("UPDATE tasks SET onsite_presence = TRUE WHERE onsite_presence IS NULL;"))
+                conn.execute(text("UPDATE tasks SET priority = 'Immédiate' WHERE LOWER(priority) IN ('critique', 'urgent', 'urgente');"))
+                conn.execute(text("UPDATE tasks SET priority = 'Rapide' WHERE LOWER(priority) IN ('haute', 'high');"))
+                conn.execute(text("UPDATE tasks SET priority = 'Sans urgence' WHERE LOWER(priority) IN ('planifié', 'planifie', 'basse');"))
+                conn.commit()
+
+    _TASKS_PRESENCE_SCHEMA_READY = True
+    return True
+
 
 # Auto-migration au chargement du module (sauf sur Vercel pour éviter les verrous concurrents)
 if not os.getenv("VERCEL"):

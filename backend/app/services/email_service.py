@@ -609,11 +609,15 @@ def send_task_assigned_email(
         return get_circuit_breaker_response()
 
     priority_colors = {
+        "immédiate": ("#fee2e2", "#991b1b", "#dc2626"),
+        "immediate": ("#fee2e2", "#991b1b", "#dc2626"),
         "critique": ("#fee2e2", "#991b1b", "#dc2626"),
+        "rapide": ("#ffedd5", "#9a3412", "#ea580c"),
         "haute": ("#ffedd5", "#9a3412", "#ea580c"),
         "normale": ("#dbeafe", "#1e40af", "#2563eb"),
+        "sans urgence": ("#f3f4f6", "#374151", "#4b5563"),
         "basse": ("#f3f4f6", "#374151", "#4b5563"),
-        "planifié": ("#e0e7ff", "#3730a3", "#4f46e5")
+        "planifié": ("#f3f4f6", "#374151", "#4b5563"),
     }
     p_key = (priority or "normale").strip().lower()
     bg_p, text_p, border_p = priority_colors.get(p_key, ("#dbeafe", "#1e40af", "#2563eb"))
@@ -664,7 +668,7 @@ def send_task_assigned_email(
             </tr>
             {location_row}
             <tr>
-                <td style="color: #6b7280;">⚡ Priorité :</td>
+                <td style="color: #6b7280;">⏱️ Urgence :</td>
                 <td>
                     <span style="display: inline-block; background-color: {bg_p}; color: {text_p}; border: 1px solid {border_p}; padding: 2px 10px; border-radius: 9999px; font-size: 12px; font-weight: bold; text-transform: uppercase;">
                         {safe_priority}
@@ -672,7 +676,7 @@ def send_task_assigned_email(
                 </td>
             </tr>
             <tr>
-                <td style="color: #6b7280;">⏱️ Charge estimée :</td>
+                <td style="color: #6b7280;">⚖️ Difficulté :</td>
                 <td style="font-weight: 600; color: #1f2937;">{safe_charge}</td>
             </tr>
             {deadline_row}
@@ -724,11 +728,15 @@ def send_task_creation_pending_email(
     Notifies a coordinator that a new task proposal has been submitted and is pending creation/arbitration.
     """
     priority_colors = {
+        "immédiate": ("#fee2e2", "#991b1b", "#dc2626"),
+        "immediate": ("#fee2e2", "#991b1b", "#dc2626"),
         "critique": ("#fee2e2", "#991b1b", "#dc2626"),
+        "rapide": ("#ffedd5", "#9a3412", "#ea580c"),
         "haute": ("#ffedd5", "#9a3412", "#ea580c"),
         "normale": ("#dbeafe", "#1e40af", "#2563eb"),
+        "sans urgence": ("#f3f4f6", "#374151", "#4b5563"),
         "basse": ("#f3f4f6", "#374151", "#4b5563"),
-        "planifié": ("#e0e7ff", "#3730a3", "#4f46e5")
+        "planifié": ("#f3f4f6", "#374151", "#4b5563"),
     }
     p_key = (priority or "normale").strip().lower()
     bg_p, text_p, border_p = priority_colors.get(p_key, ("#dbeafe", "#1e40af", "#2563eb"))
@@ -773,7 +781,7 @@ def send_task_creation_pending_email(
             </tr>
             {location_row}
             <tr>
-                <td style="color: #6b7280;">⚡ Priorité :</td>
+                <td style="color: #6b7280;">⏱️ Urgence :</td>
                 <td>
                     <span style="display: inline-block; background-color: {bg_p}; color: {text_p}; border: 1px solid {border_p}; padding: 2px 10px; border-radius: 9999px; font-size: 12px; font-weight: bold; text-transform: uppercase;">
                         {safe_priority}
@@ -781,7 +789,7 @@ def send_task_creation_pending_email(
                 </td>
             </tr>
             <tr>
-                <td style="color: #6b7280;">⏱️ Charge estimée :</td>
+                <td style="color: #6b7280;">⚖️ Difficulté :</td>
                 <td style="font-weight: 600; color: #1f2937;">{safe_complexity}</td>
             </tr>
         </table>
@@ -868,6 +876,94 @@ def send_task_completion_pending_email(
     names = [coordinator_name] if coordinator_name else []
     return _dispatch_and_record(
         trigger_action="task_completion_pending",
+        to_email=to_email,
+        subject=subject,
+        html_body=html_body,
+        recipients_names=names,
+        actually_send=actually_send
+    )
+
+
+def send_task_taken_over_email(
+    to_email: Union[str, List[str]],
+    task_title: str,
+    taken_over_by: str,
+    previous_assignee_name: Optional[str] = None,
+    mode: str = "claimed",
+    charge_points: Optional[int] = None,
+    completion_notes: Optional[str] = None,
+    task_id: Optional[Union[int, str]] = None,
+    actually_send: bool = True
+) -> dict:
+    """
+    Template: TÂCHE REPRISE / GÉRÉE SUR PLACE PAR UN AUTRE ASSOCIÉ
+    Prévient l'associé qui gérait la tâche qu'elle a été reprise en charge ou directement gérée sur place.
+    mode: 'claimed' (reprise en cours) | 'completed' (déjà réalisée sur place) | 'finalized' (clôturée/validée)
+    """
+    if is_email_disabled():
+        return get_circuit_breaker_response()
+
+    safe_prev = escape_html_text(previous_assignee_name) if previous_assignee_name else ""
+    safe_actor = escape_html_text(taken_over_by or "Un associé")
+    safe_title = escape_html_text(task_title)
+    safe_notes = escape_html_text(completion_notes, preserve_newlines=True) if completion_notes else ""
+    greeting = f"Bonjour {safe_prev}," if safe_prev else "Bonjour,"
+    action_url = f"{APP_BASE_URL}/taches?task_id={task_id}" if task_id else f"{APP_BASE_URL}/sejour"
+    pts_note = f" ({int(charge_points)} pts transférés)" if charge_points else ""
+
+    if mode == "completed":
+        lead_html = f"Bonne nouvelle : <strong>{safe_actor}</strong> s'est directement occupé sur place de la tâche qui vous était confiée et l'a déclarée terminée !"
+        box_bg, box_border, box_accent, title_color = "#f0fdf4", "#bbf7d0", "#16a34a", "#166534"
+        badge_txt = "✅ Gérée sur place (en attente de validation)"
+        subject = f"[SCI Hellenvilliers] ✅ Votre tâche a été gérée sur place : {task_title}"
+        email_title = "Tâche gérée sur place à votre place"
+        closing_txt = f"Vous n'avez plus rien à faire sur ce point. Les points de la tâche{pts_note} seront crédités à {safe_actor} dès la validation finale."
+    elif mode == "finalized":
+        lead_html = f"La tâche reprise sur place par <strong>{safe_actor}</strong> vient d'être validée et clôturée par la coordination."
+        box_bg, box_border, box_accent, title_color = "#f0fdf4", "#bbf7d0", "#059669", "#065f46"
+        badge_txt = "✅ Réalisée et clôturée"
+        subject = f"[SCI Hellenvilliers] ✅ Tâche reprise et clôturée : {task_title}"
+        email_title = "Tâche gérée et clôturée"
+        closing_txt = "Le sujet est désormais officiellement réglé."
+    else:
+        lead_html = f"Bonne nouvelle : <strong>{safe_actor}</strong> a repris votre tâche sur place pour s'en occuper pendant son séjour au domaine !"
+        box_bg, box_border, box_accent, title_color = "#ecfdf5", "#a7f3d0", "#047857", "#065f46"
+        badge_txt = "🤝 Reprise sur place"
+        subject = f"[SCI Hellenvilliers] 🤝 Tâche reprise sur place par {taken_over_by} : {task_title}"
+        email_title = "Votre tâche a été reprise sur place"
+        closing_txt = f"Vous êtes déchargé{accord_fr(previous_assignee_name, '', 'e')} de cette mission. Les points de la tâche{pts_note} reviendront à {safe_actor} lorsqu'elle sera terminée."
+
+    content_html = f"""
+    <p>{greeting}</p>
+    <p>{lead_html}</p>
+
+    <div style="background-color: {box_bg}; border: 1px solid {box_border}; border-left: 4px solid {box_accent}; border-radius: 6px; padding: 18px; margin: 20px 0;">
+        <div style="font-size: 17px; font-weight: bold; color: {title_color}; margin-bottom: 10px;">
+            {safe_title}
+        </div>
+        <div style="font-size: 13.5px; color: #374151; margin-bottom: 6px;">
+            <strong>Statut :</strong> {badge_txt}
+        </div>
+        <div style="font-size: 13.5px; color: #374151;">
+            <strong>Prise en charge par :</strong> {safe_actor}
+        </div>
+        {f'<div style="margin-top: 12px; padding-top: 10px; border-top: 1px dashed {box_border}; color: #374151; font-size: 13.5px;"><strong>Note laissée sur place :</strong><br><div style="margin-top: 6px;">{safe_notes}</div></div>' if safe_notes else ''}
+    </div>
+
+    <p style="color: #4b5563; font-size: 14px;">{closing_txt}</p>
+    """
+
+    html_body = render_email_layout(
+        title=email_title,
+        preheader=f"{taken_over_by} s'est occupé de « {task_title} » sur place.",
+        content_html=content_html,
+        action_url=action_url,
+        action_label="Voir la tâche sur le portail"
+    )
+
+    names = [previous_assignee_name] if previous_assignee_name else []
+    return _dispatch_and_record(
+        trigger_action=f"task_taken_over_{mode}",
         to_email=to_email,
         subject=subject,
         html_body=html_body,

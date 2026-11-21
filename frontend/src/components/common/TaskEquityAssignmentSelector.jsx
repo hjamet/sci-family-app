@@ -78,6 +78,10 @@ export default function TaskEquityAssignmentSelector({
   onChangeMembers,
   autoAssign = false,
   onChangeAutoAssign,
+  onsitePresence = false,
+  presenceDecision = null,
+  isOnsitePoolSelected = false,
+  onSelectOnsitePool = null,
   associates = DEFAULT_ASSOCIATES,
   allTasks = [],
   currentTaskId = null,
@@ -85,7 +89,7 @@ export default function TaskEquityAssignmentSelector({
   onSaveDirect = null,
   isSaving = false,
   readOnly = false,
-  title = 'Attribution de la mission — Membres associés (triés par équité de charge) :',
+  title = 'Attribution de la mission — Associés (présence, équité & expertise) :',
   className = '',
 }) {
   const [directSaveSuccess, setDirectSaveSuccess] = useState(false);
@@ -189,6 +193,7 @@ export default function TaskEquityAssignmentSelector({
         reason = `${activeCount} tâches en cours (${activePoints} pts) : ${snippet}${activeTitles.length > 2 ? '…' : ''}`;
       }
 
+      const recObj = recInfo?.rec || null;
       return {
         name: assocName,
         activeCount,
@@ -197,6 +202,10 @@ export default function TaskEquityAssignmentSelector({
         historicalPoints365d,
         activeTitles,
         reason,
+        nextStayLabel: recObj?.next_stay_label || null,
+        isOnSiteNow: Boolean(recObj?.is_on_site_now),
+        presenceEligible: Boolean(recObj?.presence_eligible),
+        expertiseCount: Number(recObj?.expertise_count || 0),
         recOrder: recInfo ? recInfo.idx : 99,
       };
     });
@@ -239,24 +248,45 @@ export default function TaskEquityAssignmentSelector({
     if (typeof onChangeMembers === 'function') {
       onChangeMembers(updated);
     }
+    if (typeof onSelectOnsitePool === 'function' && updated.length > 0) {
+      onSelectOnsitePool(false);
+    }
     // Choisir manuellement un associé désactive le mode auto-assign strict
     if (typeof onChangeAutoAssign === 'function') {
       onChangeAutoAssign(false);
     }
   };
 
-  // Clic sur le bouton d'auto-attribution équitable
+  // Clic sur le bouton d'auto-attribution équitable / présence
   const handleToggleAutoAssign = () => {
     if (readOnly) return;
     const nextVal = !autoAssign;
     if (typeof onChangeAutoAssign === 'function') {
       onChangeAutoAssign(nextVal);
     }
+    if (nextVal && onsitePresence && presenceDecision?.keep_in_pool) {
+      if (typeof onChangeMembers === 'function') onChangeMembers([]);
+      if (typeof onSelectOnsitePool === 'function') onSelectOnsitePool(true);
+      return;
+    }
     if (nextVal && sortedAssociatesByEquity.length > 0) {
       const top1 = sortedAssociatesByEquity[0].name;
       if (typeof onChangeMembers === 'function') {
         onChangeMembers([top1]);
       }
+      if (typeof onSelectOnsitePool === 'function') onSelectOnsitePool(false);
+    }
+  };
+
+  const handleToggleOnsitePool = () => {
+    if (readOnly) return;
+    const nextPool = !isOnsitePoolSelected;
+    if (typeof onSelectOnsitePool === 'function') {
+      onSelectOnsitePool(nextPool);
+    }
+    if (nextPool) {
+      if (typeof onChangeMembers === 'function') onChangeMembers([]);
+      if (typeof onChangeAutoAssign === 'function') onChangeAutoAssign(true);
     }
   };
 
@@ -310,14 +340,56 @@ export default function TaskEquityAssignmentSelector({
       </div>
 
       <p className="text-[11px] text-on-surface-variant leading-relaxed">
-        Cochez un ou plusieurs associés en charge de cette mission. Les associés sont classés par priorité d'équité selon l'occupation et les corvées accomplies.
+        {onsitePresence
+          ? "Tâche sur place : classement combinant les prochains séjours confirmés, l'équité (points de difficulté) et l'expertise sur ce domaine."
+          : "Cochez un ou plusieurs associés en charge de cette mission. Classement par équité de points et expertise sur le domaine."}
       </p>
 
-      {/* Grille des associés triés par équité */}
+      {/* Bandeau décision du système d'avance (présence sur place) + bouton Vivier sur place */}
+      {onsitePresence && (
+        <div className={`p-3 rounded-xl border flex flex-col sm:flex-row sm:items-center justify-between gap-2.5 ${
+          isOnsitePoolSelected || presenceDecision?.keep_in_pool
+            ? 'bg-teal-50/90 dark:bg-teal-950/40 border-teal-300 dark:border-teal-700'
+            : 'bg-sky-50/70 dark:bg-sky-950/30 border-sky-200 dark:border-sky-800'
+        }`}>
+          <div className="flex items-start gap-2 text-[11px] text-slate-800 dark:text-slate-200 leading-snug">
+            <span className="material-symbols-outlined text-[18px] text-teal-700 dark:text-teal-400 shrink-0 mt-0.5">
+              {presenceDecision?.keep_in_pool ? 'event_upcoming' : 'location_on'}
+            </span>
+            <div>
+              <strong className="block text-forest-deep dark:text-emerald-200">
+                {presenceDecision?.keep_in_pool
+                  ? 'Système d’avance : mise au vivier sur place recommandée'
+                  : 'Système d’avance : attribution sur place possible dès maintenant'}
+              </strong>
+              <span>{presenceDecision?.reason || "Peut être attribuée à un visiteur ou laissée au vivier sur place (/sejour)."}</span>
+            </div>
+          </div>
+
+          {typeof onSelectOnsitePool === 'function' && !readOnly && (
+            <button
+              type="button"
+              onClick={handleToggleOnsitePool}
+              className={`shrink-0 inline-flex items-center gap-1.5 px-3 py-1.5 rounded-xl text-[11px] font-bold border transition-all cursor-pointer ${
+                isOnsitePoolSelected
+                  ? 'bg-teal-700 text-white border-teal-700 shadow-xs'
+                  : 'bg-white text-teal-900 border-teal-300 hover:bg-teal-100/70'
+              }`}
+            >
+              <span className="material-symbols-outlined text-[15px]">
+                {isOnsitePoolSelected ? 'check_circle' : 'event_upcoming'}
+              </span>
+              <span>{isOnsitePoolSelected ? 'Vivier sur place activé' : 'Laisser au vivier sur place'}</span>
+            </button>
+          )}
+        </div>
+      )}
+
+      {/* Grille des associés triés par équité / présence */}
       <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-2">
         {sortedAssociatesByEquity.map((associate, idx) => {
           const isSelected = Array.isArray(selectedMembers) && selectedMembers.some((m) => canonName(m) === canonName(associate.name));
-          const isTop1 = idx === 0;
+          const isTop1 = idx === 0 && (!onsitePresence || associate.presenceEligible || !presenceDecision?.keep_in_pool);
 
           return (
             <button
@@ -347,7 +419,7 @@ export default function TaskEquityAssignmentSelector({
                   )}
                 </div>
 
-                <div className="min-w-0 flex flex-col flex-1">
+                <div className="min-w-0 flex flex-col flex-1 gap-0.5">
                   <div className="flex items-center gap-1.5">
                     <span
                       className={`w-4 h-4 rounded-full flex items-center justify-center text-[10px] shrink-0 font-bold ${
@@ -362,6 +434,31 @@ export default function TaskEquityAssignmentSelector({
                       {associate.name}
                     </span>
                   </div>
+                  {onsitePresence && associate.nextStayLabel && (
+                    <div className="flex flex-wrap items-center gap-1 pl-5">
+                      <span className={`inline-flex items-center gap-0.5 px-1.5 py-0.2 rounded text-[9.5px] font-bold ${
+                        associate.isOnSiteNow
+                          ? 'bg-emerald-100 text-emerald-900'
+                          : associate.presenceEligible
+                          ? 'bg-teal-100 text-teal-900'
+                          : 'bg-slate-100 text-slate-500'
+                      }`}>
+                        {associate.nextStayLabel}
+                      </span>
+                      {associate.expertiseCount > 0 && (
+                        <span className="inline-flex items-center px-1.5 py-0.2 rounded text-[9.5px] font-bold bg-indigo-100 text-indigo-800">
+                          ★ {associate.expertiseCount} exp.
+                        </span>
+                      )}
+                    </div>
+                  )}
+                  {!onsitePresence && associate.expertiseCount > 0 && (
+                    <div className="pl-5">
+                      <span className="inline-flex items-center px-1.5 py-0.2 rounded text-[9.5px] font-bold bg-indigo-100 text-indigo-800">
+                        ★ {associate.expertiseCount} mission{associate.expertiseCount > 1 ? 's' : ''} sur ce sujet
+                      </span>
+                    </div>
+                  )}
                   {associate.reason && (
                     <span className="text-[10px] text-on-surface-variant truncate pl-5" title={associate.reason}>
                       {associate.reason}
@@ -381,10 +478,15 @@ export default function TaskEquityAssignmentSelector({
       </div>
 
       {/* Message de statut d'attribution */}
-      {selectedCount === 0 ? (
+      {isOnsitePoolSelected || (onsitePresence && autoAssign && selectedCount === 0) ? (
+        <p className="text-[11px] text-teal-900 dark:text-teal-300 font-semibold flex items-center gap-1.5">
+          <span className="material-symbols-outlined text-[15px]">event_upcoming</span>
+          <span>La tâche sera placée au <strong>vivier sur place (/sejour)</strong> et attribuée automatiquement dès qu'une venue correspondra à son urgence.</span>
+        </p>
+      ) : selectedCount === 0 ? (
         <p className="text-[11px] text-rose-600 dark:text-rose-400 font-medium flex items-center gap-1">
           <span className="material-symbols-outlined text-[14px]">warning</span>
-          <span>Veuillez sélectionner au moins un membre associé pour cette tâche.</span>
+          <span>Veuillez sélectionner au moins un membre associé{onsitePresence ? ' ou activer le vivier sur place' : ''}.</span>
         </p>
       ) : (
         <p className="text-[11px] text-emerald-900/90 dark:text-emerald-300/90">
@@ -411,7 +513,7 @@ export default function TaskEquityAssignmentSelector({
           </div>
           <button
             type="button"
-            disabled={isSaving || selectedCount === 0}
+            disabled={isSaving || (selectedCount === 0 && !isOnsitePoolSelected && !(onsitePresence && autoAssign))}
             onClick={handleDirectSave}
             className="inline-flex items-center gap-1.5 px-4 py-2 rounded-xl bg-emerald-600 hover:bg-emerald-700 disabled:opacity-40 disabled:cursor-not-allowed text-white font-bold text-xs shadow-xs transition-all cursor-pointer active:scale-95"
           >

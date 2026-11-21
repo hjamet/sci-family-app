@@ -426,20 +426,26 @@ TOASTER_FUNCTION_DECLARATIONS: List[Dict[str, Any]] = [
         "name": "propose_task_action",
         "description": (
             "Propose de créer une nouvelle tâche ('create', toujours en statut PROPOSED, avec UNIQUEMENT titre + description + document joint éventuel — "
-            "JAMAIS de charge, priorité, devis, échéance, récurrence, responsable ni sous-tâches d'exemple car tout cela est géré par le coordinateur lors de la validation !), "
-            "de modifier une tâche existante ('update' : titre, description — et si coordinateur : emplacement, priorité, charge, budget ou échéance, toujours après validation utilisateur sur la carte), "
+            "JAMAIS de difficulté, urgence, devis, échéance, récurrence, responsable ni sous-tâches d'exemple car tout cela est géré par le coordinateur lors de la validation !), "
+            "de modifier une tâche existante ('update' : titre, description — et si coordinateur : emplacement, urgence, difficulté, présence sur place, budget ou échéance, toujours après validation utilisateur sur la carte), "
+            "de reprendre ou déclarer gérée sur place une tâche sur place ('claim_onsite', avec claim_mode='claim' ou 'complete' ; prévient automatiquement l'ancien titulaire), "
             "de soumettre une tâche existante pour validation ('complete'), ou de modifier l'attribution d'une tâche existante ('assign', coordinateur uniquement)."
         ),
         "parameters": {
             "type": "OBJECT",
             "properties": {
-                "operation": {"type": "STRING", "description": "'create', 'update', 'complete' ou 'assign'."},
-                "task_id": {"type": "INTEGER", "description": "ID exact de la tâche existante (pour 'update', 'complete' ou 'assign')."},
+                "operation": {"type": "STRING", "description": "'create', 'update', 'claim_onsite', 'complete' ou 'assign'."},
+                "task_id": {"type": "INTEGER", "description": "ID exact de la tâche existante (pour 'update', 'claim_onsite', 'complete' ou 'assign')."},
                 "title": {"type": "STRING", "description": "Titre clair et actionnable de la tâche."},
                 "description": {"type": "STRING", "description": "Description concrète, utile et chaleureuse pour la famille."},
                 "subject": {"type": "STRING", "description": "UNIQUEMENT pour operation='update' par un coordinateur : emplacement."},
-                "priority": {"type": "STRING", "description": "UNIQUEMENT pour operation='update' par un coordinateur : priorité."},
-                "complexity": {"type": "STRING", "description": "UNIQUEMENT pour operation='update' par un coordinateur : charge."},
+                "urgency": {"type": "STRING", "description": "UNIQUEMENT pour operation='update' par un coordinateur : urgence ('Immédiate', 'Rapide', 'Normale', 'Sans urgence')."},
+                "priority": {"type": "STRING", "description": "Alias d'urgence (préférer 'urgency')."},
+                "difficulty": {"type": "STRING", "description": "UNIQUEMENT pour operation='update' par un coordinateur : difficulté/pénibilité ('Très facile', 'Facile', 'Moyenne', 'Difficile', 'Très difficile')."},
+                "complexity": {"type": "STRING", "description": "Alias de difficulté (préférer 'difficulty')."},
+                "onsite_presence": {"type": "BOOLEAN", "description": "UNIQUEMENT pour operation='update' par un coordinateur : True si présence physique sur place requise, False si à distance."},
+                "claim_mode": {"type": "STRING", "description": "UNIQUEMENT pour operation='claim_onsite' : 'claim' (reprendre pour la faire sur place) ou 'complete' (déjà gérée sur place)."},
+                "completion_notes": {"type": "STRING", "description": "Note optionnelle de réalisation pour 'complete' ou 'claim_onsite'."},
                 "budget": {"type": "NUMBER", "description": "UNIQUEMENT pour operation='update' par un coordinateur : budget estimé (€)."},
                 "deadline": {"type": "STRING", "description": "UNIQUEMENT pour operation='update' par un coordinateur : échéance YYYY-MM-DD."},
                 "assigned_to": {"type": "STRING", "description": "UNIQUEMENT pour operation='assign' : nom de l'associé responsable."},
@@ -581,9 +587,11 @@ COHÉRENCE STRICTE DES CYCLES DE VIE & VALIDATION EXPLICITE DES ACTIONS RÉELLES
   - Document nécessitant la création d'une **nouvelle tâche** (ex. photo d'un souci, devis à suivre) → `propose_task_action(operation='create', attach_uploaded_file=True, document_organisme=..., document_title=...)`.
   - Document nécessitant la création d'un **nouveau scrutin / vote** (ex. devis de travaux à soumettre aux associés) → `propose_poll_or_vote_action(operation='create', attach_uploaded_file=True, document_organisme=..., document_title=...)`.
 - **Séjours** : renseigne toujours date ET heure (`arrival_time`/`departure_time`), participants internes (`selected_members`) et invités extérieurs (`external_guests`), et différencie Eau Chaude Sanitaire (`activate_dhw`, 52 °C), Chauffage Presbytère (`activate_heating`, 20 °C, qui inclut l'ECS) et Piscine (`activate_pool`, 27 °C).
-- **Tâches (création ultra-simple ET modification validée)** :
-  - Lors de la création (`propose_task_action`, `operation='create'`), toute nouvelle tâche est créée en statut `PROPOSED` et le créateur fournit UNIQUEMENT un **titre** et une **description** (plus un éventuel document joint). N'invente JAMAIS de sous-tâches / checklist d'exemple, et ne définis jamais la charge, la priorité, le devis, l'échéance ou le responsable : toutes ces valeurs sont estimées et gérées exclusivement par les coordinateurs lors de la validation !
-  - Lors de la **modification d'une tâche existante** (`propose_task_action`, `operation='update'`, avec `task_id`), tu PEUX parfaitement proposer de modifier son titre, sa description (et, si l'utilisateur est coordinateur, son emplacement, sa priorité, sa charge, son budget ou son échéance), toujours via la carte modifiable soumise à confirmation de l'utilisateur !
+- **Tâches (Urgence vs Difficulté, présence sur place, création ultra-simple ET modification/reprise validées)** :
+  - Chaque tâche distingue **deux axes indépendants** : **Urgence** (*à quel point il faut agir vite* : `Immédiate`, `Rapide`, `Normale`, `Sans urgence`, qui pilote uniquement l'attribution avant séjour) et **Difficulté** (*pénibilité* : `Très facile` 1 pt, `Facile` 2 pts, `Moyenne` 3 pts, `Difficile` 5 pts, `Très difficile` 8 pts, qui pilote uniquement les points d'équité).
+  - Les tâches nécessitant une **présence sur place** (`onsite_presence=true`) sont visibles sur `/sejour` et peuvent être reprises ou déclarées gérées sur place par tout associé (`propose_task_action`, `operation='claim_onsite'`, `claim_mode='claim'|'complete'`), avec transfert des points normaux et notification automatique à l'ancien titulaire.
+  - Lors de la création (`propose_task_action`, `operation='create'`), toute nouvelle tâche est créée en statut `PROPOSED` et le créateur fournit UNIQUEMENT un **titre** et une **description** (plus un éventuel document joint). N'invente JAMAIS de sous-tâches / checklist d'exemple, et ne définis jamais la difficulté, l'urgence, le devis, l'échéance ou le responsable : toutes ces valeurs sont estimées et gérées exclusivement par les coordinateurs lors de la validation !
+  - Lors de la **modification d'une tâche existante** (`propose_task_action`, `operation='update'`, avec `task_id`), tu PEUX parfaitement proposer de modifier son titre, sa description (et, si l'utilisateur est coordinateur, son emplacement, son urgence, sa difficulté, sa présence sur place, son budget ou son échéance), toujours via la carte modifiable soumise à confirmation de l'utilisateur !
 - **Scrutins / Votes (cycle de vie officiel)** : toute nouvelle proposition de scrutin est créée en statut `PROPOSED` (en attente de validation/ouverture par un coordinateur) avec un lieu/catégorie canonique, une description claire, une priorité, un budget estimé éventuel, le mode choix unique/multiple et au moins 2 options.
 - Pour toute action de création, modification, archivage ou rattachement de document, appelle TOUJOURS l'outil `propose_*` correspondant afin de présenter une carte récapitulative modifiable que l'associé devra confirmer en un clic. **INTERDICTION ABSOLUE** de répondre « dans la carte ci-dessous » ou « j'ai pré-rempli » sans avoir effectivement invoqué l'outil `propose_*` dans ce tour !
 - Si la passerelle ViCare du Presbytère est hors ligne au moment où l'utilisateur demande d'allumer le chauffage, prépare tout de même la carte `propose_heating_or_pool_action` si souhaité mais préviens clairement dans ta réponse que la passerelle Vitoconnect est actuellement hors ligne."""
@@ -631,8 +639,9 @@ def _build_system_prompt(state: Dict[str, Any], attachment_name: Optional[str] =
     ) or "  (Aucun séjour enregistré)"
 
     tasks_txt = "\n".join(
-        f"  - Tâche #{t['id']} [{t['status']}] ({t['subject']}, {t.get('charge_points', 3)} pts) : « {t['title']} » "
-        f"(assignée à: {_sanitize_family_titles(', '.join(str(x) for x in t.get('assigned_members', [])) or 'Non assignée')})"
+        f"  - Tâche #{t['id']} [{t['status']}] ({t['subject']}, {'Sur place' if t.get('onsite_presence', True) else 'À distance'}, "
+        f"Urgence: {t.get('urgency') or t.get('priority', 'Normale')}, Difficulté: {t.get('difficulty') or t.get('complexity', 'Moyenne')} {t.get('charge_points', 3)} pts) : « {t['title']} » "
+        f"(assignée à: {_sanitize_family_titles(', '.join(str(x) for x in t.get('assigned_members', [])) or ('Vivier sur place' if t.get('is_in_onsite_pool') else 'Non assignée'))})"
         for t in tasks[:20]
     ) or "  (Aucune tâche)"
 
@@ -1097,8 +1106,15 @@ def _build_action_card(
                 "title": final_title,
                 "description": final_desc,
                 "subject": str(args.get("subject") or (existing_t.get("subject") if existing_t else "Presbytère")).strip(),
-                "priority": str(args.get("priority") or (existing_t.get("priority") if existing_t else "Normale")).strip(),
-                "complexity": str(args.get("complexity") or (existing_t.get("complexity") if existing_t else "Modérée")).strip(),
+                "urgency": str(args.get("urgency") or args.get("priority") or (existing_t.get("urgency") or existing_t.get("priority") if existing_t else "Normale")).strip(),
+                "priority": str(args.get("urgency") or args.get("priority") or (existing_t.get("urgency") or existing_t.get("priority") if existing_t else "Normale")).strip(),
+                "difficulty": str(args.get("difficulty") or args.get("complexity") or (existing_t.get("difficulty") or existing_t.get("complexity") if existing_t else "Moyenne")).strip(),
+                "complexity": str(args.get("difficulty") or args.get("complexity") or (existing_t.get("difficulty") or existing_t.get("complexity") if existing_t else "Moyenne")).strip(),
+                "onsite_presence": (
+                    bool(args.get("onsite_presence"))
+                    if args.get("onsite_presence") is not None
+                    else bool(existing_t.get("onsite_presence", True) if existing_t else True)
+                ),
                 "budget": args.get("budget") if args.get("budget") is not None else (existing_t.get("budget", 0) if existing_t else 0),
                 "deadline": str(args.get("deadline") if args.get("deadline") is not None else (existing_t.get("deadline") or "")).strip()[:10],
             }
@@ -1108,6 +1124,49 @@ def _build_action_card(
                 "deduced_fields": [],
                 "missing_fields": missing,
                 "ready_to_execute": bool(tid_int) and bool(final_title),
+                "payload": payload,
+            }
+
+        if operation == "claim_onsite":
+            tid_int = int(task_id) if task_id is not None and str(task_id).isdigit() else None
+            existing_t = next((t for t in (state.get("tasks") or []) if tid_int and int(t.get("id") or 0) == tid_int), None)
+            if not existing_t and title:
+                low_t = title.lower()
+                existing_t = next((t for t in (state.get("tasks") or []) if low_t in str(t.get("title") or "").lower()), None)
+                if existing_t:
+                    tid_int = int(existing_t["id"])
+            final_title = title or (existing_t.get("title", "") if existing_t else "")
+            claim_mode = str(args.get("claim_mode") or "claim").strip().lower()
+            if claim_mode not in ("claim", "complete"):
+                claim_mode = "claim"
+            pts_val = existing_t.get("charge_points", 3) if existing_t else 3
+            prev_list = existing_t.get("assigned_members") or [] if existing_t else []
+            deduced.append({"key": "title", "label": "Tâche sur place", "value": final_title})
+            deduced.append({
+                "key": "claim_mode",
+                "label": "Action",
+                "value": f"Déclarer gérée sur place (+{pts_val} pts)" if claim_mode == "complete" else f"Reprendre sur place (+{pts_val} pts)",
+                "raw_value": claim_mode,
+            })
+            if prev_list:
+                deduced.append({"key": "previous_assignee", "label": "Ancien titulaire (notifié)", "value": ", ".join(prev_list)})
+            payload = {
+                "operation": "claim_onsite",
+                "task_id": tid_int,
+                "title": final_title,
+                "claim_mode": claim_mode,
+                "completion_notes": str(args.get("completion_notes") or "").strip(),
+            }
+            return {
+                "action_type": "task",
+                "title": (
+                    f"Déclarer gérée sur place : « {final_title} »"
+                    if claim_mode == "complete"
+                    else f"Reprendre sur place : « {final_title} »"
+                ),
+                "deduced_fields": deduced,
+                "missing_fields": missing,
+                "ready_to_execute": bool(tid_int),
                 "payload": payload,
             }
 

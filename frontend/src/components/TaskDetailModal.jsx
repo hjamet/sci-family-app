@@ -20,9 +20,22 @@ import {
   invalidateCache,
   invalidateApiCache,
   fetchTaskRecommendations,
+  claimTaskOnsite,
   validateMemberExpense,
   rejectMemberExpense,
 } from '../api';
+import {
+  URGENCY_OPTIONS,
+  DIFFICULTY_OPTIONS,
+  DIFFICULTY_LEVELS,
+  normalizeUrgency,
+  normalizeDifficulty,
+  getUrgencyMeta,
+  getDifficultyMeta,
+  getDifficultyPoints,
+  isTaskOnsite,
+  isTaskInOnsitePool,
+} from '../utils/taskTaxonomy';
 import {
   isTaskPendingValidation,
   isTaskProposed,
@@ -55,7 +68,7 @@ const SUBJECTS = [
   'SCI & Administratif',
 ];
 
-export const CHARGES = ['Négligeable', 'Faible', 'Modérée', 'Élevée', 'Très élevée'];
+export const CHARGES = DIFFICULTY_LEVELS;
 export const COMPLEXITIES = CHARGES;
 
 const ALL_MEMBERS = [
@@ -280,8 +293,12 @@ export default function TaskDetailModal({
   const [viewerDoc, setViewerDoc] = useState(null);
   const [isViewerOpen, setIsViewerOpen] = useState(false);
 
-  // Recommandations d'équité dynamiques (Annotation 4 : plus de hardcoding Joséphine Jamet)
+  // Recommandations d'équité, présence & expertise dynamiques
   const [recommendations, setRecommendations] = useState([]);
+  const [presenceDecision, setPresenceDecision] = useState(null);
+  const [leaveInOnsitePool, setLeaveInOnsitePool] = useState(false);
+  const [viewOnsitePool, setViewOnsitePool] = useState(false);
+  const [claimingOnsite, setClaimingOnsite] = useState(false);
   const [loadingRecs, setLoadingRecs] = useState(false);
   const [selectedValidationMembers, setSelectedValidationMembers] = useState([]);
 
@@ -360,8 +377,9 @@ export default function TaskDetailModal({
     const origTitle = (task?.title || '').trim();
     const origDesc = (task?.description || '').trim();
     const origSub = (task?.subject || (isVoteInitiative ? 'Presbytère' : 'Presbytère')).trim();
-    const origComp = (task?.complexity || (isVoteInitiative ? 'Élevée' : 'Modérée')).trim();
-    const origPriority = (task?.priority || 'Normale').trim();
+    const origComp = normalizeDifficulty(task?.difficulty || task?.complexity || (isVoteInitiative ? 'Difficile' : 'Moyenne'));
+    const origPriority = normalizeUrgency(task?.urgency || task?.priority || 'Normale');
+    const origOnsite = isTaskOnsite(task);
     const origDeadline = task?.deadline ? task.deadline.slice(0, 10) : '';
     const origStatus = (task?.status || 'A_FAIRE').trim();
     const origMembers = (Array.isArray(task?.assigned_members)
@@ -378,8 +396,9 @@ export default function TaskDetailModal({
     if (editTitle.trim() !== origTitle) return true;
     if (editDescription.trim() !== origDesc) return true;
     if (editSubject.trim() !== origSub) return true;
-    if (!isVoteInitiative && editComplexity.trim() !== origComp) return true;
-    if (!isVoteInitiative && editPriority.trim() !== origPriority) return true;
+    if (!isVoteInitiative && normalizeDifficulty(editComplexity) !== origComp) return true;
+    if (!isVoteInitiative && normalizeUrgency(editPriority) !== origPriority) return true;
+    if (!isVoteInitiative && Boolean(editOnsitePresence) !== Boolean(origOnsite)) return true;
     if (!isVoteInitiative && editDeadline !== origDeadline) return true;
     if (!isNewTask && isCoordinator && editStatus.trim() !== origStatus) return true;
     if (!isVoteInitiative && currentMembers !== origMembers) return true;
@@ -454,8 +473,8 @@ export default function TaskDetailModal({
     setEditTitle(t.title || '');
     setEditDescription(t.description || '');
     setEditSubject(t.subject || 'Presbytère');
-    setEditComplexity(t.complexity || (isVoteInitiative ? 'Élevée' : 'Modérée'));
-    setEditPriority(t.priority || 'Normale');
+    setEditComplexity(normalizeDifficulty(t.difficulty || t.complexity || (isVoteInitiative ? 'Difficile' : 'Moyenne')));
+    setEditPriority(normalizeUrgency(t.urgency || t.priority || 'Normale'));
     setEditDeadline(t.deadline ? t.deadline.slice(0, 10) : '');
     setEditStatus(t.status || 'A_FAIRE');
     const normMembers = (arr) => arr.map((m) => resolveMemberDisplayName(m) || m).filter(Boolean);
@@ -466,6 +485,8 @@ export default function TaskDetailModal({
     setEditMembers(isVoteInitiative ? [currentUserName || 'Henri Jamet'] : canonAssigned);
     setViewAssignedMembers(canonAssigned);
     setViewAutoAssign(Boolean(t.auto_assign_by_workload));
+    setViewOnsitePool(isTaskInOnsitePool(t));
+    setLeaveInOnsitePool(isTaskInOnsitePool(t));
     setEditChecklist(isNew ? [] : parseChecklistItems(t.checklist));
     setEditDocuments(parseTaskDocuments(t.documents || t.completion_docs || t.document_urls));
     setEditExternalLinks(Array.isArray(t.external_links) ? t.external_links : []);
@@ -845,10 +866,11 @@ export default function TaskDetailModal({
     if (!task?.id) return;
     setIsSavingDirectAssignment(true);
     try {
+      const targetMembers = viewOnsitePool ? [] : (newMembers || []);
       const payload = {
-        assigned_members: newMembers,
-        assignee: newMembers && newMembers.length > 0 ? newMembers[0] : '',
-        auto_assign_by_workload: Boolean(isAuto),
+        assigned_members: targetMembers,
+        assignee: targetMembers.length > 0 ? targetMembers[0] : '',
+        auto_assign_by_workload: Boolean(isAuto || viewOnsitePool),
       };
       const updated = await updateTask(task.id, payload);
       const refreshed = updated && updated.id ? updated : { ...task, ...payload };
@@ -867,11 +889,51 @@ export default function TaskDetailModal({
     }
   };
 
+  const handleClaimOnsiteModal = async (claimMode = 'claim') => {
+    if (!task?.id || claimingOnsite) return;
+    const pts = getDifficultyPoints(task.difficulty || task.complexity, task.charge_points);
+    let completionNotes = '';
+    if (claimMode === 'complete') {
+      const note = window.prompt(
+        `Confirmez-vous avoir déjà géré « ${task.title} » sur place (+${pts} pts) ?\nL'ancien titulaire éventuel sera automatiquement notifié.\n\nNote optionnelle de réalisation :`,
+        ''
+      );
+      if (note === null) return;
+      completionNotes = note.trim();
+    } else {
+      const ok = window.confirm(
+        `Reprendre la tâche sur place « ${task.title} » (+${pts} pts) ?\nL'ancien titulaire éventuel recevra automatiquement une notification.`
+      );
+      if (!ok) return;
+    }
+    setClaimingOnsite(true);
+    try {
+      const updated = await claimTaskOnsite(task.id, {
+        mode: claimMode,
+        completion_notes: completionNotes || undefined,
+      });
+      if (updated && updated.id) {
+        setTask(updated);
+        syncEditFields(updated);
+        if (Array.isArray(updated.comments)) setComments(updated.comments);
+        if (onTaskUpdated) onTaskUpdated(updated);
+      }
+    } catch (err) {
+      console.error('Erreur reprise sur place:', err);
+      alert(err.message || 'Erreur lors de la reprise sur place.');
+    } finally {
+      setClaimingOnsite(false);
+    }
+  };
+
   useEffect(() => {
     if (!isOpen) return;
     let isMounted = true;
-    const currentDomain = (mode === 'edit' ? editSubject : (task?.subject || task?.category)) || 'Rosings';
-    const currentComplexity = (mode === 'edit' ? editComplexity : task?.complexity) || 'Modérée';
+    const currentDomain = (mode === 'edit' ? editSubject : (task?.subject || task?.category)) || 'Presbytère';
+    const currentComplexity = normalizeDifficulty((mode === 'edit' ? editComplexity : (task?.difficulty || task?.complexity)) || 'Moyenne');
+    const currentUrgency = normalizeUrgency((mode === 'edit' ? editPriority : (task?.urgency || task?.priority)) || 'Normale');
+    const currentDeadline = (mode === 'edit' ? editDeadline : task?.deadline) || '';
+    const currentOnsite = mode === 'edit' ? Boolean(editOnsitePresence) : isTaskOnsite(task);
 
     async function loadRecommendations() {
       try {
@@ -879,18 +941,32 @@ export default function TaskDetailModal({
         const res = await fetchTaskRecommendations({
           subject: currentDomain,
           category: currentDomain,
-          complexity: currentComplexity,
+          difficulty: currentComplexity,
+          urgency: currentUrgency,
+          deadline: currentDeadline || undefined,
+          onsite_presence: currentOnsite,
           taskId: task?.id,
           limit: 7
         });
+        if (isMounted && res) {
+          setPresenceDecision(res.presence_decision || null);
+        }
         if (isMounted && res && Array.isArray(res.recommendations) && res.recommendations.length > 0) {
           setRecommendations(res.recommendations);
+          const currentTaskMembers = Array.isArray(task?.assigned_members) && task.assigned_members.length > 0
+            ? task.assigned_members
+            : (task?.assignee ? [task.assignee] : []);
+          const shouldSuggestPool = Boolean(currentOnsite && res.presence_decision?.keep_in_pool);
+
+          if (shouldSuggestPool && currentTaskMembers.length === 0) {
+            setLeaveInOnsitePool(true);
+            setSelectedValidationMembers([]);
+            return;
+          }
+
           const top1Name = res.recommendations[0]?.name || res.recommendations[0]?.member_name;
           if (top1Name) {
             setSelectedValidationMembers((prev) => {
-              const currentTaskMembers = Array.isArray(task?.assigned_members) && task.assigned_members.length > 0
-                ? task.assigned_members
-                : (task?.assignee ? [task.assignee] : []);
               if (currentTaskMembers.length === 0 && (!prev || prev.length === 0)) {
                 return [top1Name];
               }
@@ -917,7 +993,7 @@ export default function TaskDetailModal({
     return () => {
       isMounted = false;
     };
-  }, [isOpen, editSubject, editComplexity, task?.id, task?.subject, task?.category, task?.complexity, mode]);
+  }, [isOpen, editSubject, editComplexity, editPriority, editDeadline, editOnsitePresence, task?.id, task?.subject, task?.category, task?.complexity, task?.priority, task?.deadline, task?.onsite_presence, mode]);
 
   // --- DÉRIVATIONS EXPENSES & JUSTIFICATIFS ---
   const keyValuesList = parseKeyValues(task?.key_values);
@@ -1078,8 +1154,11 @@ export default function TaskDetailModal({
         onsite_presence: editOnsitePresence,
         subject: editSubject,
         category: editSubject,
-        complexity: isVoteInitiative ? 'Modérée' : editComplexity,
-        priority: editPriority,
+        difficulty: isVoteInitiative ? 'Moyenne' : normalizeDifficulty(editComplexity),
+        complexity: isVoteInitiative ? 'Moyenne' : normalizeDifficulty(editComplexity),
+        charge_points: isVoteInitiative ? 3 : getDifficultyPoints(editComplexity),
+        urgency: normalizeUrgency(editPriority),
+        priority: normalizeUrgency(editPriority),
         deadline: editDeadline ? editDeadline : null,
         budget: editBudget !== '' && !isNaN(parseFloat(String(editBudget).replace(',', '.')))
           ? Math.max(0, parseFloat(String(editBudget).replace(',', '.')))
@@ -1289,23 +1368,27 @@ export default function TaskDetailModal({
     }
   };
 
-  // Arbitrage Proposition Coordinateur (Accepter / Refuser) - Annotation 4 & 17
+  // Arbitrage Proposition Coordinateur (Accepter / Refuser) - Présence + Équité + Vivier sur place
   const handleAcceptModalTask = async () => {
+    const taskIsOnsite = isTaskOnsite(task);
     const isAutoAssign = Boolean(
+      leaveInOnsitePool ||
       task?.auto_assign_by_workload ||
       editAutoAssignByWorkload ||
       task?.is_auto_assign ||
       task?.assignment_mode === 'auto'
     );
 
-    let currentMembers = selectedValidationMembers && selectedValidationMembers.length > 0
-      ? selectedValidationMembers
-      : (Array.isArray(task?.assigned_members) && task.assigned_members.length > 0
-          ? task.assigned_members
-          : (task?.assignee ? [task.assignee] : (Array.isArray(editMembers) && editMembers.length > 0 ? editMembers : [])));
+    const currentMembers = leaveInOnsitePool
+      ? []
+      : (selectedValidationMembers && selectedValidationMembers.length > 0
+          ? selectedValidationMembers
+          : (Array.isArray(task?.assigned_members) && task.assigned_members.length > 0
+              ? task.assigned_members
+              : (task?.assignee ? [task.assignee] : (Array.isArray(editMembers) && editMembers.length > 0 ? editMembers : []))));
 
-    if (!currentMembers || currentMembers.length === 0) {
-      alert("Impossible d'approuver la tâche : aucun membre n'est sélectionné. Veuillez sélectionner au moins un responsable avant de valider la mission.");
+    if ((!currentMembers || currentMembers.length === 0) && !(taskIsOnsite && isAutoAssign)) {
+      alert("Impossible d'approuver la tâche : aucun membre n'est sélectionné. Veuillez sélectionner au moins un responsable (ou placer cette tâche sur place dans le vivier).");
       return;
     }
 
@@ -1319,18 +1402,19 @@ export default function TaskDetailModal({
         const accepted = await acceptTask(task.id, {
           assigned_members: currentMembers,
           auto_assign_by_workload: isAutoAssign,
+          leave_in_onsite_pool: Boolean(taskIsOnsite && leaveInOnsitePool),
+          assignment_mode: taskIsOnsite && leaveInOnsitePool ? 'onsite_pool' : (isAutoAssign ? 'auto' : 'manual'),
+          onsite_presence: taskIsOnsite,
+          urgency: normalizeUrgency(task?.urgency || task?.priority || editPriority),
+          difficulty: normalizeDifficulty(task?.difficulty || task?.complexity || editComplexity),
           status: 'EN_COURS'
         });
         const fetched = (accepted && accepted.id)
           ? accepted
           : await fetchTaskById(task.id).catch(() => ({ ...task, status: 'EN_COURS', assigned_members: currentMembers }));
-        const assignedResult = (fetched && fetched.assigned_members && fetched.assigned_members.length > 0)
-          ? fetched.assigned_members
-          : currentMembers;
         refreshed = {
           ...fetched,
           status: 'EN_COURS',
-          assigned_members: assignedResult
         };
         setTask(refreshed);
         syncEditFields(refreshed);
@@ -1733,6 +1817,44 @@ export default function TaskDetailModal({
                         {task.subject || (isVoteInitiative ? 'Presbytère' : 'Rosings')}
                       </span>
                     )}
+                    {!isVoteInitiative && (() => {
+                      const uMeta = getUrgencyMeta(task.urgency || task.priority);
+                      const dMeta = getDifficultyMeta(task.difficulty || task.complexity, task.charge_points);
+                      const onsiteFlag = isTaskOnsite(task);
+                      const inPoolFlag = isTaskInOnsitePool(task);
+                      return (
+                        <>
+                          <span className={`px-3 py-1 font-label-sm text-xs rounded-full flex items-center gap-1 font-semibold ${uMeta.badgeClass}`} title={uMeta.hint}>
+                            <span className="material-symbols-outlined text-[14px]">{uMeta.icon}</span>
+                            {uMeta.badgeLabel}
+                          </span>
+                          <span className={`px-3 py-1 font-label-sm text-xs rounded-full flex items-center gap-1 font-semibold ${dMeta.badgeClass}`} title={dMeta.hint}>
+                            <span className="material-symbols-outlined text-[14px]">fitness_center</span>
+                            Difficulté : {dMeta.badgeLabel}
+                          </span>
+                          <span className={`px-3 py-1 font-label-sm text-xs rounded-full flex items-center gap-1 font-semibold border ${
+                            onsiteFlag
+                              ? 'bg-teal-50 text-teal-900 border-teal-200'
+                              : 'bg-indigo-50 text-indigo-800 border-indigo-200'
+                          }`}>
+                            <span className="material-symbols-outlined text-[14px]">{onsiteFlag ? 'location_on' : 'laptop_mac'}</span>
+                            {onsiteFlag ? 'Sur place au domaine' : 'À distance'}
+                          </span>
+                          {inPoolFlag && (
+                            <span className="px-3 py-1 bg-emerald-100 text-emerald-900 border border-emerald-300 font-label-sm text-xs rounded-full flex items-center gap-1 font-bold">
+                              <span className="material-symbols-outlined text-[14px]">event_upcoming</span>
+                              En attente d'une venue (vivier)
+                            </span>
+                          )}
+                          {task.deadline && (
+                            <span className="px-3 py-1 bg-amber-50 text-amber-900 border border-amber-200 font-label-sm text-xs rounded-full flex items-center gap-1 font-semibold">
+                              <span className="material-symbols-outlined text-[14px]">event</span>
+                              Échéance : {formatFrenchDate(task.deadline)}
+                            </span>
+                          )}
+                        </>
+                      );
+                    })()}
                     {task.is_recurring && (
                       <span className="px-3 py-1 bg-amber-50 text-amber-900 border border-amber-200 font-label-sm text-xs rounded-full flex items-center gap-1 font-semibold">
                         <span className="material-symbols-outlined text-[14px] text-amber-700">update</span>
@@ -1743,12 +1865,6 @@ export default function TaskDetailModal({
                       <span className="px-3 py-1 bg-purple-50 text-purple-900 border border-purple-200 font-label-sm text-xs rounded-full flex items-center gap-1 font-semibold">
                         <span className="material-symbols-outlined text-[14px] text-purple-700">balance</span>
                         Auto-attribution équitable
-                      </span>
-                    )}
-                    {task.onsite_presence && (
-                      <span className="px-3 py-1 bg-sky-50 text-sky-900 border border-sky-200 font-label-sm text-xs rounded-full flex items-center gap-1 font-semibold">
-                        <span className="material-symbols-outlined text-[14px] text-sky-700">holiday_village</span>
-                        Sur place
                       </span>
                     )}
                     {Number(task.budget) > 0 && (
@@ -1857,12 +1973,41 @@ export default function TaskDetailModal({
                           onChangeMembers={setViewAssignedMembers}
                           autoAssign={viewAutoAssign}
                           onChangeAutoAssign={setViewAutoAssign}
+                          onsitePresence={isTaskOnsite(task)}
+                          presenceDecision={presenceDecision}
+                          isOnsitePoolSelected={viewOnsitePool}
+                          onSelectOnsitePool={setViewOnsitePool}
                           recommendations={recommendations}
                           allTasks={allTasksList}
                           currentTaskId={task?.id}
                           onSaveDirect={handleSaveDirectAssignment}
                           isSaving={isSavingDirectAssignment}
                         />
+                      </div>
+                    )}
+                    {/* Actions volontaires sur place si tâche sur place ouverte et non assignée à moi */}
+                    {!isEditingAssignment && isOpenTask && !isPendingValidation && !isProposed && isTaskOnsite(task) && !isAssignedToCurrentUser && !isExpenseValidationTask && (
+                      <div className="pt-2.5 border-t border-slate-200/80 dark:border-slate-700 flex flex-wrap items-center gap-2">
+                        <button
+                          type="button"
+                          disabled={claimingOnsite}
+                          onClick={() => handleClaimOnsiteModal('claim')}
+                          className="inline-flex items-center gap-1.5 px-3.5 py-2 rounded-xl bg-teal-700 hover:bg-teal-800 text-white text-xs font-bold shadow-xs transition-all cursor-pointer disabled:opacity-50"
+                        >
+                          <span className="material-symbols-outlined text-[16px]">pan_tool</span>
+                          <span>
+                            {isTaskInOnsitePool(task) ? "Je m'en occupe sur place" : 'Reprendre sur place'} (+{getDifficultyPoints(task.difficulty || task.complexity, task.charge_points)} pts)
+                          </span>
+                        </button>
+                        <button
+                          type="button"
+                          disabled={claimingOnsite}
+                          onClick={() => handleClaimOnsiteModal('complete')}
+                          className="inline-flex items-center gap-1.5 px-3.5 py-2 rounded-xl bg-emerald-50 hover:bg-emerald-100 text-emerald-900 border border-emerald-300 text-xs font-bold shadow-xs transition-all cursor-pointer disabled:opacity-50"
+                        >
+                          <span className="material-symbols-outlined text-[16px]">task_alt</span>
+                          <span>C'est fait sur place ! (+{getDifficultyPoints(task.difficulty || task.complexity, task.charge_points)} pts)</span>
+                        </button>
                       </div>
                     )}
                   </div>
@@ -2254,13 +2399,17 @@ export default function TaskDetailModal({
                         : "Vous êtes l'associé en charge de cette mission. Une fois vos travaux achevés et vos justificatifs joints, validez la mission pour la soumettre à l'arbitrage des coordinateurs."}
                     </p>
 
-                    {/* Bloc d'attribution équitable & multi-sélection des membres (Annotation 3) */}
+                    {/* Bloc d'attribution équitable, présence & vivier sur place */}
                     {isProposed && isCoordinator && (
                       <TaskEquityAssignmentSelector
                         selectedMembers={selectedValidationMembers}
                         onChangeMembers={setSelectedValidationMembers}
                         autoAssign={editAutoAssignByWorkload}
                         onChangeAutoAssign={setEditAutoAssignByWorkload}
+                        onsitePresence={isTaskOnsite(task)}
+                        presenceDecision={presenceDecision}
+                        isOnsitePoolSelected={leaveInOnsitePool}
+                        onSelectOnsitePool={setLeaveInOnsitePool}
                         recommendations={recommendations}
                         allTasks={allTasksList}
                         currentTaskId={task?.id}
@@ -2273,12 +2422,16 @@ export default function TaskDetailModal({
                         <>
                           <button
                             type="button"
-                            disabled={selectedValidationMembers.length === 0}
+                            disabled={selectedValidationMembers.length === 0 && !(isTaskOnsite(task) && (leaveInOnsitePool || editAutoAssignByWorkload))}
                             onClick={handleAcceptModalTask}
                             className="inline-flex items-center gap-2 px-5 py-2.5 rounded-xl bg-emerald-600 hover:bg-emerald-700 disabled:opacity-40 disabled:cursor-not-allowed text-white font-bold text-xs sm:text-sm shadow-md transition-all cursor-pointer"
                           >
                             <span className="material-symbols-outlined text-[18px]">check</span>
-                            <span>Approuver la tâche{selectedValidationMembers.length > 0 ? ` (${selectedValidationMembers.length})` : ''}</span>
+                            <span>
+                              {isTaskOnsite(task) && leaveInOnsitePool
+                                ? 'Approuver & placer au vivier sur place'
+                                : `Approuver la tâche${selectedValidationMembers.length > 0 ? ` (${selectedValidationMembers.length})` : ''}`}
+                            </span>
                           </button>
                           <button
                             type="button"
@@ -2448,16 +2601,22 @@ export default function TaskDetailModal({
                         />
                       </div>
 
-                      {/* Annotation 3 : Charge de la tâche */}
+                      {/* Difficulté / Pénibilité (pilote exclusivement les points d'équité 1 à 8 pts) */}
                       {!isVoteInitiative && (
                         <div className="flex flex-col gap-1">
-                          <label className="font-label-md text-xs font-semibold text-on-surface">Charge de la tâche</label>
+                          <label className="font-label-md text-xs font-semibold text-on-surface flex items-center gap-1">
+                            <span className="material-symbols-outlined text-[15px] text-indigo-700">fitness_center</span>
+                            <span>Difficulté / Pénibilité (points d'équité)</span>
+                          </label>
                           <CustomSelect
-                            value={editComplexity}
+                            value={normalizeDifficulty(editComplexity)}
                             onChange={(e) => setEditComplexity(e.target.value)}
-                            options={CHARGES}
+                            options={DIFFICULTY_OPTIONS.map((d) => ({ value: d.value, label: d.label }))}
                             className="h-10 text-xs sm:text-sm"
                           />
+                          <span className="text-[11px] text-on-surface-variant">
+                            À quel point c'est pesant pour celui qui s'en charge (indépendant de l'urgence).
+                          </span>
                         </div>
                       )}
 
@@ -2495,17 +2654,23 @@ export default function TaskDetailModal({
                       </div>
                     </div>
 
-                    {/* Grille Priorité, Deadline & Statut */}
+                    {/* Grille Urgence (rapidité d'action), Deadline & Statut */}
                     {!isVoteInitiative && (
                       <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
                         <div className="flex flex-col gap-1">
-                          <label className="font-label-md text-xs font-semibold text-on-surface">Priorité</label>
+                          <label className="font-label-md text-xs font-semibold text-on-surface flex items-center gap-1">
+                            <span className="material-symbols-outlined text-[15px] text-amber-700">schedule</span>
+                            <span>Urgence (rapidité d'action)</span>
+                          </label>
                           <CustomSelect
-                            value={editPriority}
+                            value={normalizeUrgency(editPriority)}
                             onChange={(e) => setEditPriority(e.target.value)}
-                            options={['Planifié', 'Normale', 'Haute', 'Critique']}
+                            options={URGENCY_OPTIONS.map((u) => ({ value: u.value, label: u.label }))}
                             className="h-10 text-xs sm:text-sm"
                           />
+                          <span className="text-[11px] text-on-surface-variant">
+                            Pilote le délai d'attribution avant séjour, sans changer les points.
+                          </span>
                         </div>
 
                         <div className="flex flex-col gap-1">

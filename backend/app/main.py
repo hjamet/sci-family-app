@@ -20,7 +20,7 @@ from sqlalchemy.orm import Session, selectinload, joinedload
 from sqlalchemy import func, or_, and_
 from sqlalchemy.exc import IntegrityError, OperationalError, ProgrammingError
 
-from .database import engine, Base, get_db
+from .database import engine, Base, get_db, ensure_tasks_presence_schema_once
 from .models import (
     Property, User, Member, Issue, Comment, IssueComment, Reservation, Project,
     ProjectVote, ProjectComment, AdminDocument, DocumentCategory, MemberAvailability,
@@ -95,7 +95,14 @@ from .services.workload_balancer import (
     resolve_auto_assignment_by_workload,
     get_task_recommendations,
     get_task_charge_points,
-    TASK_CHARGE_WEIGHTS
+    normalize_urgency,
+    normalize_difficulty,
+    extract_upcoming_member_stays,
+    evaluate_presence_task_assignment,
+    compute_anticipation_horizon_days,
+    TASK_CHARGE_WEIGHTS,
+    TASK_URGENCY_LEVELS,
+    TASK_DIFFICULTY_LEVELS,
 )
 from .services.heating_telemetry_service import (
     LIVE_SNAPSHOT_REUSE_SECONDS,
@@ -149,6 +156,7 @@ from .services.email_service import (
     send_task_assigned_email,
     send_task_creation_pending_email,
     send_task_completion_pending_email,
+    send_task_taken_over_email,
     send_vote_creation_pending_email,
     send_vote_arbitration_email,
     send_vote_required_email,
@@ -201,6 +209,12 @@ logger = logging.getLogger("sci_api")
 # Ré-exécuter create_all et seed_database à chaque cold-start de lambda ajoutait 2 à 4 secondes de latence.
 is_vercel = bool(os.environ.get("VERCEL") or os.environ.get("AWS_LAMBDA_FUNCTION_NAME"))
 force_init = os.environ.get("FORCE_DB_RESET", "false").lower() == "true" or os.environ.get("RUN_DB_MIGRATION", "false").lower() == "true"
+
+# Vérification lecture seule unique au démarrage (ajoute les colonnes tasks présence uniquement si absentes)
+try:
+    ensure_tasks_presence_schema_once(engine)
+except Exception as schema_err:
+    logger.error(f"[STARTUP SCHEMA] Impossible de vérifier/appliquer le schéma présence sur tasks : {schema_err}", exc_info=True)
 
 if not is_vercel or force_init:
     try:
@@ -1102,12 +1116,12 @@ def resolve_task_assignees(task: Task, db: Session) -> List[Member]:
 
 
 def format_task_email_fields(task: Task) -> tuple:
-    """Retourne (domain, location, charge_label) propres pour les e-mails de tâches."""
+    """Retourne (domain, location, difficulty_label) propres pour les e-mails de tâches."""
     domain = (task.subject or task.category or "SCI Familiale").strip()
     raw_loc = (task.category or "").strip()
     location = raw_loc if (raw_loc and raw_loc.lower() != domain.lower()) else "Domaine d'Hellenvilliers"
-    comp = (task.complexity or "Modérée").strip()
-    pts = getattr(task, "charge_points", None)
+    comp = normalize_difficulty(task.complexity or "Moyenne")
+    pts = getattr(task, "charge_points", None) or get_task_charge_points(comp)
     charge = f"{comp} ({pts} pt{'s' if pts != 1 else ''})" if isinstance(pts, int) and pts > 0 else comp
     return domain, location, charge
 
@@ -2781,6 +2795,11 @@ def create_reservation(res: ReservationCreate, response: Response, db: Session =
     except Exception as sync_err:
         logger.warning(f"[create_reservation] Asservissement chauffage non bloquant: {sync_err}")
 
+    try:
+        sync_onsite_presence_tasks(db, trigger_source="create_reservation")
+    except Exception as pres_err:
+        logger.warning(f"[create_reservation] Synchro tâches sur place non bloquante: {pres_err}")
+
     return db_res
 
 @app.patch("/api/reservations/{reservation_id}", response_model=ReservationResponse)
@@ -2934,6 +2953,11 @@ def update_reservation(reservation_id: int, update: ReservationUpdate, db: Sessi
     except Exception as sync_err:
         logger.warning(f"[update_reservation] Asservissement chauffage non bloquant: {sync_err}")
 
+    try:
+        sync_onsite_presence_tasks(db, trigger_source="update_reservation")
+    except Exception as pres_err:
+        logger.warning(f"[update_reservation] Synchro tâches sur place non bloquante: {pres_err}")
+
     return db_res
 
 @app.delete("/api/reservations/{reservation_id}", status_code=status.HTTP_204_NO_CONTENT)
@@ -2942,6 +2966,19 @@ def delete_reservation(reservation_id: int, db: Session = Depends(get_db)):
     if not db_res:
         raise HTTPException(status_code=404, detail="Réservation non trouvée")
 
+    # Libérer au vivier sur place les tâches en auto-attribution rattachées à ce séjour supprimé
+    linked_auto_tasks = db.query(Task).filter(
+        Task.assigned_reservation_id == reservation_id,
+        Task.onsite_presence == True,
+        Task.auto_assign_by_workload == True,
+        Task.status.in_(["EN_COURS", "A_FAIRE", "TODO"])
+    ).all()
+    for lt in linked_auto_tasks:
+        lt.assigned_members = "[]"
+        lt.assignee_id = None
+        lt.assigned_reservation_id = None
+        lt.updated_at = datetime.utcnow()
+
     db.delete(db_res)
     db.commit()
 
@@ -2949,6 +2986,11 @@ def delete_reservation(reservation_id: int, db: Session = Depends(get_db)):
         evaluate_and_sync_stay_heating(db)
     except Exception as sync_err:
         logger.warning(f"[delete_reservation] Asservissement chauffage non bloquant: {sync_err}")
+
+    try:
+        sync_onsite_presence_tasks(db, trigger_source="delete_reservation")
+    except Exception as pres_err:
+        logger.warning(f"[delete_reservation] Synchro tâches sur place non bloquante: {pres_err}")
 
     return None
 
@@ -4792,7 +4834,18 @@ def format_task_response(task: Task, include_comments: bool = False) -> dict:
                     pass
                 break
 
-    task_complexity = getattr(task, "complexity", "Modérée") or "Modérée"
+    raw_complexity = getattr(task, "complexity", "Moyenne") or "Moyenne"
+    canonical_difficulty = normalize_difficulty(raw_complexity)
+    canonical_urgency = normalize_urgency(getattr(task, "priority", "Normale") or "Normale")
+    raw_onsite = getattr(task, "onsite_presence", None)
+    onsite_presence = True if raw_onsite is None else bool(raw_onsite)
+    task_status_str = getattr(task, "status", "PROPOSED") or "PROPOSED"
+    is_in_onsite_pool = bool(
+        onsite_presence
+        and task_status_str.upper() in ("EN_COURS", "A_FAIRE", "TODO")
+        and len(assigned_members) == 0
+        and getattr(task, "assignee_id", None) is None
+    )
     data = {
         "id": getattr(task, "id", None),
         "ref": getattr(task, "ref", None),
@@ -4800,16 +4853,22 @@ def format_task_response(task: Task, include_comments: bool = False) -> dict:
         "description": getattr(task, "description", ""),
         "subject": getattr(task, "subject", "SCI"),
         "category": getattr(task, "category", None),
-        "priority": getattr(task, "priority", "Normale"),
-        "status": getattr(task, "status", "PROPOSED"),
+        "priority": canonical_urgency,
+        "urgency": canonical_urgency,
+        "status": task_status_str,
+        "onsite_presence": onsite_presence,
+        "assigned_reservation_id": getattr(task, "assigned_reservation_id", None),
+        "taken_over_from_id": getattr(task, "taken_over_from_id", None),
+        "is_in_onsite_pool": is_in_onsite_pool,
         "expense_id": expense_id,
         "is_recurring": bool(getattr(task, "is_recurring", False)),
         "recurrence_interval": int(getattr(task, "recurrence_interval", 1) or 1),
         "recurrence_unit": str(getattr(task, "recurrence_unit", "semaines") or "semaines"),
         "auto_assign_by_workload": bool(getattr(task, "auto_assign_by_workload", False)),
         "last_completed_at": getattr(task, "last_completed_at", None),
-        "complexity": task_complexity,
-        "charge_points": getattr(task, "charge_points", None) or get_task_charge_points(task_complexity),
+        "complexity": canonical_difficulty,
+        "difficulty": canonical_difficulty,
+        "charge_points": getattr(task, "charge_points", None) or get_task_charge_points(canonical_difficulty),
         "budget": float(getattr(task, "budget", 0.0) or 0.0),
         "budget_notes": getattr(task, "budget_notes", None),
         "assignee_id": getattr(task, "assignee_id", None),
@@ -4854,6 +4913,7 @@ def resolve_task_by_id_or_ref(task_id: str, db: Session) -> Task:
 def list_tasks(
     response: Response,
     priority: Optional[str] = Query(None),
+    urgency: Optional[str] = Query(None),
     category: Optional[str] = Query(None),
     status_filter: Optional[str] = Query(None, alias="status"),
     subject: Optional[str] = Query(None),
@@ -4862,13 +4922,32 @@ def list_tasks(
     user_name: Optional[str] = Query(None),
     search: Optional[str] = Query(None),
     property_id: Optional[int] = Query(None),
+    onsite_presence: Optional[bool] = Query(None),
+    onsite_pool: Optional[bool] = Query(None),
     db: Session = Depends(get_db)
 ):
     response.headers["Cache-Control"] = "no-cache, no-store, must-revalidate"
     query = db.query(Task)
 
-    if priority and priority not in ["Toutes", "ALL"]:
-        query = query.filter(func.lower(Task.priority) == priority.lower())
+    effective_urgency_filter = urgency or priority
+    if effective_urgency_filter and effective_urgency_filter not in ["Toutes", "ALL"]:
+        norm_u = normalize_urgency(effective_urgency_filter)
+        legacy_aliases = {
+            "Immédiate": ["immédiate", "immediate", "critique", "urgent", "urgente"],
+            "Rapide": ["rapide", "haute", "high"],
+            "Normale": ["normale", "normal"],
+            "Sans urgence": ["sans urgence", "planifié", "planifie", "basse"],
+        }
+        query = query.filter(func.lower(Task.priority).in_(legacy_aliases.get(norm_u, [norm_u.lower()])))
+    if onsite_presence is not None:
+        query = query.filter(Task.onsite_presence == onsite_presence)
+    if onsite_pool is True:
+        query = query.filter(
+            Task.onsite_presence == True,
+            Task.status.in_(["EN_COURS", "A_FAIRE", "TODO"]),
+            Task.assignee_id.is_(None),
+            or_(Task.assigned_members.is_(None), Task.assigned_members == "", Task.assigned_members == "[]")
+        )
     if category and category not in ["Toutes", "ALL"]:
         query = query.filter(Task.category.ilike(f"%{category}%"))
     if status_filter and status_filter not in ["Tous", "ALL"]:
@@ -4928,12 +5007,14 @@ def create_task(
     description = payload.get("description", "")
     subject = payload.get("subject", "SCI")
     category = payload.get("category", "Général")
-    priority = payload.get("priority", "Normale")
+    raw_urgency = payload.get("urgency") if payload.get("urgency") is not None else payload.get("priority", "Normale")
+    priority = normalize_urgency(raw_urgency)
     is_recurring = bool(payload.get("is_recurring", False))
     recurrence_interval = int(payload.get("recurrence_interval", 1)) if payload.get("recurrence_interval") else 1
     recurrence_unit = str(payload.get("recurrence_unit", "semaines") or "semaines")
     auto_assign_by_workload = bool(payload.get("auto_assign_by_workload", False))
-    complexity = payload.get("complexity", "Modérée")
+    raw_difficulty = payload.get("difficulty") if payload.get("difficulty") is not None else payload.get("complexity", "Moyenne")
+    complexity = normalize_difficulty(raw_difficulty)
     raw_charge_pts = payload.get("charge_points")
     if raw_charge_pts is not None:
         try:
@@ -4942,6 +5023,15 @@ def create_task(
             charge_points = get_task_charge_points(complexity)
     else:
         charge_points = get_task_charge_points(complexity)
+
+    is_bug_report_hint = bool(payload.get("is_bug_report", False))
+    if "onsite_presence" in payload and payload["onsite_presence"] is not None:
+        onsite_presence = bool(payload["onsite_presence"])
+    elif is_bug_report_hint or ("admin" in str(subject or "").lower() or str(subject or "").strip().upper() == "SCI"):
+        onsite_presence = False
+    else:
+        onsite_presence = True
+    assigned_reservation_id = payload.get("assigned_reservation_id")
 
     # Neutralisation / purge du champ budget (100% optionnel et tolérant)
     raw_budget = payload.get("budget")
@@ -4999,19 +5089,31 @@ def create_task(
     else:
         task_status = "PROPOSED"
 
-    if auto_assign_by_workload and (not assigned_members or assigned_members == [] or assigned_members == "[]"):
+    if auto_assign_by_workload and task_status != "PROPOSED" and (not assigned_members or assigned_members == [] or assigned_members == "[]"):
         try:
             all_members = db.query(Member).all()
             all_reservations = db.query(Reservation).all()
             all_tasks = db.query(Task).all()
-            selected_member = resolve_auto_assignment_by_workload(
-                all_members, all_reservations, all_tasks,
-                subject=subject, category=category, complexity=complexity
+            decision = evaluate_presence_task_assignment(
+                task={
+                    "onsite_presence": onsite_presence,
+                    "priority": priority,
+                    "deadline": deadline,
+                    "created_at": datetime.utcnow(),
+                    "subject": subject,
+                    "category": category or subject,
+                    "complexity": complexity,
+                },
+                members=all_members,
+                reservations=all_reservations,
+                tasks=all_tasks,
             )
-            if selected_member:
-                assigned_members = [selected_member]
+            if decision.get("should_assign") and decision.get("member_name"):
+                assigned_members = [decision["member_name"]]
+                if decision.get("reservation_id"):
+                    assigned_reservation_id = decision["reservation_id"]
         except Exception as auto_err:
-            logger.warning(f"Erreur calcul auto-attribution selon score d'usage: {auto_err}")
+            logger.warning(f"Erreur calcul auto-attribution selon présence/équité: {auto_err}")
 
     if isinstance(assigned_members, list):
         assigned_members = json.dumps(assigned_members)
@@ -5081,6 +5183,8 @@ def create_task(
         category=category,
         priority=priority,
         status=task_status,
+        onsite_presence=onsite_presence,
+        assigned_reservation_id=assigned_reservation_id,
         is_recurring=is_recurring,
         recurrence_interval=recurrence_interval,
         recurrence_unit=recurrence_unit,
@@ -5213,17 +5317,26 @@ def get_task_recommendations_endpoint(
     subject: Optional[str] = Query(None),
     category: Optional[str] = Query(None),
     complexity: Optional[str] = Query(None),
+    difficulty: Optional[str] = Query(None),
+    urgency: Optional[str] = Query(None),
+    priority: Optional[str] = Query(None),
+    deadline: Optional[str] = Query(None),
+    onsite_presence: Optional[bool] = Query(None),
     task_id: Optional[str] = Query(None),
     limit: Optional[int] = Query(7),
     db: Session = Depends(get_db)
 ):
     """
-    Annotation 3 & 5 :
-    Retourne les membres les plus recommandés pour une tâche (jusqu'à 7 associés)
-    selon le sujet/domaine/lieu et les scores de charge actuels.
+    Retourne les associés les plus recommandés pour une tâche (jusqu'à 6 associés éligibles, hors Frédéric)
+    en combinant présence sur place (si onsite_presence=True), équité (points Difficulté) et expertise réelle,
+    ainsi que la décision du système d'avance (attribuer maintenant vs vivier sur place).
     """
     target_subject = subject or category
-    target_complexity = complexity
+    target_complexity = difficulty or complexity
+    target_urgency = urgency or priority
+    target_deadline = deadline
+    target_onsite = onsite_presence
+    target_created_at = None
     excluded_task_id = None
     if task_id:
         try:
@@ -5234,27 +5347,61 @@ def get_task_recommendations_endpoint(
                     target_subject = existing.subject or existing.category
                 if not target_complexity:
                     target_complexity = existing.complexity
+                if not target_urgency:
+                    target_urgency = existing.priority
+                if not target_deadline:
+                    target_deadline = existing.deadline
+                if target_onsite is None:
+                    target_onsite = bool(getattr(existing, "onsite_presence", True))
+                target_created_at = getattr(existing, "created_at", None)
         except Exception:
             pass
+
+    effective_onsite = bool(target_onsite) if target_onsite is not None else False
+    effective_urgency = normalize_urgency(target_urgency or "Normale")
+    effective_difficulty = normalize_difficulty(target_complexity or "Moyenne")
 
     all_members = db.query(Member).all()
     all_reservations = db.query(Reservation).all()
     all_tasks = db.query(Task).all()
-    if excluded_task_id is not None:
-        all_tasks = [t for t in all_tasks if t.id != excluded_task_id]
+    filtered_tasks = [t for t in all_tasks if excluded_task_id is None or t.id != excluded_task_id]
 
     recommendations = get_task_recommendations(
         members=all_members,
         reservations=all_reservations,
-        tasks=all_tasks,
+        tasks=filtered_tasks,
         subject=target_subject,
         category=target_subject,
-        complexity=target_complexity,
+        complexity=effective_difficulty,
+        onsite_presence=effective_onsite,
+        urgency=effective_urgency,
+        deadline=target_deadline,
+        created_at=target_created_at,
         limit=limit if (limit is not None and limit > 0) else 7
+    )
+
+    presence_decision = evaluate_presence_task_assignment(
+        task={
+            "id": excluded_task_id,
+            "onsite_presence": effective_onsite,
+            "priority": effective_urgency,
+            "deadline": target_deadline,
+            "created_at": target_created_at,
+            "subject": target_subject,
+            "category": target_subject,
+            "complexity": effective_difficulty,
+        },
+        members=all_members,
+        reservations=all_reservations,
+        tasks=all_tasks,
     )
 
     return {
         "subject": target_subject or "SCI",
+        "onsite_presence": effective_onsite,
+        "urgency": effective_urgency,
+        "difficulty": effective_difficulty,
+        "presence_decision": presence_decision,
         "recommendations": recommendations
     }
 
@@ -5317,8 +5464,24 @@ def update_task(
         task.subject = payload["subject"]
     if "category" in payload and payload["category"] is not None:
         task.category = payload["category"]
-    if "priority" in payload and payload["priority"] is not None:
-        task.priority = payload["priority"]
+    if "urgency" in payload and payload["urgency"] is not None:
+        task.priority = normalize_urgency(payload["urgency"])
+    elif "priority" in payload and payload["priority"] is not None:
+        task.priority = normalize_urgency(payload["priority"])
+    if "onsite_presence" in payload and payload["onsite_presence"] is not None:
+        task.onsite_presence = bool(payload["onsite_presence"])
+        if not task.onsite_presence:
+            task.assigned_reservation_id = None
+    if "assigned_reservation_id" in payload:
+        task.assigned_reservation_id = payload["assigned_reservation_id"]
+    if "deadline" in payload:
+        task.deadline = payload["deadline"] or None
+    if "difficulty" in payload and payload["difficulty"] is not None:
+        task.complexity = normalize_difficulty(payload["difficulty"])
+        task.charge_points = get_task_charge_points(task.complexity)
+    elif "complexity" in payload and payload["complexity"] is not None:
+        task.complexity = normalize_difficulty(payload["complexity"])
+        task.charge_points = get_task_charge_points(task.complexity)
     if "status" in payload and payload["status"] is not None:
         new_st = str(payload["status"]).strip()
         # Seul un coordinateur peut faire passer directement une tâche PROPOSED en statut actif via PUT/PATCH
@@ -5363,28 +5526,26 @@ def update_task(
                 all_members = db.query(Member).all()
                 all_reservations = db.query(Reservation).all()
                 all_tasks = db.query(Task).all()
-                selected_member = resolve_auto_assignment_by_workload(
-                    all_members, all_reservations, all_tasks,
-                    subject=task.subject or task.category,
-                    category=task.category or task.subject,
-                    complexity=task.complexity
+                decision = evaluate_presence_task_assignment(
+                    task=task,
+                    members=all_members,
+                    reservations=all_reservations,
+                    tasks=all_tasks,
                 )
-                if selected_member:
+                if decision.get("should_assign") and decision.get("member_name"):
+                    selected_member = decision["member_name"]
                     task.assigned_members = json.dumps([selected_member], ensure_ascii=False)
-                    m_rec = db.query(Member).filter(
-                        or_(
-                            func.lower(Member.name) == selected_member.lower(),
-                            func.lower(Member.prenom) == selected_member.lower()
-                        )
-                    ).first()
-                    if not m_rec:
-                        for mem in all_members:
-                            if (mem.prenom and mem.prenom.lower() in selected_member.lower()) or (mem.name and mem.name.lower() in selected_member.lower()):
-                                m_rec = mem
-                                break
+                    m_rec = resolve_member_from_name(selected_member, db, all_members=all_members)
                     task.assignee_id = m_rec.id if m_rec else None
                     if m_rec:
                         task.assignee = m_rec
+                    task.assigned_reservation_id = decision.get("reservation_id")
+                else:
+                    # Tâche sur place non encore urgente / aucune venue dans l'horizon : placée au vivier sur place !
+                    task.assigned_members = "[]"
+                    task.assignee_id = None
+                    task.assignee = None
+                    task.assigned_reservation_id = None
             except Exception as auto_err:
                 logger.warning(f"Erreur calcul auto-attribution lors de update_task: {auto_err}")
 
@@ -5417,9 +5578,6 @@ def update_task(
 
     if "last_completed_at" in payload and payload["last_completed_at"] is not None:
         task.last_completed_at = payload["last_completed_at"]
-    if "complexity" in payload and payload["complexity"] is not None:
-        task.complexity = payload["complexity"]
-        task.charge_points = get_task_charge_points(task.complexity)
     if "charge_points" in payload and payload["charge_points"] is not None:
         try:
             task.charge_points = int(payload["charge_points"])
@@ -5433,8 +5591,6 @@ def update_task(
             task.budget = 0.0
     if "budget_notes" in payload and payload["budget_notes"] is not None:
         task.budget_notes = payload["budget_notes"]
-    if "deadline" in payload and payload["deadline"] is not None:
-        task.deadline = payload["deadline"]
     if "checklist" in payload and payload["checklist"] is not None:
         val = payload["checklist"]
         task.checklist = json.dumps(val) if isinstance(val, list) else str(val)
@@ -5665,6 +5821,36 @@ def validate_task_unified(
             link_path=f"/taches?task_id={task.id}",
             link_id=str(task.id)
         )
+        # Si la tâche avait été reprise sur place à un autre associé, prévenir cet ancien titulaire qu'elle est clôturée
+        prev_owner_id = getattr(task, "taken_over_from_id", None)
+        if prev_owner_id and prev_owner_id != task.assignee_id:
+            prev_member = db.query(Member).filter(Member.id == prev_owner_id).first()
+            if prev_member:
+                current_assignees = resolve_task_assignees(task, db)
+                actor_label = current_assignees[0].prenom if current_assignees else current_user.prenom
+                prev_email = prev_member.email or f"{prev_member.prenom.lower()}@sci-familiale.fr"
+                should_mail_prev = bool(getattr(prev_member, "notif_task_completed", True) and prev_member.email)
+                email_res = send_task_taken_over_email(
+                    to_email=prev_email,
+                    task_title=task.title,
+                    taken_over_by=actor_label,
+                    previous_assignee_name=prev_member.prenom,
+                    mode="finalized",
+                    charge_points=getattr(task, "charge_points", None),
+                    completion_notes=task.completion_notes,
+                    task_id=task.id,
+                    actually_send=should_mail_prev,
+                )
+                create_internal_notification(
+                    db=db,
+                    member_id=prev_member.id,
+                    title=f"Tâche reprise et clôturée : {task.title}",
+                    description=f"La tâche « {task.title} » reprise sur place par {actor_label} a été validée et clôturée.",
+                    notif_type="task",
+                    link_path=f"/taches?task_id={task.id}",
+                    link_id=str(task.id),
+                    email_entry=email_res.get("_email_dispatched") if isinstance(email_res, dict) else None,
+                )
     except Exception as notif_err:
         logger.error(f"[NOTIF ERROR] Échec notification validate_task: {notif_err}")
 
@@ -5766,6 +5952,20 @@ def accept_task_proposal(
             task.assigned_members = json.dumps(raw_members, ensure_ascii=False) if isinstance(raw_members, list) else str(raw_members)
         if "auto_assign_by_workload" in payload and payload["auto_assign_by_workload"] is not None:
             task.auto_assign_by_workload = bool(payload["auto_assign_by_workload"])
+        if "onsite_presence" in payload and payload["onsite_presence"] is not None:
+            task.onsite_presence = bool(payload["onsite_presence"])
+        if payload.get("urgency") is not None:
+            task.priority = normalize_urgency(payload.get("urgency"))
+        elif payload.get("priority") is not None:
+            task.priority = normalize_urgency(payload.get("priority"))
+        if payload.get("difficulty") is not None:
+            task.complexity = normalize_difficulty(payload.get("difficulty"))
+            task.charge_points = get_task_charge_points(task.complexity)
+        elif payload.get("complexity") is not None:
+            task.complexity = normalize_difficulty(payload.get("complexity"))
+            task.charge_points = get_task_charge_points(task.complexity)
+        if "deadline" in payload:
+            task.deadline = payload.get("deadline") or None
         if "key_values" in payload and payload["key_values"] is not None:
             raw_kv = payload["key_values"]
             task.key_values = json.dumps(raw_kv) if isinstance(raw_kv, list) else str(raw_kv)
@@ -5775,7 +5975,7 @@ def accept_task_proposal(
             task.custom_fields = json.dumps(raw_cf) if isinstance(raw_cf, list) else str(raw_cf)
             task.key_values = task.custom_fields
 
-    # 2. Vérification obligatoire de l'assignation ou exécution de l'attribution automatique (Annotation 4)
+    # 2. Vérification de l'assignation ou exécution de l'attribution intelligente (présence + équité + expertise)
     has_assignee = False
     if task.assignee_id:
         has_assignee = True
@@ -5790,8 +5990,15 @@ def accept_task_proposal(
             if str(task.assigned_members).strip() not in ("[]", ""):
                 has_assignee = True
 
+    explicit_onsite_pool = bool(
+        payload and (
+            payload.get("assignment_mode") == "onsite_pool"
+            or payload.get("leave_in_onsite_pool") is True
+        )
+    )
     is_auto_assign = bool(
         getattr(task, "auto_assign_by_workload", False) or
+        explicit_onsite_pool or
         (payload and (
             payload.get("auto_assign_by_workload") or
             payload.get("is_auto_assign") or
@@ -5799,32 +6006,46 @@ def accept_task_proposal(
         ))
     )
 
-    if not has_assignee and is_auto_assign:
-        # Exécuter l'attribution automatique immédiatement (Annotation 4)
+    kept_in_onsite_pool = False
+    if explicit_onsite_pool and bool(getattr(task, "onsite_presence", True)):
+        task.auto_assign_by_workload = True
+        task.assigned_members = "[]"
+        task.assignee_id = None
+        task.assigned_reservation_id = None
+        has_assignee = False
+        kept_in_onsite_pool = True
+    elif not has_assignee and is_auto_assign:
         task.auto_assign_by_workload = True
         try:
             all_members = db.query(Member).all()
             all_reservations = db.query(Reservation).all()
             all_tasks = db.query(Task).all()
-            selected_member = resolve_auto_assignment_by_workload(
-                all_members, all_reservations, all_tasks,
-                subject=task.subject or task.category,
-                category=task.category or task.subject,
-                complexity=task.complexity
+            decision = evaluate_presence_task_assignment(
+                task=task,
+                members=all_members,
+                reservations=all_reservations,
+                tasks=all_tasks,
             )
-            if selected_member:
+            if decision.get("should_assign") and decision.get("member_name"):
+                selected_member = decision["member_name"]
                 task.assigned_members = json.dumps([selected_member], ensure_ascii=False)
                 m_auto = resolve_member_from_name(selected_member, db, all_members=all_members)
                 if m_auto:
                     task.assignee_id = m_auto.id
+                task.assigned_reservation_id = decision.get("reservation_id")
                 has_assignee = True
+            elif decision.get("keep_in_pool") and bool(getattr(task, "onsite_presence", True)):
+                task.assigned_members = "[]"
+                task.assignee_id = None
+                task.assigned_reservation_id = None
+                kept_in_onsite_pool = True
         except Exception as auto_err:
             logger.warning(f"Erreur lors de l'auto-attribution à l'approbation: {auto_err}")
 
-    if not has_assignee:
+    if not has_assignee and not kept_in_onsite_pool:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
-            detail="Assignation obligatoire : impossible d'accepter la tâche car aucun membre n'est assigné. Veuillez désigner au moins un responsable avant d'accepter la mission."
+            detail="Assignation obligatoire : impossible d'accepter cette tâche à distance sans responsable. Veuillez désigner au moins un associé ou activer l'auto-attribution."
         )
 
     # Synchroniser systématiquement assignee_id (y compris pour assignation manuelle via assigned_members)
@@ -6009,6 +6230,35 @@ def submit_task_done(
                 link_id=str(task.id),
                 email_entry=m_dispatched
             )
+
+        # Si la tâche avait été reprise sur place à un ancien titulaire, le prévenir qu'elle vient d'être gérée !
+        prev_owner_id = getattr(task, "taken_over_from_id", None)
+        if prev_owner_id and (not current_user or prev_owner_id != current_user.id):
+            prev_member = db.query(Member).filter(Member.id == prev_owner_id).first()
+            if prev_member:
+                prev_email = prev_member.email or f"{prev_member.prenom.lower()}@sci-familiale.fr"
+                should_mail_prev = bool(getattr(prev_member, "notif_task_completed", True) and prev_member.email)
+                prev_mail_res = send_task_taken_over_email(
+                    to_email=prev_email,
+                    task_title=task.title,
+                    taken_over_by=submitter_name,
+                    previous_assignee_name=prev_member.prenom,
+                    mode="completed",
+                    charge_points=getattr(task, "charge_points", None),
+                    completion_notes=task.completion_notes,
+                    task_id=task.id,
+                    actually_send=should_mail_prev,
+                )
+                create_internal_notification(
+                    db=db,
+                    member_id=prev_member.id,
+                    title=f"Votre tâche a été gérée sur place : {task.title}",
+                    description=f"Bonne nouvelle : {submitter_name} a réalisé « {task.title} » sur place à votre place.",
+                    notif_type="task",
+                    link_path=f"/taches?task_id={task.id}",
+                    link_id=str(task.id),
+                    email_entry=prev_mail_res.get("_email_dispatched") if isinstance(prev_mail_res, dict) else None,
+                )
     except Exception as comp_err:
         logger.error(f"[EMAIL ERROR] Failed to send completion pending notification: {comp_err}")
 
@@ -6017,6 +6267,334 @@ def submit_task_done(
         task_res_data["_email_dispatched"] = dispatched_email
         task_res_data["email_dispatched"] = dispatched_email
     return task_res_data
+
+
+@app.post("/api/tasks/{task_id}/claim-onsite")
+def claim_task_onsite(
+    task_id: str,
+    payload: Optional[dict] = Body(None),
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db)
+):
+    """
+    Prise en charge volontaire (ou réalisation immédiate) d'une tâche sur place depuis /sejour ou la modale tâche :
+    - mode='claim' (défaut) : reprend la tâche à son nom pour la faire pendant le séjour (+ points normaux à la validation).
+    - mode='complete' : reprend la tâche ET la passe immédiatement en PENDING_VALIDATION (déjà réalisée sur place !).
+    Dans tous les cas, l'ancien titulaire éventuel est immédiatement notifié (cloche + e-mail dédié).
+    """
+    task = resolve_task_by_id_or_ref(task_id, db)
+    if not bool(getattr(task, "onsite_presence", True)):
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Seules les tâches nécessitant une présence sur place peuvent être reprises depuis le tableau séjour."
+        )
+
+    st_upper = (task.status or "").strip().upper()
+    if st_upper not in ("EN_COURS", "A_FAIRE", "TODO"):
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=f"Cette tâche n'est plus disponible pour une reprise sur place (statut actuel : {task.status})."
+        )
+
+    mode = str((payload or {}).get("mode") or "claim").strip().lower()
+    if mode not in ("claim", "complete"):
+        raise HTTPException(status_code=400, detail="Mode invalide (attendu : 'claim' ou 'complete').")
+
+    completion_notes = str((payload or {}).get("completion_notes") or "").strip() or None
+
+    previous_assignees = [m for m in resolve_task_assignees(task, db) if m.id != current_user.id]
+    primary_previous = previous_assignees[0] if previous_assignees else None
+
+    # Identifier le séjour actif ou prochain de l'associé repreneur
+    all_reservations = db.query(Reservation).all()
+    member_stays = extract_upcoming_member_stays([current_user], all_reservations)
+    my_stay = member_stays.get(current_user.name)
+
+    task.assignee_id = current_user.id
+    task.assigned_members = json.dumps([current_user.name], ensure_ascii=False)
+    task.auto_assign_by_workload = False
+    task.assigned_reservation_id = my_stay.get("reservation_id") if my_stay else None
+    if primary_previous:
+        task.taken_over_from_id = primary_previous.id
+    if mode == "complete":
+        task.status = "PENDING_VALIDATION"
+        if completion_notes:
+            task.completion_notes = completion_notes
+    task.updated_at = datetime.utcnow()
+
+    # Commentaire de traçabilité familiale dans le fil de la tâche
+    prev_names = ", ".join(m.prenom for m in previous_assignees)
+    if mode == "complete":
+        comment_text = (
+            f"✅ {current_user.prenom} s'est occupé de cette tâche sur place"
+            + (f" (reprise à {prev_names})" if prev_names else " (depuis le vivier sur place)")
+            + " et l'a déclarée terminée."
+        )
+        if completion_notes:
+            comment_text += f"\nNote : {completion_notes}"
+    else:
+        comment_text = (
+            f"🤝 {current_user.prenom} a repris cette tâche sur place"
+            + (f" (précédemment confiée à {prev_names})." if prev_names else " depuis le vivier sur place.")
+        )
+
+    db.add(TaskComment(
+        task_id=task.id,
+        author_id=current_user.id,
+        author_name=current_user.name,
+        author_role=current_user.role or "Membre Associé",
+        content=comment_text,
+        reactions="{}"
+    ))
+    db.commit()
+    db.refresh(task)
+
+    dispatched_email = None
+    pts = getattr(task, "charge_points", None) or get_task_charge_points(task.complexity)
+
+    # 1. Notification obligatoire (cloche + e-mail dédié) à CHAQUE ancien titulaire
+    for prev_m in previous_assignees:
+        try:
+            prev_email = prev_m.email or f"{prev_m.prenom.lower()}@sci-familiale.fr"
+            should_mail = bool(getattr(prev_m, "notif_task_assigned", True) and prev_m.email)
+            email_mode = "completed" if mode == "complete" else "claimed"
+            mail_res = send_task_taken_over_email(
+                to_email=prev_email,
+                task_title=task.title,
+                taken_over_by=current_user.prenom,
+                previous_assignee_name=prev_m.prenom,
+                mode=email_mode,
+                charge_points=pts,
+                completion_notes=completion_notes,
+                task_id=task.id,
+                actually_send=should_mail,
+            )
+            m_disp = mail_res.get("_email_dispatched") if isinstance(mail_res, dict) else None
+            if not dispatched_email and m_disp:
+                dispatched_email = m_disp
+
+            if mode == "complete":
+                n_title = f"Votre tâche a été gérée sur place : {task.title}"
+                n_desc = f"Bonne nouvelle ! {current_user.prenom} s'est occupé sur place de « {task.title} » à votre place (en attente de validation coordination)."
+            else:
+                n_title = f"Tâche reprise sur place par {current_user.prenom} : {task.title}"
+                n_desc = f"{current_user.prenom} a repris votre tâche « {task.title} » sur place — vous en êtes déchargé{accord_fr(prev_m.prenom, '', 'e')}."
+
+            create_internal_notification(
+                db=db,
+                member_id=prev_m.id,
+                title=n_title,
+                description=n_desc,
+                notif_type="task",
+                link_path=f"/taches?task_id={task.id}",
+                link_id=str(task.id),
+                email_entry=m_disp,
+            )
+        except Exception as prev_err:
+            logger.error(f"[CLAIM ONSITE NOTIF ERROR] Échec notif ancien titulaire {prev_m.prenom}: {prev_err}")
+
+    # 2. En mode 'complete', notifier aussi les coordinateurs pour la validation finale
+    if mode == "complete":
+        try:
+            coordinators = db.query(Member).filter(
+                or_(
+                    Member.is_coordinator == True,
+                    func.lower(Member.prenom).in_(["henri", "joséphine", "josephine"])
+                )
+            ).all()
+            for coord in coordinators:
+                if coord.id == current_user.id:
+                    continue
+                c_email = coord.email or f"{coord.prenom.lower()}@sci-familiale.fr"
+                should_mail_c = bool(getattr(coord, "notify_task_creation", False) and coord.email)
+                c_res = send_task_completion_pending_email(
+                    to_email=c_email,
+                    task_title=task.title,
+                    submitted_by=current_user.prenom,
+                    coordinator_name=coord.prenom,
+                    completion_notes=completion_notes,
+                    task_id=task.id,
+                    actually_send=should_mail_c,
+                )
+                create_internal_notification(
+                    db=db,
+                    member_id=coord.id,
+                    title=f"Validation finale requise : {task.title}",
+                    description=f"{current_user.prenom} a géré « {task.title} » sur place et demande la validation finale.",
+                    notif_type="task",
+                    link_path=f"/taches?task_id={task.id}",
+                    link_id=str(task.id),
+                    email_entry=c_res.get("_email_dispatched") if isinstance(c_res, dict) else None,
+                )
+        except Exception as coord_err:
+            logger.error(f"[CLAIM ONSITE COORD ERROR] {coord_err}")
+
+    res_data = format_task_response(task, include_comments=True)
+    res_data["claim_mode"] = mode
+    res_data["notified_previous_assignees"] = [m.prenom for m in previous_assignees]
+    if dispatched_email:
+        res_data["_email_dispatched"] = dispatched_email
+        res_data["email_dispatched"] = dispatched_email
+    return res_data
+
+
+def sync_onsite_presence_tasks(
+    db: Session,
+    trigger_source: str = "manual",
+    dry_run: bool = False
+) -> Dict[str, Any]:
+    """
+    Synchronisation DRY des tâches sur place avec les séjours confirmés :
+    1) Libère au vivier toute tâche en auto-attribution dont le séjour lié a été annulé ou est terminé sans clôture.
+    2) Évalue toutes les tâches actives du vivier sur place (onsite_presence=True, auto_assign_by_workload=True, sans titulaire)
+       selon le système d'avance (Urgence + Échéance) et attribue celles devenues éligibles.
+    """
+    today = datetime.utcnow().date()
+    all_members = db.query(Member).all()
+    all_reservations = db.query(Reservation).all()
+    all_tasks = db.query(Task).all()
+    res_by_id = {r.id: r for r in all_reservations}
+
+    released: List[Dict[str, Any]] = []
+    assigned: List[Dict[str, Any]] = []
+    kept_in_pool: List[Dict[str, Any]] = []
+
+    # 1. Détacher les tâches en auto-attribution liées à un séjour annulé ou expiré
+    for t in all_tasks:
+        st_up = (t.status or "").strip().upper()
+        if st_up not in ("EN_COURS", "A_FAIRE", "TODO"):
+            continue
+        if not bool(getattr(t, "onsite_presence", True)) or not bool(getattr(t, "auto_assign_by_workload", False)):
+            continue
+        linked_res_id = getattr(t, "assigned_reservation_id", None)
+        if linked_res_id:
+            linked_res = res_by_id.get(linked_res_id)
+            is_cancelled_or_gone = (
+                linked_res is None
+                or (linked_res.status or "") in CANCELLED_RESERVATION_STATUSES
+            )
+            is_expired = False
+            if linked_res and linked_res.end_date:
+                try:
+                    end_d = datetime.strptime(str(linked_res.end_date)[:10], "%Y-%m-%d").date()
+                    if end_d < today:
+                        is_expired = True
+                except ValueError:
+                    pass
+            if is_cancelled_or_gone or is_expired:
+                released.append({
+                    "task_id": t.id,
+                    "title": t.title,
+                    "previous_reservation_id": linked_res_id,
+                    "reason": "séjour annulé/supprimé" if is_cancelled_or_gone else "séjour passé sans clôture",
+                })
+                if not dry_run:
+                    t.assigned_members = "[]"
+                    t.assignee_id = None
+                    t.assigned_reservation_id = None
+                    t.updated_at = datetime.utcnow()
+
+    if not dry_run and released:
+        db.commit()
+
+    # 2. Promouvoir les tâches mûres du vivier sur place
+    for t in all_tasks:
+        st_up = (t.status or "").strip().upper()
+        if st_up not in ("EN_COURS", "A_FAIRE", "TODO"):
+            continue
+        if not bool(getattr(t, "onsite_presence", True)) or not bool(getattr(t, "auto_assign_by_workload", False)):
+            continue
+
+        # Vérifier si la tâche est actuellement sans titulaire (au vivier)
+        has_members = False
+        if t.assignee_id:
+            has_members = True
+        elif t.assigned_members:
+            try:
+                parsed = json.loads(t.assigned_members) if isinstance(t.assigned_members, str) else t.assigned_members
+                has_members = bool(isinstance(parsed, list) and any(str(x).strip() for x in parsed))
+            except Exception:
+                has_members = bool(str(t.assigned_members).strip() not in ("", "[]"))
+        if has_members:
+            continue
+
+        decision = evaluate_presence_task_assignment(
+            task=t,
+            members=all_members,
+            reservations=all_reservations,
+            tasks=all_tasks,
+            today=today,
+        )
+        if decision.get("should_assign") and decision.get("member_name"):
+            chosen_name = decision["member_name"]
+            chosen_res_id = decision.get("reservation_id")
+            assigned.append({
+                "task_id": t.id,
+                "title": t.title,
+                "urgency": normalize_urgency(t.priority),
+                "assigned_to": chosen_name,
+                "reservation_id": chosen_res_id,
+                "reason": decision.get("reason"),
+            })
+            if not dry_run:
+                m_target = resolve_member_from_name(chosen_name, db, all_members=all_members)
+                t.assigned_members = json.dumps([chosen_name], ensure_ascii=False)
+                t.assignee_id = m_target.id if m_target else None
+                t.assigned_reservation_id = chosen_res_id
+                t.updated_at = datetime.utcnow()
+                db.commit()
+                db.refresh(t)
+
+                if m_target:
+                    try:
+                        domain_lbl, location_lbl, charge_lbl = format_task_email_fields(t)
+                        m_email = m_target.email or f"{m_target.prenom.lower()}@sci-familiale.fr"
+                        should_mail = bool(getattr(m_target, "notif_task_assigned", True) and m_target.email)
+                        send_res = send_task_assigned_email(
+                            to_email=m_email,
+                            task_title=t.title,
+                            domain=domain_lbl,
+                            location=location_lbl,
+                            priority=normalize_urgency(t.priority),
+                            charge=charge_lbl,
+                            task_id=t.id,
+                            assignee_name=m_target.prenom,
+                            deadline=t.deadline,
+                            description=t.description,
+                            actually_send=should_mail,
+                        )
+                        create_internal_notification(
+                            db=db,
+                            member_id=m_target.id,
+                            title=f"Mission sur place pour votre séjour : {t.title}",
+                            description=f"Cette tâche sur place vous a été attribuée en prévision de votre venue : {t.title}.",
+                            notif_type="task",
+                            link_path=f"/sejour",
+                            link_id=str(t.id),
+                            email_entry=send_res.get("_email_dispatched") if isinstance(send_res, dict) else None,
+                        )
+                    except Exception as notif_err:
+                        logger.warning(f"[sync_onsite_presence_tasks] Erreur notif task #{t.id}: {notif_err}")
+        else:
+            kept_in_pool.append({
+                "task_id": t.id,
+                "title": t.title,
+                "urgency": normalize_urgency(t.priority),
+                "horizon_days": decision.get("horizon_days"),
+                "reason": decision.get("reason"),
+            })
+
+    return {
+        "trigger_source": trigger_source,
+        "dry_run": dry_run,
+        "evaluated_at": datetime.utcnow().isoformat(),
+        "released_count": len(released),
+        "assigned_count": len(assigned),
+        "pool_remaining_count": len(kept_in_pool),
+        "released": released,
+        "assigned": assigned,
+        "kept_in_pool": kept_in_pool,
+    }
 
 
 @app.get("/api/tasks/{task_id}/comments")
@@ -11962,13 +12540,44 @@ async def cron_banking_sync(request: Request, db: Session = Depends(get_db)):
     # 3. Lettrage automatique
     from .services.reconciliation_service import ReconciliationService
     rec_res = ReconciliationService.run_reconciliation(db)
+
+    # 4. Synchro quotidienne des tâches sur place selon le système d'avance & prochains séjours
+    presence_sync_res = None
+    try:
+        presence_sync_res = sync_onsite_presence_tasks(db, trigger_source="cron_daily")
+    except Exception as pres_err:
+        logger.warning(f"[CRON] Avertissement sync tâches sur place : {pres_err}")
+        presence_sync_res = {"error": str(pres_err)}
+
     return {
         "success": True,
         "cron": "banking-sync",
         "timestamp": datetime.utcnow().isoformat(),
         "drive_status": drive_status,
-        "reconciliation": rec_res
+        "reconciliation": rec_res,
+        "presence_tasks_sync": presence_sync_res,
     }
+
+
+@app.api_route("/api/cron/presence-task-sync", methods=["GET", "POST"], tags=["Crons"])
+async def cron_presence_task_sync(request: Request, db: Session = Depends(get_db)):
+    """
+    Supervision & synchronisation des tâches sur place avec les séjours :
+    - GET : dry-run en lecture seule (aucune écriture ni notification).
+    - POST : exécution réelle protégée par CRON_SECRET ou coordinateur connecté.
+    """
+    if request.method == "GET":
+        return sync_onsite_presence_tasks(db, trigger_source="api_dry_run", dry_run=True)
+
+    cron_secret = os.getenv("CRON_SECRET", "")
+    auth_header = request.headers.get("Authorization", "")
+    token = auth_header.replace("Bearer ", "", 1).strip() if auth_header.startswith("Bearer ") else ""
+    is_valid_cron = bool(cron_secret and token and secrets.compare_digest(token, cron_secret))
+    if not is_valid_cron:
+        user = get_optional_current_user(request, db)
+        if not user or not getattr(user, "is_coordinator", False):
+            verify_cron_auth(request)
+    return sync_onsite_presence_tasks(db, trigger_source="api_manual_cron", dry_run=False)
 
 
 @app.api_route("/api/cron/calls-for-funds", methods=["GET", "POST"], tags=["Crons"])

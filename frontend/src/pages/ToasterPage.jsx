@@ -3193,14 +3193,14 @@ export default function ToasterPage({ currentUser }) {
                                   </select>
                                 </div>
                                 <div className="space-y-1">
-                                  <label className="text-[11px] font-bold text-slate-600 block">Charge</label>
+                                  <label className="text-[11px] font-bold text-slate-600 block">Difficulté (points)</label>
                                   <select
                                     disabled={card.executed}
-                                    value={card.payload?.complexity || 'Modérée'}
+                                    value={card.payload?.difficulty || card.payload?.complexity || 'Moyenne'}
                                     onChange={(e) =>
                                       updateCardInMessage(msg.id, (c) => ({
                                         ...c,
-                                        payload: { ...(c.payload || {}), complexity: e.target.value },
+                                        payload: { ...(c.payload || {}), difficulty: e.target.value, complexity: e.target.value },
                                       }))
                                     }
                                     className="w-full h-9 px-2 rounded-xl bg-white border border-slate-200 text-xs text-slate-900"
@@ -3211,14 +3211,14 @@ export default function ToasterPage({ currentUser }) {
                                   </select>
                                 </div>
                                 <div className="space-y-1">
-                                  <label className="text-[11px] font-bold text-slate-600 block">Priorité</label>
+                                  <label className="text-[11px] font-bold text-slate-600 block">Urgence</label>
                                   <select
                                     disabled={card.executed}
-                                    value={card.payload?.priority || 'Normale'}
+                                    value={card.payload?.urgency || card.payload?.priority || 'Normale'}
                                     onChange={(e) =>
                                       updateCardInMessage(msg.id, (c) => ({
                                         ...c,
-                                        payload: { ...(c.payload || {}), priority: e.target.value },
+                                        payload: { ...(c.payload || {}), urgency: e.target.value, priority: e.target.value },
                                       }))
                                     }
                                     className="w-full h-9 px-2 rounded-xl bg-white border border-slate-200 text-xs text-slate-900"

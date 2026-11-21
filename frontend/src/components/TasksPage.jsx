@@ -41,6 +41,16 @@ import {
   getTaskColorCategory,
   isTaskAssignedToUser,
 } from '../utils/taskAssignment';
+import {
+  URGENCY_OPTIONS,
+  DIFFICULTY_OPTIONS,
+  normalizeUrgency,
+  normalizeDifficulty,
+  getUrgencyRank,
+  getDifficultyPoints,
+  isTaskOnsite,
+  isTaskInOnsitePool,
+} from '../utils/taskTaxonomy';
 
 export {
   resolveUserMeta,
@@ -66,6 +76,8 @@ export default function TasksPage({ currentUser = 'Henri Jamet' }) {
   const [selectedSubject, setSelectedSubject] = useState('all');
   const [selectedCategory, setSelectedCategory] = useState('all');
   const [selectedPriority, setSelectedPriority] = useState('Toutes');
+  const [selectedDifficulty, setSelectedDifficulty] = useState('Toutes');
+  const [selectedPresence, setSelectedPresence] = useState('all'); // 'all' | 'onsite' | 'remote' | 'onsite_pool'
   const [workflowFilter, setWorkflowFilter] = useState('ALL'); // 'ALL' | 'PROPOSED' | 'OPEN' | 'PENDING_VALIDATION' | 'ARCHIVED'
   const [voteFilter, setVoteFilter] = useState('ALL'); // 'ALL' | 'PROPOSED' | 'OPEN' | 'PENDING_VALIDATION' | 'ARCHIVED'
 
@@ -765,9 +777,23 @@ export default function TasksPage({ currentUser = 'Henri Jamet' }) {
       if (!match) return false;
     }
 
-    // Filtre Priorité
+    // Filtre Urgence (normalisée : Immédiate / Rapide / Normale / Sans urgence)
     if (selectedPriority !== 'Toutes') {
-      if (t.priority?.toLowerCase() !== selectedPriority.toLowerCase()) return false;
+      if (normalizeUrgency(t.urgency || t.priority) !== selectedPriority) return false;
+    }
+
+    // Filtre Difficulté (indépendant de l'urgence)
+    if (selectedDifficulty !== 'Toutes') {
+      if (normalizeDifficulty(t.difficulty || t.complexity) !== selectedDifficulty) return false;
+    }
+
+    // Filtre Lieu d'exécution (Sur place vs À distance vs Vivier sur place)
+    if (selectedPresence === 'onsite') {
+      if (!isTaskOnsite(t)) return false;
+    } else if (selectedPresence === 'remote') {
+      if (isTaskOnsite(t)) return false;
+    } else if (selectedPresence === 'onsite_pool') {
+      if (!isTaskInOnsitePool(t)) return false;
     }
 
     // Filtre Assigné
@@ -809,28 +835,43 @@ export default function TasksPage({ currentUser = 'Henri Jamet' }) {
   // Tri des tâches
   const sortedTasks = [...filteredTasks].sort((a, b) => {
     if (sortBy === 'urgency') {
-      const priorityOrder = { Critique: 4, Haute: 3, Normale: 2, Planifié: 1 };
-      return (priorityOrder[b.priority] || 0) - (priorityOrder[a.priority] || 0);
+      const diff = getUrgencyRank(b.urgency || b.priority) - getUrgencyRank(a.urgency || a.priority);
+      if (diff !== 0) return diff;
+      // Départage par échéance la plus proche si même urgence
+      const da = a.deadline ? String(a.deadline).slice(0, 10) : '9999-12-31';
+      const db = b.deadline ? String(b.deadline).slice(0, 10) : '9999-12-31';
+      return da.localeCompare(db);
+    }
+    if (sortBy === 'difficulty_desc') {
+      return getDifficultyPoints(b.difficulty || b.complexity, b.charge_points) - getDifficultyPoints(a.difficulty || a.complexity, a.charge_points);
     }
     if (sortBy === 'budget_desc') {
       return (b.budget || 0) - (a.budget || 0);
     }
     if (sortBy === 'deadline') {
-      return (a.id || 0) - (b.id || 0);
+      const da = a.deadline ? String(a.deadline).slice(0, 10) : '9999-12-31';
+      const db = b.deadline ? String(b.deadline).slice(0, 10) : '9999-12-31';
+      if (da !== db) return da.localeCompare(db);
+      return getUrgencyRank(b.urgency || b.priority) - getUrgencyRank(a.urgency || a.priority);
+    }
+    if (sortBy === 'updated') {
+      const ta = a.updated_at ? new Date(a.updated_at).getTime() : 0;
+      const tb = b.updated_at ? new Date(b.updated_at).getTime() : 0;
+      return tb - ta;
     }
     return 0;
   });
 
-  // Comptages dynamiques pour les pilules (alignés sur l'onglet actif)
+  // Comptages dynamiques pour les pilules d'Urgence (alignés sur l'onglet actif)
   const currentViewTasks = workflowFilter === 'ARCHIVED'
     ? archivedTasks
     : activeTasks;
   const countsByPriority = {
     Toutes: currentViewTasks.length,
-    Critique: currentViewTasks.filter(t => t.priority === 'Critique').length,
-    Haute: currentViewTasks.filter(t => t.priority === 'Haute').length,
-    Normale: currentViewTasks.filter(t => t.priority === 'Normale').length,
-    Planifié: currentViewTasks.filter(t => t.priority === 'Planifié').length,
+    'Immédiate': currentViewTasks.filter(t => normalizeUrgency(t.urgency || t.priority) === 'Immédiate').length,
+    'Rapide': currentViewTasks.filter(t => normalizeUrgency(t.urgency || t.priority) === 'Rapide').length,
+    'Normale': currentViewTasks.filter(t => normalizeUrgency(t.urgency || t.priority) === 'Normale').length,
+    'Sans urgence': currentViewTasks.filter(t => normalizeUrgency(t.urgency || t.priority) === 'Sans urgence').length,
   };
 
   // 1. Calculs des Tâches (Annotation 9 : robustesse filtre et calcul tâches ouvertes)
@@ -1310,8 +1351,9 @@ export default function TasksPage({ currentUser = 'Henri Jamet' }) {
                 value={sortBy}
                 onChange={(e) => setSortBy(e.target.value)}
                 options={[
-                  { value: 'urgency', label: "Degré d'urgence (priorité haute)", icon: 'priority_high' },
+                  { value: 'urgency', label: "Urgence (à agir au plus vite)", icon: 'schedule' },
                   { value: 'deadline', label: "Date d'échéance la plus proche", icon: 'event' },
+                  { value: 'difficulty_desc', label: "Difficulté / Points (décroissant)", icon: 'fitness_center' },
                   { value: 'budget_desc', label: "Budget prévisionnel (décroissant)", icon: 'euro' },
                   { value: 'updated', label: "Dernière mise à jour", icon: 'update' },
                 ]}
@@ -1334,15 +1376,12 @@ export default function TasksPage({ currentUser = 'Henri Jamet' }) {
         {/* Filter Multi-Level Row: Urgence Chips */}
         <div className="flex flex-col gap-space-xs">
           <span className="font-label-sm text-label-sm text-on-surface-variant font-semibold uppercase tracking-wider">
-            Priorité & Niveau d'Alerte :
+            Urgence (rapidité d'action) :
           </span>
           <div className="flex items-center gap-2 overflow-x-auto pb-1.5 scrollbar-none" id="priorityFilters">
             {[
               { id: 'Toutes', label: 'Toutes', dotClass: '' },
-              { id: 'Critique', label: 'Critique', dotClass: 'bg-error' },
-              { id: 'Haute', label: 'Haute', dotClass: 'bg-amber-rich' },
-              { id: 'Normale', label: 'Normale', dotClass: 'bg-secondary' },
-              { id: 'Planifié', label: 'Planifié', dotClass: 'bg-outline' },
+              ...URGENCY_OPTIONS.map((u) => ({ id: u.value, label: u.shortLabel, dotClass: u.dotClass })),
             ].map((p) => {
               const isActive = selectedPriority === p.id;
               const count = countsByPriority[p.id] || 0;
@@ -1373,8 +1412,8 @@ export default function TasksPage({ currentUser = 'Henri Jamet' }) {
           </div>
         </div>
 
-        {/* Filter Multi-Level Row: Dropdown Selectors for Associés, Catégorie, Bâtiments */}
-        <div className="grid grid-cols-1 md:grid-cols-3 gap-space-sm pt-2">
+        {/* Filter Multi-Level Row: Dropdown Selectors for Associés, Difficulté, Lieu d'exécution, Bâtiments */}
+        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-space-sm pt-2">
           {/* Associé Responsable */}
           <div className="flex flex-col gap-1.5">
             <label className="font-label-sm text-label-sm text-on-surface font-semibold flex items-center gap-1.5" htmlFor="assigneeFilter">
@@ -1394,24 +1433,39 @@ export default function TasksPage({ currentUser = 'Henri Jamet' }) {
             />
           </div>
 
-          {/* Domaine / Catégorie (Spécification Annotation 5) */}
+          {/* Lieu d'exécution : Sur place vs À distance */}
           <div className="flex flex-col gap-1.5">
-            <label className="font-label-sm text-label-sm text-on-surface font-semibold flex items-center gap-1.5" htmlFor="categoryFilter">
-              <span className="material-symbols-outlined text-[18px] text-primary">category</span>
-              Domaine / Catégorie
+            <label className="font-label-sm text-label-sm text-on-surface font-semibold flex items-center gap-1.5" htmlFor="presenceFilter">
+              <span className="material-symbols-outlined text-[18px] text-primary">location_on</span>
+              Exécution (Sur place / Distance)
             </label>
             <CustomSelect
-              id="categoryFilter"
-              value={selectedCategory}
-              onChange={(e) => setSelectedCategory(e.target.value)}
+              id="presenceFilter"
+              value={selectedPresence}
+              onChange={(e) => setSelectedPresence(e.target.value)}
               options={[
-                { value: 'all', label: 'Tous les domaines', icon: 'category' },
-                { value: 'entretien', label: 'Entretien', icon: 'handyman' },
-                { value: 'travaux', label: 'Travaux', icon: 'construction' },
-                { value: 'espaces verts', label: 'Espaces verts', icon: 'yard' },
-                { value: 'administratif', label: 'Administratif', icon: 'description' },
-                { value: 'piscine', label: 'Piscine', icon: 'pool' },
-                { value: 'chauffage', label: 'Chauffage', icon: 'thermostat' },
+                { value: 'all', label: 'Toutes les tâches', icon: 'apps' },
+                { value: 'onsite', label: 'Sur place au domaine', icon: 'location_on' },
+                { value: 'onsite_pool', label: "Vivier sur place (libre)", icon: 'event_upcoming' },
+                { value: 'remote', label: 'À distance', icon: 'laptop_mac' },
+              ]}
+              className="h-[46px]"
+            />
+          </div>
+
+          {/* Difficulté / Points d'équité (axe indépendant de l'urgence) */}
+          <div className="flex flex-col gap-1.5">
+            <label className="font-label-sm text-label-sm text-on-surface font-semibold flex items-center gap-1.5" htmlFor="difficultyFilter">
+              <span className="material-symbols-outlined text-[18px] text-primary">fitness_center</span>
+              Difficulté (points d'équité)
+            </label>
+            <CustomSelect
+              id="difficultyFilter"
+              value={selectedDifficulty}
+              onChange={(e) => setSelectedDifficulty(e.target.value)}
+              options={[
+                { value: 'Toutes', label: 'Toutes les difficultés', icon: 'fitness_center' },
+                ...DIFFICULTY_OPTIONS.map((d) => ({ value: d.value, label: d.label, icon: 'fitness_center' })),
               ]}
               className="h-[46px]"
             />
@@ -1421,7 +1475,7 @@ export default function TasksPage({ currentUser = 'Henri Jamet' }) {
           <div className="flex flex-col gap-1.5">
             <label className="font-label-sm text-label-sm text-on-surface font-semibold flex items-center gap-1.5" htmlFor="subjectFilter">
               <span className="material-symbols-outlined text-[18px] text-primary">label</span>
-              Sujet / Lieu
+              Sujet / Bâtiment
             </label>
             <CustomSelect
               id="subjectFilter"

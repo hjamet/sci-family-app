@@ -35,11 +35,14 @@ from .call_for_funds_service import reconcile_open_calls_for_member
 from .treasury_service import add_ledger_entry, get_member_treasury_summary
 from .workload_balancer import (
     calculate_workload_distribution,
+    extract_upcoming_member_stays,
     get_task_charge_points,
     is_exempt_member,
     is_member_assigned_to_task,
     is_member_creator_of_task,
+    normalize_difficulty,
     normalize_status,
+    normalize_urgency,
 )
 
 logger = logging.getLogger("sci_api.toaster_service")
@@ -86,8 +89,8 @@ TASK_SUBJECTS: List[str] = [
     "SCI & Administratif",
 ]
 
-TASK_COMPLEXITIES: List[str] = ["Négligeable", "Faible", "Modérée", "Élevée", "Très élevée"]
-TASK_PRIORITIES: List[str] = ["Planifié", "Normale", "Haute", "Critique"]
+TASK_COMPLEXITIES: List[str] = ["Très facile", "Facile", "Moyenne", "Difficile", "Très difficile"]
+TASK_PRIORITIES: List[str] = ["Sans urgence", "Normale", "Rapide", "Immédiate"]
 VOTE_PRIORITIES: List[str] = ["Basse", "Normale", "Haute", "Urgente"]
 STATUTORY_ASSOCIATE_NAMES: List[str] = [
     "Frédéric Jamet",
@@ -1134,6 +1137,15 @@ def get_toaster_state(prod_db: Session, member_id: Optional[int] = None) -> Dict
             assigned_arr = [s.strip() for s in str(assigned_raw).split(",") if s.strip()]
         assigned_arr = [sanitize_display_user_name(x) for x in assigned_arr]
         is_assigned = bool(active_member and is_member_assigned_to_task(active_member, t))
+        t_onsite = True if getattr(t, "onsite_presence", None) is None else bool(t.onsite_presence)
+        t_urgency = normalize_urgency(t.priority)
+        t_difficulty = normalize_difficulty(t.complexity)
+        t_in_pool = bool(
+            t_onsite
+            and (t.status or "").upper() in ("EN_COURS", "A_FAIRE", "TODO")
+            and len(assigned_arr) == 0
+            and t.assignee_id is None
+        )
         tasks_list.append(
             {
                 "id": t.id,
@@ -1142,9 +1154,14 @@ def get_toaster_state(prod_db: Session, member_id: Optional[int] = None) -> Dict
                 "description": t.description,
                 "subject": t.subject,
                 "category": t.category,
-                "priority": t.priority,
+                "priority": t_urgency,
+                "urgency": t_urgency,
+                "complexity": t_difficulty,
+                "difficulty": t_difficulty,
+                "onsite_presence": t_onsite,
+                "is_in_onsite_pool": t_in_pool,
                 "status": t.status,
-                "charge_points": t.charge_points or 3,
+                "charge_points": t.charge_points or get_task_charge_points(t_difficulty),
                 "budget": float(t.budget or 0.0),
                 "assignee_id": t.assignee_id,
                 "assigned_members": assigned_arr,
@@ -1483,9 +1500,20 @@ def execute_toaster_action(
 
             rooms_note = f" ({', '.join(selected_rooms)})" if selected_rooms else ""
             domo_summary = ", ".join(domotique_tags)
+            presence_note = ""
+            try:
+                from ..main import sync_onsite_presence_tasks
+                sync_res = sync_onsite_presence_tasks(prod_db, trigger_source="toaster_stay")
+                extra_return["presence_tasks_sync"] = sync_res
+                assigned_now = [a for a in (sync_res.get("assigned") or []) if member_prenom.lower() in str(a.get("assigned_to", "")).lower()]
+                if assigned_now:
+                    titles_str = ", ".join(f"« {a['title']} »" for a in assigned_now[:3])
+                    presence_note = f" Tâche(s) urgente(s) sur place rattachée(s) à ce séjour : {titles_str}."
+            except Exception as sync_err:
+                logger.warning(f"[toaster stay] Synchro tâches sur place non bloquante : {sync_err}")
             confirmation_msg = (
                 f"Séjour #{new_stay.id} enregistré au {prop_name} du {start_date} ({arrival_time}) au {end_date} ({departure_time}) "
-                f"pour {guest_count} occupant(s) ({chambers_used} ch.{rooms_note}). Domotique : {domo_summary}."
+                f"pour {guest_count} occupant(s) ({chambers_used} ch.{rooms_note}). Domotique : {domo_summary}.{presence_note}"
             )
 
     elif norm_type in ("heating", "propose_heating_or_pool_action", "pool", "thermal", "chauffage"):
@@ -1753,10 +1781,29 @@ def execute_toaster_action(
         target_task = None
         if task_id:
             target_task = prod_db.query(Task).filter(Task.id == int(task_id)).first()
-        if not target_task and title_val and operation in ("complete", "close", "check", "assign", "update", "terminee", "approve", "reject"):
+        if not target_task and title_val and operation in ("complete", "close", "check", "assign", "update", "claim_onsite", "terminee", "approve", "reject"):
             target_task = prod_db.query(Task).filter(Task.title.ilike(f"%{title_val}%")).first()
 
-        if operation in ("complete", "close", "check", "terminee", "termine"):
+        if operation == "claim_onsite":
+            if not target_task:
+                raise ValueError("Tâche sur place introuvable pour reprise.")
+            from ..main import claim_task_onsite as _claim_onsite_handler
+            claim_mode = str(merged_payload.get("claim_mode") or "claim").strip().lower()
+            claim_notes = str(merged_payload.get("completion_notes") or "").strip() or None
+            claim_res = _claim_onsite_handler(
+                task_id=str(target_task.id),
+                payload={"mode": claim_mode, "completion_notes": claim_notes},
+                current_user=member,
+                db=prod_db,
+            )
+            extra_return["task_id"] = target_task.id
+            notified_prev = claim_res.get("notified_previous_assignees") or []
+            prev_txt = f" ({', '.join(notified_prev)} a été prévenu)" if notified_prev else ""
+            if claim_mode == "complete":
+                confirmation_msg = f"La tâche sur place #{target_task.id} « {target_task.title} » a été déclarée gérée par {member_prenom}{prev_txt}."
+            else:
+                confirmation_msg = f"Vous avez repris la tâche sur place #{target_task.id} « {target_task.title} »{prev_txt}."
+        elif operation in ("complete", "close", "check", "terminee", "termine"):
             if not target_task:
                 raise ValueError("Tâche introuvable pour clôture.")
             cur_st = normalize_status(target_task.status)
@@ -1825,17 +1872,24 @@ def execute_toaster_action(
                         target_task.subject = subj_v
                         target_task.category = subj_v
                         updated_fields.append("emplacement")
-                if merged_payload.get("priority"):
-                    prio_v = str(merged_payload.get("priority")).strip()
-                    if prio_v in TASK_PRIORITIES and prio_v != target_task.priority:
+                raw_u = merged_payload.get("urgency") if merged_payload.get("urgency") is not None else merged_payload.get("priority")
+                if raw_u:
+                    prio_v = normalize_urgency(raw_u)
+                    if prio_v != normalize_urgency(target_task.priority):
                         target_task.priority = prio_v
-                        updated_fields.append("priorité")
-                if merged_payload.get("complexity"):
-                    comp_v = str(merged_payload.get("complexity")).strip()
-                    if comp_v in TASK_COMPLEXITIES and comp_v != target_task.complexity:
+                        updated_fields.append("urgence")
+                raw_d = merged_payload.get("difficulty") if merged_payload.get("difficulty") is not None else merged_payload.get("complexity")
+                if raw_d:
+                    comp_v = normalize_difficulty(raw_d)
+                    if comp_v != normalize_difficulty(target_task.complexity):
                         target_task.complexity = comp_v
                         target_task.charge_points = get_task_charge_points(comp_v)
-                        updated_fields.append("charge")
+                        updated_fields.append("difficulté")
+                if "onsite_presence" in merged_payload and merged_payload.get("onsite_presence") is not None:
+                    new_onsite = _to_bool(merged_payload.get("onsite_presence"), default=True)
+                    if new_onsite != bool(getattr(target_task, "onsite_presence", True)):
+                        target_task.onsite_presence = new_onsite
+                        updated_fields.append("présence sur place")
                 if merged_payload.get("budget") not in (None, ""):
                     try:
                         b_val = max(0.0, float(str(merged_payload.get("budget")).replace(",", ".")))
@@ -1865,13 +1919,13 @@ def execute_toaster_action(
             if subject_val not in TASK_SUBJECTS:
                 low_s = _norm_text(subject_val)
                 subject_val = next((s for s in TASK_SUBJECTS if low_s in _norm_text(s) or _norm_text(s) in low_s), "Presbytère")
-            complexity_val = str(merged_payload.get("complexity") or "Modérée").strip()
-            if complexity_val not in TASK_COMPLEXITIES:
-                complexity_val = "Modérée"
+            complexity_val = normalize_difficulty(merged_payload.get("difficulty") or merged_payload.get("complexity") or "Moyenne")
             charge_pts = get_task_charge_points(complexity_val)
-            priority_val = str(merged_payload.get("priority") or "Normale").strip()
-            if priority_val not in TASK_PRIORITIES:
-                priority_val = "Normale"
+            priority_val = normalize_urgency(merged_payload.get("urgency") or merged_payload.get("priority") or "Normale")
+            onsite_val = _to_bool(
+                merged_payload.get("onsite_presence"),
+                default=("admin" not in _norm_text(subject_val) and _norm_text(subject_val) != "sci"),
+            )
             budget_raw = merged_payload.get("budget")
             try:
                 budget_val = max(0.0, float(str(budget_raw).replace(",", "."))) if budget_raw not in (None, "") else 0.0
@@ -1908,6 +1962,7 @@ def execute_toaster_action(
                 complexity=complexity_val,
                 charge_points=charge_pts,
                 priority=priority_val,
+                onsite_presence=onsite_val,
                 budget=budget_val,
                 status="PROPOSED",
                 assignee_id=None,
@@ -2457,6 +2512,16 @@ def execute_toaster_read_tool(
                 .order_by(AdminDocument.id.desc())
                 .all()
             )
+            t_onsite = True if getattr(t, "onsite_presence", None) is None else bool(t.onsite_presence)
+            t_urgency = normalize_urgency(t.priority)
+            t_difficulty = normalize_difficulty(t.complexity)
+            parsed_am = parse_str_list(t.assigned_members)
+            t_in_pool = bool(
+                t_onsite
+                and (t.status or "").upper() in ("EN_COURS", "A_FAIRE", "TODO")
+                and len(parsed_am) == 0
+                and t.assignee_id is None
+            )
             out_tasks.append(
                 {
                     "id": t.id,
@@ -2465,9 +2530,14 @@ def execute_toaster_read_tool(
                     "description": t.description,
                     "subject": t.subject,
                     "category": t.category,
-                    "priority": t.priority,
+                    "priority": t_urgency,
+                    "urgency": t_urgency,
+                    "complexity": t_difficulty,
+                    "difficulty": t_difficulty,
+                    "onsite_presence": t_onsite,
+                    "is_in_onsite_pool": t_in_pool,
                     "status": t.status,
-                    "charge_points": t.charge_points or 3,
+                    "charge_points": t.charge_points or get_task_charge_points(t_difficulty),
                     "assigned_members": t.assigned_members,
                     "created_by": sanitize_display_user_name(t.created_by),
                     "is_recurring": bool(t.is_recurring),
@@ -2768,7 +2838,11 @@ def execute_toaster_read_tool(
             },
             "taches_et_artisans": {
                 "skill_id": "taches_et_artisans",
-                "summary": "Artisans clés : Chauffage EURL Ervan Bompais ; Fioul Éts Josse SAS (02 32 34 57 35) ; Fosses septiques SARL Les Vidanges Conchoises ; Piscine Declercq Conches. Points d'équité : 1 à 8 ; Frédéric est exempté des corvées physiques.",
+                "summary": (
+                    "Artisans clés : Chauffage EURL Ervan Bompais ; Fioul Éts Josse SAS (02 32 34 57 35) ; Fosses septiques SARL Les Vidanges Conchoises ; Piscine Declercq Conches. "
+                    "Deux axes indépendants sur chaque tâche : Urgence (Immédiate / Rapide / Normale / Sans urgence — rapidité d'action et système d'avance avant séjour) vs Difficulté (Très facile 1 pt / Facile 2 pts / Moyenne 3 pts / Difficile 5 pts / Très difficile 8 pts — pénibilité et points d'équité). "
+                    "Tâches sur place (onsite_presence=true) : visibles et reprenables en 1 clic sur /sejour (ou via propose_task_action operation='claim_onsite') avec notification automatique de l'ancien titulaire. Frédéric est toujours exempté des corvées."
+                ),
             },
             "votes_et_ag": {
                 "skill_id": "votes_et_ag",

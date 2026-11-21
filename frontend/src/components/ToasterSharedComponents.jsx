@@ -3,6 +3,14 @@ import { FuelInteractiveGraph } from '../pages/VademecumPage';
 import WhatsAppPollView from './common/WhatsAppPollView';
 import DocumentViewerModal from './DocumentViewerModal';
 import { addTaskComment, addProjectComment, fetchTaskComments, fetchProjectComments } from '../api';
+import {
+  URGENCY_LEVELS,
+  DIFFICULTY_LEVELS,
+  getUrgencyMeta,
+  getDifficultyMeta,
+  isTaskOnsite,
+  isTaskInOnsitePool,
+} from '../utils/taskTaxonomy';
 
 // ============================================================================
 // 1. RENDU MARKDOWN PROPRE & LÉGER (Annotation 6)
@@ -1256,11 +1264,32 @@ function SharedTasksWidget({ data, isCoordinator = false, onInspectTask, onOpenS
                       >
                         {meta.label}
                       </span>
-                      {t.priority && t.priority !== 'Normale' && (
-                        <span className="px-1.5 py-0.5 rounded-full bg-slate-100 text-slate-700 text-[10px] font-semibold">
-                          {t.priority}
-                        </span>
-                      )}
+                      {(() => {
+                        const uMeta = getUrgencyMeta(t.urgency || t.priority);
+                        const dMeta = getDifficultyMeta(t.difficulty || t.complexity, t.charge_points);
+                        const onsiteFlag = isTaskOnsite(t);
+                        const inPoolFlag = isTaskInOnsitePool(t);
+                        return (
+                          <>
+                            <span className={`px-1.5 py-0.5 rounded-full text-[10px] font-semibold ${uMeta.badgeClass}`}>
+                              {uMeta.badgeLabel}
+                            </span>
+                            <span className={`px-1.5 py-0.5 rounded-full text-[10px] font-semibold ${dMeta.badgeClass}`}>
+                              {dMeta.badgeLabel}
+                            </span>
+                            <span className={`px-1.5 py-0.5 rounded-full text-[10px] font-semibold border ${
+                              onsiteFlag ? 'bg-teal-50 text-teal-900 border-teal-200' : 'bg-indigo-50 text-indigo-800 border-indigo-200'
+                            }`}>
+                              {onsiteFlag ? 'Sur place' : 'À distance'}
+                            </span>
+                            {inPoolFlag && (
+                              <span className="px-1.5 py-0.5 rounded-full text-[10px] font-bold bg-emerald-100 text-emerald-900 border border-emerald-300">
+                                Vivier
+                              </span>
+                            )}
+                          </>
+                        );
+                      })()}
                     </div>
                     <div
                       className={`text-xs sm:text-[13px] font-bold mt-1 group-hover:text-primary transition-colors ${
@@ -1272,10 +1301,8 @@ function SharedTasksWidget({ data, isCoordinator = false, onInspectTask, onOpenS
                     <div className="text-[11px] text-slate-500 mt-0.5 flex items-center gap-1.5 flex-wrap">
                       <span>{t.subject || 'Presbytère'}</span>
                       <span>•</span>
-                      <span>{t.complexity || 'Modérée'} ({t.charge_points ?? 3} pts)</span>
-                      <span>•</span>
                       <span>
-                        {assignedList.length > 0 ? assignedList.join(', ') : 'Non assignée'}
+                        {assignedList.length > 0 ? assignedList.join(', ') : (isTaskInOnsitePool(t) ? 'Vivier sur place (libre)' : 'Non assignée')}
                       </span>
                       {t.deadline && (
                         <>
@@ -1877,9 +1904,9 @@ export const TASK_SUBJECTS = [
   'SCI & Administratif',
 ];
 
-export const TASK_COMPLEXITIES = ['Négligeable', 'Faible', 'Modérée', 'Élevée', 'Très élevée'];
+export const TASK_COMPLEXITIES = DIFFICULTY_LEVELS;
 
-export const TASK_PRIORITIES = ['Planifié', 'Basse', 'Normale', 'Haute', 'Critique'];
+export const TASK_PRIORITIES = URGENCY_LEVELS;
 
 export const VOTE_PRIORITIES = ['Basse', 'Normale', 'Haute', 'Urgente'];
 

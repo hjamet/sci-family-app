@@ -1396,7 +1396,12 @@ export async function fetchTaskRecommendations(params = {}) {
   const query = new URLSearchParams();
   if (params.subject) query.append('subject', params.subject);
   if (params.category) query.append('category', params.category);
-  if (params.complexity) query.append('complexity', params.complexity);
+  if (params.difficulty || params.complexity) query.append('complexity', params.difficulty || params.complexity);
+  if (params.urgency || params.priority) query.append('urgency', params.urgency || params.priority);
+  if (params.deadline) query.append('deadline', params.deadline);
+  if (params.onsite_presence !== undefined && params.onsite_presence !== null) {
+    query.append('onsite_presence', String(Boolean(params.onsite_presence)));
+  }
   if (params.taskId || params.task_id) query.append('task_id', params.taskId || params.task_id);
   if (params.limit) query.append('limit', params.limit);
   const qs = query.toString();
@@ -1408,6 +1413,24 @@ export async function fetchTaskRecommendations(params = {}) {
     const err = await res.json().catch(() => ({}));
     throw new Error(err.detail || 'Erreur lors du calcul des recommandations');
   }
+  return res.json();
+}
+
+export async function claimTaskOnsite(taskId, data = { mode: 'claim' }) {
+  const res = await fetch(`${API_BASE}/tasks/${taskId}/claim-onsite`, {
+    method: 'POST',
+    headers: getAuthJsonHeaders(),
+    body: JSON.stringify(data || { mode: 'claim' }),
+  });
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({}));
+    throw new Error(err.detail || 'Erreur lors de la prise en charge sur place');
+  }
+  invalidateApiCache('tasks');
+  invalidateApiCache('/api/tasks');
+  invalidateApiCache(`tasks/${taskId}`);
+  invalidateApiCache('workload');
+  invalidateApiCache('notifications');
   return res.json();
 }
 

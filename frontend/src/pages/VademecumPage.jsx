@@ -20,9 +20,16 @@ import {
   savePoolSettings,
   validateTask,
   invalidateTask,
+  claimTaskOnsite,
   getCachedData,
   parseApiError,
 } from '../api';
+import {
+  getUrgencyRank,
+  getDifficultyPoints,
+  isTaskOnsite,
+  isTaskInOnsitePool,
+} from '../utils/taskTaxonomy';
 import ThermalMasterSwitch from '../components/common/ThermalMasterSwitch';
 import CategoryManageModal, { COLOR_OPTIONS, EMOJI_PRESETS } from '../components/common/CategoryManageModal';
 import TaskDetailModal from '../components/TaskDetailModal';
@@ -1954,12 +1961,79 @@ export default function VademecumPage({ properties, currentUser, reservations = 
     }
   };
 
+  // Onglet actif dans le tableau des tâches séjour ('onsite_all' = toutes les tâches sur place | 'my_tasks' = mes missions)
+  const [stayTasksTab, setStayTasksTab] = useState('onsite_all');
+  const [claimModalState, setClaimModalState] = useState(null); // { task, mode: 'claim' | 'complete' }
+  const [claimNotes, setClaimNotes] = useState('');
+  const [claimingTaskId, setClaimingTaskId] = useState(null);
+
   // Tâches filtrées synchronisées rigoureusement avec /taches : Tâches ouvertes assignées + (si coordinateur) en attente de validation
   const displayedTasks = tasks.filter((t) => {
     if (!isTaskOpen(t)) return false;
     if (isCoordinator && isTaskPendingValidation(t)) return true;
     return isTaskAssignedToUser(t, currentUser);
   });
+
+  // Toutes les tâches actives réalisables SUR PLACE au domaine (vivier libre + assignées à d'autres + mes missions sur place)
+  const allOnsiteOpenTasks = React.useMemo(() => {
+    return tasks
+      .filter((t) => {
+        if (!t || !isTaskOpen(t) || isTaskPendingValidation(t)) return false;
+        const st = String(t.status || '').toUpperCase().trim();
+        if (st === 'PROPOSED' || st === 'PROPOSEE' || st === 'REJECTED') return false;
+        return isTaskOnsite(t);
+      })
+      .sort((a, b) => {
+        const uDiff = getUrgencyRank(b.urgency || b.priority) - getUrgencyRank(a.urgency || a.priority);
+        if (uDiff !== 0) return uDiff;
+        const da = a.deadline ? String(a.deadline).slice(0, 10) : '9999-12-31';
+        const db = b.deadline ? String(b.deadline).slice(0, 10) : '9999-12-31';
+        if (da !== db) return da.localeCompare(db);
+        return getDifficultyPoints(b.difficulty || b.complexity, b.charge_points) - getDifficultyPoints(a.difficulty || a.complexity, a.charge_points);
+      });
+  }, [tasks]);
+
+  const onsitePoolCount = React.useMemo(
+    () => allOnsiteOpenTasks.filter((t) => isTaskInOnsitePool(t)).length,
+    [allOnsiteOpenTasks]
+  );
+
+  const handleOpenClaimModal = (task, mode = 'claim') => {
+    setClaimNotes('');
+    setClaimModalState({ task, mode });
+  };
+
+  const handleConfirmClaimOnsite = async () => {
+    if (!claimModalState?.task?.id || claimingTaskId) return;
+    const { task, mode } = claimModalState;
+    setClaimingTaskId(task.id);
+    try {
+      const updated = await claimTaskOnsite(task.id, {
+        mode,
+        completion_notes: mode === 'complete' ? (claimNotes.trim() || undefined) : undefined,
+      });
+      const notified = Array.isArray(updated?.notified_previous_assignees) && updated.notified_previous_assignees.length > 0
+        ? ` (${updated.notified_previous_assignees.join(', ')} a été notifié)`
+        : '';
+      const pts = getDifficultyPoints(task.difficulty || task.complexity, task.charge_points);
+      if (mode === 'complete') {
+        showToast(`Bravo ! Tâche déclarée gérée sur place (+${pts} pts à la validation)${notified} ✅`);
+      } else {
+        showToast(`Tâche reprise sur place (+${pts} pts)${notified} 🤝`);
+      }
+      setClaimModalState(null);
+      setClaimNotes('');
+      if (updated && updated.id) {
+        setTasks((prev) => prev.map((t) => (t.id === updated.id ? { ...t, ...updated } : t)));
+      }
+      await loadInitialData();
+    } catch (err) {
+      console.error('Erreur reprise sur place:', err);
+      showToast(parseApiError(err, 'Erreur lors de la reprise sur place'));
+    } finally {
+      setClaimingTaskId(null);
+    }
+  };
 
   // WiFi password copy
   const [wifiCopied, setWifiCopied] = useState(false);
@@ -3494,20 +3568,22 @@ export default function VademecumPage({ properties, currentUser, reservations = 
       </section>
 
       {/* ===================================================================== */}
-      {/* 4. MISSIONS & TÂCHES SOUS VOTRE RESPONSABILITÉ (Pages 1 à N)          */}
+      {/* 4. TABLEAU DES TÂCHES SUR PLACE & MISSIONS DU SÉJOUR (Toujours visible) */}
       {/* ===================================================================== */}
-      {currentPageIndex > 0 && (
-        <section className="bg-surface-container-lowest rounded-lg p-6 sm:p-8 lg:p-10 shadow-sm border border-outline-variant/30 mb-10 flex flex-col gap-6 w-full max-w-full">
+      <section id="taches-sur-place" className="scroll-mt-24 bg-surface-container-lowest rounded-lg p-6 sm:p-8 lg:p-10 shadow-sm border border-outline-variant/30 mb-10 flex flex-col gap-6 w-full max-w-full">
         
-        {/* Section Header */}
-        <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 border-b border-outline-variant/20 pb-5">
-          <div className="space-y-1">
+        {/* Section Header + Sous-onglets */}
+        <div className="flex flex-col lg:flex-row lg:items-center justify-between gap-4 border-b border-outline-variant/20 pb-5">
+          <div className="space-y-1.5">
             <div className="flex items-center gap-2 flex-wrap">
-              <span className="text-xs text-on-surface-variant font-medium">{resolveCurrentUserFullName(currentUser)}</span>
-              {displayedTasks.length > 0 && (
-                <span className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full bg-sage-soft text-primary font-label-sm text-xs font-semibold">
-                  <span className="w-1.5 h-1.5 rounded-full bg-primary"></span>
-                  {displayedTasks.filter(t => t.status === 'active' || t.status === 'EN_COURS' || isTaskPendingValidation(t)).length} Tâches actives sur place
+              <span className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full bg-teal-50 text-teal-900 border border-teal-200 font-label-sm text-xs font-bold">
+                <span className="material-symbols-outlined text-[14px]">location_on</span>
+                {allOnsiteOpenTasks.length} tâche{allOnsiteOpenTasks.length > 1 ? 's' : ''} à faire sur place
+              </span>
+              {onsitePoolCount > 0 && (
+                <span className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full bg-emerald-100 text-emerald-900 border border-emerald-300 font-label-sm text-xs font-bold">
+                  <span className="material-symbols-outlined text-[14px]">event_upcoming</span>
+                  {onsitePoolCount} libre{onsitePoolCount > 1 ? 's' : ''} au vivier
                 </span>
               )}
               {isCoordinator && displayedTasks.some(isTaskPendingValidation) && (
@@ -3518,32 +3594,252 @@ export default function VademecumPage({ properties, currentUser, reservations = 
               )}
             </div>
             <h2 className="font-headline-md text-headline-md text-forest-deep font-bold tracking-tight mt-1">
-              Missions &amp; Tâches sous votre responsabilité
+              Tâches sur place &amp; Intendance du séjour
             </h2>
+            <p className="text-xs sm:text-sm text-on-surface-variant leading-relaxed">
+              Vous êtes sur place (ou bientôt de passage) ? Consultez toutes les tâches faisables au domaine — même attribuées à un autre associé — pour les reprendre ou les régler sur place et récupérer leurs points ! L'ancien titulaire est prévenu automatiquement.
+            </p>
+          </div>
+
+          {/* Switcher d'onglets : À faire sur place vs Mes missions */}
+          <div className="inline-flex items-center rounded-xl bg-surface-container p-1 border border-border-subtle self-start shrink-0">
+            <button
+              type="button"
+              onClick={() => setStayTasksTab('onsite_all')}
+              className={`inline-flex items-center gap-1.5 px-3.5 py-2 rounded-lg font-label-md text-xs sm:text-sm font-bold transition-all cursor-pointer ${
+                stayTasksTab === 'onsite_all'
+                  ? 'bg-white text-forest-deep shadow-xs'
+                  : 'text-on-surface-variant hover:text-forest-deep'
+              }`}
+            >
+              <span className="material-symbols-outlined text-[17px] text-teal-700">location_on</span>
+              <span>À faire sur place ({allOnsiteOpenTasks.length})</span>
+            </button>
+            <button
+              type="button"
+              onClick={() => setStayTasksTab('my_tasks')}
+              className={`inline-flex items-center gap-1.5 px-3.5 py-2 rounded-lg font-label-md text-xs sm:text-sm font-bold transition-all cursor-pointer ${
+                stayTasksTab === 'my_tasks'
+                  ? 'bg-white text-forest-deep shadow-xs'
+                  : 'text-on-surface-variant hover:text-forest-deep'
+              }`}
+            >
+              <span className="material-symbols-outlined text-[17px] text-primary">assignment_ind</span>
+              <span>Mes missions ({displayedTasks.length})</span>
+            </button>
           </div>
         </div>
 
-        {/* Tasks Cards Grid */}
-        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-5">
-          {displayedTasks.length === 0 ? (
-            <div className="col-span-full py-8 px-4 rounded-xl bg-canvas-slate border border-dashed border-outline-variant/40 flex flex-col items-center justify-center text-center">
-              <span className="material-symbols-outlined text-[32px] text-on-surface-variant/60 mb-2">assignment_turned_in</span>
-              <p className="text-sm font-semibold text-forest-deep">Aucune tâche assignée pour ce séjour</p>
-            </div>
-          ) : (
-            displayedTasks.map((task, idx) => (
-              <TaskCard
-                key={task.id || idx}
-                task={task}
-                currentUser={currentUser}
-                onOpen={handleOpenTaskDetail}
-              />
-            ))
-          )}
-        </div>
+        {/* Grille des tâches selon l'onglet actif */}
+        {stayTasksTab === 'onsite_all' ? (
+          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-5">
+            {allOnsiteOpenTasks.length === 0 ? (
+              <div className="col-span-full py-10 px-4 rounded-xl bg-canvas-slate border border-dashed border-outline-variant/40 flex flex-col items-center justify-center text-center">
+                <span className="material-symbols-outlined text-[34px] text-emerald-600/70 mb-2">task_alt</span>
+                <p className="text-sm font-semibold text-forest-deep">Aucune tâche sur place en attente au domaine !</p>
+                <p className="text-xs text-on-surface-variant mt-1">Tout est à jour sur le domaine. Profitez pleinement de votre séjour.</p>
+              </div>
+            ) : (
+              allOnsiteOpenTasks.map((task, idx) => {
+                const assignedToMe = isTaskAssignedToUser(task, currentUser);
+                const inPool = isTaskInOnsitePool(task);
+                const pts = getDifficultyPoints(task.difficulty || task.complexity, task.charge_points);
+                const currentHolder = Array.isArray(task.assigned_members) && task.assigned_members.length > 0
+                  ? task.assigned_members.join(', ')
+                  : (task.assignee || '');
+
+                return (
+                  <TaskCard
+                    key={`onsite-${task.id || idx}`}
+                    task={task}
+                    currentUser={currentUser}
+                    onOpen={handleOpenTaskDetail}
+                    extraFooterContent={
+                      assignedToMe ? (
+                        <div className="flex items-center justify-between gap-2 text-xs text-emerald-900 bg-emerald-50 border border-emerald-200 rounded-xl px-3 py-2 font-semibold">
+                          <span className="inline-flex items-center gap-1.5">
+                            <span className="material-symbols-outlined text-[16px] text-emerald-700">check_circle</span>
+                            <span>Sous votre responsabilité (+{pts} pts)</span>
+                          </span>
+                        </div>
+                      ) : (
+                        <div className="flex flex-col gap-2">
+                          <div className="flex items-center justify-between text-[11px] text-on-surface-variant">
+                            <span>
+                              {inPool ? (
+                                <strong className="text-teal-800">🟢 Libre — en attente d’une venue</strong>
+                              ) : (
+                                <>Actuellement confiée à <strong className="text-slate-800">{currentHolder}</strong></>
+                              )}
+                            </span>
+                            <span className="font-bold text-indigo-800 shrink-0">+{pts} pt{pts > 1 ? 's' : ''}</span>
+                          </div>
+                          <div className="flex flex-wrap items-center gap-2">
+                            <button
+                              type="button"
+                              disabled={claimingTaskId === task.id}
+                              onClick={() => handleOpenClaimModal(task, 'claim')}
+                              className="flex-1 inline-flex items-center justify-center gap-1.5 px-3 py-2 rounded-xl bg-teal-700 hover:bg-teal-800 text-white text-xs font-bold shadow-xs transition-all cursor-pointer active:scale-95 disabled:opacity-50"
+                            >
+                              <span className="material-symbols-outlined text-[15px]">pan_tool</span>
+                              <span>{inPool ? "Je m'en occupe" : 'Reprendre'}</span>
+                            </button>
+                            <button
+                              type="button"
+                              disabled={claimingTaskId === task.id}
+                              onClick={() => handleOpenClaimModal(task, 'complete')}
+                              className="flex-1 inline-flex items-center justify-center gap-1.5 px-3 py-2 rounded-xl bg-emerald-50 hover:bg-emerald-100 text-emerald-900 border border-emerald-300 text-xs font-bold shadow-2xs transition-all cursor-pointer active:scale-95 disabled:opacity-50"
+                              title="Déclarer cette tâche déjà réalisée sur place et prévenir l'ancien titulaire"
+                            >
+                              <span className="material-symbols-outlined text-[15px]">task_alt</span>
+                              <span>C'est fait !</span>
+                            </button>
+                          </div>
+                        </div>
+                      )
+                    }
+                  />
+                );
+              })
+            )}
+          </div>
+        ) : (
+          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-5">
+            {displayedTasks.length === 0 ? (
+              <div className="col-span-full py-8 px-4 rounded-xl bg-canvas-slate border border-dashed border-outline-variant/40 flex flex-col items-center justify-center text-center">
+                <span className="material-symbols-outlined text-[32px] text-on-surface-variant/60 mb-2">assignment_turned_in</span>
+                <p className="text-sm font-semibold text-forest-deep">Aucune mission ne vous est actuellement assignée</p>
+                {allOnsiteOpenTasks.length > 0 && (
+                  <button
+                    type="button"
+                    onClick={() => setStayTasksTab('onsite_all')}
+                    className="mt-3 inline-flex items-center gap-1.5 px-4 py-2 rounded-xl bg-teal-50 hover:bg-teal-100 text-teal-900 border border-teal-200 text-xs font-bold cursor-pointer"
+                  >
+                    <span className="material-symbols-outlined text-[16px]">location_on</span>
+                    <span>Voir les {allOnsiteOpenTasks.length} tâche(s) à faire sur place</span>
+                  </button>
+                )}
+              </div>
+            ) : (
+              displayedTasks.map((task, idx) => (
+                <TaskCard
+                  key={`my-${task.id || idx}`}
+                  task={task}
+                  currentUser={currentUser}
+                  onOpen={handleOpenTaskDetail}
+                />
+              ))
+            )}
+          </div>
+        )}
 
       </section>
-      )}
+
+      {/* Modale de confirmation de reprise / réalisation sur place (avec notification garantie) */}
+      {claimModalState && claimModalState.task && (() => {
+        const modalTask = claimModalState.task;
+        const isCompleteMode = claimModalState.mode === 'complete';
+        const pts = getDifficultyPoints(modalTask.difficulty || modalTask.complexity, modalTask.charge_points);
+        const prevHolders = Array.isArray(modalTask.assigned_members) && modalTask.assigned_members.length > 0
+          ? modalTask.assigned_members.join(', ')
+          : (modalTask.assignee || '');
+
+        return (
+          <div
+            className="fixed inset-0 z-[80] bg-slate-900/50 backdrop-blur-xs flex items-center justify-center p-4 animate-in fade-in duration-150"
+            onClick={() => !claimingTaskId && setClaimModalState(null)}
+          >
+            <div
+              onClick={(e) => e.stopPropagation()}
+              className="w-full max-w-md rounded-2xl bg-white dark:bg-slate-900 border border-border-subtle shadow-2xl overflow-hidden"
+            >
+              <div className={`px-5 py-4 border-b flex items-center justify-between gap-2 ${
+                isCompleteMode ? 'bg-emerald-50 border-emerald-200' : 'bg-teal-50 border-teal-200'
+              }`}>
+                <div className="flex items-center gap-2">
+                  <span className={`material-symbols-outlined text-[22px] ${isCompleteMode ? 'text-emerald-700' : 'text-teal-700'}`}>
+                    {isCompleteMode ? 'task_alt' : 'pan_tool'}
+                  </span>
+                  <h3 className="text-sm font-bold text-forest-deep">
+                    {isCompleteMode ? 'Déclarer cette tâche gérée sur place' : 'Prendre en charge cette tâche sur place'}
+                  </h3>
+                </div>
+                <button
+                  type="button"
+                  disabled={Boolean(claimingTaskId)}
+                  onClick={() => setClaimModalState(null)}
+                  className="w-8 h-8 rounded-full hover:bg-white/70 flex items-center justify-center text-slate-500 cursor-pointer"
+                >
+                  <span className="material-symbols-outlined text-[18px]">close</span>
+                </button>
+              </div>
+
+              <div className="p-5 space-y-4 text-xs sm:text-sm">
+                <div className="p-3.5 rounded-xl bg-canvas-slate border border-slate-200 space-y-1">
+                  <div className="font-bold text-forest-deep">{modalTask.title}</div>
+                  <div className="text-xs text-on-surface-variant flex items-center gap-2 flex-wrap">
+                    <span>{modalTask.subject || 'Domaine'}</span>
+                    <span>•</span>
+                    <strong className="text-indigo-800">+{pts} pt{pts > 1 ? 's' : ''} d'équité</strong>
+                  </div>
+                </div>
+
+                {prevHolders && (
+                  <div className="p-3 rounded-xl bg-amber-50 border border-amber-200 text-amber-950 text-xs flex items-start gap-2">
+                    <span className="material-symbols-outlined text-[18px] text-amber-700 shrink-0 mt-0.5">notifications_active</span>
+                    <span>
+                      <strong>{prevHolders}</strong> recevra automatiquement une notification (cloche + e-mail) lui indiquant que vous avez {isCompleteMode ? 'géré cette tâche sur place' : 'repris cette tâche sur place'} et que les points ({pts} pts) vous sont transférés.
+                    </span>
+                  </div>
+                )}
+
+                {isCompleteMode && (
+                  <div className="space-y-1.5">
+                    <label className="text-xs font-bold text-slate-700 block">
+                      Petit mot sur ce qui a été fait (optionnel)
+                    </label>
+                    <textarea
+                      rows={3}
+                      value={claimNotes}
+                      onChange={(e) => setClaimNotes(e.target.value)}
+                      placeholder="Ex. : Gonds resserrés et porte réalignée, elle ferme parfaitement !"
+                      className="w-full px-3 py-2 rounded-xl border border-slate-300 bg-white text-xs sm:text-sm focus:outline-none focus:ring-2 focus:ring-emerald-600"
+                    />
+                  </div>
+                )}
+
+                <div className="flex items-center justify-end gap-2 pt-2">
+                  <button
+                    type="button"
+                    disabled={Boolean(claimingTaskId)}
+                    onClick={() => setClaimModalState(null)}
+                    className="px-4 py-2 rounded-xl bg-white border border-slate-300 text-slate-700 text-xs font-semibold hover:bg-slate-50 cursor-pointer"
+                  >
+                    Annuler
+                  </button>
+                  <button
+                    type="button"
+                    disabled={Boolean(claimingTaskId)}
+                    onClick={handleConfirmClaimOnsite}
+                    className={`inline-flex items-center gap-1.5 px-4 py-2 rounded-xl text-white text-xs font-bold shadow-sm cursor-pointer disabled:opacity-50 ${
+                      isCompleteMode ? 'bg-emerald-600 hover:bg-emerald-700' : 'bg-teal-700 hover:bg-teal-800'
+                    }`}
+                  >
+                    <span className="material-symbols-outlined text-[16px]">
+                      {claimingTaskId ? 'progress_activity' : (isCompleteMode ? 'check_circle' : 'pan_tool')}
+                    </span>
+                    <span>
+                      {claimingTaskId
+                        ? 'Enregistrement...'
+                        : (isCompleteMode ? `Confirmer (+${pts} pts)` : `Je m'en occupe (+${pts} pts)`)}
+                    </span>
+                  </button>
+                </div>
+              </div>
+            </div>
+          </div>
+        );
+      })()}
 
       {/* ===================================================================== */}
       {/* 4. VADÉMÉCUM ESSENTIEL DU DOMAINE (Accès direct en séjour)            */}

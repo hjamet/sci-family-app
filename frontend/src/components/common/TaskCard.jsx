@@ -6,6 +6,12 @@ import {
   getTaskStatusMeta,
   isTaskAssignedToUser,
 } from '../../utils/taskAssignment';
+import {
+  getUrgencyMeta,
+  getDifficultyMeta,
+  isTaskOnsite,
+  isTaskInOnsitePool,
+} from '../../utils/taskTaxonomy';
 
 
 function getCategoryIcon(cat) {
@@ -39,6 +45,7 @@ export default function TaskCard({
   onOpen,
   onAccept,
   onReject,
+  extraFooterContent = null,
   className = '',
 }) {
   if (!task) return null;
@@ -87,22 +94,16 @@ export default function TaskCard({
     actionButtonClass = 'bg-emerald-100/80 text-emerald-900 border-emerald-300 hover:bg-emerald-200 text-xs sm:text-sm font-semibold';
   }
 
-  // Normalize priority to 'Normale', 'Haute', 'Critique'
-  const rawPriority = (task.priority || 'Normale').trim();
-  const normalizedPriority = rawPriority.toLowerCase() === 'normal' || rawPriority.toLowerCase() === 'normale'
-    ? 'Normale'
-    : rawPriority.toLowerCase() === 'haute' || rawPriority.toLowerCase() === 'high'
-    ? 'Haute'
-    : rawPriority.toLowerCase() === 'critique' || rawPriority.toLowerCase() === 'urgent'
-    ? 'Critique'
-    : rawPriority.charAt(0).toUpperCase() + rawPriority.slice(1).toLowerCase();
+  // Deux axes orthogonaux : Urgence (rapidité d'action) vs Difficulté (charge / points)
+  const urgencyMeta = getUrgencyMeta(task.urgency || task.priority);
+  const difficultyMeta = getDifficultyMeta(task.difficulty || task.complexity, task.charge_points);
+  const onsite = isTaskOnsite(task);
+  const inOnsitePool = isTaskInOnsitePool(task);
 
-  const isCritical = normalizedPriority === 'Critique';
-  const isHigh = normalizedPriority === 'Haute';
-  const isNormal = normalizedPriority === 'Normale' || !normalizedPriority;
+  const isCritical = urgencyMeta.value === 'Immédiate';
+  const isHigh = urgencyMeta.value === 'Rapide';
 
   const subject = task.subject || task.location || task.domaine || task.property_name || '';
-  const complexity = task.complexity || (task.difficulty ? (task.difficulty === 'Modérée' ? 'Modérée' : task.difficulty) : '');
 
   // Resolve assignee name & initials (Annotation 3 : Pas d'auto-attribution au créateur)
   let assigneeName = '';
@@ -196,54 +197,62 @@ export default function TaskCard({
             </span>
           )}
 
-          {/* Priority Badge */}
+          {/* Badge Urgence (rapidité d'action — indépendant des points) */}
           <span
-            className={`inline-flex items-center gap-1.5 px-3 py-1 rounded-full font-label-sm text-label-sm font-semibold ${
-              isCritical
-                ? 'bg-error-container/60 text-error'
-                : isHigh
-                ? 'bg-amber-soft text-amber-rich'
-                : isNormal
-                ? 'bg-sage-soft text-forest-deep'
-                : 'bg-canvas-slate text-on-surface-variant'
-            }`}
+            className={`inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full font-label-sm text-xs font-semibold ${urgencyMeta.badgeClass}`}
+            title={`Urgence : ${urgencyMeta.hint}`}
           >
-            <span
-              className={`w-2 h-2 rounded-full ${
-                isCritical
-                  ? 'bg-error'
-                  : isHigh
-                  ? 'bg-amber-rich'
-                  : isNormal
-                  ? 'bg-secondary'
-                  : 'bg-outline'
-              }`}
-            ></span>
-            {normalizedPriority}
+            <span className="material-symbols-outlined text-[14px]">{urgencyMeta.icon}</span>
+            <span>{urgencyMeta.badgeLabel}</span>
           </span>
+
+          {/* Badge Difficulté & Points d'équité (pénibilité — indépendant de l'urgence) */}
+          <span
+            className={`inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full font-label-sm text-xs font-semibold ${difficultyMeta.badgeClass}`}
+            title={`Difficulté : ${difficultyMeta.hint}`}
+          >
+            <span className="material-symbols-outlined text-[14px]">fitness_center</span>
+            <span>{difficultyMeta.badgeLabel}</span>
+          </span>
+
+          {/* Badge Présence sur place vs À distance */}
+          <span
+            className={`inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full font-label-sm text-xs font-semibold border ${
+              onsite
+                ? 'bg-teal-50 text-teal-900 border-teal-200 dark:bg-teal-950/50 dark:text-teal-200 dark:border-teal-800'
+                : 'bg-indigo-50 text-indigo-800 border-indigo-200 dark:bg-indigo-950/40 dark:text-indigo-200 dark:border-indigo-800'
+            }`}
+            title={onsite ? 'Tâche à réaliser sur place au domaine' : 'Tâche réalisable à distance'}
+          >
+            <span className="material-symbols-outlined text-[14px]">{onsite ? 'location_on' : 'laptop_mac'}</span>
+            <span>{onsite ? 'Sur place' : 'À distance'}</span>
+          </span>
+
+          {/* Badge Vivier sur place (en attente d'une venue) */}
+          {inOnsitePool && (
+            <span
+              className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full font-label-sm text-xs font-bold bg-emerald-100 text-emerald-900 border border-emerald-300 dark:bg-emerald-950/60 dark:text-emerald-200"
+              title="Disponible au vivier sur place (/sejour) en attente d'une venue ou d'un volontaire"
+            >
+              <span className="material-symbols-outlined text-[14px]">event_upcoming</span>
+              <span>En attente d'une venue</span>
+            </span>
+          )}
 
           {/* Emplacement / Sujet */}
           {subject && (
-            <span className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full bg-canvas-slate text-on-surface font-label-sm text-label-sm">
-              <span className="material-symbols-outlined text-[16px] text-on-surface-variant">
+            <span className="inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-full bg-canvas-slate text-on-surface font-label-sm text-xs border border-slate-200/80">
+              <span className="material-symbols-outlined text-[15px] text-on-surface-variant">
                 {task.subject_icon || getSubjectIcon(subject)}
               </span>
               {subject}
             </span>
           )}
 
-          {/* Estimation de complexité */}
-          {complexity && (
-            <span className="inline-flex items-center gap-1 px-2.5 py-1 rounded-full bg-canvas-slate text-on-surface-variant font-label-sm text-label-sm border border-slate-200">
-              <span className="material-symbols-outlined text-[15px] text-primary">bolt</span>
-              <span>{complexity}</span>
-            </span>
-          )}
-
-          {/* Domaine / Catégorie */}
-          {task.category && (
-            <span className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full bg-sage-soft text-forest-deep font-label-sm text-label-sm font-semibold">
-              <span className="material-symbols-outlined text-[16px] text-primary">
+          {/* Domaine / Catégorie (uniquement si différent du sujet) */}
+          {task.category && task.category.trim().toLowerCase() !== subject.trim().toLowerCase() && (
+            <span className="inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-full bg-sage-soft text-forest-deep font-label-sm text-xs font-semibold">
+              <span className="material-symbols-outlined text-[15px] text-primary">
                 {getCategoryIcon(task.category)}
               </span>
               {task.category}
@@ -369,7 +378,7 @@ export default function TaskCard({
                 ? (task.created_by ? `Proposée par : ${task.created_by}` : (isUnassigned ? 'Non assignée' : assigneeName))
                 : isValidationTask
                 ? (task.created_by ? `Réalisée par : ${assigneeName || task.created_by}` : (isUnassigned ? 'Non assignée' : assigneeName))
-                : (isUnassigned ? 'Non assignée' : assigneeName)}
+                : (inOnsitePool ? 'Vivier sur place (libre)' : (isUnassigned ? 'Non assignée' : assigneeName))}
             </span>
             <span className="text-[12px] text-on-surface-variant leading-tight">
               {isProposed
@@ -378,6 +387,8 @@ export default function TaskCard({
                 ? 'En attente de validation'
                 : isDone
                 ? 'Archivée'
+                : inOnsitePool
+                ? 'En attente d’une venue / reprise volontaire'
                 : task.role_label || (isUnassigned ? 'En attente de désignation' : 'Responsable de mission')}
             </span>
           </div>
@@ -396,6 +407,16 @@ export default function TaskCard({
           <span>{actionButtonLabel}</span>
         </button>
       </div>
+
+      {/* Actions contextuelles supplémentaires (ex. reprise / réalisation sur place dans /sejour) */}
+      {extraFooterContent && (
+        <div
+          onClick={(e) => e.stopPropagation()}
+          className="pt-3 mt-3 border-t border-slate-100 dark:border-slate-800"
+        >
+          {extraFooterContent}
+        </div>
+      )}
     </article>
   );
 }
