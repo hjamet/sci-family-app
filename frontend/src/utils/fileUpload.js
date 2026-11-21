@@ -14,6 +14,8 @@
  *    et compression d'images (JPEG max 2400px, q=0.8) pour préserver la RAM des smartphones.
  */
 
+import { reportClientError } from './errorLogger';
+
 function getAuthHeaders(extraHeaders = {}) {
   const token = typeof window !== 'undefined' ? localStorage.getItem('sci_token') : null;
   const headers = { ...extraHeaders };
@@ -87,7 +89,10 @@ export async function readFileToMemory(file) {
  * en ménageant strictement la mémoire vive (createImageBitmap + libération immédiate).
  * Cette optimisation préserve la mémoire des smartphones sans être une limite serveur.
  */
-export async function compressImageIfApplicable(file) {
+export async function compressImageIfApplicable(
+  file,
+  { maxLongSide = MAX_IMAGE_LONG_SIDE, quality = JPEG_COMPRESSION_QUALITY, forceJpeg = false } = {}
+) {
   const isImage = (
     (file.type && file.type.startsWith('image/')) ||
     /\.(jpe?g|png|webp|heic|heif)$/i.test(file.name || '')
@@ -135,13 +140,13 @@ export async function compressImageIfApplicable(file) {
       return file;
     }
 
-    // Calcul du redimensionnement (côté long ~2400px)
+    // Calcul du redimensionnement
     const maxDim = Math.max(width, height);
     let targetWidth = width;
     let targetHeight = height;
 
-    if (maxDim > MAX_IMAGE_LONG_SIDE) {
-      const scale = MAX_IMAGE_LONG_SIDE / maxDim;
+    if (maxDim > maxLongSide) {
+      const scale = maxLongSide / maxDim;
       targetWidth = Math.round(width * scale);
       targetHeight = Math.round(height * scale);
     }
@@ -158,9 +163,9 @@ export async function compressImageIfApplicable(file) {
       bitmap.close();
     }
 
-    // 3. Export JPEG 0.8
+    // 3. Export JPEG
     const compressedBlob = await new Promise((resolve) => {
-      canvas.toBlob(resolve, 'image/jpeg', JPEG_COMPRESSION_QUALITY);
+      canvas.toBlob(resolve, 'image/jpeg', quality);
     });
 
     // Libération immédiate du canvas
@@ -171,8 +176,8 @@ export async function compressImageIfApplicable(file) {
       return file;
     }
 
-    // Si la compression est plus lourde que l'original (ex. tout petit PNG), conserver l'original
-    if (compressedBlob.size >= file.size && maxDim <= MAX_IMAGE_LONG_SIDE) {
+    // Si la compression est plus lourde que l'original (ex. tout petit PNG), conserver l'original sauf si forceJpeg
+    if (!forceJpeg && compressedBlob.size >= file.size && maxDim <= maxLongSide) {
       return file;
     }
 
@@ -245,7 +250,17 @@ export async function uploadUniversalDocument(file, metadata = {}, onProgress = 
 
     if (!res.ok) {
       const errJson = await res.json().catch(() => ({}));
-      throw new Error(friendlyErrorMessage(errJson, res.status));
+      const msg = friendlyErrorMessage(errJson, res.status);
+      reportClientError({
+        source: 'frontend_upload_error',
+        severity: res.status >= 500 ? 'critical' : 'error',
+        message: msg,
+        endpoint: '/api/documents/upload',
+        httpMethod: 'POST',
+        statusCode: res.status,
+        context: { filename: preparedFile.name, size: preparedFile.size, type: preparedFile.type, metadata },
+      });
+      throw new Error(msg);
     }
 
     if (onProgress) onProgress(100, "Document archivé avec succès !");

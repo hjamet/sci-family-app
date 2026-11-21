@@ -18,6 +18,7 @@ from sqlalchemy.orm import Session
 from ..database import get_db
 from ..models import Member
 from ..security import decode_access_token
+from ..services.error_log_service import record_error_log
 from ..services.toaster_service import (
     DOMAIN_ROOMS,
     STATUTORY_ASSOCIATE_NAMES,
@@ -91,6 +92,8 @@ class ToasterChatRequest(BaseModel):
     attachment_base64: Optional[str] = None
     attachment_mime: Optional[str] = None
     attachment_name: Optional[str] = None
+    session_attachment_name: Optional[str] = None
+    session_attachment_mime: Optional[str] = None
 
 
 class ToasterExecuteRequest(BaseModel):
@@ -156,7 +159,7 @@ TOASTER_FUNCTION_DECLARATIONS: List[Dict[str, Any]] = [
                         "{'initial_tab': 'annual'|'temperatures'|'daily'} pour fuel_and_heating_graph ; "
                         "{'project_id': 40} ou {'search_query': 'ménage'} pour poll_status_card ; "
                         "{'assigned_to': 'Joséphine', 'status_filter': 'REVIEW_NEEDED'|'PROPOSED'|'PENDING_VALIDATION'|'EN_COURS'|'ACTIVE'|'ALL', 'task_id': 87, 'task_ids': [87]} pour tasks_overview_card ; "
-                        "{'document_id': 177} pour document_viewer_card ; "
+                        "{'document_id': 177} ou {'document_ids': [122, 127]} ou {'search_queries': ['maif', 'taxe fonciere']} pour document_viewer_card ; "
                         "{'period': 'all'|'1_year'|'3_months'} pour leaderboard_card ; "
                         "{'title': '...', 'subtitle': '...', 'chart_type': 'bar'|'horizontal_bar'|'line'|'pie', 'unit': '€', 'labels': [...], 'series': [{'name': '...', 'color': '#059669', 'values': [...]}]} pour custom_chart_card ; "
                         "{'search_query': 'wifi', 'category': '...', 'item_id': 41} pour vademecum_card ; "
@@ -258,13 +261,29 @@ TOASTER_FUNCTION_DECLARATIONS: List[Dict[str, Any]] = [
     },
     {
         "name": "read_documents_and_contracts",
-        "description": "LECTURE SEULE : recherche parmi les documents officiels de la SCI ou lit un PDF/image précis via document_id.",
+        "description": (
+            "LECTURE SEULE : recherche parmi TOUS les documents officiels/administratifs de la SCI (avec recherche tolérante aux accents, "
+            "pluriels, synonymes et multi-requêtes via search_queries ou parcours complet via list_all=True), "
+            "ou lit le contenu exact PDF/image d'un ou plusieurs documents via document_id / document_ids (jusqu'à 3 documents en parallèle)."
+        ),
         "parameters": {
             "type": "OBJECT",
             "properties": {
-                "search_query": {"type": "STRING", "description": "Mots-clés de recherche (ex: 'taxe fonciere', 'sepase', 'josse', 'rib')."},
-                "category": {"type": "STRING", "description": "Catégorie optionnelle."},
-                "document_id": {"type": "INTEGER", "description": "ID exact d'un document pour lire son PDF/image."},
+                "search_query": {"type": "STRING", "description": "Mots-clés de recherche (ex: 'taxe fonciere', 'maif', 'sepase', 'josse', 'kbis', 'rib')."},
+                "search_queries": {
+                    "type": "ARRAY",
+                    "items": {"type": "STRING"},
+                    "description": "Liste de plusieurs requêtes / variantes / synonymes à tester simultanément (ex: ['statuts', 'kbis', 'inpi', 'immatriculation']).",
+                },
+                "category": {"type": "STRING", "description": "Catégorie optionnelle (ex: 'Actes & Statuts', 'Assurances & Police', 'Fiscalité & Impôts', 'Travaux & Factures', 'Chauffage', 'Eau & Assainissement', 'Procès-Verbaux AG')."},
+                "list_all": {"type": "BOOLEAN", "description": "True pour lister l'index complet de toute la bibliothèque documentaire si un document est introuvable par mot-clé."},
+                "include_calls_for_funds": {"type": "BOOLEAN", "description": "True pour inclure aussi les PDF d'avis d'appel de fonds mensuels."},
+                "document_id": {"type": "INTEGER", "description": "ID exact d'un document pour lire son contenu PDF/image."},
+                "document_ids": {
+                    "type": "ARRAY",
+                    "items": {"type": "INTEGER"},
+                    "description": "Liste de 1 à 3 IDs de documents à ouvrir et lire en parallèle.",
+                },
             },
         },
     },
@@ -379,11 +398,11 @@ TOASTER_FUNCTION_DECLARATIONS: List[Dict[str, Any]] = [
                 "operation": {"type": "STRING", "description": "'archive', 'link_task' ou 'link_vote'."},
                 "organisme": {"type": "STRING", "description": "Organisme émetteur ou destinataire (ex: 'EURL Bompais', 'Declercq', 'SCI', 'AXA', 'Notaire')."},
                 "title": {"type": "STRING", "description": "Titre clair du document (pour le nom canonique ORGANISME MMAAAA Titre.ext)."},
-                "category": {"type": "STRING", "description": "Catégorie d'archive (ex: 'Travaux & Chantiers', 'Factures', 'Contrats & Assurances', 'Statuts & Actes', 'Notices & Plans', 'Autre')."},
+                "category": {"type": "STRING", "description": "Catégorie réelle de la bibliothèque Administratif (ex: 'Actes & Statuts', 'Assurances & Police', 'Chauffage', 'Eau & Assainissement', 'Fiscalité & Impôts', 'Procès-Verbaux AG', 'Travaux & Factures', 'Factures', 'Courriers & Mairie', 'Autre')."},
                 "task_id": {"type": "INTEGER", "description": "ID de la tâche existante si operation='link_task'."},
                 "project_id": {"type": "INTEGER", "description": "ID du scrutin/vote existant si operation='link_vote'."},
                 "existing_document_id": {"type": "INTEGER", "description": "ID d'un document déjà existant dans la bibliothèque SCI (optionnel, si l'on lie un document existant au lieu d'un fichier joint)."},
-                "assistant_message": {"type": "STRING", "description": "Réponse fluide en français naturel."},
+                "assistant_message": {"type": "STRING", "description": "Réponse COMPLÈTE en français naturel répondant à TOUTES les questions de l'associé (données lues dans le document, codes, montants, dates, documents trouvés) avant de mentionner la carte d'archivage."},
             },
             "required": ["operation", "title", "assistant_message"],
         },
@@ -581,11 +600,15 @@ LISTE EXHAUSTIVE « CE QUE J'AI À FAIRE » (`read_my_pending_actions`) :
 COHÉRENCE STRICTE DES CYCLES DE VIE & VALIDATION EXPLICITE DES ACTIONS RÉELLES :
 - Tu opères directement sur le vrai portail de la SCI (base PostgreSQL, chauffage ViCare, piscine Klereo, bibliothèque documentaire Google Drive).
 - **Fils de discussion & messages** : tu peux à la fois **afficher un fil de discussion interactif** dans le chat via `show_discussion_thread` (pour que l'utilisateur lise et réponde directement) ET **proposer de publier un message / commentaire** sur une tâche ou un scrutin via `propose_comment_action` (toujours soumis à validation explicite de l'utilisateur sur la carte).
-- **Documents joints par l'utilisateur (upload & rattachement)** : lorsqu'un associé te fournit un document (PDF ou photo), examine-le et propose toujours l'opération la plus pertinente (qui reste soumise à confirmation explicite de l'associé sur la carte) :
-  - Facture/reçu avec montant TTC → `propose_invoice_or_document_upload` (enregistre la dépense/avance + archive le document réel).
-  - Document à archiver dans la bibliothèque SCI, ou à rattacher à une **tâche existante** ou un **scrutin existant** → `propose_document_action` (`operation='archive'`, `'link_task'` avec `task_id`, ou `'link_vote'` avec `project_id`).
-  - Document nécessitant la création d'une **nouvelle tâche** (ex. photo d'un souci, devis à suivre) → `propose_task_action(operation='create', attach_uploaded_file=True, document_organisme=..., document_title=...)`.
-  - Document nécessitant la création d'un **nouveau scrutin / vote** (ex. devis de travaux à soumettre aux associés) → `propose_poll_or_vote_action(operation='create', attach_uploaded_file=True, document_organisme=..., document_title=...)`.
+- **Recherche exhaustive dans les documents administratifs (`read_documents_and_contracts`)** : ne réponds JAMAIS qu'un document n'existe pas après une seule requête ! Utilise `search_queries` avec plusieurs variantes/synonymes/prestataires (ex. `['statuts', 'kbis', 'inpi', 'rne']` ou `['maif', 'assurance', 'habitation']`), ou `list_all=True` pour parcourir tout le catalogue de la bibliothèque Administratif. Dès que tu trouves le(s) bon(s) document(s), appelle `read_documents_and_contracts(document_id=...)` (ou `document_ids=[...]`) pour lire leur contenu exact si on te pose une question sur leur contenu, ET appelle `display_ui_component('document_viewer_card', props={'document_ids': [...]})` pour les rendre consultables/téléchargeables en un clic !
+- **Documents joints par l'utilisateur (images, PDF — lecture + upload & rattachement)** : lorsqu'un associé te fournit un document (photo, capture, PDF) :
+  1. **Lis et restitue toujours concrètement ce que tu vois** (texte clé, codes, montants, dates, fournisseur, objet) directement dans ta réponse (y compris dans le champ `assistant_message` si tu invoques aussi un outil `propose_*`, car c'est le texte final affiché au-dessus de la carte !).
+  2. **Propose proactivement l'action utile** (toujours soumise à confirmation explicite de l'associé sur la carte) en choisissant une catégorie réelle de la bibliothèque Administratif :
+     - Facture/reçu avec montant TTC → `propose_invoice_or_document_upload` (enregistre la dépense/avance + archive le document réel).
+     - Document à archiver dans la bibliothèque **Administratif** de la SCI, ou à rattacher à une **tâche existante** ou un **scrutin existant** → `propose_document_action` (`operation='archive'`, `'link_task'` avec `task_id`, ou `'link_vote'` avec `project_id`).
+     - Document nécessitant la création d'une **nouvelle tâche** (ex. photo d'un souci, devis à suivre) → `propose_task_action(operation='create', attach_uploaded_file=True, document_organisme=..., document_title=..., document_category=...)`.
+     - Document nécessitant la création d'un **nouveau scrutin / vote** (ex. devis de travaux à soumettre aux associés) → `propose_poll_or_vote_action(operation='create', attach_uploaded_file=True, document_organisme=..., document_title=..., document_category=...)`.
+  3. Même lors d'un **tour suivant** de la conversation, si un fichier a déjà été joint plus tôt dans cette discussion (indiqué par `FICHIER LOCAL PRÉCÉDEMMENT JOINT`), tu peux toujours proposer de l'archiver dans Administratif ou de le rattacher à une tâche / un scrutin !
 - **Séjours** : renseigne toujours date ET heure (`arrival_time`/`departure_time`), participants internes (`selected_members`) et invités extérieurs (`external_guests`), et différencie Eau Chaude Sanitaire (`activate_dhw`, 52 °C), Chauffage Presbytère (`activate_heating`, 20 °C, qui inclut l'ECS) et Piscine (`activate_pool`, 27 °C).
 - **Tâches (Urgence vs Difficulté, présence sur place, création ultra-simple ET modification/reprise validées)** :
   - Chaque tâche distingue **deux axes indépendants** : **Urgence** (*à quel point il faut agir vite* : `Immédiate`, `Rapide`, `Normale`, `Sans urgence`, qui pilote uniquement l'attribution avant séjour) et **Difficulté** (*pénibilité* : `Très facile` 1 pt, `Facile` 2 pts, `Moyenne` 3 pts, `Difficile` 5 pts, `Très difficile` 8 pts, qui pilote uniquement les points d'équité).
@@ -617,7 +640,11 @@ def _sanitize_family_titles(text: str) -> str:
     return cleaned
 
 
-def _build_system_prompt(state: Dict[str, Any], attachment_name: Optional[str] = None) -> str:
+def _build_system_prompt(
+    state: Dict[str, Any],
+    attachment_name: Optional[str] = None,
+    session_attachment_name: Optional[str] = None,
+) -> str:
     member = state.get("active_member") or {}
     treasury = state.get("treasury") or {}
     swan = state.get("swan_banking") or {}
@@ -627,6 +654,7 @@ def _build_system_prompt(state: Dict[str, Any], attachment_name: Optional[str] =
     tasks = state.get("tasks") or []
     votes = state.get("open_votes") or []
     docs_count = state.get("documents_count") or 0
+    doc_categories = state.get("document_categories") or []
     vad_count = state.get("vademecum_count") or 0
 
     member_prenom = _sanitize_family_titles(str(member.get("prenom") or "Henri"))
@@ -676,14 +704,24 @@ def _build_system_prompt(state: Dict[str, Any], attachment_name: Optional[str] =
         f"messages/mentions={pending_counts.get('messages', 0)}, frais à payer={pending_counts.get('fees', 0)} / {float(pending.get('total_fees_due_eur') or 0.0):.2f} €)"
     )
 
-    attach_info = (
-        f"\nPIÈCE JOINTE FOURNIE DANS CE TOUR : « {attachment_name} » "
-        f"(examine-la visuellement et propose l'action adaptée parmi : propose_invoice_or_document_upload si facture/reçu avec montant, "
-        f"propose_document_action pour archiver ou lier à une tâche/un scrutin existant, "
-        f"ou propose_task_action / propose_poll_or_vote_action avec attach_uploaded_file=True pour créer une nouvelle tâche ou un nouveau scrutin avec ce document joint)."
-        if attachment_name
-        else ""
-    )
+    doc_cats_txt = ", ".join(str(c) for c in doc_categories[:20]) if doc_categories else "Actes & Statuts, Assurances & Police, Chauffage, Eau & Assainissement, Fiscalité & Impôts, Procès-Verbaux AG, Travaux & Factures, Factures, Courriers & Mairie, Autre"
+
+    if attachment_name:
+        attach_info = (
+            f"\nPIÈCE JOINTE FOURNIE DANS CE TOUR : « {attachment_name} » "
+            f"(examine-la visuellement/textuellement, réponds d'abord complètement aux questions sur son contenu — y compris dans assistant_message si tu appelles un outil propose_* — "
+            f"puis propose si pertinent l'action adaptée : propose_invoice_or_document_upload si facture/reçu avec montant, "
+            f"propose_document_action pour archiver dans Administratif ou lier à une tâche/un scrutin existant, "
+            f"ou propose_task_action / propose_poll_or_vote_action avec attach_uploaded_file=True pour créer une nouvelle tâche ou un nouveau scrutin avec ce document joint)."
+        )
+    elif session_attachment_name:
+        attach_info = (
+            f"\nFICHIER LOCAL PRÉCÉDEMMENT JOINT DANS CETTE CONVERSATION (ENCORE PRÊT DANS LE NAVIGATEUR POUR ARCHIVAGE/LIAISON) : « {session_attachment_name} ». "
+            f"Si l'associé demande de l'archiver dans Administratif ou de le rattacher à une tâche/un scrutin (existant ou nouveau), "
+            f"appelle directement propose_document_action ou propose_task_action / propose_poll_or_vote_action (avec attach_uploaded_file=True)."
+        )
+    else:
+        attach_info = ""
 
     dynamic_context = f"""
 DATE DU JOUR : {datetime.utcnow().strftime('%Y-%m-%d')}
@@ -692,6 +730,7 @@ ACTIONS EN ATTENTE POUR {member_prenom.upper()} : {pending_summary_txt}
 
 TRÉSORERIE BANCAIRE SWAN & SOLDES CCA DES 7 ASSOCIÉS :
 - Compte SCI Swan : solde {float(swan.get('balance') or 0.0):.2f} € | IBAN {swan.get('iban')} | {docs_count} documents officiels | {vad_count} fiches Vademecum
+- Catégories réelles de la bibliothèque Administratif : {doc_cats_txt}
 - Soldes CCA : {assoc_txt}
 - Solde CCA de {member_prenom} : {float(treasury.get('balance') or 0.0):+.2f} €
 - Derniers mouvements de {member_prenom} :
@@ -977,7 +1016,15 @@ def _build_action_card(
             operation = "archive"
         organisme = str(args.get("organisme") or "SCI").strip()
         title = str(args.get("title") or (attachment_name or "Document SCI")).strip()
-        category = str(args.get("category") or "Travaux & Chantiers").strip()
+        raw_cat = str(args.get("category") or "Travaux & Factures").strip()
+        _cat_aliases = {
+            "travaux & chantiers": "Travaux & Factures",
+            "contrats & assurances": "Assurances & Police",
+            "statuts & actes": "Actes & Statuts",
+            "impôts & taxes": "Fiscalité & Impôts",
+            "impots & taxes": "Fiscalité & Impôts",
+        }
+        category = _cat_aliases.get(raw_cat.lower(), raw_cat)
         task_id = args.get("task_id")
         project_id = args.get("project_id")
         existing_doc_id = args.get("existing_document_id")
@@ -1493,7 +1540,12 @@ def _stream_toaster_orchestration(
     db: Session,
 ) -> Generator[Dict[str, Any], None, None]:
     state = get_toaster_state(prod_db=db, member_id=member_id)
-    system_prompt = _build_system_prompt(state=state, attachment_name=req.attachment_name)
+    effective_attachment_name = req.attachment_name or req.session_attachment_name
+    system_prompt = _build_system_prompt(
+        state=state,
+        attachment_name=req.attachment_name,
+        session_attachment_name=req.session_attachment_name,
+    )
     contents = _prepare_gemini_contents(req)
     api_key = _get_toaster_api_key()
     stream_url = f"{GEMINI_STREAM_ENDPOINT}?alt=sse&key={api_key}"
@@ -1505,7 +1557,7 @@ def _stream_toaster_orchestration(
     write_func_calls: List[Dict[str, Any]] = []
     final_text_parts: List[str] = []
 
-    MAX_STEPS = 5
+    MAX_STEPS = 8
     retried_empty_thought = False
     retried_missing_action = False
     force_any_tool = False
@@ -1644,6 +1696,7 @@ def _stream_toaster_orchestration(
                         args=rc_args,
                     )
                     inline_att = tool_result.pop("_inline_attachment", None) if isinstance(tool_result, dict) else None
+                    inline_atts_multi = tool_result.pop("_inline_attachments", None) if isinstance(tool_result, dict) else None
                     if isinstance(tool_result, dict) and "_ui_component" in tool_result:
                         ui_comp = tool_result.pop("_ui_component")
                         ui_components_out.append(ui_comp)
@@ -1658,12 +1711,19 @@ def _stream_toaster_orchestration(
                         fn_resp_obj["id"] = rc_id
                     response_parts.append({"functionResponse": fn_resp_obj})
 
+                    all_inline_atts = []
                     if inline_att and inline_att.get("data"):
+                        all_inline_atts.append(inline_att)
+                    if isinstance(inline_atts_multi, list):
+                        for ia in inline_atts_multi:
+                            if isinstance(ia, dict) and ia.get("data"):
+                                all_inline_atts.append(ia)
+                    for ia in all_inline_atts:
                         response_parts.append(
                             {
                                 "inlineData": {
-                                    "mimeType": inline_att.get("mimeType") or "application/pdf",
-                                    "data": inline_att["data"],
+                                    "mimeType": ia.get("mimeType") or "application/pdf",
+                                    "data": ia["data"],
                                 }
                             }
                         )
@@ -1780,7 +1840,7 @@ def _stream_toaster_orchestration(
                 func_name=w_name,
                 args=tool_args,
                 state=state,
-                attachment_name=req.attachment_name,
+                attachment_name=effective_attachment_name,
             )
             if built_card:
                 action_cards.append(built_card)
@@ -1905,10 +1965,39 @@ def toaster_chat_stream_endpoint(
             for ev in _stream_toaster_orchestration(req=req, member_id=resolved_id, db=db):
                 yield f"data: {json.dumps(ev, ensure_ascii=False, default=str)}\n\n"
         except HTTPException as http_exc:
+            record_error_log(
+                source="toaster_stream",
+                severity="critical" if http_exc.status_code >= 500 else "error",
+                status_code=http_exc.status_code,
+                error_type="HTTPException",
+                message=str(http_exc.detail),
+                member_id=resolved_id,
+                context={
+                    "attachment_name": req.attachment_name,
+                    "attachment_mime": req.attachment_mime,
+                    "messages_count": len(req.messages or []),
+                },
+                request=request,
+            )
             err_ev = {"type": "error", "detail": str(http_exc.detail)}
             yield f"data: {json.dumps(err_ev, ensure_ascii=False)}\n\n"
         except Exception as exc:
             logger.exception("[TOASTER STREAM EXCEPTION]")
+            record_error_log(
+                source="toaster_stream",
+                severity="critical",
+                status_code=500,
+                error_type=type(exc).__name__,
+                message=f"Erreur interne de l'assistant : {exc}",
+                member_id=resolved_id,
+                context={
+                    "attachment_name": req.attachment_name,
+                    "attachment_mime": req.attachment_mime,
+                    "messages_count": len(req.messages or []),
+                },
+                request=request,
+                exc=exc,
+            )
             err_ev = {"type": "error", "detail": f"Erreur interne de l'assistant : {exc}"}
             yield f"data: {json.dumps(err_ev, ensure_ascii=False)}\n\n"
 
@@ -1966,7 +2055,30 @@ def toaster_execute_endpoint(
             payload=merged_payload,
         )
     except ValueError as err:
+        record_error_log(
+            source="toaster_execute",
+            severity="error",
+            status_code=400,
+            error_type="ValueError",
+            message=str(err),
+            member_id=resolved_id,
+            context={"action_type": req.action_type, "payload": merged_payload},
+            request=request,
+        )
         raise HTTPException(status_code=400, detail=str(err))
+    except Exception as exc:
+        record_error_log(
+            source="toaster_execute",
+            severity="critical",
+            status_code=500,
+            error_type=type(exc).__name__,
+            message=str(exc),
+            member_id=resolved_id,
+            context={"action_type": req.action_type, "payload": merged_payload},
+            request=request,
+            exc=exc,
+        )
+        raise
 
 
 class ToasterTtsRequest(BaseModel):

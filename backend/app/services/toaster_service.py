@@ -1,6 +1,8 @@
 import base64
 import json
 import logging
+import mimetypes
+import os
 import re
 import unicodedata
 from datetime import datetime, timedelta, timezone
@@ -15,6 +17,7 @@ from ..models import (
     BankAccount,
     BankTransaction,
     CallForFunds,
+    DocumentCategory,
     HeatingLiveSnapshot,
     HeatingTelemetryHistory,
     Log,
@@ -182,6 +185,340 @@ def _to_naive_utc(dt: Optional[datetime]) -> Optional[datetime]:
 def _iso_utc(dt: Optional[datetime]) -> Optional[str]:
     naive = _to_naive_utc(dt)
     return naive.isoformat() + "Z" if naive else None
+
+
+_DOC_STOPWORDS = {
+    "de", "du", "des", "la", "le", "les", "un", "une", "et", "ou", "au", "aux", "en",
+    "sur", "pour", "par", "avec", "dans", "mon", "ma", "mes", "notre", "nos", "son",
+    "sa", "ses", "ce", "cet", "cette", "ces", "qui", "que", "quoi", "est", "sont",
+    "document", "documents", "fichier", "fichiers", "pdf", "doc", "docs", "admin",
+    "administratif", "administratifs", "officiel", "officiels", "sci", "hellenvilliers",
+}
+
+_DOC_SYNONYM_GROUPS = [
+    {"impot", "impots", "taxe", "taxes", "foncier", "fonciere", "dgfip", "fiscal", "fiscalite", "imposition", "tresor"},
+    {"assurance", "assurances", "police", "polices", "maif", "raqvam", "multirisque", "habitation", "sinistre", "attestation", "axa"},
+    {"eau", "sepase", "assainissement", "potable", "compteur", "resiliation", "abonnement"},
+    {"fioul", "fuel", "josse", "cuve", "mazout"},
+    {"chaudiere", "chauffage", "bompais", "viessmann", "vitoladens", "bruleur", "depannage", "ramonage", "entretien"},
+    {"statut", "statuts", "acte", "actes", "kbis", "inpi", "rne", "immatriculation", "notaire", "notarie", "barrandon", "goumard", "vente", "propriete"},
+    {"rib", "iban", "swan", "indy", "banque", "bancaire", "sepa", "mandat", "prelevement", "ppf"},
+    {"ag", "pv", "proces", "verbal", "verbaux", "assemblee", "generale"},
+    {"piscine", "declercq", "klereo", "filtration"},
+    {"fosse", "fosses", "septique", "septiques", "vidange", "vidanges", "conchoise", "conchoises"},
+    {"facture", "factures", "devis", "avoir", "recu", "justificatif", "reglement", "travaux"},
+    {"mairie", "courrier", "courriers", "commune", "urbanisme"},
+    {"jardin", "jardinage", "jardinier", "perrot", "paysage", "paysagiste", "tonte", "taille"},
+    {"electricite", "edf", "enedis", "linky", "meance", "electricien"},
+    {"presbytere", "4"},
+    {"rosing", "rosings", "8"},
+    {"annexe", "11"},
+]
+
+_DOC_SYNONYM_MAP: Dict[str, set] = {}
+for _grp in _DOC_SYNONYM_GROUPS:
+    for _w in _grp:
+        _DOC_SYNONYM_MAP.setdefault(_w, set()).update(_grp)
+
+
+def _doc_tokens(raw: Optional[str], *, keep_stopwords: bool = False) -> List[str]:
+    norm = _norm_text(raw)
+    if not norm:
+        return []
+    parts = [p for p in re.split(r"[^a-z0-9]+", norm) if p]
+    out: List[str] = []
+    for p in parts:
+        if not keep_stopwords and p in _DOC_STOPWORDS:
+            continue
+        if len(p) >= 2 or p in ("4", "8"):
+            out.append(p)
+    return out
+
+
+def _stem_fr(tok: str) -> str:
+    if len(tok) >= 5 and tok.endswith("eaux"):
+        return tok[:-1]
+    if len(tok) >= 4 and tok.endswith(("s", "x")):
+        return tok[:-1]
+    return tok
+
+
+def _get_real_document_categories(prod_db: Session) -> List[str]:
+    cats: List[str] = []
+    seen_norm: set = set()
+    default_order = [
+        "Actes & Statuts",
+        "Assurances & Police",
+        "Chauffage",
+        "Eau & Assainissement",
+        "Fiscalité & Impôts",
+        "Procès-Verbaux AG",
+        "Travaux & Factures",
+        "Factures",
+        "Courriers & Mairie",
+    ]
+    try:
+        db_cats = prod_db.query(DocumentCategory).order_by(DocumentCategory.name.asc()).all()
+        for c in db_cats:
+            name = str(c.name or "").strip()
+            if name and _norm_text(name) not in seen_norm:
+                seen_norm.add(_norm_text(name))
+                cats.append(name)
+    except Exception:
+        pass
+
+    try:
+        doc_rows = prod_db.query(AdminDocument.category).distinct().all()
+        for (raw_cat,) in doc_rows:
+            if not raw_cat:
+                continue
+            for part in str(raw_cat).split(","):
+                name = part.strip()
+                if name and _norm_text(name) not in seen_norm:
+                    seen_norm.add(_norm_text(name))
+                    cats.append(name)
+    except Exception:
+        pass
+
+    for fallback in default_order:
+        if _norm_text(fallback) not in seen_norm:
+            seen_norm.add(_norm_text(fallback))
+            cats.append(fallback)
+    if _norm_text("Autre") not in seen_norm:
+        cats.append("Autre")
+    return cats
+
+
+def _serialize_doc_meta(d: AdminDocument, score: Optional[int] = None) -> Dict[str, Any]:
+    raw_tags: List[str] = []
+    if d.tags:
+        try:
+            parsed = json.loads(d.tags) if isinstance(d.tags, str) else d.tags
+            if isinstance(parsed, list):
+                raw_tags = [str(t).strip() for t in parsed if str(t).strip()]
+        except ValueError:
+            raw_tags = [t.strip() for t in str(d.tags).split(",") if t.strip()]
+    item: Dict[str, Any] = {
+        "id": d.id,
+        "title": d.title or d.file_name or f"Document #{d.id}",
+        "category": d.category or "Autre",
+        "tags": raw_tags,
+        "file_name": d.file_name,
+        "file_type": d.file_type,
+        "file_size_kb": round((d.file_size or 0) / 1024, 1) if d.file_size else None,
+        "task_id": d.task_id,
+        "source_type": d.source_type,
+        "source_id": d.source_id,
+        "uploaded_by": sanitize_display_user_name(d.uploaded_by),
+        "notes": d.notes,
+        "created_at": str(d.created_at)[:10] if d.created_at else None,
+        "download_url": f"/api/documents/{d.id}/download",
+    }
+    if score is not None:
+        item["relevance_score"] = score
+    return item
+
+
+def _search_admin_documents(
+    prod_db: Session,
+    *,
+    search_query: Optional[str] = None,
+    search_queries: Optional[List[str]] = None,
+    category: Optional[str] = None,
+    list_all: bool = False,
+    include_calls_for_funds: bool = False,
+    limit: int = 40,
+) -> Dict[str, Any]:
+    all_rows = (
+        prod_db.query(AdminDocument)
+        .options(defer(AdminDocument.file_data))
+        .order_by(AdminDocument.id.desc())
+        .all()
+    )
+    tasks_title_map = {t.id: t.title for t in prod_db.query(Task.id, Task.title).all()}
+
+    queries_raw: List[str] = []
+    if search_query and str(search_query).strip():
+        queries_raw.append(str(search_query).strip())
+    if isinstance(search_queries, list):
+        for sq in search_queries:
+            if sq and str(sq).strip() and str(sq).strip() not in queries_raw:
+                queries_raw.append(str(sq).strip())
+
+    all_query_norm = _norm_text(" ".join(queries_raw))
+    wants_cff = include_calls_for_funds or any(
+        kw in all_query_norm for kw in ("appel de fonds", "appels de fonds", "avis appel", "cotisation")
+    )
+
+    visible_docs: List[AdminDocument] = []
+    cat_counts: Dict[str, int] = {}
+    for d in all_rows:
+        fname = d.file_name or ""
+        is_cff = (getattr(d, "source_type", None) == "CALL_FOR_FUNDS") or (
+            fname.startswith("SCI ") and "Avis Appel de Fonds" in fname
+        )
+        if is_cff and not wants_cff:
+            continue
+        visible_docs.append(d)
+        c_label = (d.category or "Autre").strip() or "Autre"
+        cat_counts[c_label] = cat_counts.get(c_label, 0) + 1
+
+    cat_tokens = _doc_tokens(category)
+    cat_stems = {_stem_fr(t) for t in cat_tokens}
+    cat_syns: set = set()
+    for t in cat_tokens:
+        cat_syns.update(_DOC_SYNONYM_MAP.get(t, set()))
+        cat_syns.update(_DOC_SYNONYM_MAP.get(_stem_fr(t), set()))
+
+    parsed_queries: List[Tuple[str, List[str]]] = []
+    for qr in queries_raw:
+        toks = _doc_tokens(qr)
+        if not toks:
+            toks = _doc_tokens(qr, keep_stopwords=True)
+        if toks:
+            parsed_queries.append((_norm_text(qr), toks))
+
+    def _score_doc(d: AdminDocument, enforce_category: bool) -> int:
+        t_title = tasks_title_map.get(d.task_id, "") if d.task_id else ""
+        hay_str = _norm_text(
+            f"{d.title or ''} {d.file_name or ''} {d.category or ''} {d.notes or ''} {d.tags or ''} "
+            f"{d.uploaded_by or ''} {t_title}"
+        )
+        hay_toks = set(_doc_tokens(hay_str, keep_stopwords=True))
+        hay_stems = {_stem_fr(t) for t in hay_toks}
+
+        cat_hay = _norm_text(f"{d.category or ''} {d.tags or ''}")
+        cat_hay_toks = set(_doc_tokens(cat_hay, keep_stopwords=True))
+        cat_hay_stems = {_stem_fr(t) for t in cat_hay_toks}
+
+        cat_score = 0
+        if cat_tokens:
+            cat_match = any(
+                (ct in cat_hay) or (ct in cat_hay_toks) or (_stem_fr(ct) in cat_hay_stems)
+                for ct in cat_tokens
+            ) or bool(cat_syns & (cat_hay_toks | cat_hay_stems))
+            if enforce_category and not cat_match:
+                return 0
+            if cat_match:
+                cat_score = 12
+
+        if not parsed_queries:
+            return 10 + cat_score
+
+        best_q_score = 0
+        for q_norm, q_toks in parsed_queries:
+            q_score = 0
+            if q_norm and len(q_norm) >= 4 and q_norm in hay_str:
+                q_score += 50
+            matched_cnt = 0
+            for tok in q_toks:
+                t_stem = _stem_fr(tok)
+                if tok in hay_toks or (len(tok) >= 3 and tok in hay_str):
+                    q_score += 18
+                    matched_cnt += 1
+                elif t_stem in hay_stems or (len(t_stem) >= 4 and t_stem in hay_str):
+                    q_score += 13
+                    matched_cnt += 1
+                else:
+                    syns = _DOC_SYNONYM_MAP.get(tok) or _DOC_SYNONYM_MAP.get(t_stem) or set()
+                    if syns and (syns & hay_toks or syns & hay_stems):
+                        q_score += 6
+                        matched_cnt += 1
+            if matched_cnt == len(q_toks) and len(q_toks) > 0:
+                q_score += 24
+            elif matched_cnt > 0 and len(q_toks) > 1:
+                q_score += int(12 * (matched_cnt / len(q_toks)))
+            if q_score > best_q_score:
+                best_q_score = q_score
+
+        if best_q_score <= 0:
+            return 0
+        return best_q_score + cat_score
+
+    scored: List[Tuple[int, AdminDocument]] = []
+    category_relaxed = False
+    for d in visible_docs:
+        sc = _score_doc(d, enforce_category=bool(cat_tokens))
+        if sc > 0:
+            scored.append((sc, d))
+
+    # Repli intelligent : si un filtre catégorie trop strict a renvoyé 0 résultat, relâcher la catégorie automatiquement
+    if not scored and cat_tokens:
+        category_relaxed = True
+        for d in visible_docs:
+            sc = _score_doc(d, enforce_category=False)
+            if sc > 0:
+                scored.append((sc, d))
+
+    scored.sort(key=lambda pair: (-pair[0], -int(pair[1].id or 0)))
+    matched_docs = [_serialize_doc_meta(d, score=sc) for sc, d in scored[:limit]]
+
+    result: Dict[str, Any] = {
+        "total_library_documents": len(visible_docs),
+        "total_matching_documents": len(scored),
+        "queries_used": queries_raw,
+        "category_filter_relaxed": category_relaxed,
+        "categories_available": [
+            {"category": k, "count": v}
+            for k, v in sorted(cat_counts.items(), key=lambda kv: (-kv[1], kv[0]))
+        ],
+        "documents": matched_docs,
+        "hint": (
+            "Appelle read_documents_and_contracts avec document_id=<id> (ou document_ids=[...]) pour lire le contenu PDF/image exact, "
+            "et display_ui_component('document_viewer_card', props={'document_ids': [...]}) pour afficher les cartes téléchargeables."
+        ),
+    }
+
+    # Filet zéro-oubli : si peu de résultats ou list_all, inclure l'index compact de TOUTE la bibliothèque (<= 150 docs)
+    if list_all or not parsed_queries or len(matched_docs) < 5:
+        result["all_documents_catalog"] = [
+            {
+                "id": d.id,
+                "title": d.title or d.file_name,
+                "file_name": d.file_name,
+                "category": d.category or "Autre",
+                "created_at": str(d.created_at)[:10] if d.created_at else None,
+            }
+            for d in visible_docs[:150]
+        ]
+    return result
+
+
+def _load_document_binary(real_doc: AdminDocument, drive_jail_service: Any) -> Tuple[Optional[bytes], str]:
+    raw_bytes = real_doc.file_data
+    fname = real_doc.file_name or real_doc.title or f"document_{real_doc.id}.pdf"
+    guessed_mime, _ = mimetypes.guess_type(fname)
+    mime = real_doc.file_type or ""
+    if not mime or mime == "application/octet-stream":
+        mime = guessed_mime or "application/pdf"
+
+    if not raw_bytes and drive_jail_service.is_configured():
+        target_drive_id = real_doc.drive_file_id
+        if not target_drive_id and real_doc.file_name:
+            try:
+                drive_files = drive_jail_service.list_files()
+                hit = next((f for f in drive_files if f.get("name") == real_doc.file_name), None)
+                if hit:
+                    target_drive_id = hit.get("id")
+            except Exception as err:
+                logger.warning(f"[TOASTER DOC] Recherche Drive par nom échouée pour {real_doc.file_name}: {err}")
+        if target_drive_id:
+            dl_bytes, meta = drive_jail_service.download_file(target_drive_id)
+            if dl_bytes:
+                raw_bytes = dl_bytes
+                if meta and meta.get("mimeType") and meta["mimeType"] != "application/octet-stream":
+                    mime = meta["mimeType"]
+
+    if not raw_bytes and real_doc.file_name:
+        base_dir = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+        candidate = os.path.join(base_dir, "uploads", "documents", real_doc.file_name)
+        if os.path.isfile(candidate):
+            with open(candidate, "rb") as f:
+                raw_bytes = f.read()
+
+    if not mime or mime == "application/octet-stream":
+        mime = guessed_mime or "application/pdf"
+    return raw_bytes, mime
 
 
 def _norm_text(s: Optional[str]) -> str:
@@ -1283,6 +1620,7 @@ def get_toaster_state(prod_db: Session, member_id: Optional[int] = None) -> Dict
 
     docs_count = prod_db.query(AdminDocument).count()
     vademecum_count = prod_db.query(VademecumItem).count()
+    document_categories = _get_real_document_categories(prod_db)
 
     active_member_dict = (
         {
@@ -1312,6 +1650,7 @@ def get_toaster_state(prod_db: Session, member_id: Optional[int] = None) -> Dict
         "swan_banking": swan_banking,
         "associates_balances": associates_balances,
         "documents_count": docs_count,
+        "document_categories": document_categories,
         "vademecum_count": vademecum_count,
         "stays": stays_list,
         "tasks": tasks_list,
@@ -1329,6 +1668,7 @@ def get_toaster_state(prod_db: Session, member_id: Optional[int] = None) -> Dict
         "swan_banking": swan_banking,
         "associates_balances": associates_balances,
         "documents_count": docs_count,
+        "document_categories": document_categories,
         "vademecum_count": vademecum_count,
         "stays": stays_list,
         "tasks": tasks_list,
@@ -2746,71 +3086,75 @@ def execute_toaster_read_tool(
 
     if tool_name == "read_documents_and_contracts":
         doc_id = args.get("document_id")
-        search_q = _norm_text(args.get("search_query"))
-        cat_q = _norm_text(args.get("category"))
+        raw_doc_ids = args.get("document_ids")
+        doc_ids_list: List[int] = []
+        if doc_id is not None and str(doc_id).isdigit():
+            doc_ids_list.append(int(doc_id))
+        if isinstance(raw_doc_ids, list):
+            for x in raw_doc_ids:
+                if str(x).isdigit() and int(x) not in doc_ids_list:
+                    doc_ids_list.append(int(x))
 
-        if doc_id is not None:
-            real_doc = prod_db.query(AdminDocument).filter(AdminDocument.id == int(doc_id)).first()
-            if not real_doc:
-                return {"error": f"Aucun document trouvé avec id={doc_id}."}
-            raw_bytes = real_doc.file_data
-            mime = real_doc.file_type or "application/pdf"
-            if not raw_bytes and real_doc.drive_file_id and drive_jail_service.is_configured():
-                raw_bytes, meta = drive_jail_service.download_file(real_doc.drive_file_id)
-                if meta and meta.get("mimeType"):
-                    mime = meta["mimeType"]
-            result_doc: Dict[str, Any] = {
-                "id": real_doc.id,
-                "title": real_doc.title,
-                "category": real_doc.category,
-                "file_name": real_doc.file_name,
-                "file_type": mime,
-                "uploaded_by": sanitize_display_user_name(real_doc.uploaded_by),
-                "notes": real_doc.notes,
-                "download_url": f"https://hellenvilliers.henri-jamet.com/api/documents/{real_doc.id}/download",
-            }
-            if raw_bytes and len(raw_bytes) <= 8 * 1024 * 1024:
-                result_doc["_inline_attachment"] = {
-                    "mimeType": mime,
-                    "data": base64.b64encode(raw_bytes).decode("ascii"),
-                    "file_name": real_doc.file_name or f"document_{real_doc.id}.pdf",
-                }
-                result_doc["content_loaded"] = True
-            else:
-                result_doc["content_loaded"] = False
-            return result_doc
-
-        docs_rows = (
-            prod_db.query(AdminDocument)
-            .options(defer(AdminDocument.file_data))
-            .order_by(AdminDocument.id.desc())
-            .all()
-        )
-        matched = []
-        for d in docs_rows:
-            hay = _norm_text(f"{d.title or ''} {d.file_name or ''} {d.category or ''} {d.notes or ''} {d.tags or ''}")
-            if search_q:
-                tokens = [tok for tok in search_q.split() if len(tok) >= 2]
-                if tokens and not all(tok in hay for tok in tokens):
+        if doc_ids_list:
+            loaded_docs: List[Dict[str, Any]] = []
+            inline_atts: List[Dict[str, Any]] = []
+            for tid in doc_ids_list[:3]:
+                real_doc = prod_db.query(AdminDocument).filter(AdminDocument.id == tid).first()
+                if not real_doc:
+                    loaded_docs.append({"id": tid, "error": f"Aucun document trouvé avec id={tid}."})
                     continue
-            if cat_q and cat_q not in _norm_text(d.category):
-                continue
-            matched.append(
-                {
-                    "id": d.id,
-                    "title": d.title,
-                    "category": d.category,
-                    "file_name": d.file_name,
-                    "uploaded_by": sanitize_display_user_name(d.uploaded_by),
-                    "created_at": str(d.created_at)[:10] if d.created_at else None,
-                    "download_url": f"https://hellenvilliers.henri-jamet.com/api/documents/{d.id}/download",
+                raw_bytes, mime = _load_document_binary(real_doc, drive_jail_service)
+                doc_entry: Dict[str, Any] = {
+                    "id": real_doc.id,
+                    "title": real_doc.title,
+                    "category": real_doc.category,
+                    "file_name": real_doc.file_name,
+                    "file_type": mime,
+                    "uploaded_by": sanitize_display_user_name(real_doc.uploaded_by),
+                    "notes": real_doc.notes,
+                    "download_url": f"https://hellenvilliers.henri-jamet.com/api/documents/{real_doc.id}/download",
                 }
-            )
-        return {
-            "total_matching_documents": len(matched),
-            "documents": matched[:40],
-            "hint": "Appelle à nouveau read_documents_and_contracts avec document_id=<id> pour lire le contenu exact PDF/image.",
-        }
+                if raw_bytes and len(raw_bytes) <= 8 * 1024 * 1024:
+                    inline_atts.append(
+                        {
+                            "mimeType": mime,
+                            "data": base64.b64encode(raw_bytes).decode("ascii"),
+                            "file_name": real_doc.file_name or f"document_{real_doc.id}.pdf",
+                        }
+                    )
+                    doc_entry["content_loaded"] = True
+                else:
+                    doc_entry["content_loaded"] = False
+                    doc_entry["content_unavailable_reason"] = (
+                        f"Fichier trop volumineux ({round(len(raw_bytes)/(1024*1024), 1)} Mo > 8 Mo)"
+                        if raw_bytes
+                        else "Contenu binaire introuvable en base et sur Google Drive"
+                    )
+                loaded_docs.append(doc_entry)
+
+            if len(doc_ids_list) == 1 and loaded_docs:
+                single = dict(loaded_docs[0])
+                if inline_atts:
+                    single["_inline_attachment"] = inline_atts[0]
+                return single
+
+            out_multi: Dict[str, Any] = {"count": len(loaded_docs), "documents": loaded_docs}
+            if inline_atts:
+                out_multi["_inline_attachments"] = inline_atts
+            return out_multi
+
+        raw_sq_list = args.get("search_queries")
+        if isinstance(raw_sq_list, str):
+            raw_sq_list = [raw_sq_list]
+        return _search_admin_documents(
+            prod_db,
+            search_query=args.get("search_query"),
+            search_queries=raw_sq_list if isinstance(raw_sq_list, list) else None,
+            category=args.get("category"),
+            list_all=_to_bool(args.get("list_all"), default=False),
+            include_calls_for_funds=_to_bool(args.get("include_calls_for_funds"), default=False),
+            limit=40,
+        )
 
     if tool_name == "inspect_ui_skill":
         skill_id = str(args.get("skill_id") or "ui_components").strip().lower()
@@ -3214,42 +3558,37 @@ def execute_toaster_read_tool(
 
         if comp_id in ("document_viewer_card", "document", "documents"):
             doc_id = props.get("document_id")
-            search_q = _norm_text(props.get("search_query"))
+            raw_doc_ids = props.get("document_ids")
+            explicit_ids: List[int] = []
+            if doc_id is not None and str(doc_id).isdigit():
+                explicit_ids.append(int(doc_id))
+            if isinstance(raw_doc_ids, list):
+                for x in raw_doc_ids:
+                    if str(x).isdigit() and int(x) not in explicit_ids:
+                        explicit_ids.append(int(x))
+
             docs_out = []
-            if doc_id is not None:
-                d = prod_db.query(AdminDocument).options(defer(AdminDocument.file_data)).filter(AdminDocument.id == int(doc_id)).first()
-                if d:
-                    docs_out.append(
-                        {
-                            "id": d.id,
-                            "title": d.title or d.file_name,
-                            "file_name": d.file_name,
-                            "category": d.category,
-                            "uploaded_by": sanitize_display_user_name(d.uploaded_by),
-                            "created_at": str(d.created_at)[:10] if d.created_at else None,
-                            "download_url": f"/api/documents/{d.id}/download",
-                        }
-                    )
+            if explicit_ids:
+                by_id = {
+                    d.id: d
+                    for d in prod_db.query(AdminDocument)
+                    .options(defer(AdminDocument.file_data))
+                    .filter(AdminDocument.id.in_(explicit_ids))
+                    .all()
+                }
+                for eid in explicit_ids:
+                    d = by_id.get(eid)
+                    if d:
+                        docs_out.append(_serialize_doc_meta(d))
             else:
-                for d in prod_db.query(AdminDocument).options(defer(AdminDocument.file_data)).order_by(AdminDocument.id.desc()).all():
-                    hay = _norm_text(f"{d.title or ''} {d.file_name or ''} {d.category or ''} {d.notes or ''}")
-                    if search_q:
-                        toks = [tok for tok in search_q.split() if len(tok) >= 2]
-                        if toks and not all(tok in hay for tok in toks):
-                            continue
-                    docs_out.append(
-                        {
-                            "id": d.id,
-                            "title": d.title or d.file_name,
-                            "file_name": d.file_name,
-                            "category": d.category,
-                            "uploaded_by": sanitize_display_user_name(d.uploaded_by),
-                            "created_at": str(d.created_at)[:10] if d.created_at else None,
-                            "download_url": f"/api/documents/{d.id}/download",
-                        }
-                    )
-                    if len(docs_out) >= 6:
-                        break
+                search_res = _search_admin_documents(
+                    prod_db,
+                    search_query=props.get("search_query"),
+                    search_queries=props.get("search_queries") if isinstance(props.get("search_queries"), list) else None,
+                    category=props.get("category"),
+                    limit=8,
+                )
+                docs_out = (search_res.get("documents") or [])[:8]
             ui_payload = {"component_id": "document_viewer_card", "documents": docs_out}
             return {"status": "rendered_in_chat", "component_id": "document_viewer_card", "documents_rendered_count": len(docs_out), "_ui_component": ui_payload}
 

@@ -1858,7 +1858,7 @@ export function ToasterComponentRenderer({
                     filename: doc.file_name || doc.title || 'Document.pdf',
                     file_url: doc.download_url,
                     url: doc.download_url,
-                    file_type: 'application/pdf',
+                    file_type: doc.file_type || 'application/pdf',
                   })
                 }
               />

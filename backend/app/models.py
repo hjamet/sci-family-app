@@ -635,3 +635,26 @@ class MemberLedgerEntry(Base):
     bank_transaction = relationship("BankTransaction", backref="ledger_entries")
     call_for_funds = relationship("CallForFunds", backref="ledger_entries")
 
+
+class AppErrorLog(Base):
+    """Journal persistant des erreurs backend & frontend pour diagnostic post-mortem."""
+    __tablename__ = "app_error_logs"
+
+    id = Column(Integer, primary_key=True, index=True)
+    source = Column(String(60), nullable=False, index=True)
+    severity = Column(String(20), default="error", nullable=False)
+    endpoint = Column(String(255), nullable=True, index=True)
+    http_method = Column(String(16), nullable=True)
+    status_code = Column(Integer, nullable=True, index=True)
+    error_type = Column(String(120), nullable=True)
+    message = Column(Text, nullable=False)
+    stack_trace = Column(Text, nullable=True)
+    context_json = Column(Text, nullable=True)
+    member_id = Column(Integer, nullable=True, index=True)
+    member_name = Column(String(120), nullable=True)
+    user_agent = Column(String(300), nullable=True)
+    page_url = Column(String(500), nullable=True)
+    resolved = Column(Boolean, default=False, nullable=False, server_default="0", index=True)
+    created_at = Column(DateTime, default=datetime.utcnow, nullable=False, index=True)
+
+

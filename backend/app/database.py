@@ -360,6 +360,88 @@ def ensure_tasks_presence_schema_once(target_engine=None) -> bool:
     return True
 
 
+_ERROR_LOGS_SCHEMA_READY = False
+
+
+def ensure_error_logs_schema_once(target_engine=None) -> bool:
+    """
+    Vérification lecture seule (zéro verrou DDL dès que la table existe) de `app_error_logs`.
+    Crée la table et ses index uniquement lors du premier démarrage où elle est absente.
+    """
+    global _ERROR_LOGS_SCHEMA_READY
+    if _ERROR_LOGS_SCHEMA_READY:
+        return True
+
+    eng = target_engine or engine
+    from sqlalchemy import text
+    with eng.connect() as conn:
+        if eng.dialect.name == "sqlite":
+            exists = conn.execute(
+                text("SELECT name FROM sqlite_master WHERE type='table' AND name='app_error_logs'")
+            ).fetchone()
+            if not exists:
+                conn.execute(text("""
+                    CREATE TABLE IF NOT EXISTS app_error_logs (
+                        id INTEGER PRIMARY KEY AUTOINCREMENT,
+                        source VARCHAR(60) NOT NULL,
+                        severity VARCHAR(20) NOT NULL DEFAULT 'error',
+                        endpoint VARCHAR(255),
+                        http_method VARCHAR(16),
+                        status_code INTEGER,
+                        error_type VARCHAR(120),
+                        message TEXT NOT NULL,
+                        stack_trace TEXT,
+                        context_json TEXT,
+                        member_id INTEGER,
+                        member_name VARCHAR(120),
+                        user_agent VARCHAR(300),
+                        page_url VARCHAR(500),
+                        resolved BOOLEAN NOT NULL DEFAULT 0,
+                        created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP
+                    );
+                """))
+                conn.execute(text("CREATE INDEX IF NOT EXISTS ix_app_error_logs_created_at ON app_error_logs (created_at);"))
+                conn.execute(text("CREATE INDEX IF NOT EXISTS ix_app_error_logs_source ON app_error_logs (source);"))
+                conn.execute(text("CREATE INDEX IF NOT EXISTS ix_app_error_logs_resolved ON app_error_logs (resolved);"))
+                conn.commit()
+        else:
+            exists = conn.execute(text("""
+                SELECT 1
+                FROM information_schema.tables
+                WHERE table_schema = current_schema()
+                  AND table_name = 'app_error_logs'
+            """)).fetchone()
+            if not exists:
+                conn.execute(text("SET LOCAL lock_timeout = '5s';"))
+                conn.execute(text("""
+                    CREATE TABLE IF NOT EXISTS app_error_logs (
+                        id SERIAL PRIMARY KEY,
+                        source VARCHAR(60) NOT NULL,
+                        severity VARCHAR(20) NOT NULL DEFAULT 'error',
+                        endpoint VARCHAR(255),
+                        http_method VARCHAR(16),
+                        status_code INTEGER,
+                        error_type VARCHAR(120),
+                        message TEXT NOT NULL,
+                        stack_trace TEXT,
+                        context_json TEXT,
+                        member_id INTEGER,
+                        member_name VARCHAR(120),
+                        user_agent VARCHAR(300),
+                        page_url VARCHAR(500),
+                        resolved BOOLEAN NOT NULL DEFAULT FALSE,
+                        created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
+                    );
+                """))
+                conn.execute(text("CREATE INDEX IF NOT EXISTS ix_app_error_logs_created_at ON app_error_logs (created_at);"))
+                conn.execute(text("CREATE INDEX IF NOT EXISTS ix_app_error_logs_source ON app_error_logs (source);"))
+                conn.execute(text("CREATE INDEX IF NOT EXISTS ix_app_error_logs_resolved ON app_error_logs (resolved);"))
+                conn.commit()
+
+    _ERROR_LOGS_SCHEMA_READY = True
+    return True
+
+
 # Auto-migration au chargement du module (sauf sur Vercel pour éviter les verrous concurrents)
 if not os.getenv("VERCEL"):
     try:

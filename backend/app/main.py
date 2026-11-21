@@ -13,21 +13,23 @@ from urllib.parse import urlparse
 from datetime import datetime, timedelta, timezone
 from typing import List, Optional, Any, Dict
 from fastapi import FastAPI, Depends, HTTPException, Query, UploadFile, File, Form, status, Request, BackgroundTasks, Body
+from fastapi.exceptions import RequestValidationError
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 from fastapi.responses import FileResponse, Response, RedirectResponse, StreamingResponse, JSONResponse
+from starlette.exceptions import HTTPException as StarletteHTTPException
 from sqlalchemy.orm import Session, selectinload, joinedload
 from sqlalchemy import func, or_, and_
 from sqlalchemy.exc import IntegrityError, OperationalError, ProgrammingError
 
-from .database import engine, Base, get_db, ensure_tasks_presence_schema_once
+from .database import engine, Base, get_db, ensure_tasks_presence_schema_once, ensure_error_logs_schema_once
 from .models import (
     Property, User, Member, Issue, Comment, IssueComment, Reservation, Project,
     ProjectVote, ProjectComment, AdminDocument, DocumentCategory, MemberAvailability,
     VademecumItem, MaintenanceTask, StayTaskAssignment, Task, TaskComment, Log,
     BankAccount, BankTransaction, BankAuthSession, MemberSettings, ThermalSettings,
     Notification, AppRelease, MemberReleaseView,
-    CallForFunds, MemberExpense, MemberLedgerEntry
+    CallForFunds, MemberExpense, MemberLedgerEntry, AppErrorLog
 )
 from .schemas import (
     LoginRequest, PropertyResponse, UserResponse, MemberResponse, TokenResponse,
@@ -216,6 +218,11 @@ try:
 except Exception as schema_err:
     logger.error(f"[STARTUP SCHEMA] Impossible de vérifier/appliquer le schéma présence sur tasks : {schema_err}", exc_info=True)
 
+try:
+    ensure_error_logs_schema_once(engine)
+except Exception as err_schema_exc:
+    logger.error(f"[STARTUP SCHEMA] Impossible de vérifier/appliquer la table app_error_logs : {err_schema_exc}", exc_info=True)
+
 if not is_vercel or force_init:
     try:
         Base.metadata.create_all(bind=engine)
@@ -252,11 +259,69 @@ app.add_middleware(
 )
 
 from .routers.toaster import router as toaster_router
+from .routers.error_logs import router as error_logs_router
+from .services.error_log_service import record_error_log
+
 app.include_router(toaster_router)
+app.include_router(error_logs_router)
+
+
+@app.exception_handler(StarletteHTTPException)
+async def http_exception_handler(request: Request, exc: StarletteHTTPException):
+    path = request.url.path or ""
+    should_log = (
+        not path.startswith("/api/error-logs")
+        and (
+            exc.status_code >= 500
+            or (
+                exc.status_code >= 400
+                and exc.status_code != 401
+                and (path.startswith("/api/toaster") or path.startswith("/api/documents"))
+            )
+        )
+    )
+    if should_log:
+        record_error_log(
+            source="backend_http",
+            severity="critical" if exc.status_code >= 500 else "error",
+            status_code=exc.status_code,
+            error_type=type(exc).__name__,
+            message=str(exc.detail or f"HTTP {exc.status_code}"),
+            context={"query_params": dict(request.query_params)},
+            request=request,
+        )
+    return JSONResponse(status_code=exc.status_code, content={"detail": exc.detail})
+
+
+@app.exception_handler(RequestValidationError)
+async def validation_exception_handler(request: Request, exc: RequestValidationError):
+    path = request.url.path or ""
+    if not path.startswith("/api/error-logs"):
+        record_error_log(
+            source="backend_validation",
+            severity="error",
+            status_code=422,
+            error_type="RequestValidationError",
+            message=f"Validation error on {request.method} {path}: {exc.errors()[:5]}",
+            context={"errors": exc.errors()[:10], "query_params": dict(request.query_params)},
+            request=request,
+        )
+    return JSONResponse(status_code=422, content={"detail": exc.errors()})
+
 
 @app.exception_handler(Exception)
 async def global_exception_handler(request: Request, exc: Exception):
     logger.error(f"[GLOBAL UNHANDLED ERROR] {request.method} {request.url.path}: {exc}", exc_info=True)
+    record_error_log(
+        source="backend_exception",
+        severity="critical",
+        status_code=500,
+        error_type=type(exc).__name__,
+        message=f"Erreur interne serveur sur {request.method} {request.url.path} ({type(exc).__name__}) : {exc}",
+        context={"query_params": dict(request.query_params)},
+        request=request,
+        exc=exc,
+    )
     return JSONResponse(
         status_code=500,
         content={

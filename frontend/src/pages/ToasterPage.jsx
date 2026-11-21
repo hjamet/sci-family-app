@@ -12,7 +12,8 @@ import {
   VOTE_PRIORITIES,
   STATUTORY_ASSOCIATES_LIST,
 } from '../components/ToasterSharedComponents';
-import { uploadUniversalDocument, compressImageIfApplicable } from '../utils/fileUpload';
+import { uploadUniversalDocument, compressImageIfApplicable, readFileToMemory } from '../utils/fileUpload';
+import { reportClientError } from '../utils/errorLogger';
 import TaskDetailModal from '../components/TaskDetailModal';
 import VoteRoofModal from '../components/VoteRoofModal';
 
@@ -376,13 +377,16 @@ const ACTION_TYPE_META = {
   treasury: { icon: 'account_balance', badge: 'Trésorerie & CCA', color: 'bg-emerald-100 text-emerald-900 border-emerald-300' },
 };
 
-const DOCUMENT_ARCHIVE_CATEGORIES = [
-  'Travaux & Chantiers',
+const DOCUMENT_ARCHIVE_CATEGORIES_FALLBACK = [
+  'Actes & Statuts',
+  'Assurances & Police',
+  'Chauffage',
+  'Eau & Assainissement',
+  'Fiscalité & Impôts',
+  'Procès-Verbaux AG',
+  'Travaux & Factures',
   'Factures',
-  'Contrats & Assurances',
-  'Statuts & Actes',
-  'Notices & Plans',
-  'Impôts & Taxes',
+  'Courriers & Mairie',
   'Autre',
 ];
 
@@ -455,8 +459,10 @@ export default function ToasterPage({ currentUser }) {
 
   // Pièce jointe multimodale (Photo / PDF / Document)
   const [attachment, setAttachment] = useState(null);
+  const [isReadingAttachment, setIsReadingAttachment] = useState(false);
   const [isDraggingOverChat, setIsDraggingOverChat] = useState(false);
   const fileInputRef = useRef(null);
+  const attachmentRef = useRef(null);
   const latestAttachedFileRef = useRef(null);
 
   // Dictée vocale fluide :
@@ -738,26 +744,75 @@ export default function ToasterPage({ currentUser }) {
     return names.length >= 5 ? names : STATUTORY_ASSOCIATES_LIST;
   }, [membersOptions]);
 
+  const documentArchiveCategories = useMemo(() => {
+    const dyn = Array.isArray(portalState?.document_categories)
+      ? portalState.document_categories.map((c) => String(c || '').trim()).filter(Boolean)
+      : [];
+    return dyn.length > 0 ? dyn : DOCUMENT_ARCHIVE_CATEGORIES_FALLBACK;
+  }, [portalState?.document_categories]);
+
+  const clearComposerAttachment = useCallback(() => {
+    setAttachment((prev) => {
+      if (prev?.previewUrl) {
+        try {
+          URL.revokeObjectURL(prev.previewUrl);
+        } catch (_) {}
+      }
+      return null;
+    });
+    attachmentRef.current = null;
+  }, []);
+
   const attachLocalFile = useCallback(async (rawFile) => {
     if (!rawFile) return;
     setErrorBanner(null);
+    setIsReadingAttachment(true);
     const detectedMime =
       rawFile.type ||
       (rawFile.name.toLowerCase().endsWith('.pdf')
         ? 'application/pdf'
         : rawFile.name.toLowerCase().endsWith('.png')
         ? 'image/png'
-        : 'image/jpeg');
+        : rawFile.name.toLowerCase().endsWith('.webp')
+        ? 'image/webp'
+        : /\.(jpe?g|heic|heif)$/i.test(rawFile.name || '')
+        ? 'image/jpeg'
+        : 'application/octet-stream');
 
     try {
-      // Préparer un aperçu léger pour l'analyse multimodale (tout en conservant rawFile pour upload Drive/PostgreSQL)
-      let fileForPreview = rawFile;
-      const isImg = detectedMime.startsWith('image/') || /\.(jpe?g|png|webp|heic|heif)$/i.test(rawFile.name || '');
-      if (isImg && rawFile.size > 1.2 * 1024 * 1024) {
-        fileForPreview = await compressImageIfApplicable(rawFile);
+      // 1. Lecture mémoire vive immédiate (contourne les blocages SAF Android / Google Drive)
+      const memoryFile = await readFileToMemory(rawFile);
+
+      // 2. Préparer un aperçu multimodal garanti < 2,6 Mo (sous la limite Vercel 4,5 Mo après base64)
+      //    tout en conservant memoryFile intact pour l'archivage Google Drive haute qualité
+      let fileForPreview = memoryFile;
+      const isImg =
+        detectedMime.startsWith('image/') ||
+        /\.(jpe?g|png|webp|heic|heif|gif)$/i.test(memoryFile.name || '');
+      const isHeic = /\.(heic|heif)$/i.test(memoryFile.name || '') || /heic|heif/i.test(detectedMime);
+
+      if (isImg && (memoryFile.size > 1.0 * 1024 * 1024 || isHeic)) {
+        fileForPreview = await compressImageIfApplicable(memoryFile, {
+          maxLongSide: 2000,
+          quality: 0.8,
+          forceJpeg: isHeic,
+        });
+      }
+      const maxInlineBytes = 2.6 * 1024 * 1024;
+      if (isImg && fileForPreview.size > maxInlineBytes) {
+        fileForPreview = await compressImageIfApplicable(memoryFile, {
+          maxLongSide: 1400,
+          quality: 0.72,
+          forceJpeg: true,
+        });
       }
 
-      const maxInlineBytes = 2.9 * 1024 * 1024;
+      // IMPORTANT : toujours aligner le MIME envoyé à Gemini sur le fichier réellement encodé en base64
+      const previewMime =
+        (fileForPreview.type && fileForPreview.type !== 'application/octet-stream'
+          ? fileForPreview.type
+          : null) || detectedMime;
+
       let base64Clean = null;
       if (fileForPreview.size <= maxInlineBytes) {
         base64Clean = await new Promise((resolve, reject) => {
@@ -771,17 +826,47 @@ export default function ToasterPage({ currentUser }) {
         });
       }
 
+      let previewUrl = null;
+      if (isImg && typeof URL !== 'undefined') {
+        try {
+          previewUrl = URL.createObjectURL(fileForPreview);
+        } catch (_) {}
+      }
+
       const attObj = {
-        file: rawFile,
-        name: rawFile.name,
+        file: memoryFile,
+        name: memoryFile.name,
         mime: detectedMime,
+        previewMime,
         base64: base64Clean,
-        size: rawFile.size,
+        size: memoryFile.size,
+        previewTooLarge: !base64Clean,
+        previewUrl,
+        uploaded: false,
       };
       latestAttachedFileRef.current = attObj;
-      setAttachment(attObj);
+      attachmentRef.current = attObj;
+      setAttachment((prev) => {
+        if (prev?.previewUrl) {
+          try {
+            URL.revokeObjectURL(prev.previewUrl);
+          } catch (_) {}
+        }
+        return attObj;
+      });
     } catch (err) {
-      setErrorBanner(err.message || 'Impossible de lire le fichier sélectionné.');
+      const msg = err.message || 'Impossible de lire le fichier sélectionné.';
+      setErrorBanner(msg);
+      reportClientError({
+        source: 'frontend_attachment_error',
+        severity: 'error',
+        message: msg,
+        errorType: err?.name || 'AttachmentReadError',
+        stackTrace: err?.stack || null,
+        context: { name: rawFile?.name, size: rawFile?.size, type: rawFile?.type },
+      });
+    } finally {
+      setIsReadingAttachment(false);
     }
   }, []);
 
@@ -885,7 +970,7 @@ export default function ToasterPage({ currentUser }) {
       if (rawCard.action_type === 'document') {
         if (!basePayload.operation) basePayload.operation = 'archive';
         if (!basePayload.organisme) basePayload.organisme = 'SCI';
-        if (!basePayload.category) basePayload.category = 'Travaux & Chantiers';
+        if (!basePayload.category) basePayload.category = 'Travaux & Factures';
       }
 
       const candidateFile =
@@ -934,12 +1019,13 @@ export default function ToasterPage({ currentUser }) {
   );
 
   const sendMessagePayload = useCallback(
-    async ({ textOverride = null, clearComposerText = true, fromVoice = false } = {}) => {
+    async ({ textOverride = null, clearComposerText = true, fromVoice = false, includeAttachment = true } = {}) => {
       const rawText = textOverride !== null ? String(textOverride) : inputText;
       const trimmed = rawText.trim();
-      const currentAttachment = textOverride !== null ? null : attachment;
+      const activeAttachment = attachmentRef.current || attachment;
+      const currentAttachment = includeAttachment ? activeAttachment : null;
 
-      if ((!trimmed && !currentAttachment) || isSending) return;
+      if ((!trimmed && !currentAttachment) || isSending || isReadingAttachment) return;
 
       // Animation élégante de sortie du portrait Mr. Collins au tout premier message envoyé
       if (messagesRef.current.length === 0) {
@@ -953,7 +1039,7 @@ export default function ToasterPage({ currentUser }) {
         role: 'user',
         content: trimmed || (currentAttachment ? `[Pièce jointe : ${currentAttachment.name}]` : ''),
         attachment: currentAttachment
-          ? { name: currentAttachment.name, mime: currentAttachment.mime, size: currentAttachment.size }
+          ? { name: currentAttachment.name, mime: currentAttachment.previewMime || currentAttachment.mime, size: currentAttachment.size }
           : null,
         timestamp: new Date().toISOString(),
       };
@@ -972,17 +1058,26 @@ export default function ToasterPage({ currentUser }) {
       };
 
       // Fix Ann. 5/6 : ne jamais inclure dans l'historique un tour assistant vide issu d'une erreur précédente
+      // Conserver aussi la trace explicite des pièces jointes des tours précédents pour le suivi multi-tours
       const historyForApi = [...messagesRef.current, userMsg]
         .filter((m) => m.role === 'user' || (m.content && m.content.trim().length > 0))
-        .map((m) => ({
-          role: m.role === 'assistant' || m.role === 'model' ? 'assistant' : 'user',
-          content: m.content,
-        }));
+        .map((m) => {
+          let contentOut = m.content || '';
+          if (m.role === 'user' && m.attachment?.name && !contentOut.includes(m.attachment.name)) {
+            contentOut = `[Pièce jointe envoyée : ${m.attachment.name} (${m.attachment.mime || 'fichier'})]\n${contentOut}`;
+          }
+          return {
+            role: m.role === 'assistant' || m.role === 'model' ? 'assistant' : 'user',
+            content: contentOut,
+          };
+        });
 
       setMessages((prev) => [...prev, userMsg, assistantPlaceholder]);
       if (clearComposerText) {
         setInputText('');
-        setAttachment(null);
+      }
+      if (currentAttachment) {
+        clearComposerAttachment();
       }
       setIsSending(true);
       setErrorBanner(null);
@@ -994,12 +1089,19 @@ export default function ToasterPage({ currentUser }) {
         );
       };
 
+      const pendingSessionFile =
+        !currentAttachment && latestAttachedFileRef.current?.file && !latestAttachedFileRef.current.uploaded
+          ? latestAttachedFileRef.current
+          : null;
+
       const body = {
         member_id: Number(selectedMemberId),
         messages: historyForApi,
         attachment_base64: currentAttachment ? currentAttachment.base64 : null,
-        attachment_mime: currentAttachment ? currentAttachment.mime : null,
+        attachment_mime: currentAttachment ? (currentAttachment.previewMime || currentAttachment.mime) : null,
         attachment_name: currentAttachment ? currentAttachment.name : null,
+        session_attachment_name: pendingSessionFile ? pendingSessionFile.name : null,
+        session_attachment_mime: pendingSessionFile ? pendingSessionFile.mime : null,
       };
 
       let receivedDone = false;
@@ -1188,6 +1290,21 @@ export default function ToasterPage({ currentUser }) {
         }
       } catch (err) {
         console.error('Erreur /api/toaster/chat/stream:', err);
+        reportClientError({
+          source: 'frontend_toaster_stream',
+          severity: 'error',
+          message: err?.message || 'Erreur inconnue sur /api/toaster/chat/stream',
+          errorType: err?.name || 'StreamError',
+          stackTrace: err?.stack || null,
+          endpoint: '/api/toaster/chat/stream',
+          httpMethod: 'POST',
+          context: {
+            hasAttachment: Boolean(currentAttachment),
+            attachmentName: currentAttachment?.name || null,
+            attachmentMime: currentAttachment?.previewMime || currentAttachment?.mime || null,
+            attachmentSize: currentAttachment?.size || null,
+          },
+        });
         setErrorBanner(`Erreur lors de l'appel à l'assistant : ${err.message}`);
         setLastFailedPrompt(trimmed);
         // Fail-Fast : retirer la bulle assistant incomplète (et éviter toute fuite dans le tour suivant)
@@ -1199,7 +1316,7 @@ export default function ToasterPage({ currentUser }) {
         setIsSending(false);
       }
     },
-    [inputText, attachment, isSending, selectedMemberId, normalizeActionCard, playTtsForMessage]
+    [inputText, attachment, isSending, isReadingAttachment, selectedMemberId, normalizeActionCard, playTtsForMessage, clearComposerAttachment]
   );
 
   useEffect(() => {
@@ -1266,12 +1383,14 @@ export default function ToasterPage({ currentUser }) {
       }
 
       if (action === 'send') {
-        if (!voiceSentRef.current && (combinedMessage || attachment) && sendVoiceTriggerRef.current) {
+        const hasPendingAtt = Boolean(attachmentRef.current || attachment);
+        if (!voiceSentRef.current && (combinedMessage || hasPendingAtt) && sendVoiceTriggerRef.current) {
           voiceSentRef.current = true;
           sendVoiceTriggerRef.current({
             textOverride: combinedMessage,
             clearComposerText: true,
             fromVoice: true,
+            includeAttachment: true,
           });
         }
       } else {
@@ -1928,7 +2047,7 @@ export default function ToasterPage({ currentUser }) {
         const op = finalPayload.operation || 'archive';
         const targetTaskId = op === 'link_task' && finalPayload.task_id ? Number(finalPayload.task_id) : null;
         const targetProjectId = op === 'link_vote' && finalPayload.project_id ? Number(finalPayload.project_id) : null;
-        const cat = finalPayload.category || 'Travaux & Chantiers';
+        const cat = finalPayload.category || 'Travaux & Factures';
 
         const uploadedDoc = await uploadUniversalDocument(localFile, {
           organisme: finalPayload.organisme || 'SCI',
@@ -1939,6 +2058,9 @@ export default function ToasterPage({ currentUser }) {
           project_id: targetProjectId,
           uploaded_by: uploaderName,
         });
+        if (latestAttachedFileRef.current?.file === localFile) {
+          latestAttachedFileRef.current.uploaded = true;
+        }
 
         const docLabel = uploadedDoc?.file_name || uploadedDoc?.title || localFile.name;
         const destLabel = targetTaskId
@@ -2006,7 +2128,7 @@ export default function ToasterPage({ currentUser }) {
         finalPayload.operation === 'create' &&
         resData.created_task_id
       ) {
-        const cat = finalPayload.document_category || 'Travaux & Chantiers';
+        const cat = finalPayload.document_category || 'Travaux & Factures';
         const uploadedDoc = await uploadUniversalDocument(localFile, {
           organisme: finalPayload.document_organisme || 'SCI',
           title: finalPayload.document_title || finalPayload.title || localFile.name.replace(/\.[^.]+$/, ''),
@@ -2015,6 +2137,9 @@ export default function ToasterPage({ currentUser }) {
           task_id: Number(resData.created_task_id),
           uploaded_by: uploaderName,
         });
+        if (latestAttachedFileRef.current?.file === localFile) {
+          latestAttachedFileRef.current.uploaded = true;
+        }
         confirmText = `${confirmText} Pièce jointe « ${uploadedDoc?.file_name || localFile.name} » archivée et liée à la tâche.`;
       } else if (
         localFile &&
@@ -2023,7 +2148,7 @@ export default function ToasterPage({ currentUser }) {
         finalPayload.operation === 'create' &&
         resData.created_project_id
       ) {
-        const cat = finalPayload.document_category || 'Travaux & Chantiers';
+        const cat = finalPayload.document_category || 'Travaux & Factures';
         const uploadedDoc = await uploadUniversalDocument(localFile, {
           organisme: finalPayload.document_organisme || 'SCI',
           title: finalPayload.document_title || finalPayload.title || localFile.name.replace(/\.[^.]+$/, ''),
@@ -2032,6 +2157,9 @@ export default function ToasterPage({ currentUser }) {
           project_id: Number(resData.created_project_id),
           uploaded_by: uploaderName,
         });
+        if (latestAttachedFileRef.current?.file === localFile) {
+          latestAttachedFileRef.current.uploaded = true;
+        }
         confirmText = `${confirmText} Pièce jointe « ${uploadedDoc?.file_name || localFile.name} » archivée et liée au scrutin.`;
       }
 
@@ -2046,6 +2174,16 @@ export default function ToasterPage({ currentUser }) {
       await loadPortalState(selectedMemberId);
     } catch (err) {
       console.error('Erreur /api/toaster/execute:', err);
+      reportClientError({
+        source: 'frontend_toaster_execute',
+        severity: 'error',
+        message: err?.message || 'Erreur inconnue sur /api/toaster/execute',
+        errorType: err?.name || 'ExecuteError',
+        stackTrace: err?.stack || null,
+        endpoint: '/api/toaster/execute',
+        httpMethod: 'POST',
+        context: { actionType: card?.action_type, operation: card?.payload?.operation },
+      });
       updateCardInMessage(msgId, (c) => ({
         ...c,
         executing: false,
@@ -2118,7 +2256,8 @@ export default function ToasterPage({ currentUser }) {
               stopTtsPlayback();
               setMessages([]);
               setIsWelcomeExiting(false);
-              setAttachment(null);
+              clearComposerAttachment();
+              latestAttachedFileRef.current = null;
               setErrorBanner(null);
               setLastFailedPrompt(null);
             }}
@@ -2213,6 +2352,7 @@ export default function ToasterPage({ currentUser }) {
                         sendMessagePayload({
                           textOverride: q.prompt,
                           clearComposerText: false,
+                          includeAttachment: false,
                         })
                       }
                       className="group flex items-start gap-3 px-3.5 py-2.5 rounded-2xl bg-white hover:bg-sage-soft/55 border border-border-subtle hover:border-primary/40 shadow-2xs transition-all cursor-pointer disabled:opacity-45 text-left"
@@ -2261,6 +2401,7 @@ export default function ToasterPage({ currentUser }) {
                         sendMessagePayload({
                           textOverride: q.prompt,
                           clearComposerText: false,
+                          includeAttachment: false,
                         })
                       }
                       className="group flex items-start gap-3 px-3.5 py-2.5 rounded-2xl bg-white hover:bg-sage-soft/55 border border-border-subtle hover:border-primary/40 shadow-2xs transition-all cursor-pointer disabled:opacity-45 text-left"
@@ -2291,6 +2432,7 @@ export default function ToasterPage({ currentUser }) {
                     sendMessagePayload({
                       textOverride: PENDING_ACTIONS_PROMPT,
                       clearComposerText: false,
+                      includeAttachment: false,
                     })
                   }
                   className={`group relative inline-flex flex-col sm:flex-row items-center justify-center gap-2 sm:gap-3 px-6 py-3 rounded-2xl text-sm font-bold transition-all cursor-pointer disabled:opacity-50 max-w-xl w-full sm:w-auto ${
@@ -3083,7 +3225,7 @@ export default function ToasterPage({ currentUser }) {
                             <div className="p-2.5 rounded-xl bg-amber-50 border border-amber-200 text-amber-950 text-[11.5px] flex items-start gap-2">
                               <span className="material-symbols-outlined text-[16px] text-amber-700 shrink-0 mt-0.5">info</span>
                               <span>
-                                Statut initial automatique : <strong>Proposition à arbitrer</strong>. Décrivez simplement la tâche (titre et description) : l’emplacement, la charge, la priorité, le devis et l’attribution sont estimés et gérés ensuite par les coordinateurs.
+                                Statut initial automatique : <strong>Proposition à arbitrer</strong>. Décrivez simplement la tâche (titre et description) : l’emplacement, la difficulté, l’urgence, le devis et l’attribution sont estimés et gérés ensuite par les coordinateurs.
                               </span>
                             </div>
 
@@ -3693,7 +3835,7 @@ export default function ToasterPage({ currentUser }) {
                                   <label className="text-[11px] font-bold text-slate-600 block">Catégorie</label>
                                   <select
                                     disabled={card.executed}
-                                    value={card.payload?.category || 'Travaux & Chantiers'}
+                                    value={card.payload?.category || 'Travaux & Factures'}
                                     onChange={(e) =>
                                       updateCardInMessage(msg.id, (c) => ({
                                         ...c,
@@ -3702,7 +3844,10 @@ export default function ToasterPage({ currentUser }) {
                                     }
                                     className="w-full h-9 px-2.5 rounded-xl bg-white border border-slate-200 text-xs font-medium text-slate-900"
                                   >
-                                    {DOCUMENT_ARCHIVE_CATEGORIES.map((cat) => (
+                                    {(card.payload?.category && !documentArchiveCategories.includes(card.payload.category)
+                                      ? [card.payload.category, ...documentArchiveCategories]
+                                      : documentArchiveCategories
+                                    ).map((cat) => (
                                       <option key={cat} value={cat}>
                                         {cat}
                                       </option>
@@ -4020,18 +4165,38 @@ export default function ToasterPage({ currentUser }) {
           onSubmit={handleSendMessage}
           className="shrink-0 p-2.5 sm:p-3.5 bg-white/95 dark:bg-slate-950/90 backdrop-blur-md border-t border-slate-100 dark:border-slate-800 flex flex-col gap-2"
         >
-          {attachment && (
+          {isReadingAttachment && (
+            <div className="inline-flex items-center gap-2 px-3.5 py-1.5 rounded-full bg-amber-50 border border-amber-200 text-amber-900 text-xs font-semibold self-start">
+              <span className="material-symbols-outlined text-[15px] animate-spin">progress_activity</span>
+              <span>Préparation du fichier joint…</span>
+            </div>
+          )}
+
+          {attachment && !isReadingAttachment && (
             <div className="inline-flex items-center justify-between gap-2 px-3.5 py-1.5 rounded-full bg-emerald-50/90 border border-emerald-200 text-emerald-950 text-xs font-semibold self-start animate-in fade-in duration-150">
-              <div className="flex items-center gap-1.5">
-                <span className="material-symbols-outlined text-[15px] text-emerald-700">description</span>
+              <div className="flex items-center gap-2">
+                {attachment.previewUrl ? (
+                  <img
+                    src={attachment.previewUrl}
+                    alt={attachment.name}
+                    className="w-6 h-6 rounded-md object-cover border border-emerald-300 shrink-0"
+                  />
+                ) : (
+                  <span className="material-symbols-outlined text-[15px] text-emerald-700">description</span>
+                )}
                 <span className="max-w-[240px] truncate">{attachment.name}</span>
                 <span className="text-[10px] text-emerald-700">
                   ({Math.max(1, Math.round(attachment.size / 1024))} Ko)
                 </span>
+                {attachment.previewTooLarge && (
+                  <span className="text-[10px] px-1.5 py-0.5 rounded-full bg-amber-100 text-amber-900 font-bold">
+                    &gt; 2,6 Mo · archivage Drive prêt
+                  </span>
+                )}
               </div>
               <button
                 type="button"
-                onClick={() => setAttachment(null)}
+                onClick={clearComposerAttachment}
                 className="w-5 h-5 rounded-full hover:bg-emerald-200/60 flex items-center justify-center text-emerald-800 hover:text-rose-600 cursor-pointer ml-1"
                 title="Retirer la pièce jointe"
               >
@@ -4157,7 +4322,7 @@ export default function ToasterPage({ currentUser }) {
             <button
               id="btn-toaster-send"
               type="submit"
-              disabled={isSending || (!isListening && !isFinalizingVoice && !inputText.trim() && !attachment)}
+              disabled={isSending || isReadingAttachment || (!isListening && !isFinalizingVoice && !inputText.trim() && !attachment)}
               className="w-10 h-10 rounded-full bg-primary hover:bg-forest-deep text-white inline-flex items-center justify-center shrink-0 transition-all duration-200 cursor-pointer shadow-xs disabled:opacity-35 disabled:cursor-not-allowed active:scale-95"
               title={
                 isListening || isFinalizingVoice
