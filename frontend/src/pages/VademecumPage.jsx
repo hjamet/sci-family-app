@@ -3247,6 +3247,10 @@ export default function VademecumPage({ properties, currentUser, reservations = 
                         <span className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded bg-amber-100 text-amber-900 dark:bg-amber-950 dark:text-amber-200 font-semibold">
                           ⚠️ Mesure figée ({formatTelemetryAge(piscineStatus.water_temp_age_s)})
                         </span>
+                      ) : piscineStatus?.water_temp_frozen_between_cycles && piscineStatus?.water_temp_direct != null ? (
+                        <span>
+                          Bassin (fin filtration il y a {formatTelemetryAge(piscineStatus.water_temp_filtered_age_s)}) • Sonde tuyau : {Number(piscineStatus.water_temp_direct).toFixed(1)}°C
+                        </span>
                       ) : (
                         <span>Sonde skimmer • {formatTelemetryAge(piscineStatus.water_temp_age_s)}</span>
                       )

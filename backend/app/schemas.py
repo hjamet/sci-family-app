@@ -841,6 +841,10 @@ class PoolHeatingModeRequest(BaseModel):
 
 class PiscineStatusResponse(BaseModel):
     water_temperature: Optional[float] = None
+    water_temp_direct: Optional[float] = None
+    water_temp_filtered_age_s: Optional[int] = None
+    water_temp_direct_age_s: Optional[int] = None
+    water_temp_frozen_between_cycles: bool = False
     air_temperature: Optional[float] = None
     ph_value: Optional[float] = None
     redox_value: Optional[float] = None
@@ -857,7 +861,9 @@ class PiscineStatusResponse(BaseModel):
     pac_mode_code: Optional[int] = None
     pac_mode_label: Optional[str] = None
     heating_today_hours: Optional[float] = None
+    heating_today_seconds: Optional[int] = None
     heating_total_hours: Optional[float] = None
+    heating_total_seconds: Optional[int] = None
     pump_mode_code: Optional[int] = None
     pump_relay_active: bool = False
     pump_mode: Optional[str] = "auto"

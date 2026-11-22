@@ -12748,6 +12748,327 @@ def parse_domotique_wishes(notes: Optional[str]) -> dict:
     return {"wants_heating": wants_heating, "wants_dhw": (not dhw_cut) or wants_heating, "wants_pool": wants_pool}
 
 
+def _notify_pool_watchdog_event(db: Session, title: str, details: str, action: str):
+    """Enregistre un log, envoie l'alerte e-mail thermique et crée une notification interne."""
+    db.add(Log(
+        action=action,
+        user_name=HEATING_AUTOMATION_AUTHOR,
+        details=details,
+    ))
+    db.commit()
+    try:
+        subscribed_members = db.query(Member).filter(
+            Member.notif_thermal_changes == True,
+            Member.email.isnot(None),
+        ).all()
+        target_emails = [m.email for m in subscribed_members if m.email]
+        dispatched_email = None
+        if target_emails:
+            send_res = send_thermal_change_email(
+                target_emails=target_emails,
+                author_name=HEATING_AUTOMATION_AUTHOR,
+                equipment_type="Sécurité PAC Piscine Klereo (Rosings)",
+                details=details,
+            )
+            if isinstance(send_res, dict) and "_email_dispatched" in send_res:
+                dispatched_email = send_res["_email_dispatched"]
+        create_internal_notification(
+            db=db,
+            title=title,
+            description=details,
+            notif_type="thermal",
+            link_path="/sejour",
+            email_entry=dispatched_email,
+        )
+    except Exception as notif_err:
+        logger.warning(f"[pool_watchdog] Erreur envoi alerte/notif ({action}): {notif_err}")
+
+
+def evaluate_and_enforce_pool_watchdog(
+    db: Session,
+    need_pool: bool,
+    now_paris: datetime,
+    now_utc: datetime,
+    dry_run: bool = False,
+) -> Dict[str, Any]:
+    """
+    Garde-fou multi-couches Klereo Piscine (Rosings) :
+    1. Coupure immédiate + relecture de confirmation si la PAC est armée/active (ou mode=4 Synchro Filtration)
+       hors séjour (override manuel limité à 4h en hiver oct-avr, 24h mai-sept, 0h pour mode=4).
+    2. Surveillance du compteur horaire matériel cumulé (Chauff_TotalTime) : alerte critique + re-coupure
+       si > 60s de chauffe physique détectées hors séjour entre deux vérifications.
+    3. Alerte radio/Wi-Fi muette > 6h (throttlée 1/24h) pour éviter tout angle mort prolongé.
+    4. Alerte antigel critique si la filtration est coupée (mode=0) alors que l'air extérieur < 3.0 °C.
+    Ne coupe JAMAIS la filtration Auto (hors-gel 0,5 °C préservé).
+    """
+    is_winter_season = now_paris.month in (10, 11, 12, 1, 2, 3, 4)
+    manual_pool_override_hours = 4.0 if is_winter_season else 24.0
+
+    pool_setting = db.query(ThermalSettings).filter(ThermalSettings.equipment_type == "pool").first()
+    if pool_setting is None:
+        pool_setting = ThermalSettings(equipment_type="pool")
+
+    sched_state: Dict[str, Any] = {}
+    if getattr(pool_setting, "schedule_json", None):
+        try:
+            parsed_sched = json.loads(pool_setting.schedule_json)
+            if isinstance(parsed_sched, dict):
+                sched_state = parsed_sched
+        except Exception:
+            sched_state = {}
+
+    prev_chauff_total_s = sched_state.get("watchdog_last_chauff_total_s")
+    pool_sync_info: Dict[str, Any] = {
+        "need_pool": need_pool,
+        "winter_strict_mode": is_winter_season,
+        "live_known": False,
+        "radio_link_ok": None,
+        "pac_mode_code": None,
+        "pac_mode_label": None,
+        "live_heating_active": None,
+        "pac_relay_active": None,
+        "target_heating_active": need_pool,
+        "manual_override_until": None,
+        "hardware_out_of_sync": False,
+        "chauff_total_seconds": None,
+        "chauff_delta_seconds": None,
+        "readback_verified_off": None,
+        "alerts_sent": [],
+        "action_taken": None,
+        "error": None,
+    }
+
+    try:
+        klereo_status = KlereoService.get_pool_status(force_refresh=not dry_run)
+        pool_radio_ok = bool(klereo_status.get("radio_link_ok", True)) and not bool(klereo_status.get("radio_error", False))
+        pac_mode_code = klereo_status.get("pac_mode_code")
+        pac_relay_active = bool(klereo_status.get("pac_active", False))
+        pool_live_heating = bool(klereo_status.get("is_heating_active", False))
+        pump_mode_code = klereo_status.get("pump_mode_code")
+        air_temp = klereo_status.get("air_temperature")
+        infos_time_s = klereo_status.get("infos_time_s")
+        chauff_total_s = klereo_status.get("heating_total_seconds")
+
+        chauff_delta_s = None
+        if chauff_total_s is not None and prev_chauff_total_s is not None:
+            try:
+                chauff_delta_s = int(chauff_total_s) - int(prev_chauff_total_s)
+            except (ValueError, TypeError):
+                chauff_delta_s = None
+
+        pool_sync_info.update({
+            "live_known": True,
+            "radio_link_ok": pool_radio_ok,
+            "pac_mode_code": pac_mode_code,
+            "pac_mode_label": klereo_status.get("pac_mode_label"),
+            "live_heating_active": pool_live_heating,
+            "pac_relay_active": pac_relay_active,
+            "heating_today_hours": klereo_status.get("heating_today_hours"),
+            "chauff_total_seconds": chauff_total_s,
+            "chauff_delta_seconds": chauff_delta_s,
+            "water_temperature": klereo_status.get("water_temperature"),
+            "water_temp_direct": klereo_status.get("water_temp_direct"),
+            "infos_time_s": infos_time_s,
+        })
+
+        # Override manuel humain récent respecté uniquement si mode légitime (jamais pour mode=4 Synchro Filtration)
+        pool_manual_override_until = None
+        if (
+            not need_pool
+            and pac_mode_code != 4
+            and (pool_setting.mode or "").lower() in ("on", "confort", "marche")
+            and pool_setting.updated_by
+            and pool_setting.updated_by not in (HEATING_AUTOMATION_AUTHOR, "Système")
+            and pool_setting.updated_at is not None
+        ):
+            p_upd_utc = pool_setting.updated_at if pool_setting.updated_at.tzinfo else pool_setting.updated_at.replace(tzinfo=timezone.utc)
+            p_expiry = p_upd_utc + timedelta(hours=manual_pool_override_hours)
+            if now_utc < p_expiry:
+                pool_manual_override_until = p_expiry
+
+        pool_target_heating = bool(need_pool or pool_manual_override_until is not None)
+        pool_hw_out_of_sync = pool_radio_ok and (
+            (pool_target_heating and (not pool_live_heating or pac_mode_code == 4))
+            or (not pool_target_heating and (pool_live_heating or pac_relay_active or pac_mode_code == 4))
+        )
+        pool_sync_info["target_heating_active"] = pool_target_heating
+        pool_sync_info["manual_override_until"] = pool_manual_override_until.isoformat() if pool_manual_override_until else None
+        pool_sync_info["hardware_out_of_sync"] = pool_hw_out_of_sync
+
+        sched_dirty = False
+        if not dry_run and not KlereoService.is_read_only_mode():
+            # Couche 1 : réconciliation PAC + relecture de confirmation
+            if pool_radio_ok:
+                if pool_target_heating and (not pool_live_heating or pac_mode_code == 4):
+                    target_pool_temp = (
+                        float(pool_setting.target_temperature)
+                        if (pool_setting.target_temperature is not None and 15.0 <= float(pool_setting.target_temperature) <= 32.0)
+                        else 27.0
+                    )
+                    KlereoService.set_heating_mode(mode="on", active=True, target_temperature=target_pool_temp)
+                    pool_setting.mode = "on"
+                    pool_setting.filtration_mode = "auto"
+                    pool_setting.target_temperature = target_pool_temp
+                    if pool_manual_override_until is None:
+                        pool_setting.updated_by = HEATING_AUTOMATION_AUTHOR
+                        pool_setting.updated_at = datetime.utcnow()
+                    db.add(pool_setting)
+                    db.commit()
+                    pool_sync_info["action_taken"] = f"pac_on_{target_pool_temp:.1f}C"
+                elif not pool_target_heating and (pool_live_heating or pac_relay_active or pac_mode_code == 4):
+                    KlereoService.set_heating_mode(mode="off", active=False)
+                    verify_kl = KlereoService.get_pool_status(force_refresh=True)
+                    verified_off = (verify_kl.get("pac_mode_code") == 0) and (not verify_kl.get("pac_active", False))
+                    pool_sync_info["readback_verified_off"] = verified_off
+                    pool_setting.mode = "off"
+                    pool_setting.updated_by = HEATING_AUTOMATION_AUTHOR
+                    pool_setting.updated_at = datetime.utcnow()
+                    db.add(pool_setting)
+                    reason = (
+                        "anomalie Klereo mode=4 (Synchro Filtration) détectée hors séjour"
+                        if pac_mode_code == 4
+                        else "chauffage PAC actif hors séjour (ou fin de séjour)"
+                    )
+                    verify_txt = (
+                        "Relecture Klereo confirmée : mode=0, relais=0."
+                        if verified_off
+                        else "⚠️ ATTENTION : la relecture Klereo signale encore la PAC active — coupez le disjoncteur PAC au Pool House !"
+                    )
+                    details = (
+                        f"Coupure automatique de la PAC piscine ({reason}) — "
+                        f"hivernage actif préservé (filtration Auto • hors-gel 0.5°C). {verify_txt}"
+                    )
+                    _notify_pool_watchdog_event(
+                        db=db,
+                        title="🛡️ Sécurité Piscine : PAC coupée automatiquement" if verified_off else "🚨 URGENCE PISCINE : Échec coupure PAC !",
+                        details=details,
+                        action="POOL_WATCHDOG_AUTO_OFF",
+                    )
+                    pool_sync_info["action_taken"] = "watchdog_pac_off_mode4" if pac_mode_code == 4 else "watchdog_pac_off"
+                    pool_sync_info["alerts_sent"].append("pac_auto_off")
+
+            # Couche 2 : détection de chauffe furtive via compteur matériel cumulé Chauff_TotalTime (> 60s)
+            if (
+                not pool_target_heating
+                and chauff_delta_s is not None
+                and chauff_delta_s > 60
+                and pool_sync_info["action_taken"] is None
+            ):
+                if pool_radio_ok:
+                    try:
+                        KlereoService.set_heating_mode(mode="off", active=False)
+                    except Exception as reoff_err:
+                        logger.warning(f"[pool_watchdog] Re-coupure post-delta impossible: {reoff_err}")
+                delta_min = round(chauff_delta_s / 60.0, 1)
+                details = (
+                    f"🚨 Le compteur horaire matériel Klereo (Chauff_TotalTime) a augmenté de +{delta_min} min "
+                    f"({prev_chauff_total_s}s → {chauff_total_s}s) hors séjour ! "
+                    f"Ordre d'arrêt PAC (mode=0) renvoyé immédiatement. Vérifiez le coffret Kompact M9 / disjoncteur PAC au Pool House."
+                )
+                _notify_pool_watchdog_event(
+                    db=db,
+                    title=f"🚨 Alerte Compteur PAC Piscine (+{delta_min} min hors séjour)",
+                    details=details,
+                    action="POOL_WATCHDOG_RUNTIME_DELTA",
+                )
+                pool_sync_info["action_taken"] = f"watchdog_runtime_delta_{chauff_delta_s}s"
+                pool_sync_info["alerts_sent"].append("runtime_delta")
+
+            # Couche 3 : alerte coupure radio / silence coffret > 6h (max 1 alerte / 24h)
+            radio_silent_too_long = (not pool_radio_ok) or (infos_time_s is not None and infos_time_s > 21600)
+            if radio_silent_too_long:
+                last_radio_alert_raw = sched_state.get("watchdog_last_radio_alert_at")
+                should_alert_radio = True
+                if last_radio_alert_raw:
+                    try:
+                        last_dt = datetime.fromisoformat(str(last_radio_alert_raw).replace("Z", "+00:00"))
+                        if last_dt.tzinfo is None:
+                            last_dt = last_dt.replace(tzinfo=timezone.utc)
+                        if (now_utc - last_dt) < timedelta(hours=24):
+                            should_alert_radio = False
+                    except Exception:
+                        pass
+                if should_alert_radio:
+                    silence_h = round((infos_time_s or 0) / 3600.0, 1)
+                    details = (
+                        f"⚠️ La liaison radio/Wi-Fi Klereo Piscine est muette depuis ~{silence_h} h "
+                        f"(code={klereo_status.get('klereo_alert_code') or 'stale'}). "
+                        f"La surveillance antigel (0,5 °C) et le garde-fou anti-chauffe PAC sont aveugles tant que la liaison n'est pas rétablie."
+                    )
+                    _notify_pool_watchdog_event(
+                        db=db,
+                        title="⚠️ Alerte Piscine : Liaison Klereo muette (> 6 h)",
+                        details=details,
+                        action="POOL_WATCHDOG_RADIO_SILENCE",
+                    )
+                    sched_state["watchdog_last_radio_alert_at"] = now_utc.isoformat()
+                    sched_dirty = True
+                    pool_sync_info["alerts_sent"].append("radio_silence_6h")
+            elif sched_state.get("watchdog_last_radio_alert_at") and infos_time_s is not None and infos_time_s <= 3600:
+                sched_state.pop("watchdog_last_radio_alert_at", None)
+                sched_dirty = True
+
+            # Couche 4 : alerte antigel critique si filtration coupée (mode=0) sous 3.0 °C extérieur
+            if pool_radio_ok and pump_mode_code == 0 and air_temp is not None and float(air_temp) < 3.0:
+                last_frost_raw = sched_state.get("watchdog_last_frost_alert_at")
+                should_alert_frost = True
+                if last_frost_raw:
+                    try:
+                        last_fdt = datetime.fromisoformat(str(last_frost_raw).replace("Z", "+00:00"))
+                        if last_fdt.tzinfo is None:
+                            last_fdt = last_fdt.replace(tzinfo=timezone.utc)
+                        if (now_utc - last_fdt) < timedelta(hours=12):
+                            should_alert_frost = False
+                    except Exception:
+                        pass
+                if should_alert_frost:
+                    details = (
+                        f"❄️ ALERTE ANTIGEL PISCINE : la pompe de filtration Klereo est à l'Arrêt (mode=0) "
+                        f"alors que l'air extérieur est à {float(air_temp):.1f} °C ! "
+                        f"Remettez immédiatement la filtration en mode Auto sur /sejour pour activer le hors-gel 0,5 °C."
+                    )
+                    _notify_pool_watchdog_event(
+                        db=db,
+                        title=f"❄️ ALERTE ANTIGEL : Filtration piscine coupée ({float(air_temp):.1f} °C)",
+                        details=details,
+                        action="POOL_WATCHDOG_ANTIFREEZE_ALERT",
+                    )
+                    sched_state["watchdog_last_frost_alert_at"] = now_utc.isoformat()
+                    sched_dirty = True
+                    pool_sync_info["alerts_sent"].append("antifreeze_pump_off")
+
+            # Persister l'empreinte compteur horaire pour le prochain cycle de contrôle
+            if chauff_total_s is not None and sched_state.get("watchdog_last_chauff_total_s") != int(chauff_total_s):
+                sched_state["watchdog_last_chauff_total_s"] = int(chauff_total_s)
+                sched_dirty = True
+            sched_state["watchdog_last_check_at"] = now_utc.isoformat()
+            sched_dirty = True
+
+            if sched_dirty:
+                pool_setting.schedule_json = json.dumps(sched_state)
+                db.add(pool_setting)
+                db.commit()
+
+    except Exception as k_err:
+        pool_sync_info["error"] = str(k_err)
+        logger.warning(f"[pool_watchdog] Erreur synchro/watchdog Klereo piscine: {k_err}")
+
+    return pool_sync_info
+
+
+def _compute_need_pool_now(db: Session, now_paris: datetime) -> bool:
+    reservations = db.query(Reservation).filter(Reservation.status == "Confirmée").all()
+    for r in reservations:
+        arr_time = r.arrival_time or "15:00"
+        dep_time = r.departure_time or "11:00"
+        arrival_dt = datetime.strptime(f"{r.start_date} {arr_time}", "%Y-%m-%d %H:%M").replace(tzinfo=now_paris.tzinfo)
+        departure_dt = datetime.strptime(f"{r.end_date} {dep_time}", "%Y-%m-%d %H:%M").replace(tzinfo=now_paris.tzinfo)
+        wishes = parse_domotique_wishes(r.notes)
+        if wishes["wants_pool"] and (arrival_dt - timedelta(hours=24.0)) <= now_paris <= departure_dt:
+            return True
+    return False
+
+
 def evaluate_and_sync_stay_heating(db: Session, force_sync: bool = False, dry_run: bool = False) -> dict:
     """
     Asservissement automatique du chauffage et de l'eau chaude sanitaire aux réservations confirmées du Presbytère :
@@ -12937,134 +13258,14 @@ def evaluate_and_sync_stay_heating(db: Session, force_sync: bool = False, dry_ru
                 f"mode={target_mode}, heating={need_heating} ({target_temp}°C), dhw={need_dhw} ({target_dhw_temp}°C), live_mode avant={live_mode}"
             )
 
-    # 5. Réconciliation & garde-fou piscine Klereo (toutes propriétés, toute saison) :
-    #    - Séjour demandant la piscine -> PAC en Marche régulée (mode 3, jamais mode 4)
-    #    - Hors séjour (et hors override manuel < 24h) -> coupure automatique immédiate si la PAC chauffe
-    #      ou si elle bascule en mode anormal 4 ("Synchro Filtration" / MODE_CLONE), sans jamais couper la filtration Auto.
-    MANUAL_POOL_OVERRIDE_HOURS = 24.0
-    pool_setting = db.query(ThermalSettings).filter(ThermalSettings.equipment_type == "pool").first()
-    if pool_setting is None:
-        pool_setting = ThermalSettings(equipment_type="pool")
-
-    pool_sync_info: Dict[str, Any] = {
-        "need_pool": need_pool,
-        "live_known": False,
-        "radio_link_ok": None,
-        "pac_mode_code": None,
-        "pac_mode_label": None,
-        "live_heating_active": None,
-        "target_heating_active": need_pool,
-        "manual_override_until": None,
-        "hardware_out_of_sync": False,
-        "action_taken": None,
-        "error": None,
-    }
-
-    try:
-        klereo_status = KlereoService.get_pool_status(force_refresh=not dry_run)
-        pool_radio_ok = bool(klereo_status.get("radio_link_ok", True)) and not bool(klereo_status.get("radio_error", False))
-        pac_mode_code = klereo_status.get("pac_mode_code")
-        pool_live_heating = bool(klereo_status.get("is_heating_active", False))
-
-        pool_sync_info.update({
-            "live_known": True,
-            "radio_link_ok": pool_radio_ok,
-            "pac_mode_code": pac_mode_code,
-            "pac_mode_label": klereo_status.get("pac_mode_label"),
-            "live_heating_active": pool_live_heating,
-            "heating_today_hours": klereo_status.get("heating_today_hours"),
-        })
-
-        # Override manuel humain récent (< 24h) respecté uniquement si mode légitime (jamais pour mode=4 Synchro Filtration)
-        pool_manual_override_until = None
-        if (
-            not need_pool
-            and pac_mode_code != 4
-            and (pool_setting.mode or "").lower() in ("on", "confort", "marche")
-            and pool_setting.updated_by
-            and pool_setting.updated_by not in (HEATING_AUTOMATION_AUTHOR, "Système")
-            and pool_setting.updated_at is not None
-        ):
-            p_upd_utc = pool_setting.updated_at if pool_setting.updated_at.tzinfo else pool_setting.updated_at.replace(tzinfo=timezone.utc)
-            p_expiry = p_upd_utc + timedelta(hours=MANUAL_POOL_OVERRIDE_HOURS)
-            if now_utc < p_expiry:
-                pool_manual_override_until = p_expiry
-
-        pool_target_heating = bool(need_pool or pool_manual_override_until is not None)
-        pool_hw_out_of_sync = pool_radio_ok and (
-            (pool_target_heating and (not pool_live_heating or pac_mode_code == 4))
-            or (not pool_target_heating and (pool_live_heating or pac_mode_code == 4))
-        )
-        pool_sync_info["target_heating_active"] = pool_target_heating
-        pool_sync_info["manual_override_until"] = pool_manual_override_until.isoformat() if pool_manual_override_until else None
-        pool_sync_info["hardware_out_of_sync"] = pool_hw_out_of_sync
-
-        if not dry_run and not KlereoService.is_read_only_mode() and pool_radio_ok:
-            if pool_target_heating and (not pool_live_heating or pac_mode_code == 4):
-                target_pool_temp = (
-                    float(pool_setting.target_temperature)
-                    if (pool_setting.target_temperature is not None and 15.0 <= float(pool_setting.target_temperature) <= 32.0)
-                    else 27.0
-                )
-                KlereoService.set_heating_mode(mode="on", active=True, target_temperature=target_pool_temp)
-                pool_setting.mode = "on"
-                pool_setting.filtration_mode = "auto"
-                pool_setting.target_temperature = target_pool_temp
-                if pool_manual_override_until is None:
-                    pool_setting.updated_by = HEATING_AUTOMATION_AUTHOR
-                    pool_setting.updated_at = datetime.utcnow()
-                db.add(pool_setting)
-                db.commit()
-                pool_sync_info["action_taken"] = f"pac_on_{target_pool_temp:.1f}C"
-            elif not pool_target_heating and (pool_live_heating or pac_mode_code == 4):
-                KlereoService.set_heating_mode(mode="off", active=False)
-                pool_setting.mode = "off"
-                pool_setting.updated_by = HEATING_AUTOMATION_AUTHOR
-                pool_setting.updated_at = datetime.utcnow()
-                db.add(pool_setting)
-                reason = (
-                    "anomalie Klereo mode=4 (Synchro Filtration) détectée hors séjour"
-                    if pac_mode_code == 4
-                    else "chauffage PAC actif hors séjour (ou fin de séjour)"
-                )
-                details = f"Coupure automatique de la PAC piscine ({reason}) — hivernage actif préservé (filtration Auto • hors-gel 0.5°C)."
-                db.add(Log(
-                    action="POOL_WATCHDOG_AUTO_OFF",
-                    user_name=HEATING_AUTOMATION_AUTHOR,
-                    details=details,
-                ))
-                db.commit()
-                pool_sync_info["action_taken"] = "watchdog_pac_off_mode4" if pac_mode_code == 4 else "watchdog_pac_off"
-
-                try:
-                    subscribed_members = db.query(Member).filter(
-                        Member.notif_thermal_changes == True,
-                        Member.email.isnot(None),
-                    ).all()
-                    target_emails = [m.email for m in subscribed_members if m.email]
-                    dispatched_email = None
-                    if target_emails:
-                        send_res = send_thermal_change_email(
-                            target_emails=target_emails,
-                            author_name=HEATING_AUTOMATION_AUTHOR,
-                            equipment_type="Sécurité PAC Piscine Klereo (Rosings)",
-                            details=details,
-                        )
-                        if isinstance(send_res, dict) and "_email_dispatched" in send_res:
-                            dispatched_email = send_res["_email_dispatched"]
-                    create_internal_notification(
-                        db=db,
-                        title="🛡️ Sécurité Piscine : PAC coupée automatiquement",
-                        description=details,
-                        notif_type="thermal",
-                        link_path="/sejour",
-                        email_entry=dispatched_email,
-                    )
-                except Exception as notif_err:
-                    logger.warning(f"[evaluate_and_sync_stay_heating] Erreur notif watchdog piscine: {notif_err}")
-    except Exception as k_err:
-        pool_sync_info["error"] = str(k_err)
-        logger.warning(f"[evaluate_and_sync_stay_heating] Erreur synchro/watchdog Klereo piscine: {k_err}")
+    # 5. Garde-fou multi-couches piscine Klereo (réconciliation PAC + compteur horaire + silence radio + antigel)
+    pool_sync_info = evaluate_and_enforce_pool_watchdog(
+        db=db,
+        need_pool=need_pool,
+        now_paris=now_paris,
+        now_utc=now_utc,
+        dry_run=dry_run,
+    )
 
     return {
         "status": "success" if vicare_error is None else "vicare_error",
@@ -13130,6 +13331,54 @@ async def cron_heating_stay_sync(request: Request, force: bool = Query(False), d
     if result["vicare_error"] is not None:
         raise HTTPException(status_code=status.HTTP_502_BAD_GATEWAY, detail=result)
     return result
+
+
+@app.api_route("/api/cron/pool-watchdog", methods=["GET", "POST"], tags=["Crons"])
+async def cron_pool_watchdog(request: Request, db: Session = Depends(get_db)):
+    """
+    Garde-fou indépendant dédié à la piscine Klereo (zéro dépendance ViCare) :
+    - GET : diagnostic lecture seule (dry_run).
+    - POST : exécution réelle protégée par CRON_SECRET ou membre authentifié (appelé par GitHub Actions en backup horaire).
+    """
+    from zoneinfo import ZoneInfo
+    tz_paris = ZoneInfo("Europe/Paris")
+    now_paris = datetime.now(tz_paris)
+    now_utc = datetime.now(timezone.utc)
+    need_pool = _compute_need_pool_now(db, now_paris)
+
+    if request.method == "GET":
+        return {
+            "status": "ok",
+            "dry_run": True,
+            "now_paris": now_paris.isoformat(),
+            "pool_sync": evaluate_and_enforce_pool_watchdog(db, need_pool=need_pool, now_paris=now_paris, now_utc=now_utc, dry_run=True),
+        }
+
+    cron_secret = os.getenv("CRON_SECRET", "")
+    auth_header = request.headers.get("Authorization", "")
+    token = auth_header.replace("Bearer ", "", 1).strip() if auth_header.startswith("Bearer ") else ""
+    if not token:
+        token = request.query_params.get("token") or request.query_params.get("cron_secret") or request.query_params.get("secret")
+    is_authenticated_cron = bool(cron_secret and token and secrets.compare_digest(token, cron_secret))
+    if not is_authenticated_cron:
+        if get_optional_current_user(request, db) is None:
+            verify_cron_auth(request)
+        is_authenticated_cron = True
+
+    pool_sync = evaluate_and_enforce_pool_watchdog(db, need_pool=need_pool, now_paris=now_paris, now_utc=now_utc, dry_run=False)
+    pool_retry = None
+    try:
+        pool_retry = retry_pending_pool_commands(db)
+    except Exception as pool_err:
+        logger.warning(f"[CRON POOL WATCHDOG] Erreur retry pool: {pool_err}")
+    return {
+        "status": "ok" if pool_sync.get("error") is None else "pool_error",
+        "dry_run": False,
+        "authenticated": is_authenticated_cron,
+        "now_paris": now_paris.isoformat(),
+        "pool_sync": pool_sync,
+        "pool_retry": pool_retry,
+    }
 
 
 

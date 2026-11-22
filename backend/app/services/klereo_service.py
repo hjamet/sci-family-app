@@ -337,6 +337,9 @@ class KlereoService:
             # Analyse dynamique des sondes (Zero-Trust : aucun fallback hardcodé)
             probes = pool_detail.get("probes", sys_0.get("probes", []))
             water_temp = None
+            water_temp_direct = None
+            water_temp_filtered_age_s = None
+            water_temp_direct_age_s = None
             air_temp = None
             ph_val = None
             redox_val = None
@@ -356,6 +359,12 @@ class KlereoService:
                         f_val = float(val)
                         if p_type == 5:  # Sonde Eau
                             water_temp = round(f_val, 2)
+                            if p.get("directValue") is not None:
+                                water_temp_direct = round(float(p.get("directValue")), 2)
+                            if p.get("filteredTime") is not None:
+                                water_temp_filtered_age_s = int(p.get("filteredTime"))
+                            if p.get("directTime") is not None:
+                                water_temp_direct_age_s = int(p.get("directTime"))
                         elif p_type == 1:  # Sonde Air
                             air_temp = round(f_val, 1)
                         elif p_type == 3:  # Sonde pH
@@ -423,10 +432,16 @@ class KlereoService:
             pool_mode = params.get("PoolMode", sys_0.get("RegulModes", {}).get("PoolMode", 2))
             filt_today_sec = params.get("Filtration_TodayTime", 0)
             filt_today_h = round(filt_today_sec / 3600, 1) if filt_today_sec else 0.0
-            chauff_today_sec = params.get("Chauff_TodayTime", 0)
+            chauff_today_sec = int(params.get("Chauff_TodayTime", 0) or 0)
             heating_today_hours = round(float(chauff_today_sec) / 3600.0, 2) if chauff_today_sec else 0.0
-            chauff_total_sec = params.get("Chauff_TotalTime")
-            heating_total_hours = round(float(chauff_total_sec) / 3600.0, 1) if chauff_total_sec is not None else None
+            chauff_total_sec_raw = params.get("Chauff_TotalTime")
+            heating_total_seconds = int(chauff_total_sec_raw) if chauff_total_sec_raw is not None else None
+            heating_total_hours = round(float(heating_total_seconds) / 3600.0, 1) if heating_total_seconds is not None else None
+            water_temp_frozen_between_cycles = bool(
+                not pump_relay_active
+                and water_temp_filtered_age_s is not None
+                and water_temp_filtered_age_s >= 1800
+            )
             
             regul_duree = params.get("RegulDuree")
             filt_target_h = round(float(regul_duree), 1) if regul_duree is not None else None
@@ -610,8 +625,42 @@ class KlereoService:
             else:
                 last_update_iso = datetime.fromtimestamp(now_ts).isoformat()
 
+            # Synthèse factuelle anti-hallucination (notamment pour Mr. Collins)
+            pac_age_min = round(pac_state_age_s / 60) if pac_state_age_s is not None else None
+            filt_age_txt = (
+                f"{water_temp_filtered_age_s // 3600}h{(water_temp_filtered_age_s % 3600) // 60:02d}"
+                if water_temp_filtered_age_s is not None
+                else "n/a"
+            )
+            if not is_pac_switch_on and not pac_active:
+                pac_truth = (
+                    f"PAC 100 % COUPÉE (mode={pac_mode_code} Arrêt, relais=0). "
+                    f"Cumul journalier Chauff_TodayTime={heating_today_hours:.2f}h ({chauff_today_sec}s depuis minuit) ; "
+                    f"compteur matériel cumulé Chauff_TotalTime={heating_total_seconds}s ({heating_total_hours}h). "
+                    f"ATTENTION : pac_state_age_s ({pac_age_min} min) est UNIQUEMENT l'âge de la dernière trame radio confirmant cet état Arrêt, "
+                    f"et NE SIGNIFIE PAS que la PAC a tourné il y a {pac_age_min} min !"
+                )
+            else:
+                pac_truth = (
+                    f"PAC ARMÉE/ACTIVE (mode={pac_mode_code} {pac_mode_label}, relais={1 if pac_active else 0}). "
+                    f"Cumul journalier={heating_today_hours:.2f}h ({chauff_today_sec}s), compteur cumulé={heating_total_seconds}s."
+                )
+            if water_temp_frozen_between_cycles and water_temp_direct is not None:
+                water_truth = (
+                    f"Eau bassin={water_temp}°C (dernière mesure figée à l'arrêt de la filtration il y a {filt_age_txt}) ; "
+                    f"sonde instantanée canalisation (filtration arrêtée)={water_temp_direct}°C. "
+                    f"Un bassin couvert de 54 m³ refroidit lentement (~0,5 à 1,5 °C/24h) par inertie thermique sans aucune chauffe."
+                )
+            else:
+                water_truth = f"Eau bassin={water_temp}°C (sonde directe={water_temp_direct}°C)."
+            ai_telemetry_truth_note = f"{pac_truth} {water_truth}"
+
             return {
                 "water_temperature": water_temp,
+                "water_temp_direct": water_temp_direct,
+                "water_temp_filtered_age_s": water_temp_filtered_age_s,
+                "water_temp_direct_age_s": water_temp_direct_age_s,
+                "water_temp_frozen_between_cycles": water_temp_frozen_between_cycles,
                 "air_temperature": air_temp,
                 "ph_value": ph_val,
                 "redox_value": redox_val,
@@ -628,7 +677,10 @@ class KlereoService:
                 "pac_mode_code": pac_mode_code,
                 "pac_mode_label": pac_mode_label,
                 "heating_today_hours": heating_today_hours,
+                "heating_today_seconds": chauff_today_sec,
                 "heating_total_hours": heating_total_hours,
+                "heating_total_seconds": heating_total_seconds,
+                "ai_telemetry_truth_note": ai_telemetry_truth_note,
                 "pump_mode_code": pump_mode_code,
                 "pump_relay_active": pump_relay_active,
                 "pump_mode": resolved_pump_mode,

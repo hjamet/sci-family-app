@@ -1,0 +1,17 @@
+name: Pool Klereo Watchdog Backup Cron
+
+on:
+  schedule:
+    # Filet de sécurité indépendant toutes les heures (en doublon du cron Supabase pg_cron */15)
+    - cron: '23 * * * *'
+  workflow_dispatch:
+
+jobs:
+  pool-watchdog:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Run Pool Klereo Safety Watchdog
+        run: |
+          curl -fsS -X POST https://hellenvilliers.henri-jamet.com/api/cron/pool-watchdog \
+            -H "Authorization: Bearer ${{ secrets.CRON_SECRET }}" \
+            -H "Content-Type: application/json"

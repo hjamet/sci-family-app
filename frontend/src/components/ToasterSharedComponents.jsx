@@ -600,6 +600,11 @@ function SharedPoolWidget({ data }) {
             {p.water_temperature != null ? `${Number(p.water_temperature).toFixed(1)} °C` : '—'}
           </span>
           {p.water_temperature == null && <span className="block text-[10px] text-amber-700">{probeFallback}</span>}
+          {p.water_temp_frozen_between_cycles && p.water_temp_direct != null && (
+            <span className="block text-[9.5px] text-slate-500">
+              Fin filtration • Tuyau : {Number(p.water_temp_direct).toFixed(1)} °C
+            </span>
+          )}
         </div>
         <div className="p-2.5 rounded-xl bg-slate-50 border border-slate-200/70">
           <span className="text-[10px] text-slate-500 font-bold uppercase block">Air ext.</span>
