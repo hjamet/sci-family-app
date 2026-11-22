@@ -1894,6 +1894,7 @@ export default function ToasterPage({ currentUser }) {
         ...(card.payload || {}),
         [missingField.key]: rawValue,
       };
+      let finalDeduced = updatedDeduced;
       if (card.action_type === 'stay' && missingField.key === 'building') {
         const newMax = getMaxRoomsForBuilding(rawValue);
         updatedPayload.max_chambers = newMax;
@@ -1901,10 +1902,33 @@ export default function ToasterPage({ currentUser }) {
           updatedPayload.chambers_used = newMax;
         }
       }
+      if (card.action_type === 'heating' && updatedPayload.equipment === 'pool' && missingField.key === 'mode') {
+        if (rawValue === 'on') {
+          const tVal = Number(updatedPayload.target_temperature) >= 15 ? Number(updatedPayload.target_temperature) : 27.0;
+          updatedPayload.target_temperature = tVal;
+          finalDeduced = finalDeduced.filter((d) => d.key !== 'antifreeze_info' && d.key !== 'target_temperature');
+          finalDeduced.push({
+            key: 'target_temperature',
+            label: 'Consigne baignade (°C)',
+            value: `${tVal.toFixed(1)} °C`,
+            raw_value: tVal,
+          });
+        } else {
+          delete updatedPayload.target_temperature;
+          finalDeduced = finalDeduced.filter((d) => d.key !== 'target_temperature' && d.key !== 'antifreeze_info');
+          finalDeduced.push({
+            key: 'antifreeze_info',
+            label: 'Sécurité hors-gel',
+            value: '0,5 °C (automatique Klereo)',
+            raw_value: 0.5,
+            readonly: true,
+          });
+        }
+      }
 
       return {
         ...card,
-        deduced_fields: updatedDeduced,
+        deduced_fields: finalDeduced,
         missing_fields: remainingMissing,
         ready_to_execute: remainingMissing.length === 0,
         payload: updatedPayload,
@@ -1920,21 +1944,105 @@ export default function ToasterPage({ currentUser }) {
     }
     updateCardInMessage(msgId, (card) => {
       let valToStore = trimmed;
+      let displayVal = trimmed;
+      const isPoolHeatingCard = card.action_type === 'heating' && card.payload?.equipment === 'pool';
+      const isBoilerHeatingCard = card.action_type === 'heating' && !isPoolHeatingCard;
+
       if (fieldKey === 'chambers_used' || fieldKey === 'guest_count' || fieldKey === 'charge_points') {
         valToStore = Number(trimmed) || 1;
+        displayVal = String(valToStore);
       }
       if (card.action_type === 'stay' && fieldKey === 'chambers_used') {
         const maxR = getMaxRoomsForBuilding(card.payload?.building);
         valToStore = Math.max(1, Math.min(maxR, Number(valToStore) || 1));
+        displayVal = String(valToStore);
       }
-      const updatedDeduced = card.deduced_fields.map((d) =>
-        d.key === fieldKey ? { ...d, value: String(valToStore), raw_value: valToStore } : d
+      if (card.action_type === 'heating' && fieldKey === 'target_temperature') {
+        const cleaned = trimmed.replace(/°C/gi, '').replace(',', '.').trim();
+        const parsed = Number.parseFloat(cleaned);
+        if (!Number.isNaN(parsed)) {
+          const minT = 15.0;
+          const maxT = isPoolHeatingCard ? 32.0 : 24.0;
+          valToStore = Math.round(Math.max(minT, Math.min(maxT, parsed)) * 10) / 10;
+          displayVal = `${valToStore.toFixed(1)} °C`;
+        }
+      }
+      if (isPoolHeatingCard && fieldKey === 'mode') {
+        valToStore = trimmed === 'on' ? 'on' : 'off';
+        displayVal =
+          valToStore === 'on'
+            ? 'Chauffe PAC régulée'
+            : 'Arrêt PAC (Hivernage actif • hors-gel 0,5 °C)';
+      }
+      if (isPoolHeatingCard && fieldKey === 'filtration_mode') {
+        const filtLabels = {
+          auto: 'Auto (hors-gel 0,5 °C)',
+          marche: 'Auto / Marche',
+          arret: 'Arrêt (⚠️ désactive le hors-gel)',
+        };
+        valToStore = filtLabels[trimmed] ? trimmed : 'auto';
+        displayVal = filtLabels[valToStore];
+      }
+      if (isBoilerHeatingCard && fieldKey === 'mode') {
+        const boilerLabels = {
+          dhwAndHeating: 'Confort Chauffage + ECS (dhwAndHeating)',
+          dhw: 'Eau Chaude Sanitaire seule (dhw • 52 °C)',
+          standby: 'Veille / Hors-gel (standby)',
+        };
+        valToStore = boilerLabels[trimmed] ? trimmed : 'standby';
+        displayVal = boilerLabels[valToStore];
+      }
+
+      let updatedDeduced = card.deduced_fields.map((d) =>
+        d.key === fieldKey ? { ...d, value: displayVal, raw_value: valToStore } : d
       );
       const updatedPayload = { ...(card.payload || {}), [fieldKey]: valToStore };
+
       if (card.action_type === 'stay' && fieldKey === 'building') {
         const maxR = getMaxRoomsForBuilding(valToStore);
         updatedPayload.max_chambers = maxR;
       }
+      if (isPoolHeatingCard && fieldKey === 'mode') {
+        if (valToStore === 'off') {
+          delete updatedPayload.target_temperature;
+          updatedDeduced = updatedDeduced.filter((d) => d.key !== 'target_temperature' && d.key !== 'antifreeze_info');
+          updatedDeduced.push({
+            key: 'antifreeze_info',
+            label: 'Sécurité hors-gel',
+            value: '0,5 °C (automatique Klereo)',
+            raw_value: 0.5,
+            readonly: true,
+          });
+        } else {
+          const tVal = Number(updatedPayload.target_temperature) >= 15 ? Number(updatedPayload.target_temperature) : 27.0;
+          updatedPayload.target_temperature = tVal;
+          updatedDeduced = updatedDeduced.filter((d) => d.key !== 'antifreeze_info' && d.key !== 'target_temperature');
+          updatedDeduced.push({
+            key: 'target_temperature',
+            label: 'Consigne baignade (°C)',
+            value: `${tVal.toFixed(1)} °C`,
+            raw_value: tVal,
+          });
+        }
+      }
+      if (isBoilerHeatingCard && fieldKey === 'mode') {
+        if (valToStore === 'dhwAndHeating') {
+          const tVal = Number(updatedPayload.target_temperature) >= 15 ? Number(updatedPayload.target_temperature) : 20.0;
+          updatedPayload.target_temperature = tVal;
+          if (!updatedDeduced.some((d) => d.key === 'target_temperature')) {
+            updatedDeduced.push({
+              key: 'target_temperature',
+              label: 'Consigne (°C)',
+              value: `${tVal.toFixed(1)} °C`,
+              raw_value: tVal,
+            });
+          }
+        } else {
+          delete updatedPayload.target_temperature;
+          updatedDeduced = updatedDeduced.filter((d) => d.key !== 'target_temperature');
+        }
+      }
+
       return {
         ...card,
         deduced_fields: updatedDeduced,
@@ -2726,6 +2834,19 @@ export default function ToasterPage({ currentUser }) {
                             </span>
                             <div className="flex flex-wrap gap-2">
                               {chipFields.map((field) => {
+                                if (field.readonly) {
+                                  return (
+                                    <span
+                                      key={field.key}
+                                      className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-full bg-slate-50 text-slate-700 border border-slate-200 text-xs font-semibold shadow-2xs"
+                                    >
+                                      <span>{field.key === 'antifreeze_info' ? '❄️' : '🏷️'}</span>
+                                      <span className="font-bold">{field.label} :</span>
+                                      <span>{String(field.value)}</span>
+                                    </span>
+                                  );
+                                }
+
                                 const isEditingThis =
                                   editingField &&
                                   editingField.msgId === msg.id &&
@@ -2734,6 +2855,10 @@ export default function ToasterPage({ currentUser }) {
                                 if (isEditingThis) {
                                   const isSelectAssignee = field.key === 'assigned_to';
                                   const isSelectBuilding = field.key === 'building' && card.action_type === 'stay';
+                                  const isPoolCard = card.action_type === 'heating' && card.payload?.equipment === 'pool';
+                                  const isSelectHeatingMode = card.action_type === 'heating' && field.key === 'mode';
+                                  const isSelectFiltrationMode = isPoolCard && field.key === 'filtration_mode';
+                                  const isNumberTemp = card.action_type === 'heating' && field.key === 'target_temperature';
                                   return (
                                     <div
                                       key={field.key}
@@ -2770,6 +2895,62 @@ export default function ToasterPage({ currentUser }) {
                                           <option value="Rosings">Rosings (2 ch.)</option>
                                           <option value="Presbytère & Rosings">Presbytère &amp; Rosings (7 ch.)</option>
                                         </select>
+                                      ) : isSelectHeatingMode ? (
+                                        <select
+                                          autoFocus
+                                          value={editingField.tempValue}
+                                          onChange={(e) =>
+                                            handleSaveEditedDeducedField(msg.id, field.key, e.target.value)
+                                          }
+                                          className="px-2 py-0.5 bg-white border border-emerald-300 rounded-full text-xs font-semibold text-slate-900 focus:outline-none"
+                                        >
+                                          {isPoolCard ? (
+                                            <>
+                                              <option value="off">❄️ Arrêt PAC (Hivernage actif • hors-gel 0,5 °C)</option>
+                                              <option value="on">🔥 Chauffe PAC régulée (15–32 °C)</option>
+                                            </>
+                                          ) : (
+                                            <>
+                                              <option value="dhwAndHeating">🔥 Confort Chauffage + ECS</option>
+                                              <option value="dhw">🚿 Eau Chaude seule (52 °C)</option>
+                                              <option value="standby">❄️ Veille / Hors-gel</option>
+                                            </>
+                                          )}
+                                        </select>
+                                      ) : isSelectFiltrationMode ? (
+                                        <select
+                                          autoFocus
+                                          value={editingField.tempValue}
+                                          onChange={(e) =>
+                                            handleSaveEditedDeducedField(msg.id, field.key, e.target.value)
+                                          }
+                                          className="px-2 py-0.5 bg-white border border-emerald-300 rounded-full text-xs font-semibold text-slate-900 focus:outline-none"
+                                        >
+                                          <option value="auto">🌊 Auto (hors-gel 0,5 °C)</option>
+                                          <option value="marche">Auto / Marche</option>
+                                          <option value="arret">Arrêt (⚠️ coupe le hors-gel)</option>
+                                        </select>
+                                      ) : isNumberTemp ? (
+                                        <input
+                                          type="number"
+                                          step="0.5"
+                                          min={15}
+                                          max={isPoolCard ? 32 : 24}
+                                          autoFocus
+                                          value={editingField.tempValue}
+                                          onChange={(e) =>
+                                            setEditingField((prev) => ({ ...prev, tempValue: e.target.value }))
+                                          }
+                                          onKeyDown={(e) => {
+                                            if (e.key === 'Enter') {
+                                              e.preventDefault();
+                                              handleSaveEditedDeducedField(msg.id, field.key, editingField.tempValue);
+                                            } else if (e.key === 'Escape') {
+                                              setEditingField(null);
+                                            }
+                                          }}
+                                          className="px-2 py-0.5 bg-white border border-emerald-300 rounded-full text-xs font-semibold text-slate-900 focus:outline-none w-20"
+                                        />
                                       ) : (
                                         <input
                                           type="text"
@@ -2811,7 +2992,7 @@ export default function ToasterPage({ currentUser }) {
                                       setEditingField({
                                         msgId: msg.id,
                                         fieldKey: field.key,
-                                        tempValue: String(field.value ?? ''),
+                                        tempValue: String(field.raw_value ?? field.value ?? ''),
                                       })
                                     }
                                     title="Cliquer pour modifier cette valeur"

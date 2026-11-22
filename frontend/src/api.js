@@ -1537,12 +1537,19 @@ export async function fetchPiscineStatus(options = {}) {
   return data;
 }
 
-export async function setPoolPumpMode(modeOrActive) {
-  const is_active = typeof modeOrActive === 'boolean' ? modeOrActive : modeOrActive !== 'Arrêt' && modeOrActive !== 'arret';
+export async function setPoolPumpMode(modeOrActive, author_name = undefined) {
+  const is_active = typeof modeOrActive === 'boolean' ? modeOrActive : modeOrActive !== 'Arrêt' && modeOrActive !== 'arret' && modeOrActive !== 'off';
+  const payload = {
+    is_active,
+    mode: is_active ? 'auto' : 'arret',
+  };
+  if (author_name !== undefined && author_name !== null) {
+    payload.author_name = author_name;
+  }
   const res = await fetch(`${API_BASE}/pool/pump/mode`, {
     method: 'POST',
     headers: getAuthJsonHeaders(),
-    body: JSON.stringify({ is_active, mode: is_active ? 'marche' : 'arret' }),
+    body: JSON.stringify(payload),
   });
   if (!res.ok) {
     const err = await res.json().catch(() => ({}));
@@ -1553,14 +1560,17 @@ export async function setPoolPumpMode(modeOrActive) {
   return res.json();
 }
 
-export async function setPoolHeatingMode(modeOrActive, target_temperature = undefined) {
-  const is_active = typeof modeOrActive === 'boolean' ? modeOrActive : modeOrActive !== 'Arrêt' && modeOrActive !== 'arret';
+export async function setPoolHeatingMode(modeOrActive, target_temperature = undefined, author_name = undefined) {
+  const is_active = typeof modeOrActive === 'boolean' ? modeOrActive : modeOrActive !== 'Arrêt' && modeOrActive !== 'arret' && modeOrActive !== 'off';
   const payload = {
     is_active,
-    mode: is_active ? 'marche' : 'arret',
+    mode: is_active ? 'on' : 'off',
   };
-  if (target_temperature !== undefined && target_temperature !== null) {
+  if (is_active && target_temperature !== undefined && target_temperature !== null) {
     payload.target_temperature = Number(target_temperature);
+  }
+  if (author_name !== undefined && author_name !== null) {
+    payload.author_name = author_name;
   }
   const res = await fetch(`${API_BASE}/pool/heating/mode`, {
     method: 'POST',

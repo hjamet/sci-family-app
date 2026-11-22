@@ -697,9 +697,9 @@ def _read_heating_summary(db: Session) -> Dict[str, Any]:
         "is_cached_last_known": is_gateway_offline,
         "last_seen_at": recorded_at.isoformat() + "Z" if recorded_at else None,
         "recorded_at": recorded_at.isoformat() + "Z" if recorded_at else None,
-        "pool_mode": pool_setting.mode if pool_setting and pool_setting.mode else "eco",
+        "pool_mode": pool_setting.mode if pool_setting and pool_setting.mode else "off",
         "pool_filtration_mode": pool_setting.filtration_mode if pool_setting and pool_setting.filtration_mode else "auto",
-        "pool_temperature": float(pool_setting.target_temperature) if pool_setting and pool_setting.target_temperature is not None else 0.5,
+        "pool_temperature": float(pool_setting.target_temperature) if pool_setting and pool_setting.target_temperature is not None else 27.0,
         "updated_by": heating_setting.updated_by if heating_setting and heating_setting.updated_by else "Système ViCare",
     }
 
@@ -713,7 +713,7 @@ def _fetch_live_pool_status(db: Session) -> Dict[str, Any]:
 
     pool_setting = db.query(ThermalSettings).filter(ThermalSettings.equipment_type == "pool").first()
     base: Dict[str, Any] = {
-        "mode": pool_setting.mode if pool_setting and pool_setting.mode else "eco",
+        "mode": pool_setting.mode if pool_setting and pool_setting.mode else "off",
         "filtration_mode": pool_setting.filtration_mode if pool_setting and pool_setting.filtration_mode else "auto",
         "target_temperature": float(pool_setting.target_temperature) if pool_setting and pool_setting.target_temperature is not None else 0.5,
         "live_error": None,
@@ -722,6 +722,7 @@ def _fetch_live_pool_status(db: Session) -> Dict[str, Any]:
         live_kl = KlereoService.get_pool_status(force_refresh=True)
         if isinstance(live_kl, dict):
             base.update(live_kl)
+            base["mode"] = live_kl.get("heating_mode") or ("on" if live_kl.get("is_heating_active") else "off")
     except HTTPException as exc:
         detail = exc.detail
         err_msg = detail.get("error") if isinstance(detail, dict) else str(detail)
@@ -1879,18 +1880,65 @@ def execute_toaster_action(
         raw_mode = str(merged_payload.get("mode") or "dhwAndHeating").strip()
 
         if "pool" in equipment or "piscine" in equipment or merged_payload.get("pool_mode"):
-            from .klereo_service import KlereoService
+            from .klereo_service import (
+                KlereoService,
+                POOL_HEATING_OFF_MODES,
+                POOL_HEATING_ON_MODES,
+                POOL_MAX_COMFORT_TEMP,
+                POOL_MIN_COMFORT_TEMP,
+            )
 
-            pool_mode = str(merged_payload.get("pool_mode") or raw_mode or "confort").strip().lower()
-            filtration = str(merged_payload.get("filtration_mode") or "auto").strip().lower()
-            pool_temp = float(merged_payload.get("pool_temperature") or merged_payload.get("target_temperature") or 27.0)
+            raw_pool_mode = str(merged_payload.get("pool_mode") or raw_mode or "off").strip().lower()
+            if raw_pool_mode in POOL_HEATING_OFF_MODES:
+                is_pac_on = False
+                canonical_mode = "off"
+            elif raw_pool_mode in POOL_HEATING_ON_MODES:
+                is_pac_on = True
+                canonical_mode = "on"
+            else:
+                raise ValueError(
+                    f"Commande piscine Klereo impossible : mode PAC inconnu « {raw_pool_mode} ». "
+                    "Modes autorisés : 'off' (Arrêt / Hivernage actif) ou 'on' (Chauffe régulée)."
+                )
+
+            raw_filt = merged_payload.get("filtration_mode")
+            filtration = str(raw_filt or "auto").strip().lower()
+            if filtration in ("auto", "hivernage", "hiver", "hors-gel", "hors_gel"):
+                filtration = "auto"
+            elif filtration in ("marche", "on", "true", "manuel_on"):
+                filtration = "auto" if filtration != "manuel_on" else "manuel_on"
+            elif filtration in ("arret", "arrêt", "off", "false"):
+                filtration = "arret"
+            else:
+                raise ValueError(
+                    f"Commande piscine Klereo impossible : mode filtration inconnu « {filtration} » "
+                    "(autorisés : 'auto', 'marche', 'arret')."
+                )
+
+            raw_temp_val = merged_payload.get("pool_temperature")
+            if raw_temp_val is None:
+                raw_temp_val = merged_payload.get("target_temperature")
+            pool_temp: Optional[float] = None
+            if is_pac_on and raw_temp_val is not None and str(raw_temp_val).strip() != "":
+                cleaned_temp = str(raw_temp_val).replace("°C", "").replace("°", "").replace(",", ".").strip()
+                try:
+                    pool_temp = round(float(cleaned_temp), 1)
+                except ValueError:
+                    raise ValueError(f"Consigne piscine invalide : « {raw_temp_val} ».")
+                if pool_temp < POOL_MIN_COMFORT_TEMP or pool_temp > POOL_MAX_COMFORT_TEMP:
+                    raise ValueError(
+                        f"Consigne de baignade piscine invalide ({pool_temp:.1f} °C) : "
+                        f"Klereo attend entre {POOL_MIN_COMFORT_TEMP:.0f} °C et {POOL_MAX_COMFORT_TEMP:.0f} °C."
+                    )
 
             try:
-                KlereoService.set_heating_mode(mode=pool_mode)
-                if merged_payload.get("filtration_mode"):
-                    KlereoService.set_pump_mode(mode=filtration)
-                if merged_payload.get("target_temperature") or merged_payload.get("pool_temperature"):
-                    KlereoService.set_temperature(pool_temp)
+                live_res = KlereoService.set_heating_mode(
+                    mode=canonical_mode,
+                    active=is_pac_on,
+                    target_temperature=pool_temp if is_pac_on else None,
+                )
+                if raw_filt is not None and str(raw_filt).strip() != "":
+                    live_res = KlereoService.set_pump_mode(mode=filtration)
             except HTTPException as exc:
                 detail = exc.detail.get("error") if isinstance(exc.detail, dict) else str(exc.detail)
                 raise ValueError(f"Commande piscine Klereo impossible : {detail}")
@@ -1901,22 +1949,59 @@ def execute_toaster_action(
             if not pool_setting:
                 pool_setting = ThermalSettings(equipment_type="pool")
                 prod_db.add(pool_setting)
-            pool_setting.mode = pool_mode
+            pool_setting.mode = canonical_mode
             pool_setting.filtration_mode = filtration
-            pool_setting.target_temperature = pool_temp
+            if is_pac_on and pool_temp is not None:
+                pool_setting.target_temperature = pool_temp
+            pool_setting.schedule_json = json.dumps({"has_pending": False, "applied_at": datetime.utcnow().isoformat()})
             pool_setting.updated_by = member_display
             pool_setting.updated_at = datetime.utcnow()
+
+            comfort_display = pool_temp or (live_res.get("pool_comfort_target") if isinstance(live_res, dict) else None) or pool_setting.target_temperature or 27.0
+            if is_pac_on:
+                details_msg = f"Chauffage PAC piscine activé (Marche régulée {comfort_display:.1f} °C, filtration « {filtration} »)"
+                confirmation_msg = f"Piscine Klereo mise en chauffe régulée à {comfort_display:.1f} °C (filtration « {filtration} »)."
+            else:
+                details_msg = f"Chauffage PAC piscine mis à l'Arrêt (Hivernage actif • hors-gel Klereo 0,5 °C, filtration « {filtration} »)"
+                confirmation_msg = f"Piscine Klereo passée en hivernage actif : PAC à l'Arrêt, filtration « {filtration} » (hors-gel automatique Klereo 0,5 °C)."
+
             prod_db.add(
                 Log(
                     action="TOASTER_POOL_UPDATE",
                     user_name=member_display,
-                    details=f"Piscine Klereo réglée : mode={pool_mode}, filtration={filtration}, consigne={pool_temp:.1f}°C",
+                    details=details_msg,
+                )
+            )
+            prod_db.add(
+                Notification(
+                    member_id=None,
+                    title="Commande Mr. Collins : Piscine Klereo",
+                    description=f"{details_msg} (par {member_display})",
+                    type="thermal",
+                    link_path="/sejour",
+                    is_read=False,
+                    created_at=datetime.utcnow(),
                 )
             )
             prod_db.commit()
-            confirmation_msg = (
-                f"Piscine Klereo mise à jour : mode « {pool_mode} » ({pool_temp:.1f} °C, filtration « {filtration} »)."
-            )
+
+            try:
+                from .email_service import send_thermal_change_email
+
+                subscribed = prod_db.query(Member).filter(
+                    Member.notif_thermal_changes == True,  # noqa: E712
+                    Member.email.isnot(None),
+                ).all()
+                target_emails = [m.email for m in subscribed if m.email]
+                if target_emails:
+                    send_thermal_change_email(
+                        target_emails=target_emails,
+                        author_name=member_display,
+                        equipment_type="Chauffage PAC Piscine Inopac 20 kW (Rosings)",
+                        details=details_msg,
+                    )
+            except Exception as email_err:
+                logger.warning(f"[TOASTER POOL] Envoi e-mail thermique non bloquant: {email_err}")
         else:
             from .vicare_service import ViCareService
 
@@ -3195,7 +3280,8 @@ def execute_toaster_read_tool(
                 "summary": (
                     "7 chambres EXACTEMENT au total : Presbytère (5 max : Suite, Deuxième Chambre du Couloir, Première Chambre du Couloir, La Mezzanine, Chambre du bas) "
                     "et Rosings (2 max : Chambre Haut Droite, Chambre Haut Gauche). Il est IMPOSSIBLE de réserver plus de 5 chambres au Presbytère, 2 à Rosings ou 7 sur tout le domaine. "
-                    "Chauffage ViCare Presbytère : veille hors-gel standby hors séjour ; confort 20 °C (04h30–21h00) + réduit 6 °C la nuit."
+                    "Chauffage ViCare Presbytère : veille hors-gel standby hors séjour ; confort 20 °C (04h30–21h00) + réduit 6 °C la nuit. "
+                    "Piscine Klereo (Rosings) : protocole d'hivernage actif par défaut hors baignade et d'octobre à avril = PAC sur 'off' (Arrêt, sans toucher à ConsigneEau) + Filtration sur 'auto' (hors-gel matériel automatique à 0,5 °C, ne jamais couper la filtration en hiver). En chauffe ('on'), consigne baignade entre 15 °C et 32 °C (27 °C par défaut)."
                 ),
             },
             "taches_et_artisans": {

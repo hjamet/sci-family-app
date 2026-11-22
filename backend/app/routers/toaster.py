@@ -336,15 +336,32 @@ TOASTER_FUNCTION_DECLARATIONS: List[Dict[str, Any]] = [
         "name": "propose_heating_or_pool_action",
         "description": (
             "Propose de régler le mode ou la température de la chaudière fioul Viessmann du Presbytère "
-            "('dhwAndHeating', 'standby', 'dhw') ou de la piscine Klereo ('confort', 'eco')."
+            "('dhwAndHeating', 'standby', 'dhw') ou de la piscine Klereo ('off' = Arrêt PAC / Hivernage actif avec hors-gel 0,5 °C et filtration 'auto', "
+            "ou 'on' = Chauffe PAC régulée entre 15 °C et 32 °C, défaut 27 °C)."
         ),
         "parameters": {
             "type": "OBJECT",
             "properties": {
                 "equipment": {"type": "STRING", "description": "'heating' (Presbytère) ou 'pool' (piscine Klereo)."},
-                "mode": {"type": "STRING", "description": "Chaudière : 'dhwAndHeating', 'standby' ou 'dhw'. Piscine : 'confort' ou 'eco'."},
-                "target_temperature": {"type": "NUMBER", "description": "Consigne en °C (ex: 18.0, 20.0, 27.0)."},
-                "filtration_mode": {"type": "STRING", "description": "Pour la piscine : 'auto', 'marche' ou 'arret'."},
+                "mode": {
+                    "type": "STRING",
+                    "description": (
+                        "Chaudière Presbytère : 'dhwAndHeating', 'standby' ou 'dhw'. "
+                        "Piscine Klereo : 'off' (Arrêt PAC / Hivernage actif hors-gel 0,5 °C — NE PAS utiliser 'eco') "
+                        "ou 'on' (Chauffe PAC régulée 15–32 °C)."
+                    ),
+                },
+                "target_temperature": {
+                    "type": "NUMBER",
+                    "description": (
+                        "Consigne confort en °C UNIQUEMENT en marche : Chaudière 15–24 °C (défaut 20 °C), "
+                        "Piscine PAC 'on' 15–32 °C (défaut 27 °C). Ne PAS fournir en mode Arrêt/Hivernage ('off' ou 'standby')."
+                    ),
+                },
+                "filtration_mode": {
+                    "type": "STRING",
+                    "description": "Pour la piscine : 'auto' (recommandé toute l'année et OBLIGATOIRE en hiver pour la sécurité hors-gel 0,5 °C), 'marche' ou 'arret'.",
+                },
                 "assistant_message": {"type": "STRING", "description": "Réponse fluide en français naturel."},
             },
             "required": ["equipment", "mode", "assistant_message"],
@@ -617,6 +634,7 @@ COHÉRENCE STRICTE DES CYCLES DE VIE & VALIDATION EXPLICITE DES ACTIONS RÉELLES
   - Lors de la **modification d'une tâche existante** (`propose_task_action`, `operation='update'`, avec `task_id`), tu PEUX parfaitement proposer de modifier son titre, sa description (et, si l'utilisateur est coordinateur, son emplacement, son urgence, sa difficulté, sa présence sur place, son budget ou son échéance), toujours via la carte modifiable soumise à confirmation de l'utilisateur !
 - **Scrutins / Votes (cycle de vie officiel)** : toute nouvelle proposition de scrutin est créée en statut `PROPOSED` (en attente de validation/ouverture par un coordinateur) avec un lieu/catégorie canonique, une description claire, une priorité, un budget estimé éventuel, le mode choix unique/multiple et au moins 2 options.
 - Pour toute action de création, modification, archivage ou rattachement de document, appelle TOUJOURS l'outil `propose_*` correspondant afin de présenter une carte récapitulative modifiable que l'associé devra confirmer en un clic. **INTERDICTION ABSOLUE** de répondre « dans la carte ci-dessous » ou « j'ai pré-rempli » sans avoir effectivement invoqué l'outil `propose_*` dans ce tour !
+- **Piscine Klereo (Rosings) — Protocole d'hivernage actif & pilotage** : le réglage officiel par défaut hors baignade et en hiver (octobre à avril) consiste à mettre la **PAC sur `'off'` (Arrêt)** et à **laisser la filtration sur `'auto'`** (l'automate Klereo assure le hors-gel actif automatique dès `0,5 °C` sans chauffer le bassin). En mode `'off'` / hivernage, **n'indique aucune consigne de température** (ne mets jamais `10 °C` ni `'eco'`). En chauffe (`'on'`), la consigne baignade est entre `15 °C` et `32 °C` (`27 °C` par défaut). Si la télémétrie signale `pac_mode_code == 4` (*Synchro Filtration*), alerte immédiatement l'associé et propose de passer la PAC sur `'off'`.
 - Si la passerelle ViCare du Presbytère est hors ligne au moment où l'utilisateur demande d'allumer le chauffage, prépare tout de même la carte `propose_heating_or_pool_action` si souhaité mais préviens clairement dans ta réponse que la passerelle Vitoconnect est actuellement hors ligne."""
 
 
@@ -740,7 +758,7 @@ TRÉSORERIE BANCAIRE SWAN & SOLDES CCA DES 7 ASSOCIÉS :
 
 DOMOTIQUE CHAUFFAGE & PISCINE :
 - Chaudière Viessmann Presbytère : mode={heating.get('mode')}, consigne={heating.get('target_temperature')} °C, int={heating.get('room_temperature')} °C, ext={heating.get('outside_temperature')} °C, fioul=~{heating.get('fuel_liters_remaining')} L / 3000 L ({heating.get('fuel_percent')}%), passerelle hors ligne={heating.get('is_gateway_offline')} (dernier relevé={heating.get('last_seen_at')})
-- Piscine Klereo : mode={heating.get('pool_mode')}, consigne={heating.get('pool_temperature')} °C (appeler read_heating_and_pool_status ou pool_status_widget pour le relevé live Wi-Fi/radio/sondes)
+- Piscine Klereo : dernière consigne base mode={heating.get('pool_mode')}, filtration={heating.get('pool_filtration_mode')} (toujours appeler read_heating_and_pool_status ou pool_status_widget pour le relevé live Klereo Wi-Fi/radio/PAC/sondes)
 
 SÉJOURS ENREGISTRÉS :
 {stays_txt}
@@ -887,7 +905,7 @@ def _build_action_card(
 
     if func_name == "propose_heating_or_pool_action":
         equipment = str(args.get("equipment") or "heating").lower()
-        mode = str(args.get("mode") or "").strip()
+        raw_mode = str(args.get("mode") or "").strip()
         target_temp = args.get("target_temperature")
 
         is_pool = "pool" in equipment or "piscine" in equipment
@@ -897,10 +915,103 @@ def _build_action_card(
                 "label": "Équipement",
                 "value": "Piscine Klereo" if is_pool else "Chaudière fioul Viessmann (Presbytère)",
                 "raw_value": "pool" if is_pool else "heating",
+                "readonly": True,
             }
         )
+
+        if is_pool:
+            low_m = raw_mode.lower()
+            if low_m in ("off", "arret", "arrêt", "standby", "eco", "éco", "hivernage", "hiver", "hors-gel", "hors_gel", "veille", "stop", "false"):
+                pool_mode = "off"
+            elif low_m in ("on", "marche", "confort", "chauffe", "chauffage", "auto", "regul", "régulé", "true"):
+                pool_mode = "on"
+            else:
+                pool_mode = ""
+
+            if pool_mode:
+                mode_label = (
+                    "Arrêt PAC (Hivernage actif • hors-gel 0,5 °C)"
+                    if pool_mode == "off"
+                    else "Chauffe PAC régulée"
+                )
+                deduced.append({"key": "mode", "label": "Mode PAC", "value": mode_label, "raw_value": pool_mode})
+            else:
+                missing.append(
+                    {
+                        "key": "mode",
+                        "label": "Mode PAC piscine",
+                        "question": "Quel mode souhaitez-vous appliquer à la PAC piscine ?",
+                        "options": [
+                            {"label": "❄️ Arrêt PAC / Hivernage actif (hors-gel 0,5 °C)", "value": "off"},
+                            {"label": "🔥 Marche Chauffage PAC régulé (27 °C)", "value": "on"},
+                        ],
+                    }
+                )
+
+            raw_filt = str(args.get("filtration_mode") or "auto").strip().lower()
+            if raw_filt in ("arret", "arrêt", "off"):
+                filt_norm = "arret"
+                filt_label = "Arrêt (⚠️ désactive le hors-gel)"
+            elif raw_filt in ("marche", "on", "manuel_on"):
+                filt_norm = "marche"
+                filt_label = "Auto / Marche"
+            else:
+                filt_norm = "auto"
+                filt_label = "Auto (hors-gel 0,5 °C)"
+            deduced.append({"key": "filtration_mode", "label": "Filtration", "value": filt_label, "raw_value": filt_norm})
+
+            payload = {
+                "equipment": "pool",
+                "mode": pool_mode or "off",
+                "filtration_mode": filt_norm,
+            }
+            if pool_mode == "on":
+                try:
+                    t_val = float(target_temp) if target_temp is not None else 27.0
+                except (ValueError, TypeError):
+                    t_val = 27.0
+                t_val = max(15.0, min(32.0, round(t_val, 1)))
+                payload["target_temperature"] = t_val
+                deduced.append({"key": "target_temperature", "label": "Consigne baignade (°C)", "value": f"{t_val:.1f} °C", "raw_value": t_val})
+            else:
+                # En mode Arrêt / Hivernage, ConsigneEau ne doit PAS être modifiée : hors-gel matériel Klereo 0,5 °C
+                deduced.append(
+                    {
+                        "key": "antifreeze_info",
+                        "label": "Sécurité hors-gel",
+                        "value": "0,5 °C (automatique Klereo)",
+                        "raw_value": 0.5,
+                        "readonly": True,
+                    }
+                )
+
+            return {
+                "action_type": "heating",
+                "title": "Pilotage Piscine Klereo",
+                "deduced_fields": deduced,
+                "missing_fields": missing,
+                "ready_to_execute": len(missing) == 0,
+                "payload": payload,
+            }
+
+        # Chaudière fioul Viessmann (Presbytère)
+        low_m = raw_mode.lower()
+        if low_m in ("dhwandheating", "confort", "on", "chauffage", "normal", "active"):
+            mode = "dhwAndHeating"
+        elif low_m in ("standby", "off", "hors-gel", "hors_gel", "veille", "eco", "arret", "arrêt"):
+            mode = "standby"
+        elif low_m in ("dhw", "ecs"):
+            mode = "dhw"
+        else:
+            mode = raw_mode
+
         if mode:
-            deduced.append({"key": "mode", "label": "Mode demandé", "value": mode, "raw_value": mode})
+            boiler_labels = {
+                "dhwAndHeating": "Confort Chauffage + ECS (dhwAndHeating)",
+                "dhw": "Eau Chaude Sanitaire seule (dhw • 52 °C)",
+                "standby": "Veille / Hors-gel (standby)",
+            }
+            deduced.append({"key": "mode", "label": "Mode demandé", "value": boiler_labels.get(mode, mode), "raw_value": mode})
         else:
             missing.append(
                 {
@@ -909,26 +1020,28 @@ def _build_action_card(
                     "question": "Quel mode souhaitez-vous appliquer ?",
                     "options": [
                         {"label": "🔥 Confort Chauffage + ECS (dhwAndHeating)", "value": "dhwAndHeating"},
+                        {"label": "🚿 Eau Chaude Sanitaire seule (dhw)", "value": "dhw"},
                         {"label": "❄️ Hors-Gel / Veille (standby)", "value": "standby"},
                     ],
                 }
             )
 
-        if target_temp is not None:
-            t_val = float(target_temp)
-        else:
-            t_val = 27.0 if is_pool else (20.0 if mode != "standby" else 10.0)
-        deduced.append({"key": "target_temperature", "label": "Consigne (°C)", "value": f"{t_val:.1f} °C", "raw_value": t_val})
-
         payload = {
-            "equipment": "pool" if is_pool else "heating",
-            "mode": mode or "dhwAndHeating",
-            "target_temperature": t_val,
-            "filtration_mode": args.get("filtration_mode") or "auto",
+            "equipment": "heating",
+            "mode": mode or "standby",
         }
+        if mode == "dhwAndHeating":
+            try:
+                t_val = float(target_temp) if target_temp is not None else 20.0
+            except (ValueError, TypeError):
+                t_val = 20.0
+            t_val = max(15.0, min(24.0, round(t_val, 1)))
+            payload["target_temperature"] = t_val
+            deduced.append({"key": "target_temperature", "label": "Consigne (°C)", "value": f"{t_val:.1f} °C", "raw_value": t_val})
+
         return {
             "action_type": "heating",
-            "title": "Pilotage Piscine Klereo" if is_pool else "Pilotage Chaudière Viessmann (Presbytère)",
+            "title": "Pilotage Chaudière Viessmann (Presbytère)",
             "deduced_fields": deduced,
             "missing_fields": missing,
             "ready_to_execute": len(missing) == 0,

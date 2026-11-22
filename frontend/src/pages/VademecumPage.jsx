@@ -1640,7 +1640,7 @@ export default function VademecumPage({ properties, currentUser, reservations = 
     setIsPoolPumpActive(targetActive);
     setSavingThermal(true);
     try {
-      const res = await setPoolPumpMode(targetActive);
+      const res = await setPoolPumpMode(targetActive, resolveCurrentUserFullName(currentUser));
       if (res) {
         setPiscineStatus((prev) => ({
           ...(prev || {}),
@@ -1697,7 +1697,7 @@ export default function VademecumPage({ properties, currentUser, reservations = 
     setIsPoolHeatingActive(targetActive);
     setSavingThermal(true);
     try {
-      const res = await setPoolHeatingMode(targetActive, poolTarget);
+      const res = await setPoolHeatingMode(targetActive, targetActive ? poolTarget : undefined, resolveCurrentUserFullName(currentUser));
       if (res) {
         setPiscineStatus((prev) => ({
           ...(prev || {}),
@@ -1769,10 +1769,10 @@ export default function VademecumPage({ properties, currentUser, reservations = 
       try {
         await savePoolSettings({
           target_temperature: poolTarget,
-          filtration_mode: isPoolPumpActive ? 'marche' : 'arret',
-          mode: isPoolHeatingActive ? 'confort' : 'standby',
+          filtration_mode: isPoolPumpActive ? 'auto' : 'arret',
+          mode: isPoolHeatingActive ? 'on' : 'off',
           author_name: resolveCurrentUserFullName(currentUser),
-          details: `Réglages consolidés piscine : Pompe ${isPoolPumpActive ? 'Marche' : 'Arrêt'}, PAC ${isPoolHeatingActive ? 'Marche' : 'Arrêt'}, Cible ${poolTarget.toFixed(1)}°C`
+          details: `Réglages consolidés piscine : Pompe ${isPoolPumpActive ? 'Auto' : 'Arrêt'}, PAC ${isPoolHeatingActive ? `Marche (${poolTarget.toFixed(1)}°C)` : 'Arrêt (Hivernage actif)'}`
         });
       } catch (poolErr) {
         const parsedErr = parseApiError(poolErr, 'Erreur lors de la synchronisation des réglages piscine Klereo');
@@ -3196,6 +3196,11 @@ export default function VademecumPage({ properties, currentUser, reservations = 
                     <span className="w-1.5 h-1.5 rounded-full bg-amber-600"></span>
                     Coffret injoignable (K-Link)
                   </span>
+                ) : piscineStatus?.pac_mode_code === 4 ? (
+                  <span className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full font-label-sm text-[11px] font-bold shrink-0 bg-rose-100 text-rose-900 border border-rose-400 animate-pulse">
+                    <span className="w-1.5 h-1.5 rounded-full bg-rose-600 animate-ping"></span>
+                    ⚠️ PAC Synchro Filtration (mode 4)
+                  </span>
                 ) : isPoolHeatingActive && piscineStatus?.pac_active ? (
                   <span className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full font-label-sm text-[11px] font-bold shrink-0 bg-rose-100 text-rose-800 border border-rose-300 animate-pulse">
                     <span className="w-1.5 h-1.5 rounded-full bg-rose-600 animate-ping"></span>
@@ -3283,6 +3288,21 @@ export default function VademecumPage({ properties, currentUser, reservations = 
                 </div>
               </div>
 
+              {/* Alerte critique PAC en mode 4 (Synchro Filtration / Clone) */}
+              {piscineStatus?.pac_mode_code === 4 && (
+                <div className="p-3.5 bg-rose-50 dark:bg-rose-950/50 border-2 border-rose-500 text-rose-950 dark:text-rose-100 rounded-xl text-xs flex items-start gap-2.5 shadow-sm animate-in fade-in duration-200">
+                  <span className="material-symbols-outlined text-rose-600 dark:text-rose-400 text-[22px] shrink-0 mt-0.5">warning</span>
+                  <div className="flex flex-col gap-0.5 min-w-0">
+                    <span className="font-bold text-xs text-rose-900 dark:text-rose-200">
+                      ⚠️ Anomalie Klereo : PAC en mode « Synchro Filtration » (mode=4)
+                    </span>
+                    <span className="text-[11px] text-rose-800 dark:text-rose-300 leading-relaxed font-normal">
+                      La pompe à chaleur est couplée à la pompe de filtration et chauffe automatiquement à chaque cycle quotidien ({piscineStatus?.heating_today_hours > 0 ? `${Number(piscineStatus.heating_today_hours).toFixed(1)} h de chauffe aujourd'hui` : 'hors thermostat'}). Basculez l&apos;interrupteur PAC sur « Arrêt » ci-dessous pour la couper immédiatement.
+                    </span>
+                  </div>
+                </div>
+              )}
+
               {/* Bandeau d'information télémétrie stale Klereo (radio K-Link 868 MHz) */}
               {(piscineStatus?.telemetry_stale && piscineStatus?.radio_link_ok !== false && piscineStatus?.klereo_alert_code !== 'radioPB') && (
                 <div className="p-3.5 bg-amber-50 dark:bg-amber-950/40 border border-amber-300 dark:border-amber-600 text-amber-950 dark:text-amber-100 rounded-xl text-xs flex items-start gap-2.5 shadow-2xs animate-in fade-in duration-200">
@@ -3355,17 +3375,19 @@ export default function VademecumPage({ properties, currentUser, reservations = 
                       Chauffage Piscine (PAC Inopac 20 kW)
                     </span>
                     <span className={`text-[10px] font-bold px-2 py-0.5 rounded-full ${
-                      isPoolHeatingActive && piscineStatus?.pac_active
+                      piscineStatus?.pac_mode_code === 4 || (isPoolHeatingActive && piscineStatus?.pac_active)
                         ? 'bg-rose-100 text-rose-800 dark:bg-rose-950 dark:text-rose-200 border border-rose-300'
                         : isPoolHeatingActive && !piscineStatus?.pac_active
                         ? 'bg-amber-100 text-amber-900 dark:bg-amber-950 dark:text-amber-200 border border-amber-300'
                         : 'bg-slate-100 text-slate-700 dark:bg-slate-800 dark:text-slate-300 border border-slate-200'
                     }`}>
-                      {isPoolHeatingActive && piscineStatus?.pac_active
-                        ? 'État PAC : 🔥 En chauffe (compresseur actif)'
+                      {piscineStatus?.pac_mode_code === 4
+                        ? `État PAC : ⚠️ Synchro Filtration (mode 4)${Number(piscineStatus?.heating_today_hours) > 0 ? ` • ${Number(piscineStatus.heating_today_hours).toFixed(1)}h auj.` : ''}`
+                        : isPoolHeatingActive && piscineStatus?.pac_active
+                        ? `État PAC : 🔥 En chauffe${Number(piscineStatus?.heating_today_hours) > 0 ? ` (${Number(piscineStatus.heating_today_hours).toFixed(1)}h auj.)` : ' (compresseur actif)'}`
                         : isPoolHeatingActive && !piscineStatus?.pac_active
                         ? `État PAC : 🌡️ Marche (Thermostat ${poolTarget.toFixed(1)}°C • repos)`
-                        : 'État PAC : ❄️ À l\'arrêt (Hors-gel 0.5°C)'}
+                        : `État PAC : ❄️ À l'arrêt (Hors-gel 0.5°C)${Number(piscineStatus?.heating_today_hours) > 0 ? ` • ${Number(piscineStatus.heating_today_hours).toFixed(1)}h auj.` : ''}`}
                     </span>
                   </div>
                   <ThermalMasterSwitch

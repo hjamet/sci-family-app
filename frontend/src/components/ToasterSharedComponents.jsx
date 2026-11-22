@@ -568,17 +568,28 @@ function SharedPoolWidget({ data }) {
           </div>
           <span className="material-symbols-outlined text-sky-600 text-[20px]">water_pump</span>
         </div>
-        <div className="p-2.5 rounded-xl bg-canvas-slate border border-border-subtle flex items-center justify-between gap-2">
+        <div className={`p-2.5 rounded-xl border flex items-center justify-between gap-2 ${
+          p.pac_active || p.pac_mode_code === 4
+            ? 'bg-rose-50 border-rose-300'
+            : p.is_heating_active
+            ? 'bg-amber-50 border-amber-300'
+            : 'bg-canvas-slate border-border-subtle'
+        }`}>
           <div>
             <span className="text-[10px] font-bold uppercase text-slate-500 block">Pompe à chaleur</span>
-            <span className="font-bold text-slate-800">
-              {p.pac_status_label || (p.mode === 'confort' ? 'Chauffage confort' : 'Hors-gel / Éco')}
+            <span className={`font-bold ${
+              p.pac_active || p.pac_mode_code === 4 ? 'text-rose-900' : 'text-slate-800'
+            }`}>
+              {p.pac_status_label || (p.is_heating_active ? 'Chauffage PAC régulé' : 'Arrêt / Hors-gel (0,5 °C)')}
             </span>
-            <span className="block text-[10.5px] text-slate-500">
+            <span className="block text-[10.5px] text-slate-600">
               {p.pac_status_subtext || `Consigne : ${p.target_temperature ?? 0.5} °C`}
+              {Number(p.heating_today_hours) > 0 ? ` • Chauffe du jour : ${Number(p.heating_today_hours).toFixed(1)} h` : ''}
             </span>
           </div>
-          <span className="material-symbols-outlined text-amber-600 text-[20px]">heat_pump</span>
+          <span className={`material-symbols-outlined text-[20px] ${
+            p.pac_active || p.pac_mode_code === 4 ? 'text-rose-600' : p.is_heating_active ? 'text-amber-600' : 'text-sky-600'
+          }`}>heat_pump</span>
         </div>
       </div>
 

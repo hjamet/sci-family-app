@@ -855,10 +855,13 @@ class PiscineStatusResponse(BaseModel):
     is_heating_active: bool = False
     pac_active: bool = False
     pac_mode_code: Optional[int] = None
+    pac_mode_label: Optional[str] = None
+    heating_today_hours: Optional[float] = None
+    heating_total_hours: Optional[float] = None
     pump_mode_code: Optional[int] = None
     pump_relay_active: bool = False
     pump_mode: Optional[str] = "auto"
-    heating_mode: Optional[str] = "auto"
+    heating_mode: Optional[str] = "off"
     pac_state: Optional[str] = None
     pac_status_label: Optional[str] = "Hors-gel actif (seuil sécurité 0.5°C)"
     pac_status_subtext: Optional[str] = "Chauffage coupé • Surveillance antigel active (circulation de sauvegarde sous 0.5°C)"
@@ -872,10 +875,13 @@ class PiscineStatusResponse(BaseModel):
     frederic_jamet_agreement: Optional[str] = "Prise en charge contrat DECLERCQ à 100% jusqu’au 31/12/2026."
     agreement_status: Optional[str] = "Actif (100% pris en charge par Frédéric Jamet)"
     contract_provider: Optional[str] = "DECLERCQ PISCINES"
+    wifi_box_ok: Optional[bool] = True
     radio_link_ok: bool = True
+    klereo_alert_code: Optional[str] = None
     radio_status: Optional[str] = "Liaison radio K-Link active"
     radio_alert: Optional[str] = None
     radio_error: bool = False
+    last_sync_label: Optional[str] = None
     infos_time_s: Optional[int] = None
     water_temp_age_s: Optional[int] = None
     air_temp_age_s: Optional[int] = None
@@ -884,6 +890,8 @@ class PiscineStatusResponse(BaseModel):
     rf_sent: Optional[int] = None
     rf_err: Optional[int] = None
     telemetry_stale: bool = False
+    pending_sync: Optional[Dict[str, Any]] = None
+    queued_for_retry: bool = False
     test_mode_read_only: bool = False
     message: Optional[str] = "Télémétrie Klereo Connect en direct."
     pool_nickname: Optional[str] = "Ma piscine"
