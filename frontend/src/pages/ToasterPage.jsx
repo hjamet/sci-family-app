@@ -887,6 +887,7 @@ export default function ToasterPage({ currentUser }) {
             label: f.label || f.key || 'Champ',
             value: f.value !== undefined && f.value !== null ? String(f.value) : '',
             raw_value: f.raw_value !== undefined ? f.raw_value : f.value,
+            readonly: Boolean(f.readonly),
           }))
         : [];
 
