@@ -66,7 +66,7 @@ def extract_member_from_request(request: Optional[Request]) -> Tuple[Optional[in
     payload = decode_access_token(token)
     if not isinstance(payload, dict):
         return None, None
-    raw_id = payload.get("member_id") or payload.get("id")
+    raw_id = payload.get("user_id") or payload.get("member_id") or payload.get("id")
     member_id = int(raw_id) if raw_id is not None and str(raw_id).isdigit() else None
     member_name = payload.get("name") or payload.get("prenom") or payload.get("sub") or payload.get("username")
     return member_id, (str(member_name)[:120] if member_name else None)

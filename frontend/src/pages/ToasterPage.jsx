@@ -16,6 +16,7 @@ import { uploadUniversalDocument, compressImageIfApplicable, readFileToMemory } 
 import { reportClientError } from '../utils/errorLogger';
 import TaskDetailModal from '../components/TaskDetailModal';
 import VoteRoofModal from '../components/VoteRoofModal';
+import { useAuth } from '../context/AuthContext';
 
 const STATUTORY_MEMBERS_FALLBACK = [
   { id: 1, prenom: 'Henri', nom: 'Henri Jamet', displayLabel: 'Henri Jamet' },
@@ -424,13 +425,33 @@ const EXAMPLE_QUESTIONS = [
   },
 ];
 
-export default function ToasterPage({ currentUser }) {
-  const [selectedMemberId, setSelectedMemberId] = useState(() => {
-    if (currentUser && typeof currentUser === 'object' && currentUser.id) {
-      return Number(currentUser.id);
-    }
-    return 1;
+function resolveMemberIdFromUser(user, membersList = STATUTORY_MEMBERS_FALLBACK) {
+  if (!user) return null;
+  if (typeof user === 'object' && user.id != null && Number.isFinite(Number(user.id))) {
+    return Number(user.id);
+  }
+  const rawName = typeof user === 'string' ? user : (user.prenom || user.name || '');
+  const sanitized = sanitizeFamilyLabel(rawName);
+  const norm = sanitized.normalize('NFD').replace(/[\u0300-\u036f]/g, '').toLowerCase().trim();
+  if (!norm) return null;
+  const firstToken = norm.split(/\s+/)[0];
+  const canonical = firstToken === 'elizabeth' || firstToken === 'maman'
+    ? 'elisabeth'
+    : firstToken === 'papa'
+      ? 'frederic'
+      : firstToken;
+  const found = (membersList || []).find((m) => {
+    const mp = sanitizeFamilyLabel(m.prenom || '').normalize('NFD').replace(/[\u0300-\u036f]/g, '').toLowerCase().trim();
+    const mn = sanitizeFamilyLabel(m.name || m.nom || '').normalize('NFD').replace(/[\u0300-\u036f]/g, '').toLowerCase().trim();
+    return mp === canonical || mp === norm || (canonical && mn.includes(canonical));
   });
+  return found ? Number(found.id) : null;
+}
+
+export default function ToasterPage({ currentUser }) {
+  const { logout } = useAuth();
+  const [selectedMemberId, setSelectedMemberId] = useState(() => resolveMemberIdFromUser(currentUser));
+  const loadedMemberIdRef = useRef(undefined);
 
   const [portalState, setPortalState] = useState(null);
   const [loadingState, setLoadingState] = useState(true);
@@ -644,10 +665,15 @@ export default function ToasterPage({ currentUser }) {
     async (memberId = selectedMemberId) => {
       setLoadingState(true);
       try {
-        const res = await fetch(`/api/toaster/state?member_id=${encodeURIComponent(memberId)}`, {
+        const query = memberId != null ? `?member_id=${encodeURIComponent(memberId)}` : '';
+        const res = await fetch(`/api/toaster/state${query}`, {
           method: 'GET',
           headers: getAuthHeaders(),
         });
+        if (res.status === 401) {
+          logout();
+          return;
+        }
         if (!res.ok) {
           let detail = `Erreur HTTP ${res.status}`;
           try {
@@ -658,8 +684,12 @@ export default function ToasterPage({ currentUser }) {
         }
         const data = await res.json();
         setPortalState(data);
-        if (data?.active_member?.id && Number(data.active_member.id) !== Number(memberId)) {
-          setSelectedMemberId(Number(data.active_member.id));
+        if (data?.active_member?.id != null) {
+          const resolvedId = Number(data.active_member.id);
+          loadedMemberIdRef.current = resolvedId;
+          if (Number(memberId) !== resolvedId) {
+            setSelectedMemberId(resolvedId);
+          }
         }
       } catch (err) {
         console.error('Erreur chargement état Grille-Pain:', err);
@@ -668,26 +698,21 @@ export default function ToasterPage({ currentUser }) {
         setLoadingState(false);
       }
     },
-    [selectedMemberId]
+    [selectedMemberId, logout]
   );
 
   // Synchroniser automatiquement avec l'utilisateur connecté
   useEffect(() => {
-    if (!currentUser) return;
-    if (typeof currentUser === 'object' && currentUser.id) {
-      setSelectedMemberId(Number(currentUser.id));
-    } else if (typeof currentUser === 'string' && portalState?.members?.length) {
-      const target = currentUser.toLowerCase();
-      const found = portalState.members.find(
-        (m) =>
-          (m.prenom && target.includes(m.prenom.toLowerCase())) ||
-          (m.name && target.includes(m.name.toLowerCase()))
-      );
-      if (found) setSelectedMemberId(Number(found.id));
+    const resolved = resolveMemberIdFromUser(currentUser, portalState?.members || STATUTORY_MEMBERS_FALLBACK);
+    if (resolved != null && resolved !== selectedMemberId) {
+      setSelectedMemberId(resolved);
     }
-  }, [currentUser, portalState?.members]);
+  }, [currentUser, portalState?.members, selectedMemberId]);
 
   useEffect(() => {
+    if (loadedMemberIdRef.current !== undefined && selectedMemberId === loadedMemberIdRef.current) {
+      return;
+    }
     loadPortalState(selectedMemberId);
   }, [selectedMemberId, loadPortalState]);
 
@@ -721,12 +746,19 @@ export default function ToasterPage({ currentUser }) {
   }, [portalState]);
 
   const activeMemberObj = useMemo(() => {
-    return (
-      portalState?.active_member ||
-      membersOptions.find((m) => Number(m.id) === Number(selectedMemberId)) ||
-      membersOptions[0]
-    );
-  }, [membersOptions, selectedMemberId, portalState]);
+    if (portalState?.active_member) return portalState.active_member;
+    if (selectedMemberId != null) {
+      const matched = membersOptions.find((m) => Number(m.id) === Number(selectedMemberId));
+      if (matched) return matched;
+    }
+    if (currentUser && typeof currentUser === 'object' && (currentUser.prenom || currentUser.name)) {
+      return currentUser;
+    }
+    if (typeof currentUser === 'string' && currentUser.trim()) {
+      return { prenom: sanitizeFamilyLabel(currentUser.trim()) };
+    }
+    return null;
+  }, [membersOptions, selectedMemberId, portalState, currentUser]);
 
   const isCoordinator = useMemo(() => {
     const labelLower = formatAssociateLabel(activeMemberObj).toLowerCase();
@@ -1096,7 +1128,7 @@ export default function ToasterPage({ currentUser }) {
           : null;
 
       const body = {
-        member_id: Number(selectedMemberId),
+        ...(selectedMemberId != null ? { member_id: Number(selectedMemberId) } : {}),
         messages: historyForApi,
         attachment_base64: currentAttachment ? currentAttachment.base64 : null,
         attachment_mime: currentAttachment ? (currentAttachment.previewMime || currentAttachment.mime) : null,
@@ -1640,7 +1672,7 @@ export default function ToasterPage({ currentUser }) {
         method: 'POST',
         headers: getAuthHeaders(),
         body: JSON.stringify({
-          member_id: Number(selectedMemberId),
+          ...(selectedMemberId != null ? { member_id: Number(selectedMemberId) } : {}),
           action_type: actionType,
           payload,
         }),
@@ -2209,7 +2241,7 @@ export default function ToasterPage({ currentUser }) {
         method: 'POST',
         headers: getAuthHeaders(),
         body: JSON.stringify({
-          member_id: Number(selectedMemberId),
+          ...(selectedMemberId != null ? { member_id: Number(selectedMemberId) } : {}),
           action_type: card.action_type,
           payload: finalPayload,
         }),
@@ -2439,7 +2471,7 @@ export default function ToasterPage({ currentUser }) {
               }`}
             >
               <h2 className="font-headline-sm text-base sm:text-lg font-bold text-forest-deep">
-                Bonjour {formatAssociatePrenom(activeMemberObj)}, comment puis-je vous aider aujourd'hui ?
+                {activeMemberObj ? `Bonjour ${formatAssociatePrenom(activeMemberObj)},` : 'Bonjour,'} comment puis-je vous aider aujourd'hui ?
               </h2>
               <p className="text-xs sm:text-sm text-on-surface-variant mt-1 leading-relaxed max-w-xl">
                 Consultez le Vademecum, la trésorerie, le classement participatif, la piscine, la cuve à fioul ou préparez en un clic une réservation, une tâche ou un scrutin familial. Tout est possible. Dingue, non ?!

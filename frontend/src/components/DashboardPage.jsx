@@ -164,7 +164,7 @@ export function hasUserParticipatedInVote(project, user) {
 }
 
 export default function DashboardPage({
-  currentUser = 'Henri',
+  currentUser = null,
   setActiveTab,
   onOpenNewProject,
   onOpenBooking,
@@ -229,9 +229,14 @@ export default function DashboardPage({
     setIsRoofVoteModalOpen(true);
   };
 
-  const userPrenom = typeof currentUser === 'object'
-    ? (currentUser?.prenom || 'Henri')
-    : (currentUser ? currentUser.split(' ')[0] : 'Henri');
+  const rawUserPrenom = typeof currentUser === 'object' && currentUser !== null
+    ? (currentUser?.prenom || (currentUser?.name ? String(currentUser.name).split(' ')[0] : ''))
+    : (typeof currentUser === 'string' && currentUser.trim() ? currentUser.trim().split(' ')[0] : '');
+  const userPrenom = /^maman$/i.test(rawUserPrenom)
+    ? 'Élisabeth'
+    : /^papa$/i.test(rawUserPrenom)
+      ? 'Frédéric'
+      : rawUserPrenom;
 
   const loadDashboardData = useCallback(async (options = {}) => {
     // ==================== PHASE 1 : DONNÉES PRIORITAIRES SUPABASE SQL (< 50ms) ====================
@@ -399,9 +404,9 @@ export default function DashboardPage({
     ? reservations.slice(0, 5)
     : [];
 
-  const currentUserName = typeof currentUser === 'object'
-    ? (currentUser?.name || currentUser?.prenom || 'Henri Jamet')
-    : (currentUser || 'Henri Jamet');
+  const currentUserName = typeof currentUser === 'object' && currentUser !== null
+    ? (currentUser?.name || currentUser?.prenom || '')
+    : (typeof currentUser === 'string' ? currentUser : '');
   const currentUserFirst = currentUserName.trim().split(' ')[0].toLowerCase();
   const isCoordinator = Boolean(
     currentUser?.is_coordinator ||
@@ -493,7 +498,7 @@ export default function DashboardPage({
               Domaine d'Hellenvilliers • SCI Familiale
             </span>
             <h1 className="font-display-lg text-2xl sm:text-3xl lg:text-display-lg text-forest-deep tracking-tight mt-2">
-              Bonjour {userPrenom},
+              {userPrenom ? `Bonjour ${userPrenom},` : 'Bonjour,'}
             </h1>
             <p className="font-body-md text-sm sm:text-base text-on-surface-variant leading-relaxed">
               Bienvenue sur le portail des 7 associés. Consultez les plannings de passage, les arbitrages budgétaires et le registre des chantiers.

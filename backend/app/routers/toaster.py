@@ -70,17 +70,25 @@ def _resolve_request_member_id(request: Request, db: Session, fallback_member_id
     if auth_header.lower().startswith("bearer "):
         token = auth_header[7:].strip()
         payload = decode_access_token(token)
-        if isinstance(payload, dict):
-            sub_id = payload.get("member_id") or payload.get("id")
-            if sub_id and str(sub_id).isdigit():
-                m = db.query(Member).filter(Member.id == int(sub_id)).first()
-                if m:
-                    return m.id
-            sub_name = payload.get("sub") or payload.get("prenom") or payload.get("username")
-            if sub_name:
-                m = resolve_member(db, member_prenom=str(sub_name))
-                if m:
-                    return m.id
+        if not isinstance(payload, dict):
+            raise HTTPException(
+                status_code=401,
+                detail="[Auth Error] Jeton d'authentification invalide ou expiré.",
+            )
+        sub_id = payload.get("user_id") or payload.get("member_id") or payload.get("id")
+        if sub_id is not None and str(sub_id).isdigit():
+            m = db.query(Member).filter(Member.id == int(sub_id)).first()
+            if m:
+                return m.id
+        sub_name = payload.get("sub") or payload.get("prenom") or payload.get("username")
+        if sub_name:
+            m = resolve_member(db, member_prenom=str(sub_name), allow_default_fallback=False)
+            if m:
+                return m.id
+        raise HTTPException(
+            status_code=401,
+            detail="[Auth Error] Utilisateur introuvable pour ce jeton d'authentification.",
+        )
     m = resolve_member(db, member_id=fallback_member_id)
     return m.id if m else 1
 

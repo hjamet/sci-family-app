@@ -841,16 +841,40 @@ def compute_family_leaderboard(db: Session, period: str = "all") -> Dict[str, An
     }
 
 
-def resolve_member(db: Session, member_id: Optional[int] = None, member_prenom: Optional[str] = None) -> Optional[Member]:
+_MEMBER_PRENOM_ALIASES = {
+    "maman": "elisabeth",
+    "elizabeth": "elisabeth",
+    "papa": "frederic",
+}
+
+
+def resolve_member(
+    db: Session,
+    member_id: Optional[int] = None,
+    member_prenom: Optional[str] = None,
+    allow_default_fallback: bool = True,
+) -> Optional[Member]:
     if member_id is not None:
         m = db.query(Member).filter(Member.id == int(member_id)).first()
         if m:
             return m
     if member_prenom:
         target = _norm_text(member_prenom)
+        first_token = target.split()[0] if target else ""
+        canonical_target = _MEMBER_PRENOM_ALIASES.get(target) or _MEMBER_PRENOM_ALIASES.get(first_token) or target
         for m in db.query(Member).order_by(Member.id.asc()).all():
-            if _norm_text(format_member_prenom(m)) == target or target in _norm_text(m.name):
+            m_prenom = _norm_text(m.prenom)
+            m_fmt_prenom = _norm_text(format_member_prenom(m))
+            m_name = _norm_text(m.name)
+            if (
+                m_prenom in (target, canonical_target)
+                or m_fmt_prenom in (target, canonical_target)
+                or (target and target in m_name)
+                or (canonical_target and canonical_target in m_name)
+            ):
                 return m
+    if not allow_default_fallback:
+        return None
     members = db.query(Member).order_by(Member.id.asc()).all()
     if not members:
         return None

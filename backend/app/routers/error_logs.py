@@ -38,7 +38,7 @@ def _require_coordinator(request: Request, db: Session) -> Member:
         raise HTTPException(status_code=401, detail="Jeton d'authentification invalide ou expiré.")
 
     member: Optional[Member] = None
-    sub_id = payload.get("member_id") or payload.get("id")
+    sub_id = payload.get("user_id") or payload.get("member_id") or payload.get("id")
     if sub_id is not None and str(sub_id).isdigit():
         member = db.query(Member).filter(Member.id == int(sub_id)).first()
     if not member:

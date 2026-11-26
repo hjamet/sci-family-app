@@ -51,7 +51,7 @@ const NAV_ITEMS = [
 export default function Header({
   activeTab = 'home',
   setActiveTab,
-  currentUser = 'Henri Jamet',
+  currentUser = null,
   onLogout,
   onNavigate,
   onOpenVoteModal,
@@ -94,9 +94,16 @@ export default function Header({
     } catch (_) {}
   };
 
-  const displayName = typeof currentUser === 'object'
-    ? (currentUser?.prenom ? `${currentUser.prenom} ${currentUser.nom || 'Jamet'}` : 'Henri Jamet')
-    : (currentUser || 'Henri Jamet');
+  const rawDisplayName = typeof currentUser === 'object' && currentUser !== null
+    ? (currentUser?.name || (currentUser?.prenom ? `${currentUser.prenom} ${currentUser.nom || 'Jamet'}` : ''))
+    : (typeof currentUser === 'string' ? currentUser : '');
+  const displayName = rawDisplayName
+    ? rawDisplayName
+        .replace(/Maman\s*\(\s*[ÉE]lisabeth\s*\)\s*Jamet/gi, 'Élisabeth Jamet')
+        .replace(/\bMaman\s+Jamet\b/gi, 'Élisabeth Jamet')
+        .replace(/\bMaman\b/gi, 'Élisabeth')
+        .trim()
+    : 'Associé';
 
   useEffect(() => {
     function handleClickOutside(event) {
